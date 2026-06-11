@@ -1,0 +1,36 @@
+openapi: 3.0.3
+info:
+  title: Verve Dental Operational Suite API
+  version: 0.1.0
+  description: OpenAPI-first contract for the Verve Backend (Module 01 scaffold).
+servers:
+  - url: http://localhost:3000
+    description: Local development
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - service
+                  - timestamp
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: "@verve/backend"
+                  timestamp:
+                    type: string
+                    format: date-time
