@@ -34,7 +34,7 @@
 - [x] `.github/workflows/ci.yml` — Backend lint, typecheck, test on PR/push
 - [x] `docs/adr/` — Architecture Decision Records directory
 - [x] `Frontend-Web/` and `Mobile-app/` — placeholder READMEs
-- [ ] Git repository initialized (`git init`) — requires Git CLI on developer machine
+- [x] Git repository initialized — `main` + `dev` branches, initial commit `ed2a9f8`
 
 ### Backend Status (`/Backend`)
 - [x] Node.js + TypeScript project scaffold
