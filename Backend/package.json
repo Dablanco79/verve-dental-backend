@@ -9,10 +9,10 @@
   },
   "scripts": {
     "dev": "node ./node_modules/tsx/dist/cli.mjs watch src/index.ts",
-    "build": "node ./node_modules/typescript/lib/tsc.js -p tsconfig.build.json",
+    "build": "node ../node_modules/typescript/lib/tsc.js -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "typecheck": "node ./node_modules/typescript/lib/tsc.js --noEmit",
-    "lint": "node ./node_modules/eslint/bin/eslint.js src tests",
+    "typecheck": "node ../node_modules/typescript/lib/tsc.js --noEmit",
+    "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
     "test:coverage": "npm run test -- --coverage"
   },

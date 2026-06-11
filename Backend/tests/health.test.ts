@@ -14,10 +14,14 @@ describe("GET /api/v1/health", () => {
     const response = await request(app).get("/api/v1/health");
 
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      status: "ok",
-      service: "@verve/backend",
-    });
-    expect(response.body.timestamp).toBeDefined();
+    const body = response.body as {
+      status: string;
+      service: string;
+      timestamp: string;
+    };
+
+    expect(body.status).toBe("ok");
+    expect(body.service).toBe("@verve/backend");
+    expect(body.timestamp).toEqual(expect.any(String));
   });
 });

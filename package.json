@@ -1,0 +1,21 @@
+{
+  "name": "verve-operational-suite",
+  "version": "0.1.0",
+  "description": "Verve Dental Operational Suite — monorepo workspace root",
+  "private": true,
+  "workspaces": [
+    "Backend",
+    "Frontend-Web"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=@verve/backend",
+    "dev:web": "npm run dev --workspace=@verve/frontend-web",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

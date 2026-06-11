@@ -1,0 +1,80 @@
+:root {
+  color: #102a43;
+  background-color: #f5f7fa;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.app-shell__header {
+  margin-bottom: 2rem;
+}
+
+.app-shell__eyebrow {
+  margin: 0 0 0.25rem;
+  color: #486581;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-shell__header h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.status-card {
+  padding: 1.5rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.status-card h2 {
+  margin-top: 0;
+}
+
+.status-card dl {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+}
+
+.status-card dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #627d98;
+}
+
+.status-card dd {
+  margin: 0.25rem 0 0;
+  font-size: 1rem;
+}
+
+.status-card__error {
+  margin: 0;
+  color: #ba1a1a;
+}

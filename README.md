@@ -23,15 +23,39 @@ Multi-tenant dental practice management platform for inventory, rostering, payro
 ## Quick start (Backend)
 
 ```bash
-cd Backend
-cp .env.example .env
 npm install
-npm run dev
+npm run dev:backend
 ```
 
 Health check: `GET http://localhost:3000/api/v1/health`
 
+## Quick start (Frontend-Web)
+
+```bash
+npm install
+npm run dev:web
+```
+
+App: `http://localhost:5173` (proxies `/api/*` to the Backend)
+
+## Workspace scripts (root)
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev:backend` | Start Backend dev server |
+| `npm run dev:web` | Start Frontend-Web dev server |
+| `npm run build` | Build all workspaces |
+| `npm run test` | Test all workspaces |
+| `npm run lint` | Lint all workspaces |
+| `npm run typecheck` | Typecheck all workspaces |
+
 ## Development scripts (Backend)
+
+```bash
+cd Backend
+cp .env.example .env
+npm run dev
+```
 
 | Command | Description |
 |---------|-------------|

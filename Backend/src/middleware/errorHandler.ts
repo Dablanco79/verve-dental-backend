@@ -15,6 +15,8 @@ export function errorHandler(logger: Logger) {
     error: unknown,
     _req: Request,
     res: Response<ApiErrorBody>,
+    // Express requires the 4-argument error middleware signature.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _next: NextFunction,
   ): void => {
     const message =

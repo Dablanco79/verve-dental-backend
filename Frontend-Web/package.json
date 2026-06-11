@@ -1,0 +1,39 @@
+{
+  "name": "@verve/frontend-web",
+  "version": "0.1.0",
+  "description": "Verve Dental Operational Suite — React web application",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "node ../node_modules/vite/bin/vite.js",
+    "build": "node ../node_modules/typescript/lib/tsc.js -b && node ../node_modules/vite/bin/vite.js build",
+    "preview": "node ../node_modules/vite/bin/vite.js preview",
+    "typecheck": "node ../node_modules/typescript/lib/tsc.js -b --noEmit",
+    "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
+    "test": "node ../node_modules/vitest/vitest.mjs run",
+    "test:watch": "node ../node_modules/vitest/vitest.mjs"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.2",
+    "eslint": "^9.28.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.33.1",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.3"
+  }
+}

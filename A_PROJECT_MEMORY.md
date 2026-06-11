@@ -24,17 +24,25 @@
 
 ### Completed Modules
 - [x] 00 MASTER SYSTEM PROMPT (Governing rules)
-- [ ] 01 CORE PLATFORM FOUNDATION (Scaffolding) — Backend + Git structure initialized
+- [x] 01 CORE PLATFORM FOUNDATION (Scaffolding)
 
 ### Repository Status (Root)
 - [x] `.cursorignore` — excludes `node_modules/` from Cursor context
 - [x] Root `.gitignore` — monorepo-wide ignore rules
 - [x] Root `README.md` — project overview and branch strategy
+- [x] Root `package.json` — npm workspaces (`Backend`, `Frontend-Web`)
 - [x] `.editorconfig` — shared editor conventions
-- [x] `.github/workflows/ci.yml` — Backend lint, typecheck, test on PR/push
+- [x] `.github/workflows/ci.yml` — monorepo lint, typecheck, test, web build
 - [x] `docs/adr/` — Architecture Decision Records directory
-- [x] `Frontend-Web/` and `Mobile-app/` — placeholder READMEs
+- [x] `Mobile-app/` — placeholder README (React Native scaffold deferred)
 - [x] Git repository initialized — `main` + `dev` branches, initial commit `ed2a9f8`
+
+### Frontend-Web Status (`/Frontend-Web`)
+- [x] React 19 + TypeScript (strict) + Vite 6 scaffold
+- [x] Core folders: `api`, `components`, `config`, `pages`, `types`
+- [x] API client stub with Backend health check integration
+- [x] Vitest + React Testing Library test scaffold
+- [x] Vite dev proxy for `/api/*` → Backend
 
 ### Backend Status (`/Backend`)
 - [x] Node.js + TypeScript project scaffold
