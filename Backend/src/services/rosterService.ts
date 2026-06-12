@@ -9,9 +9,18 @@ import { AppError } from "../types/errors.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 
+/**
+ * Fields the service consumer must supply.  Everything else (staffEmail,
+ * rosteredClinicId, rosteredClinicName, createdByUserId, createdByEmail)
+ * is filled in server-side by the service layer.
+ */
 export type CreateRosterInput = Omit<
   CreateRosterEntryInput,
-  "staffEmail" | "createdByUserId"
+  | "staffEmail"
+  | "createdByUserId"
+  | "createdByEmail"
+  | "rosteredClinicId"
+  | "rosteredClinicName"
 >;
 
 export type RosterService = ReturnType<typeof createRosterService>;
@@ -21,29 +30,21 @@ export function createRosterService(
   userRepository: UserRepository,
 ) {
   /**
-   * Grants read access when the caller's homeClinicId matches, or when they have
-   * an active (non-cancelled) roster entry at the requested clinic.
-   * owner_admin bypasses this check entirely.
+   * Returns true when the caller is entitled to see the full clinic roster.
+   * Only owner_admin (any clinic) and group_practice_manager (home clinic only)
+   * receive unrestricted read access.
    */
-  async function assertClinicReadAccess(
+  function hasFullClinicReadAccess(
     user: AuthenticatedUser,
     requestedClinicId: string,
-  ): Promise<void> {
-    if (user.role === "owner_admin") return;
-    if (user.homeClinicId === requestedClinicId) return;
-
-    const hasShift = await rosterRepository.hasActiveShiftAtClinic(
-      user.id,
-      requestedClinicId,
-    );
-
-    if (!hasShift) {
-      throw new AppError(
-        403,
-        "TENANT_ACCESS_DENIED",
-        "You do not have access to this clinic's data",
-      );
-    }
+  ): boolean {
+    if (user.role === "owner_admin") return true;
+    if (
+      user.role === "group_practice_manager" &&
+      user.homeClinicId === requestedClinicId
+    )
+      return true;
+    return false;
   }
 
   /** Only owner_admin and group_practice_manager at their home clinic may write. */
@@ -73,8 +74,15 @@ export function createRosterService(
       clinicId: string,
       options?: ListRosterOptions,
     ): Promise<RosterEntry[]> {
-      await assertClinicReadAccess(caller, clinicId);
-      return rosterRepository.listByClinic(clinicId, options);
+      // owner_admin and group_practice_manager (own clinic) get the full list.
+      if (hasFullClinicReadAccess(caller, clinicId)) {
+        return rosterRepository.listByClinic(clinicId, options);
+      }
+
+      // clinical_staff (and any other role) are silently scoped to their own
+      // shifts only — they never receive another staff member's roster data.
+      // Uses the composite DB index instead of loading all staff shifts into memory.
+      return rosterRepository.listByStaffAtClinic(caller.id, clinicId, options);
     },
 
     async getEntry(
@@ -82,11 +90,17 @@ export function createRosterService(
       clinicId: string,
       entryId: string,
     ): Promise<RosterEntry> {
-      await assertClinicReadAccess(caller, clinicId);
-
       const entry = await rosterRepository.findEntryById(entryId);
 
       if (!entry || entry.rosteredClinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Roster entry not found");
+      }
+
+      // Privileged roles see any entry; others can only see their own.
+      if (
+        !hasFullClinicReadAccess(caller, clinicId) &&
+        entry.staffUserId !== caller.id
+      ) {
         throw new AppError(404, "NOT_FOUND", "Roster entry not found");
       }
 
@@ -98,10 +112,7 @@ export function createRosterService(
       clinicId: string,
       options?: { from?: Date; to?: Date },
     ): Promise<RosterEntry[]> {
-      await assertClinicReadAccess(caller, clinicId);
-
-      const all = await rosterRepository.listByStaff(caller.id, options);
-      return all.filter((e) => e.rosteredClinicId === clinicId);
+      return rosterRepository.listByStaffAtClinic(caller.id, clinicId, options);
     },
 
     async createEntry(
@@ -119,7 +130,6 @@ export function createRosterService(
         );
       }
 
-      // Look up the staff member's email to denormalize onto the entry.
       const staffUser = await userRepository.findById(input.staffUserId);
 
       if (!staffUser) {
@@ -130,10 +140,29 @@ export function createRosterService(
         throw new AppError(400, "USER_INACTIVE", "Staff user account is not active");
       }
 
+      // TODO: Module 06 — Migrate to canonical clinics reference table.
+      // Currently deriving the clinic name from the users table (ORDER BY email
+      // LIMIT 1) as a deterministic workaround.  Once a first-class `clinics`
+      // table is introduced in Module 06, replace this call with a direct lookup
+      // on that table to make the name truly authoritative and independent of
+      // the user roster.
+      const rosteredClinicName = await userRepository.getClinicName(clinicId);
+
+      if (!rosteredClinicName) {
+        throw new AppError(
+          404,
+          "CLINIC_NOT_FOUND",
+          "Target clinic not found or has no members",
+        );
+      }
+
       return rosterRepository.createEntry({
         ...input,
+        rosteredClinicId: clinicId,
+        rosteredClinicName,
         staffEmail: staffUser.email,
         createdByUserId: caller.id,
+        createdByEmail: caller.email,
       });
     },
 

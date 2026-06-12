@@ -6,33 +6,75 @@ import type { RosterEntry } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
 import { parseBody } from "../utils/validation.js";
 
+// { offset: true } accepts UTC (Z) and local offsets like +10:00 for AEST.
+const isoDatetime = () => z.string().datetime({ offset: true });
+
 // Inline literals mirror SHIFT_TYPES / ROSTER_STATUSES from types/roster.ts
+// Shift-time ordering (shiftEndAt > shiftStartAt) is validated as business
+// logic in the service layer, which returns the stable INVALID_SHIFT_TIMES
+// error code rather than a generic VALIDATION_ERROR.
 const createEntrySchema = z.object({
   staffUserId: z.string().uuid(),
-  rosteredClinicName: z.string().trim().min(1).max(255),
-  shiftStartAt: z.string().datetime(),
-  shiftEndAt: z.string().datetime(),
+  // rosteredClinicName is intentionally absent — the service derives it
+  // server-side from the DB to prevent client spoofing.
+  shiftStartAt: isoDatetime(),
+  shiftEndAt: isoDatetime(),
   shiftType: z
     .enum(["standard", "overtime", "on_call", "training"])
     .default("standard"),
   notes: z.string().trim().max(1000).nullable().optional(),
 });
 
-const updateEntrySchema = z.object({
-  shiftStartAt: z.string().datetime().optional(),
-  shiftEndAt: z.string().datetime().optional(),
-  shiftType: z.enum(["standard", "overtime", "on_call", "training"]).optional(),
-  status: z.enum(["scheduled", "confirmed", "completed", "cancelled"]).optional(),
-  notes: z.string().trim().max(1000).nullable().optional(),
-});
+// .strict() rejects payloads that contain keys not defined in the schema
+// (e.g. { "foo": "bar" }), giving clients a clear 400 instead of silently
+// stripping unknown fields and producing a no-op audit entry.
+const updateEntrySchema = z
+  .object({
+    shiftStartAt: isoDatetime().optional(),
+    shiftEndAt: isoDatetime().optional(),
+    shiftType: z
+      .enum(["standard", "overtime", "on_call", "training"])
+      .optional(),
+    status: z
+      .enum(["scheduled", "confirmed", "completed", "cancelled"])
+      .optional(),
+    notes: z.string().trim().max(1000).nullable().optional(),
+  })
+  .strict();
 
-const listQuerySchema = z.object({
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
-  status: z
-    .enum(["scheduled", "confirmed", "completed", "cancelled"])
-    .optional(),
-});
+const listQuerySchema = z
+  .object({
+    from: isoDatetime().optional(),
+    to: isoDatetime().optional(),
+    status: z
+      .enum(["scheduled", "confirmed", "completed", "cancelled"])
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.from && data.to && new Date(data.from) >= new Date(data.to)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "'from' must be earlier than 'to'",
+        path: ["from"],
+      });
+    }
+  });
+
+// UUID v4 path param — rejects malformed values before they reach Postgres.
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requireUuidParam(req: Request, paramName: string): string {
+  const value = routeParam(req.params[paramName]);
+  if (!UUID_REGEX.test(value)) {
+    throw new AppError(
+      400,
+      "INVALID_PARAM",
+      `Path parameter '${paramName}' must be a valid UUID`,
+    );
+  }
+  return value;
+}
 
 function serializeEntry(entry: RosterEntry) {
   return {
@@ -70,15 +112,22 @@ export function createRosterHandlers(rosterService: RosterService) {
   return {
     async listEntries(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
+      const clinicId = requireUuidParam(req, "clinicId");
       const parsed = listQuerySchema.safeParse(req.query);
-      const options = parsed.success
-        ? {
-            from: parsed.data.from ? new Date(parsed.data.from) : undefined,
-            to: parsed.data.to ? new Date(parsed.data.to) : undefined,
-            status: parsed.data.status,
-          }
-        : undefined;
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "INVALID_QUERY",
+          message: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const options = {
+        from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+        to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+        status: parsed.data.status,
+      };
 
       const entries = await rosterService.listByClinic(caller, clinicId, options);
       res.status(200).json({ data: entries.map(serializeEntry) });
@@ -86,14 +135,21 @@ export function createRosterHandlers(rosterService: RosterService) {
 
     async getMyShifts(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
+      const clinicId = requireUuidParam(req, "clinicId");
       const parsed = listQuerySchema.safeParse(req.query);
-      const options = parsed.success
-        ? {
-            from: parsed.data.from ? new Date(parsed.data.from) : undefined,
-            to: parsed.data.to ? new Date(parsed.data.to) : undefined,
-          }
-        : undefined;
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "INVALID_QUERY",
+          message: parsed.error.flatten().fieldErrors,
+        });
+        return;
+      }
+
+      const options = {
+        from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+        to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+      };
 
       const entries = await rosterService.getMyShifts(caller, clinicId, options);
       res.status(200).json({ data: entries.map(serializeEntry) });
@@ -101,21 +157,19 @@ export function createRosterHandlers(rosterService: RosterService) {
 
     async getEntry(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
-      const entryId = routeParam(req.params.entryId);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const entryId = requireUuidParam(req, "entryId");
       const entry = await rosterService.getEntry(caller, clinicId, entryId);
       res.status(200).json({ data: serializeEntry(entry) });
     },
 
     async createEntry(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
+      const clinicId = requireUuidParam(req, "clinicId");
       const body = parseBody(createEntrySchema, req.body);
 
       const entry = await rosterService.createEntry(caller, clinicId, {
         staffUserId: body.staffUserId,
-        rosteredClinicId: clinicId,
-        rosteredClinicName: body.rosteredClinicName,
         shiftStartAt: new Date(body.shiftStartAt),
         shiftEndAt: new Date(body.shiftEndAt),
         shiftType: body.shiftType ?? "standard",
@@ -127,9 +181,21 @@ export function createRosterHandlers(rosterService: RosterService) {
 
     async updateEntry(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
-      const entryId = routeParam(req.params.entryId);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const entryId = requireUuidParam(req, "entryId");
+
+      // .strict() above already rejects unknown-only bodies (e.g. { "foo": "bar" }).
+      // This post-parse check catches a fully empty body {} — Zod passes it
+      // (all fields optional) but there is nothing to update.
       const body = parseBody(updateEntrySchema, req.body);
+
+      if (Object.keys(body).length === 0) {
+        throw new AppError(
+          400,
+          "NO_VALID_FIELDS",
+          "No valid update fields provided",
+        );
+      }
 
       const entry = await rosterService.updateEntry(caller, clinicId, entryId, {
         shiftStartAt: body.shiftStartAt ? new Date(body.shiftStartAt) : undefined,
@@ -144,8 +210,8 @@ export function createRosterHandlers(rosterService: RosterService) {
 
     async cancelEntry(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
-      const clinicId = routeParam(req.params.clinicId);
-      const entryId = routeParam(req.params.entryId);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const entryId = requireUuidParam(req, "entryId");
       const entry = await rosterService.cancelEntry(caller, clinicId, entryId);
       res.status(200).json({ data: serializeEntry(entry) });
     },

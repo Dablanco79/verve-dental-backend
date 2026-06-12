@@ -19,6 +19,11 @@ import type {
   ScanRequest,
   ScanResponse,
 } from "../types/inventory.js";
+import type {
+  CreateShiftRequest,
+  RosterEntry,
+  UpdateShiftRequest,
+} from "../types/roster.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -200,6 +205,73 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function listRoster(
+    clinicId: string,
+    params?: { from?: string; to?: string; status?: string },
+  ): Promise<RosterEntry[]> {
+    const query = new URLSearchParams();
+    if (params?.from) query.set("from", params.from);
+    if (params?.to) query.set("to", params.to);
+    if (params?.status) query.set("status", params.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<RosterEntry[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getMyShifts(
+    clinicId: string,
+    params?: { from?: string; to?: string },
+  ): Promise<RosterEntry[]> {
+    const query = new URLSearchParams();
+    if (params?.from) query.set("from", params.from);
+    if (params?.to) query.set("to", params.to);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<RosterEntry[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/me${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createShift(
+    clinicId: string,
+    body: CreateShiftRequest,
+  ): Promise<RosterEntry> {
+    return request<RosterEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateShift(
+    clinicId: string,
+    entryId: string,
+    body: UpdateShiftRequest,
+  ): Promise<RosterEntry> {
+    return request<RosterEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/${entryId}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function cancelShift(clinicId: string, entryId: string): Promise<RosterEntry> {
+    return request<RosterEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/${entryId}`,
+      { method: "DELETE" },
+      requireAccessToken(),
+    );
+  }
+
   async function resetUserPassword(
     clinicId: string,
     userId: string,
@@ -231,6 +303,11 @@ export function createApiClient(config: AppConfig) {
     changePassword,
     resetUserPassword,
     listPurchaseOrders,
+    listRoster,
+    getMyShifts,
+    createShift,
+    updateShift,
+    cancelShift,
   };
 }
 

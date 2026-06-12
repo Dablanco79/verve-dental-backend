@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { canManageUsers } from "../../utils/roles.js";
 
+
 type AppShellProps = {
   children: ReactNode;
 };
@@ -30,6 +31,8 @@ export function AppShell({ children }: AppShellProps) {
             Dashboard
           </NavLink>
           <NavLink to="/inventory">Inventory</NavLink>
+          <NavLink to="/roster">Roster</NavLink>
+          <NavLink to="/my-shifts">My Shifts</NavLink>
           {user && canManageUsers(user.role) ? (
             <>
               <NavLink to="/users">Users</NavLink>

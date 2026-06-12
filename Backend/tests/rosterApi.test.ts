@@ -205,7 +205,11 @@ describe("Roster API (Module 04)", () => {
 
   // ─── Cross-clinic access via roster membership ────────────────────────────
 
-  it("clinical_staff at clinic-a cannot see clinic-b roster without a shift there", async () => {
+  it("clinical_staff at clinic-a sees only their own shifts (empty) when querying clinic-b without a roster entry there", async () => {
+    // Security model: clinical_staff calling the clinic endpoint are silently
+    // scoped to their own shifts — they never receive another staff member's
+    // data.  With no shift at clinic-b the result is 200 + empty array rather
+    // than a 403, which avoids leaking whether specific clinic IDs exist.
     const app = await createTestApp();
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
@@ -213,9 +217,8 @@ describe("Roster API (Module 04)", () => {
       .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
       .set("Authorization", `Bearer ${staffToken}`);
 
-    expect(res.status).toBe(403);
-    const body = res.body as ApiError;
-    expect(body.error.code).toBe("TENANT_ACCESS_DENIED");
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<RosterEntryDto[]>).data).toHaveLength(0);
   });
 
   it("clinical_staff gains cross-clinic read access when rostered at that clinic", async () => {

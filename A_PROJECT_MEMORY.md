@@ -3,9 +3,9 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Module 04 Session 1 complete — Roster & Scheduling backend CRUD infrastructure  
+**Current Phase:** Module 04 Session 2 complete — Roster & Scheduling frontend calendar + My Shifts UI  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
-**Status:** Development Phase - Module 04 Session 1 complete (frontend calendar/grid UI pending)
+**Status:** Development Phase - Module 04 complete (both sessions)
 
 ---
 
@@ -266,11 +266,39 @@ scheduled → confirmed → completed
 #### Test count
 66/66 tests passing, 0 TypeScript errors (both workspaces)
 
-### Session 2 (pending) — Frontend roster calendar/grid UI
-- [ ] `RosterPage` (`/roster`) — weekly/fortnightly grid with clinic filter
-- [ ] `ShiftForm` — create/edit shift modal (staff picker, date/time, type, notes)
-- [ ] `MyShiftsPage` — staff member's personal upcoming shifts
-- [ ] API client: `listRoster`, `createShift`, `updateShift`, `cancelShift`, `getMyShifts`
+### Session 2 complete — Frontend roster calendar/grid UI
+
+#### New files
+- [x] `Frontend-Web/src/types/roster.ts` — `RosterEntry`, `CreateShiftRequest`, `UpdateShiftRequest`, `SHIFT_TYPE_LABELS`, `ROSTER_STATUS_LABELS`, `ALL_SHIFT_TYPES`
+- [x] `Frontend-Web/src/pages/RosterCalendarPage.tsx` — weekly 7-column grid with week navigation, shift cards (colour-coded by status), create/edit modal, cancel-shift action
+- [x] `Frontend-Web/src/pages/MyShiftsPage.tsx` — personal upcoming + recent shifts list, cross-clinic indicator, duration label, status + type badges
+
+#### Modified files
+- [x] `Frontend-Web/src/api/client.ts` — `listRoster`, `getMyShifts`, `createShift`, `updateShift`, `cancelShift` (5 new methods)
+- [x] `Frontend-Web/src/utils/roles.ts` — `canManageRoster()` helper added
+- [x] `Frontend-Web/src/App.tsx` — `/roster` → `RosterCalendarPage`, `/my-shifts` → `MyShiftsPage` routes added
+- [x] `Frontend-Web/src/components/layout/AppShell.tsx` — "Roster" + "My Shifts" nav links (visible to all roles)
+- [x] `Frontend-Web/src/index.css` — ~300 lines of new roster styles (calendar grid, shift cards, type/status badges, modal, form, my-shifts list)
+
+#### Calendar UX design
+- Week navigation: ‹ / › buttons + "Today" shortcut
+- Day columns: `Mon–Sun`, today highlighted in blue
+- Shift cards: staff name, `HH:mm–HH:mm`, shift type badge — 4 colours (standard=blue, overtime=amber, on_call=purple, training=green)
+- Status colours: scheduled=light-blue, confirmed=light-green, completed=gray, cancelled=red+faded
+- Read-only for `clinical_staff`; click-to-edit + "Cancel shift" for managers/admins
+- Mobile: grid scrolls horizontally (`min-width: 700px` with `overflow-x: auto`)
+
+#### Modal form fields
+| Field | Control | Notes |
+|-------|---------|-------|
+| Staff member | `<select>` from `listUsers` | Hidden when editing (shown as static text) |
+| Date | `<input type="date">` | Pre-filled with clicked day column |
+| Start / End time | `<input type="time">` pair | Defaults 08:00 / 17:00 |
+| Shift type | `<select>` | standard / overtime / on_call / training |
+| Notes | `<textarea>` | Optional, max 1000 chars |
+
+#### TypeScript status
+0 TS errors in both `Frontend-Web` and `Backend` workspaces
 
 ---
 

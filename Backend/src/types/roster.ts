@@ -64,6 +64,8 @@ export type CreateRosterEntryInput = {
   shiftType: ShiftType;
   notes: string | null;
   createdByUserId: string;
+  /** Email of the user who created this entry (the caller), NOT the staff member. */
+  createdByEmail: string;
 };
 
 export type UpdateRosterEntryInput = {

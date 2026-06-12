@@ -254,31 +254,83 @@ const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ON roster_entry_audit (roster_entry_id, created_at DESC);
     `,
   },
+  {
+    /**
+     * Adds the two access-pattern indexes that were missing from 006.
+     *
+     * idx_roster_entries_active_staff_clinic — partial index covering only
+     *   non-cancelled entries; used by hasActiveShiftAtClinic and the
+     *   clinical_staff tenant-scoped listByClinic intercept.
+     *
+     * idx_roster_entries_staff_clinic_start — composite covering index for
+     *   listByStaff / getMyShifts date-window queries scoped to a clinic.
+     */
+    id: "007_roster_performance_indexes",
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_roster_entries_active_staff_clinic
+        ON roster_entries (staff_user_id, rostered_clinic_id)
+        WHERE status <> 'cancelled';
+
+      CREATE INDEX IF NOT EXISTS idx_roster_entries_staff_clinic_start
+        ON roster_entries (staff_user_id, rostered_clinic_id, shift_start_at);
+    `,
+  },
 ];
+
+/**
+ * Advisory lock key — unique to this application so it never collides with
+ * other Postgres-backed services sharing the same cluster.
+ * Value is arbitrary but must be a stable bigint.
+ */
+const MIGRATION_ADVISORY_LOCK_KEY = 5_432_001n;
 
 export async function runBootstrapMigrations(
   pool: DatabasePool,
   logger: Logger,
 ): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         text        PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
+  // Check-out a dedicated connection so the transaction and the advisory lock
+  // are both scoped to the same physical session.  pg_advisory_xact_lock is
+  // automatically released when the transaction commits or rolls back, so two
+  // app instances scaling up concurrently on Render will serialize here without
+  // executing migrations twice or corrupting schema_migrations.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  for (const migration of BOOTSTRAP_MIGRATIONS) {
-    const { rows } = await pool.query<{ id: string }>(
-      "SELECT id FROM schema_migrations WHERE id = $1",
-      [migration.id],
-    );
+    // Acquire transaction-level advisory lock — blocks until the lock is free.
+    await client.query("SELECT pg_advisory_xact_lock($1)", [
+      MIGRATION_ADVISORY_LOCK_KEY,
+    ]);
 
-    if (rows.length > 0) {
-      continue;
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id         text        PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+
+    for (const migration of BOOTSTRAP_MIGRATIONS) {
+      const { rows } = await client.query<{ id: string }>(
+        "SELECT id FROM schema_migrations WHERE id = $1",
+        [migration.id],
+      );
+
+      if (rows.length > 0) {
+        continue;
+      }
+
+      await client.query(migration.sql);
+      await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [
+        migration.id,
+      ]);
+      logger.info({ migrationId: migration.id }, "Bootstrap migration applied");
     }
 
-    await pool.query(migration.sql);
-    await pool.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
-    logger.info({ migrationId: migration.id }, "Bootstrap migration applied");
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 }

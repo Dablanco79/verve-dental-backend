@@ -96,6 +96,14 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
       return rows.map(rowToUserRecord);
     },
 
+    async getClinicName(clinicId: string): Promise<string | null> {
+      const { rows } = await pool.query<{ home_clinic_name: string }>(
+        "SELECT home_clinic_name FROM users WHERE home_clinic_id = $1 ORDER BY email LIMIT 1",
+        [clinicId],
+      );
+      return rows[0]?.home_clinic_name ?? null;
+    },
+
     async updatePassword(userId: string, hashedPassword: string): Promise<void> {
       await pool.query(
         "UPDATE users SET password_hash = $1 WHERE id = $2",

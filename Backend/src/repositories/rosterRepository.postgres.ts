@@ -1,3 +1,4 @@
+import { AppError } from "../types/errors.js";
 import type { DatabasePool } from "../db/pool.js";
 import type {
   CreateRosterEntryInput,
@@ -46,38 +47,50 @@ function toRosterEntry(row: RosterEntryRow): RosterEntry {
 export function createPostgresRosterRepository(pool: DatabasePool): RosterRepository {
   return {
     async createEntry(input: CreateRosterEntryInput): Promise<RosterEntry> {
-      const { rows } = await pool.query<RosterEntryRow>(
-        `INSERT INTO roster_entries
-           (staff_user_id, staff_email, rostered_clinic_id, rostered_clinic_name,
-            shift_start_at, shift_end_at, shift_type, notes, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [
-          input.staffUserId,
-          input.staffEmail,
-          input.rosteredClinicId,
-          input.rosteredClinicName,
-          input.shiftStartAt,
-          input.shiftEndAt,
-          input.shiftType,
-          input.notes,
-          input.createdByUserId,
-        ],
-      );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
 
-      const row = rows[0];
-      if (!row) throw new Error("Failed to create roster entry");
+        const { rows } = await client.query<RosterEntryRow>(
+          `INSERT INTO roster_entries
+             (staff_user_id, staff_email, rostered_clinic_id, rostered_clinic_name,
+              shift_start_at, shift_end_at, shift_type, notes, created_by_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING *`,
+          [
+            input.staffUserId,
+            input.staffEmail,
+            input.rosteredClinicId,
+            input.rosteredClinicName,
+            input.shiftStartAt,
+            input.shiftEndAt,
+            input.shiftType,
+            input.notes,
+            input.createdByUserId,
+          ],
+        );
 
-      const entry = toRosterEntry(row);
+        const row = rows[0];
+        if (!row) throw new Error("Failed to create roster entry");
 
-      await pool.query(
-        `INSERT INTO roster_entry_audit
-           (roster_entry_id, changed_by_user_id, changed_by_email, action, snapshot)
-         VALUES ($1, $2, $3, 'created', $4)`,
-        [row.id, input.createdByUserId, input.staffEmail, JSON.stringify(entry)],
-      );
+        const entry = toRosterEntry(row);
 
-      return entry;
+        // Audit row uses caller's email, not the staff member's email.
+        await client.query(
+          `INSERT INTO roster_entry_audit
+             (roster_entry_id, changed_by_user_id, changed_by_email, action, snapshot)
+           VALUES ($1, $2, $3, 'created', $4)`,
+          [row.id, input.createdByUserId, input.createdByEmail, JSON.stringify(entry)],
+        );
+
+        await client.query("COMMIT");
+        return entry;
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
     },
 
     async findEntryById(entryId: string): Promise<RosterEntry | null> {
@@ -100,9 +113,12 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         params.push(options.status);
         conditions.push(`status = $${params.length}`);
       }
+      // Overlap math: the shift overlaps [from, to) when
+      //   shift_start_at < to  AND  shift_end_at > from
+      // This correctly captures overnight shifts that straddle a boundary.
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_start_at >= $${params.length}`);
+        conditions.push(`shift_end_at > $${params.length}`);
       }
       if (options?.to) {
         params.push(options.to);
@@ -128,7 +144,41 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_start_at >= $${params.length}`);
+        conditions.push(`shift_end_at > $${params.length}`);
+      }
+      if (options?.to) {
+        params.push(options.to);
+        conditions.push(`shift_start_at < $${params.length}`);
+      }
+
+      const { rows } = await pool.query<RosterEntryRow>(
+        `SELECT * FROM roster_entries
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY shift_start_at ASC`,
+        params,
+      );
+
+      return rows.map(toRosterEntry);
+    },
+
+    async listByStaffAtClinic(
+      staffUserId: string,
+      clinicId: string,
+      options?: ListRosterOptions,
+    ): Promise<RosterEntry[]> {
+      const params: unknown[] = [staffUserId, clinicId];
+      const conditions: string[] = [
+        "staff_user_id = $1",
+        "rostered_clinic_id = $2",
+      ];
+
+      if (options?.status) {
+        params.push(options.status);
+        conditions.push(`status = $${params.length}`);
+      }
+      if (options?.from) {
+        params.push(options.from);
+        conditions.push(`shift_end_at > $${params.length}`);
       }
       if (options?.to) {
         params.push(options.to);
@@ -175,29 +225,51 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       }
 
       params.push(entryId);
+      const idIdx = params.length;
 
-      const { rows } = await pool.query<RosterEntryRow>(
-        `UPDATE roster_entries
-         SET ${setClauses.join(", ")}
-         WHERE id = $${params.length}
-         RETURNING *`,
-        params,
-      );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
 
-      const row = rows[0];
-      if (!row) throw new Error(`Roster entry not found: ${entryId}`);
+        // The AND status <> 'cancelled' guard prevents a concurrent cancel
+        // from being silently overwritten (race-condition protection).
+        const { rows } = await client.query<RosterEntryRow>(
+          `UPDATE roster_entries
+           SET ${setClauses.join(", ")}
+           WHERE id = $${idIdx} AND status <> 'cancelled'
+           RETURNING *`,
+          params,
+        );
 
-      const updated = toRosterEntry(row);
-      const action = input.status === "cancelled" ? "cancelled" : "updated";
+        const row = rows[0];
+        if (!row) {
+          // Zero rows means the entry was concurrently cancelled between the
+          // service pre-check and this write — surface as a clean 409.
+          throw new AppError(
+            409,
+            "ENTRY_CANCELLED",
+            "Cannot update a cancelled roster entry",
+          );
+        }
 
-      await pool.query(
-        `INSERT INTO roster_entry_audit
-           (roster_entry_id, changed_by_user_id, changed_by_email, action, snapshot)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [entryId, changedBy.userId, changedBy.email, action, JSON.stringify(updated)],
-      );
+        const updated = toRosterEntry(row);
+        const action = input.status === "cancelled" ? "cancelled" : "updated";
 
-      return updated;
+        await client.query(
+          `INSERT INTO roster_entry_audit
+             (roster_entry_id, changed_by_user_id, changed_by_email, action, snapshot)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [entryId, changedBy.userId, changedBy.email, action, JSON.stringify(updated)],
+        );
+
+        await client.query("COMMIT");
+        return updated;
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
     },
 
     async hasActiveShiftAtClinic(

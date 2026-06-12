@@ -16,6 +16,12 @@ export interface UserRepository {
   findById(id: string): Promise<UserRecord | null>;
   createUser(input: CreateUserInput): Promise<UserRecord>;
   listByClinic(clinicId: string): Promise<UserRecord[]>;
+  /**
+   * Returns the canonical display name for a clinic, or null when the clinic
+   * has no members.  Used by RosterService to derive rostered_clinic_name
+   * server-side rather than trusting the client payload.
+   */
+  getClinicName(clinicId: string): Promise<string | null>;
   updatePassword(userId: string, hashedPassword: string): Promise<void>;
 }
 
@@ -104,6 +110,11 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
 
     listByClinic(clinicId: string): Promise<UserRecord[]> {
       return Promise.resolve(users.filter((u) => u.homeClinicId === clinicId));
+    },
+
+    getClinicName(clinicId: string): Promise<string | null> {
+      const member = users.find((u) => u.homeClinicId === clinicId);
+      return Promise.resolve(member?.homeClinicName ?? null);
     },
 
     updatePassword(userId: string, hashedPassword: string): Promise<void> {

@@ -15,6 +15,20 @@ export interface RosterRepository {
     staffUserId: string,
     options?: { from?: Date; to?: Date },
   ): Promise<RosterEntry[]>;
+  /**
+   * Returns all roster entries for a specific staff member at a specific clinic,
+   * with optional date-window and status filtering applied in the database.
+   *
+   * Replaces the previous pattern of `listByStaff` + in-process `.filter()` so
+   * the query uses the composite index
+   * `idx_roster_entries_staff_clinic_start (staff_user_id, rostered_clinic_id, shift_start_at)`
+   * instead of pulling every shift for the user into application memory.
+   */
+  listByStaffAtClinic(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListRosterOptions,
+  ): Promise<RosterEntry[]>;
   updateEntry(
     entryId: string,
     input: UpdateRosterEntryInput,
@@ -58,7 +72,8 @@ export function createInMemoryRosterRepository(): RosterRepository {
         .filter((e) => {
           if (e.rosteredClinicId !== clinicId) return false;
           if (options?.status && e.status !== options.status) return false;
-          if (options?.from && e.shiftStartAt < options.from) return false;
+          // Overlap: shift_start_at < to AND shift_end_at > from
+          if (options?.from && e.shiftEndAt <= options.from) return false;
           if (options?.to && e.shiftStartAt >= options.to) return false;
           return true;
         })
@@ -73,7 +88,25 @@ export function createInMemoryRosterRepository(): RosterRepository {
       return entries
         .filter((e) => {
           if (e.staffUserId !== staffUserId) return false;
-          if (options?.from && e.shiftStartAt < options.from) return false;
+          if (options?.from && e.shiftEndAt <= options.from) return false;
+          if (options?.to && e.shiftStartAt >= options.to) return false;
+          return true;
+        })
+        .sort((a, b) => a.shiftStartAt.getTime() - b.shiftStartAt.getTime())
+        .map((e) => ({ ...e }));
+    },
+
+    async listByStaffAtClinic(
+      staffUserId: string,
+      clinicId: string,
+      options?: ListRosterOptions,
+    ): Promise<RosterEntry[]> {
+      return entries
+        .filter((e) => {
+          if (e.staffUserId !== staffUserId) return false;
+          if (e.rosteredClinicId !== clinicId) return false;
+          if (options?.status && e.status !== options.status) return false;
+          if (options?.from && e.shiftEndAt <= options.from) return false;
           if (options?.to && e.shiftStartAt >= options.to) return false;
           return true;
         })
