@@ -27,7 +27,16 @@ body {
 }
 
 .app-shell__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.app-shell__brand {
+  flex: 1 1 auto;
 }
 
 .app-shell__eyebrow {
@@ -49,6 +58,40 @@ body {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.app-shell__user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  margin-top: 0.5rem;
+}
+
+.app-shell__user-link {
+  font-size: 0.85rem;
+  color: #486581;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.app-shell__user-link:hover {
+  text-decoration: underline;
+}
+
+.app-shell__logout {
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  padding: 0.3rem 0.75rem;
+  background: transparent;
+  color: #486581;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.app-shell__logout:hover {
+  background: #f0f4f8;
 }
 
 .app-shell__nav a {
@@ -450,5 +493,161 @@ body {
 
 .inventory-empty {
   margin: 0;
+  color: #627d98;
+}
+
+/* Account page */
+
+.account-details {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.account-details__row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #f0f4f8;
+}
+
+.account-details__row:last-child {
+  border-bottom: 0;
+}
+
+.account-details dt {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #627d98;
+  align-self: center;
+}
+
+.account-details dd {
+  margin: 0;
+  align-self: center;
+}
+
+/* Inline password reset form in ManageUsersPage */
+
+.reset-password-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  padding: 0.75rem 0;
+}
+
+.reset-password-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  flex: 1 1 220px;
+}
+
+.reset-password-form input {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.reset-password-form button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  background: #102a43;
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.reset-password-form button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.inventory-notice--inline {
+  font-size: 0.85rem;
+  color: #0f5132;
+  font-weight: 600;
+}
+
+/* Purchase Orders page */
+
+.po-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.po-badge--draft {
+  background: #fff3cd;
+  color: #664d03;
+}
+
+.po-badge--submitted {
+  background: #e3f9e5;
+  color: #0f5132;
+}
+
+.po-empty {
+  padding: 1.5rem 0;
+}
+
+.po-empty__title {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+.po-empty__hint {
+  margin: 0;
+  color: #627d98;
+  font-size: 0.9rem;
+}
+
+.po-summary {
+  padding: 1.25rem 1.5rem;
+}
+
+.po-summary__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 0 0 1rem;
+}
+
+.po-summary__stat {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.po-summary__stat dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #627d98;
+}
+
+.po-summary__stat dd {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #102a43;
+}
+
+.po-summary__hint {
+  margin: 0;
+  font-size: 0.85rem;
   color: #627d98;
 }

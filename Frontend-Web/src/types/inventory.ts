@@ -72,6 +72,19 @@ export type CreateProductResponse = {
   clinicItem: InventoryItem;
 };
 
+export type PurchaseOrderLine = {
+  id: string;
+  draftPurchaseOrderId: string;
+  masterCatalogItemId: string;
+  masterSku: string;
+  itemName: string;
+  clinicInventoryItemId: string;
+  quantity: number;
+  reason: string;
+  orderStatus: "draft" | "submitted";
+  createdAt: string;
+};
+
 export type ScanResponse = {
   mode: ScanMode;
   item: InventoryItem;

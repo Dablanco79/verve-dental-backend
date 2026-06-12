@@ -3,9 +3,9 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Module 03 Session 4 complete + security hotfix + user management + home_clinic_id schema clarification  
+**Current Phase:** Module 04 Session 1 complete — Roster & Scheduling backend CRUD infrastructure  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
-**Status:** Development Phase - Module 03 complete (pending Module 04+)
+**Status:** Development Phase - Module 04 Session 1 complete (frontend calendar/grid UI pending)
 
 ---
 
@@ -172,7 +172,109 @@
 - When Roster module is built, add a `roster_entries` table with `staff_user_id` + `rostered_clinic_id` + `shift_date`. Payroll reports group by `users.home_clinic_id`; scheduling views group by `roster_entries.rostered_clinic_id`.
 - The `resolveTenantClinicId()` helper in `db/tenantContext.ts` has a comment marking the future roster-lookup extension point.
 
+### Task 6 — Production Hardening (in progress)
+
+#### Task 6.1 — Password Change & Reset (complete)
+- [x] `UserRepository` interface extended: `updatePassword(userId, hashedPassword)`
+- [x] In-memory and Postgres repositories both implement `updatePassword`
+- [x] Bugfix: `userRepository.postgres.ts` `listByClinic` was querying `clinic_id`; corrected to `home_clinic_id`
+- [x] `AuthAuditEvent` extended with `auth.password.changed` and `auth.password.reset`
+- [x] `AuthService.changePassword(userId, currentPassword, newPassword, auditContext)` — bcrypt verify + hash + `revokeAllUserTokens` on success
+- [x] `AuthService.revokeAllUserTokens(userId)` — purges all in-memory refresh tokens for a user
+- [x] `UserService.resetPassword(caller, targetUserId, newPassword)` — RBAC-gated admin/manager reset; calls `revokeAllUserTokens`
+- [x] `POST /auth/change-password` (authenticated) — self-service password change
+- [x] `POST /clinics/:clinicId/users/:userId/reset-password` (owner_admin / group_practice_manager) — admin reset
+- [x] Frontend `AccountPage` (`/account`) — account info + change-password form; auto-logs out after success
+- [x] `AppShell` header updated: user email link → `/account`, "Log out" button
+- [x] `ManageUsersPage` — inline "Reset password" per-row action with inline form
+- [x] `api/client.ts` extended: `changePassword`, `resetUserPassword`
+- [x] Pre-existing test bugs fixed: `health.test.ts` `clinicId` → `homeClinicId`; `scanApi.test.ts` `ScanResponse.barcode` type missing `mapping`
+- [x] 50/50 backend tests pass; 0 TypeScript errors (both workspaces)
+
+#### Task 6.2 — Inventory PostgreSQL Persistence (complete)
+- [x] `005_inventory_schema` bootstrap migration added to `db/migrate.ts` — idempotent ENUMs via `DO $$ EXCEPTION WHEN duplicate_object`, `CREATE TABLE/INDEX IF NOT EXISTS` for all tables
+- [x] `catalogRepository.postgres.ts` — implements full `CatalogRepository` interface against `master_catalog_items` + `barcode_mappings`
+- [x] `inventoryRepository.postgres.ts` — implements full `InventoryRepository` interface; `listClinicInventory` / `findClinicInventoryItem` use SQL JOIN to build `ClinicInventoryItemView` natively
+- [x] `db/seed.ts` extended with `seedInventory()` — seeds 5 master items, 6 barcodes, 10 clinic stock rows using same fixed UUIDs as in-memory seed; runs only when `master_catalog_items` is empty
+- [x] `bootstrap/dependencies.ts` factory updated — when `DATABASE_URL` is set, all three repos (users, catalog, inventory) switch to Postgres; `AppDependencies` typed against repo interfaces not concrete implementations
+- [x] 50/50 backend tests pass; 0 TypeScript errors
+
+#### Task 6.3 — Draft PO Frontend Panel (complete)
+- [x] `purchaseOrderController.ts` — enriches `DraftPoLine[]` with catalog item names/SKUs via parallel `findMasterItemById` batch; `orderStatus: "draft"` until submit flow added in Module 04
+- [x] `purchaseOrderRoutes.ts` — `GET /` behind `owner_admin` / `group_practice_manager` RBAC + tenant enforcement
+- [x] `GET /clinics/:clinicId/purchase-orders` mounted in `routes/index.ts`
+- [x] Frontend `PurchaseOrderLine` type added to `types/inventory.ts`
+- [x] `api/client.ts` extended with `listPurchaseOrders(clinicId)`
+- [x] `PurchaseOrdersPage` (`/purchase-orders`) — sortable table (item, qty needed, trigger reason, Draft badge, timestamp) + summary stats card (total lines, total units, unique SKUs)
+- [x] `AppShell` nav: "Purchase Orders" link added for managers/admins
+- [x] 50/50 backend tests pass; 0 TypeScript errors (both workspaces)
+
+### Task 6 — Production Hardening COMPLETE ✓
+All three sub-tasks delivered with zero TypeScript errors and 50/50 tests green across every session.
+
+---
+
+## Module 04 — Rostering & Scheduling
+
+### Session 1 complete — Backend CRUD infrastructure
+
+#### New files
+- [x] `src/types/roster.ts` — `ShiftType`, `RosterStatus`, `RosterAuditAction`, `RosterEntry`, `RosterEntryAudit`, `CreateRosterEntryInput`, `UpdateRosterEntryInput`, `ListRosterOptions`
+- [x] `src/repositories/rosterRepository.ts` — `RosterRepository` interface + in-memory implementation
+- [x] `src/repositories/rosterRepository.postgres.ts` — Postgres implementation (with `roster_entry_audit` JSONB snapshot writes)
+- [x] `src/services/rosterService.ts` — RBAC + cross-clinic access control; injected with `userRepository` to look up staff email on create
+- [x] `src/controllers/rosterController.ts` — Zod-validated request handlers, serializes Date → ISO string
+- [x] `src/routes/rosterRoutes.ts` — NO `enforceTenantParam` (service handles async roster-membership check)
+- [x] `tests/rosterApi.test.ts` — 16 tests covering CRUD, RBAC, cross-clinic access
+
+#### Modified files
+- [x] `src/db/migrate.ts` — added `006_roster_schema`: ENUMs (`shift_type`, `roster_status`, `roster_audit_action`), `roster_entries` table (TIMESTAMPTZ start/end, `shift_end_at > shift_start_at` constraint), `roster_entry_audit` table (JSONB snapshot), 4 indexes
+- [x] `src/bootstrap/dependencies.ts` — `rosterRepository` + `userRepository` added to `AppDependencies`; both repos wired for Postgres and in-memory paths
+- [x] `src/routes/index.ts` — `GET|POST|PATCH|DELETE /clinics/:clinicId/roster[/:entryId]` + `/me` mounted
+
+#### REST API surface
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/clinics/:clinicId/roster` | All roles (with cross-clinic roster-membership check) |
+| `POST` | `/clinics/:clinicId/roster` | owner_admin, group_practice_manager (own clinic) |
+| `GET` | `/clinics/:clinicId/roster/me` | All roles |
+| `GET` | `/clinics/:clinicId/roster/:entryId` | All roles |
+| `PATCH` | `/clinics/:clinicId/roster/:entryId` | owner_admin, group_practice_manager (own clinic) |
+| `DELETE` | `/clinics/:clinicId/roster/:entryId` | owner_admin, group_practice_manager (own clinic — sets status=cancelled) |
+
+#### Cross-clinic access design (IMPORTANT)
+- `owner_admin` — unrestricted read/write to any clinic's roster
+- `group_practice_manager` — read/write to own `homeClinicId` only
+- `clinical_staff` — read own `homeClinicId` roster OR any clinic where `hasActiveShiftAtClinic(userId, clinicId)` returns true
+- The `resolveTenantClinicId()` helper is **not** used on roster routes. `RosterService` performs its own async tenant check including the DB lookup.
+- The extension point in `tenantContext.ts` comment ("roster-membership lookup") is now fulfilled by `RosterService.assertClinicReadAccess`.
+
+#### Shift type ENUM
+| Value | Description |
+|-------|-------------|
+| `standard` | Regular scheduled shift (default) |
+| `overtime` | Paid overtime shift |
+| `on_call` | On-call coverage |
+| `training` | Internal training day |
+
+#### Roster status lifecycle
+```
+scheduled → confirmed → completed
+         ↘ cancelled (terminal, any stage)
+```
+
+#### Test count
+66/66 tests passing, 0 TypeScript errors (both workspaces)
+
+### Session 2 (pending) — Frontend roster calendar/grid UI
+- [ ] `RosterPage` (`/roster`) — weekly/fortnightly grid with clinic filter
+- [ ] `ShiftForm` — create/edit shift modal (staff picker, date/time, type, notes)
+- [ ] `MyShiftsPage` — staff member's personal upcoming shifts
+- [ ] API client: `listRoster`, `createShift`, `updateShift`, `cancelShift`, `getMyShifts`
+
+---
+
 ### Next Planned Upgrades
-- [ ] 04+ per master module plan (rostering, payroll, etc.)
+- [ ] 04 Session 2 — Frontend roster calendar/grid UI
+- [ ] 05+ per master module plan (payroll, etc.)
 - [ ] Real TOTP (authenticator app) for MFA — re-enable `mfa_enabled` for privileged roles
-- [ ] Password-change / reset flow for staff accounts created via user management

@@ -333,6 +333,56 @@ export function createAuthService(
     return user.homeClinicId === clinicId;
   }
 
+  /**
+   * Revokes all in-memory refresh tokens belonging to a user.
+   * Called after a password change or admin reset so existing sessions are
+   * invalidated and the user must log in again with the new credentials.
+   */
+  function revokeAllUserTokens(userId: string): void {
+    for (const [jti, record] of refreshTokens) {
+      if (record.userId === userId) {
+        refreshTokens.delete(jti);
+      }
+    }
+  }
+
+  async function changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    auditContext: { ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    const user = await userRepository.findById(userId);
+
+    if (!user?.isActive) {
+      throw new AppError(404, "NOT_FOUND", "User not found");
+    }
+
+    const passwordMatches = await bcrypt.compare(currentPassword, user.passwordHash);
+
+    if (!passwordMatches) {
+      audit.logAuthEvent("auth.password.changed", {
+        userId,
+        email: user.email,
+        clinicId: user.homeClinicId,
+        reason: "wrong_current_password",
+        ...auditContext,
+      });
+      throw new AppError(400, "INVALID_CREDENTIALS", "Current password is incorrect");
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    await userRepository.updatePassword(userId, hashedPassword);
+    revokeAllUserTokens(userId);
+
+    audit.logAuthEvent("auth.password.changed", {
+      userId,
+      email: user.email,
+      clinicId: user.homeClinicId,
+      ...auditContext,
+    });
+  }
+
   return {
     login,
     verifyMfa,
@@ -340,6 +390,8 @@ export function createAuthService(
     logout,
     authenticateAccessToken,
     canAccessClinic,
+    changePassword,
+    revokeAllUserTokens,
   };
 }
 

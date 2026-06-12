@@ -2,11 +2,13 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider } from "./auth/AuthContext.js";
 import { ProtectedRoute } from "./auth/ProtectedRoute.js";
+import { AccountPage } from "./pages/AccountPage.js";
 import { HomePage } from "./pages/HomePage.js";
 import { AddProductPage } from "./pages/AddProductPage.js";
 import { InventoryPage } from "./pages/InventoryPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { ManageUsersPage } from "./pages/ManageUsersPage.js";
+import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage.js";
 
 export function App() {
   return (
@@ -19,6 +21,8 @@ export function App() {
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/inventory/products/new" element={<AddProductPage />} />
             <Route path="/users" element={<ManageUsersPage />} />
+            <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+            <Route path="/account" element={<AccountPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

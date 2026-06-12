@@ -11,7 +11,7 @@ type LoginData = {
   accessToken?: string;
   refreshToken?: string;
   mfaToken?: string;
-  user: { clinicId: string; email: string };
+  user: { homeClinicId: string; email: string };
 };
 
 describe("GET /api/v1/health", () => {
@@ -47,7 +47,7 @@ describe("Auth API", () => {
     expect(response.status).toBe(200);
     expect(body.data.requiresMfa).toBe(false);
     expect(body.data.accessToken).toEqual(expect.any(String));
-    expect(body.data.user.clinicId).toBe(SEED_CLINIC_A_ID);
+    expect(body.data.user.homeClinicId).toBe(SEED_CLINIC_A_ID);
   });
 
   it("requires MFA for owner/admin accounts with MFA enabled", async () => {

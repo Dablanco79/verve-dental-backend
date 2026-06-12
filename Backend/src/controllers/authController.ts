@@ -9,6 +9,11 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, "New password must be at least 8 characters"),
+});
+
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
@@ -91,6 +96,22 @@ export function createAuthHandlers(authService: AuthService) {
 
     me(req: Request, res: Response): void {
       res.status(200).json({ data: req.user });
+    },
+
+    async changePassword(req: Request, res: Response): Promise<void> {
+      const body = parseBody(changePasswordSchema, req.body);
+
+      // req.user is guaranteed by the authenticate middleware on this route.
+      const userId = req.user!.id;
+
+      await authService.changePassword(
+        userId,
+        body.currentPassword,
+        body.newPassword,
+        auditContext(req),
+      );
+
+      res.status(200).json({ data: { message: "Password changed successfully. Please log in again." } });
     },
 
     getClinicSummary(req: Request, res: Response): void {

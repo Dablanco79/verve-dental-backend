@@ -11,7 +11,9 @@ export type AuthAuditEvent =
   | "auth.logout"
   | "auth.unauthorized"
   | "auth.forbidden"
-  | "user.created";
+  | "user.created"
+  | "auth.password.changed"
+  | "auth.password.reset";
 
 export type AuditContext = {
   userId?: string;

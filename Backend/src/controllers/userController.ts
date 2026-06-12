@@ -22,6 +22,13 @@ const createUserSchema = z.object({
   clinicName: z.string().min(1, "Clinic name is required").max(120),
 });
 
+const resetPasswordSchema = z.object({
+  newPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must be at most 128 characters"),
+});
+
 export function createUserHandlers(userService: UserService) {
   return {
     async listUsers(req: Request, res: Response): Promise<void> {
@@ -55,6 +62,21 @@ export function createUserHandlers(userService: UserService) {
       });
 
       res.status(201).json({ data: user });
+    },
+
+    async resetPassword(req: Request, res: Response): Promise<void> {
+      const caller = req.user;
+
+      if (!caller) {
+        throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      }
+
+      const targetUserId = routeParam(req.params.userId);
+      const body = parseBody(resetPasswordSchema, req.body);
+
+      await userService.resetPassword(caller, targetUserId, body.newPassword);
+
+      res.status(200).json({ data: { message: "Password reset successfully." } });
     },
   };
 }

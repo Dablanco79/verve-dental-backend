@@ -4,15 +4,18 @@ import type {
   ApiErrorBody,
   AuthSession,
   AuthUser,
+  ChangePasswordRequest,
   CreateUserRequest,
   HealthResponse,
   LoginResponse,
+  ResetPasswordRequest,
   StaffUser,
 } from "../types/index.js";
 import type {
   CreateProductRequest,
   CreateProductResponse,
   InventoryItem,
+  PurchaseOrderLine,
   ScanRequest,
   ScanResponse,
 } from "../types/inventory.js";
@@ -176,6 +179,43 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function changePassword(body: ChangePasswordRequest): Promise<void> {
+    await request<{ message: string }>(
+      config,
+      "/api/v1/auth/change-password",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      requireAccessToken(),
+    );
+  }
+
+  async function listPurchaseOrders(clinicId: string): Promise<PurchaseOrderLine[]> {
+    return request<PurchaseOrderLine[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/purchase-orders`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function resetUserPassword(
+    clinicId: string,
+    userId: string,
+    body: ResetPasswordRequest,
+  ): Promise<void> {
+    await request<{ message: string }>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/reset-password`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -188,6 +228,9 @@ export function createApiClient(config: AppConfig) {
     createProduct,
     listUsers,
     createUser,
+    changePassword,
+    resetUserPassword,
+    listPurchaseOrders,
   };
 }
 

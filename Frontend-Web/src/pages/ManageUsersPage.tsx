@@ -22,6 +22,14 @@ function initialForm(): FormState {
   return { email: "", password: "", role: "clinical_staff" };
 }
 
+type ResetPasswordState = {
+  userId: string;
+  newPassword: string;
+  isSubmitting: boolean;
+  error: string | null;
+  success: boolean;
+};
+
 export function ManageUsersPage() {
   const { user } = useAuth();
   const [users, setUsers] = useState<StaffUser[]>([]);
@@ -33,6 +41,8 @@ export function ManageUsersPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [resetState, setResetState] = useState<ResetPasswordState | null>(null);
 
   const loadUsers = useCallback(async () => {
     if (!user) return;
@@ -86,6 +96,29 @@ export function ManageUsersPage() {
       setFormError(err instanceof Error ? err.message : "Failed to create user");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleResetPassword(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!user || !resetState) return;
+
+    setResetState((s) => s && { ...s, isSubmitting: true, error: null });
+
+    try {
+      await apiClient.resetUserPassword(user.homeClinicId, resetState.userId, {
+        newPassword: resetState.newPassword,
+      });
+      setResetState((s) => s && { ...s, isSubmitting: false, success: true });
+    } catch (err: unknown) {
+      setResetState(
+        (s) =>
+          s && {
+            ...s,
+            isSubmitting: false,
+            error: err instanceof Error ? err.message : "Failed to reset password",
+          },
+      );
     }
   }
 
@@ -218,17 +251,79 @@ export function ManageUsersPage() {
                   <th>Email</th>
                   <th>Role</th>
                   <th>Clinic</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <tr key={u.id}>
-                    <td>{u.email}</td>
-                    <td>
-                      <span className="inventory-badge">{ROLE_LABELS[u.role]}</span>
-                    </td>
-                    <td>{u.homeClinicName}</td>
-                  </tr>
+                  <>
+                    <tr key={u.id}>
+                      <td>{u.email}</td>
+                      <td>
+                        <span className="inventory-badge">{ROLE_LABELS[u.role]}</span>
+                      </td>
+                      <td>{u.homeClinicName}</td>
+                      <td>
+                        {resetState?.userId === u.id && resetState.success ? (
+                          <span className="inventory-notice--inline">Password reset</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => {
+                              setResetState(
+                                resetState?.userId === u.id
+                                  ? null
+                                  : {
+                                      userId: u.id,
+                                      newPassword: "",
+                                      isSubmitting: false,
+                                      error: null,
+                                      success: false,
+                                    },
+                              );
+                            }}
+                          >
+                            {resetState?.userId === u.id ? "Cancel" : "Reset password"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    {resetState?.userId === u.id && !resetState.success ? (
+                      <tr key={`${u.id}-reset`}>
+                        <td colSpan={4}>
+                          <form
+                            className="reset-password-form"
+                            onSubmit={(event) => void handleResetPassword(event)}
+                            aria-label={`Reset password for ${u.email}`}
+                          >
+                            <label>
+                              New password
+                              <input
+                                type="password"
+                                value={resetState.newPassword}
+                                onChange={(e) => {
+                                  setResetState(
+                                    (s) => s && { ...s, newPassword: e.target.value },
+                                  );
+                                }}
+                                required
+                                minLength={8}
+                                placeholder="Min 8 characters"
+                                autoComplete="new-password"
+                              />
+                            </label>
+                            {resetState.error ? (
+                              <p className="status-card__error">{resetState.error}</p>
+                            ) : null}
+                            <button type="submit" disabled={resetState.isSubmitting}>
+                              {resetState.isSubmitting ? "Resetting…" : "Set new password"}
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </>
                 ))}
               </tbody>
             </table>

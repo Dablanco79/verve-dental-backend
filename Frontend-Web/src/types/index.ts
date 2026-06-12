@@ -60,3 +60,12 @@ export type CreateUserRequest = {
   role: UserRole;
   clinicName: string;
 };
+
+export type ChangePasswordRequest = {
+  currentPassword: string;
+  newPassword: string;
+};
+
+export type ResetPasswordRequest = {
+  newPassword: string;
+};

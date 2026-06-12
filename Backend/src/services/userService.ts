@@ -11,6 +11,7 @@ import bcrypt from "bcryptjs";
 
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { AuditService } from "./auditService.js";
+import type { AuthService } from "./authService.js";
 import type { AuthenticatedUser, PublicUser, UserRecord, UserRole } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 
@@ -37,6 +38,7 @@ function toPublicUser(user: UserRecord): PublicUser {
 export function createUserService(
   userRepository: UserRepository,
   audit: AuditService,
+  authService: AuthService,
 ) {
   function assertCanManageClinic(caller: AuthenticatedUser, targetClinicId: string): void {
     if (caller.role === "owner_admin") return;
@@ -100,7 +102,41 @@ export function createUserService(
     return toPublicUser(user);
   }
 
-  return { listUsers, createUser };
+  /**
+   * Admin/manager resets a target user's password.
+   * The caller must manage the target user's clinic. The target user's
+   * active sessions are revoked so they must log in again.
+   */
+  async function resetPassword(
+    caller: AuthenticatedUser,
+    targetUserId: string,
+    newPassword: string,
+  ): Promise<void> {
+    const target = await userRepository.findById(targetUserId);
+
+    if (!target) {
+      throw new AppError(404, "NOT_FOUND", "User not found");
+    }
+
+    assertCanManageClinic(caller, target.homeClinicId);
+
+    // Managers cannot reset passwords for admins or other managers.
+    if (caller.role === "group_practice_manager" && target.role !== "clinical_staff") {
+      throw new AppError(403, "FORBIDDEN", "Practice managers can only reset clinical staff passwords");
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await userRepository.updatePassword(targetUserId, hashedPassword);
+    authService.revokeAllUserTokens(targetUserId);
+
+    audit.logAuthEvent("auth.password.reset", {
+      userId: caller.id,
+      email: caller.email,
+      clinicId: caller.homeClinicId,
+    });
+  }
+
+  return { listUsers, createUser, resetPassword };
 }
 
 export type UserService = ReturnType<typeof createUserService>;

@@ -16,6 +16,7 @@ export interface UserRepository {
   findById(id: string): Promise<UserRecord | null>;
   createUser(input: CreateUserInput): Promise<UserRecord>;
   listByClinic(clinicId: string): Promise<UserRecord[]>;
+  updatePassword(userId: string, hashedPassword: string): Promise<void>;
 }
 
 export const SEED_CLINIC_A_ID = "11111111-1111-4111-8111-111111111111";
@@ -103,6 +104,14 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
 
     listByClinic(clinicId: string): Promise<UserRecord[]> {
       return Promise.resolve(users.filter((u) => u.homeClinicId === clinicId));
+    },
+
+    updatePassword(userId: string, hashedPassword: string): Promise<void> {
+      const user = users.find((u) => u.id === userId);
+      if (user) {
+        user.passwordHash = hashedPassword;
+      }
+      return Promise.resolve();
     },
   };
 }

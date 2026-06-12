@@ -89,11 +89,18 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
 
     async listByClinic(clinicId: string): Promise<UserRecord[]> {
       const { rows } = await pool.query<UserRow>(
-        "SELECT * FROM users WHERE clinic_id = $1 ORDER BY email",
+        "SELECT * FROM users WHERE home_clinic_id = $1 ORDER BY email",
         [clinicId],
       );
 
       return rows.map(rowToUserRecord);
+    },
+
+    async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+      await pool.query(
+        "UPDATE users SET password_hash = $1 WHERE id = $2",
+        [hashedPassword, userId],
+      );
     },
   };
 }

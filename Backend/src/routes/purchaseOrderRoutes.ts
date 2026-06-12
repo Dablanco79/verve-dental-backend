@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import type { AppDependencies } from "../bootstrap/dependencies.js";
-import { createUserHandlers } from "../controllers/userController.js";
+import { createPurchaseOrderHandlers } from "../controllers/purchaseOrderController.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
@@ -9,10 +9,13 @@ import {
 } from "../middleware/authMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
-export function createUserRouter(deps: AppDependencies): Router {
+export function createPurchaseOrderRouter(deps: AppDependencies): Router {
   const router = Router({ mergeParams: true });
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
-  const handlers = createUserHandlers(deps.userService);
+  const handlers = createPurchaseOrderHandlers(
+    deps.inventoryRepository,
+    deps.catalogRepository,
+  );
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
@@ -20,17 +23,7 @@ export function createUserRouter(deps: AppDependencies): Router {
 
   router.get(
     "/",
-    asyncHandler((req, res) => handlers.listUsers(req, res)),
-  );
-
-  router.post(
-    "/",
-    asyncHandler((req, res) => handlers.createUser(req, res)),
-  );
-
-  router.post(
-    "/:userId/reset-password",
-    asyncHandler((req, res) => handlers.resetPassword(req, res)),
+    asyncHandler((req, res) => handlers.listPurchaseOrders(req, res)),
   );
 
   return router;

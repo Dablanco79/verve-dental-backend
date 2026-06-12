@@ -12,6 +12,8 @@ import {
 } from "../middleware/authMiddleware.js";
 import { createInventoryRouter } from "./inventoryRoutes.js";
 import { createProductRouter } from "./productRoutes.js";
+import { createPurchaseOrderRouter } from "./purchaseOrderRoutes.js";
+import { createRosterRouter } from "./rosterRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -43,6 +45,12 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     authHandlers.me(req, res);
   });
 
+  router.post(
+    "/auth/change-password",
+    authenticate,
+    asyncHandler((req, res) => authHandlers.changePassword(req, res)),
+  );
+
   router.get(
     "/clinics/:clinicId/summary",
     authenticate,
@@ -65,6 +73,8 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId/scans", createScanRouter(deps));
   router.use("/clinics/:clinicId/products", createProductRouter(deps));
   router.use("/clinics/:clinicId/users", createUserRouter(deps));
+  router.use("/clinics/:clinicId/purchase-orders", createPurchaseOrderRouter(deps));
+  router.use("/clinics/:clinicId/roster", createRosterRouter(deps));
 
   return router;
 }

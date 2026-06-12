@@ -14,10 +14,18 @@ type InventoryItem = {
   isBelowReorderPoint: boolean;
 };
 
+type BarcodeMappingShape = {
+  id: string;
+  masterCatalogItemId: string;
+  barcodeValue: string;
+  barcodeFormat: string;
+  isPrimary: boolean;
+};
+
 type ScanResponse = {
   item: InventoryItem;
   adjustment: { adjustmentType: string; quantityDelta: number; referenceId: string | null };
-  barcode: { detectedFormat: string; lookupKey: string };
+  barcode: { detectedFormat: string; lookupKey: string; mapping: BarcodeMappingShape };
   draftPoLineAdded: boolean;
   draftPoLine: { quantity: number; reason: string } | null;
 };
