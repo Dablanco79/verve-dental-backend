@@ -3,7 +3,7 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Inventory & Scanning — Module 03 Session 4 complete  
+**Current Phase:** Inventory & Scanning — Module 03 Session 4 complete + security hotfix  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
 **Status:** Development Phase - Module 03 complete (pending Module 04+)
 
@@ -52,17 +52,26 @@
 - [x] Tenant middleware: clinic-scoped routes + owner cross-clinic access
 - [x] MFA gate for privileged roles (dev code `000000`)
 - [x] Structured auth audit logging (Pino)
-- [x] In-memory user repository (seed dev accounts) — replaced by PostgreSQL in Module 13
+- [x] In-memory user repository (seed dev accounts) — fallback when `DATABASE_URL` absent
+- [x] PostgreSQL user repository (`userRepository.postgres.ts`) — used when `DATABASE_URL` is set
+- [x] Bootstrap migration runner (`db/migrate.ts`) — applies `003_users_schema` on cold start
+- [x] Demo user seed (`db/seed.ts`) — bcrypt-hashes and inserts 4 accounts if `users` table empty
 - [x] `AppError` + hardened error handler
 - [x] CORS restricted to `CORS_ORIGIN`
-- [ ] PostgreSQL client + migrations (Module 13)
+- [x] `trust proxy` set so `req.ip` resolves real client IP behind Render load balancer
+- [x] `express-rate-limit` on `/auth/login`, `/auth/mfa/verify`, `/auth/refresh`
+- [ ] Full schema migrations CLI (Module 13)
 - [ ] Database RLS policies (Module 13)
 
 ### Dev seed accounts (password: `password123`)
+
+> All accounts have `mfa_enabled = false` in the PostgreSQL seed — real TOTP is wired in Module 04+.
+> The DEV_MFA_CODE (`000000`) bypass is blocked in `NODE_ENV=production` (already applied).
+
 | Email | Role | Clinic | MFA |
 |-------|------|--------|-----|
-| `admin@clinic-a.au` | owner_admin | Clinic A | Yes (`000000`) |
-| `manager@clinic-a.au` | group_practice_manager | Clinic A | Yes (`000000`) |
+| `admin@clinic-a.au` | owner_admin | Clinic A | No (seeded with false) |
+| `manager@clinic-a.au` | group_practice_manager | Clinic A | No (seeded with false) |
 | `staff@clinic-a.au` | clinical_staff | Clinic A | No |
 | `admin@clinic-b.au` | owner_admin | Clinic B | No |
 
@@ -129,5 +138,13 @@
 - [x] App shell nav (Dashboard / Inventory)
 - [x] Tests: `InventoryPage.test.tsx` (2), `AddProductPage.test.tsx` (2)
 
+### Security Hotfix (applied post-Module 03 security review)
+- [x] `DEV_MFA_CODE = "000000"` gated behind `NODE_ENV !== "production"` in `authService.ts`
+- [x] Seed credentials + dev hint paragraph stripped from `LoginPage.tsx`
+- [x] `app.set('trust proxy', 1)` in `app.ts` — real client IP in audit logs behind Render LB
+- [x] `express-rate-limit` on all auth routes (login / mfa verify / refresh)
+- [x] PostgreSQL user repository + bootstrap migration + demo seed (users persist across redeploys)
+
 ### Next Planned Upgrades
 - [ ] 04+ per master module plan (rostering, payroll, etc.)
+- [ ] Real TOTP (authenticator app) for MFA — re-enable `mfa_enabled` for privileged roles

@@ -1,8 +1,11 @@
 import type { EnvConfig } from "../config/index.js";
+import { runBootstrapMigrations } from "../db/migrate.js";
 import { createDatabasePool } from "../db/pool.js";
+import { seedDemoUsers } from "../db/seed.js";
 import { createInMemoryCatalogRepository } from "../repositories/catalogRepository.js";
 import { createInMemoryInventoryRepository } from "../repositories/inventoryRepository.js";
 import { createInMemoryUserRepository } from "../repositories/userRepository.js";
+import { createPostgresUserRepository } from "../repositories/userRepository.postgres.js";
 import { createRedisClient } from "../redis/client.js";
 import { createAuditService } from "../services/auditService.js";
 import { createAuthService } from "../services/authService.js";
@@ -24,19 +27,32 @@ export async function createAppDependencies(
   config: EnvConfig,
   logger: Logger,
 ): Promise<AppDependencies> {
-  const userRepository = await createInMemoryUserRepository();
   const catalogRepository = createInMemoryCatalogRepository();
   const inventoryRepository = createInMemoryInventoryRepository(catalogRepository);
   const auditService = createAuditService(logger);
-  const authService = createAuthService(config, userRepository, auditService);
 
   const databasePool = createDatabasePool(config);
   const redisClient = createRedisClient(config);
 
+  let userRepository;
+
   if (databasePool) {
     await databasePool.query("SELECT 1");
     logger.info("PostgreSQL connection pool ready");
+
+    await runBootstrapMigrations(databasePool, logger);
+    await seedDemoUsers(databasePool, logger);
+
+    userRepository = createPostgresUserRepository(databasePool);
+    logger.info("Using PostgreSQL user repository");
+  } else {
+    userRepository = await createInMemoryUserRepository();
+    logger.warn(
+      "DATABASE_URL not set — using in-memory user repository (state lost on restart)",
+    );
   }
+
+  const authService = createAuthService(config, userRepository, auditService);
 
   if (redisClient) {
     await redisClient.connect();
