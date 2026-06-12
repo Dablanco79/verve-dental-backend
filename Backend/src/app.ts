@@ -17,6 +17,10 @@ export function createApp(
 ) {
   const app = express();
 
+  // Render (and most PaaS load balancers) sit one hop in front; trust that hop
+  // so req.ip resolves to the real client IP rather than the internal proxy IP.
+  app.set("trust proxy", 1);
+
   app.disable("x-powered-by");
   app.use(helmet());
   app.use(
@@ -33,7 +37,7 @@ export function createApp(
     }),
   );
 
-  app.use("/api/v1", createApiRouter(deps));
+  app.use("/api/v1", createApiRouter(deps, config));
   app.use(errorHandler(logger, config));
 
   return app;

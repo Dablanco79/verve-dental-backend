@@ -19,6 +19,7 @@ import type {
 import { AppError } from "../types/errors.js";
 
 const MFA_REQUIRED_ROLES: UserRole[] = ["owner_admin", "group_practice_manager"];
+// DEV-only bypass code — never valid in production. Real TOTP wired in Module 04+.
 const DEV_MFA_CODE = "000000";
 
 type RefreshTokenRecord = {
@@ -215,7 +216,9 @@ export function createAuthService(
       throw new AppError(401, "INVALID_MFA_TOKEN", "Invalid MFA challenge token");
     }
 
-    if (code !== DEV_MFA_CODE) {
+    const isValidCode = config.NODE_ENV !== "production" && code === DEV_MFA_CODE;
+
+    if (!isValidCode) {
       audit.logAuthEvent("auth.mfa.failure", {
         userId: payload.sub,
         reason: "invalid_mfa_code",

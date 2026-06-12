@@ -6,10 +6,10 @@ import { useAuth } from "../auth/useAuth.js";
 
 export function LoginPage() {
   const { user, login, verifyMfa } = useAuth();
-  const [email, setEmail] = useState("staff@clinic-a.au");
-  const [password, setPassword] = useState("password123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [mfaToken, setMfaToken] = useState<string | null>(null);
-  const [mfaCode, setMfaCode] = useState("000000");
+  const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -60,9 +60,6 @@ export function LoginPage() {
     <AppShell>
       <section className="auth-card">
         <h2>{mfaToken ? "Verify MFA" : "Sign in"}</h2>
-        <p className="auth-card__hint">
-          Dev accounts: `staff@clinic-a.au` (no MFA) or `admin@clinic-a.au` (MFA code `000000`).
-        </p>
 
         {mfaToken ? (
           <form className="auth-form" onSubmit={(event) => void handleMfaSubmit(event)}>
