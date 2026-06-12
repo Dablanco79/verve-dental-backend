@@ -3,7 +3,7 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Inventory & Scanning — Module 03 Session 4 complete + security hotfix + user management (Task 5)  
+**Current Phase:** Module 03 Session 4 complete + security hotfix + user management + home_clinic_id schema clarification  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
 **Status:** Development Phase - Module 03 complete (pending Module 04+)
 
@@ -159,6 +159,18 @@
 - [x] `AppShell` nav shows "Users" link for `owner_admin` and `group_practice_manager` only
 - [x] API client (`listUsers`, `createUser`) + types (`StaffUser`, `CreateUserRequest`) added
 - [x] `ROLE_LABELS` + `canManageUsers()` added to `utils/roles.ts`
+
+### Schema Architecture — Clinic Context (IMPORTANT for Roster/Timesheet design)
+
+| Field | Location | Meaning |
+|-------|----------|---------|
+| `home_clinic_id` | `users` table (JWT payload) | Permanent payroll/contract location. Used for payroll reporting. |
+| `rostered_clinic_id` | Future `roster_entries` table | The clinic a staff member is physically working at on a given shift. |
+| `:clinicId` URL param | All tenant-scoped routes | The clinic whose data is currently being accessed. |
+
+- `enforceTenantParam` in `authMiddleware.ts` compares `req.user.homeClinicId` against the URL `:clinicId`.
+- When Roster module is built, add a `roster_entries` table with `staff_user_id` + `rostered_clinic_id` + `shift_date`. Payroll reports group by `users.home_clinic_id`; scheduling views group by `roster_entries.rostered_clinic_id`.
+- The `resolveTenantClinicId()` helper in `db/tenantContext.ts` has a comment marking the future roster-lookup extension point.
 
 ### Next Planned Upgrades
 - [ ] 04+ per master module plan (rostering, payroll, etc.)
