@@ -3,7 +3,7 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Inventory & Scanning — Module 03 Session 4 complete + security hotfix  
+**Current Phase:** Inventory & Scanning — Module 03 Session 4 complete + security hotfix + user management (Task 5)  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
 **Status:** Development Phase - Module 03 complete (pending Module 04+)
 
@@ -145,6 +145,22 @@
 - [x] `express-rate-limit` on all auth routes (login / mfa verify / refresh)
 - [x] PostgreSQL user repository + bootstrap migration + demo seed (users persist across redeploys)
 
+### Task 5 — User Management (complete)
+- [x] `UserRepository` interface extended: `createUser(input)` + `listByClinic(clinicId)`
+- [x] Both Postgres (`userRepository.postgres.ts`) and in-memory fallback implement the new methods
+- [x] `UserService` (`services/userService.ts`) — RBAC-aware:
+  - `owner_admin` can create any role for any clinic
+  - `group_practice_manager` can only create `clinical_staff` for their own clinic
+  - `clinical_staff` has no access
+- [x] `GET /clinics/:clinicId/users` — list users in a clinic
+- [x] `POST /clinics/:clinicId/users` — create a new staff account (email, password, role, clinicName)
+- [x] `AuthAuditEvent` extended with `user.created`
+- [x] Frontend `ManageUsersPage` (`/users`) — staff table + inline "Add user" form, role-gated
+- [x] `AppShell` nav shows "Users" link for `owner_admin` and `group_practice_manager` only
+- [x] API client (`listUsers`, `createUser`) + types (`StaffUser`, `CreateUserRequest`) added
+- [x] `ROLE_LABELS` + `canManageUsers()` added to `utils/roles.ts`
+
 ### Next Planned Upgrades
 - [ ] 04+ per master module plan (rostering, payroll, etc.)
 - [ ] Real TOTP (authenticator app) for MFA — re-enable `mfa_enabled` for privileged roles
+- [ ] Password-change / reset flow for staff accounts created via user management
