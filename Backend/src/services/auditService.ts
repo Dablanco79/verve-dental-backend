@@ -10,7 +10,8 @@ export type AuthAuditEvent =
   | "auth.refresh.failure"
   | "auth.logout"
   | "auth.unauthorized"
-  | "auth.forbidden";
+  | "auth.forbidden"
+  | "user.created";
 
 export type AuditContext = {
   userId?: string;

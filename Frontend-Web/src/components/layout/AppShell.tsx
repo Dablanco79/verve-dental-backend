@@ -1,11 +1,16 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 
+import { useAuth } from "../../auth/useAuth.js";
+import { canManageUsers } from "../../utils/roles.js";
+
 type AppShellProps = {
   children: ReactNode;
 };
 
 export function AppShell({ children }: AppShellProps) {
+  const { user } = useAuth();
+
   return (
     <div className="app-shell">
       <header className="app-shell__header">
@@ -16,6 +21,9 @@ export function AppShell({ children }: AppShellProps) {
             Dashboard
           </NavLink>
           <NavLink to="/inventory">Inventory</NavLink>
+          {user && canManageUsers(user.role) ? (
+            <NavLink to="/users">Users</NavLink>
+          ) : null}
         </nav>
       </header>
       <main className="app-shell__main">{children}</main>

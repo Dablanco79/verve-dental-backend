@@ -1,10 +1,21 @@
 import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
 
-import type { UserRecord } from "../types/auth.js";
+import type { UserRecord, UserRole } from "../types/auth.js";
+
+export type CreateUserInput = {
+  email: string;
+  passwordHash: string;
+  role: UserRole;
+  clinicId: string;
+  clinicName: string;
+};
 
 export interface UserRepository {
   findByEmail(email: string): Promise<UserRecord | null>;
   findById(id: string): Promise<UserRecord | null>;
+  createUser(input: CreateUserInput): Promise<UserRecord>;
+  listByClinic(clinicId: string): Promise<UserRecord[]>;
 }
 
 export const SEED_CLINIC_A_ID = "11111111-1111-4111-8111-111111111111";
@@ -73,6 +84,25 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
 
     findById(id: string): Promise<UserRecord | null> {
       return Promise.resolve(users.find((user) => user.id === id) ?? null);
+    },
+
+    createUser(input: CreateUserInput): Promise<UserRecord> {
+      const record: UserRecord = {
+        id: randomUUID(),
+        email: input.email.trim().toLowerCase(),
+        passwordHash: input.passwordHash,
+        role: input.role,
+        clinicId: input.clinicId,
+        clinicName: input.clinicName,
+        mfaEnabled: false,
+        isActive: true,
+      };
+      users.push(record);
+      return Promise.resolve(record);
+    },
+
+    listByClinic(clinicId: string): Promise<UserRecord[]> {
+      return Promise.resolve(users.filter((u) => u.clinicId === clinicId));
     },
   };
 }

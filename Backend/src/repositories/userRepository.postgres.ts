@@ -13,9 +13,11 @@
  *   is_active     → isActive
  */
 
+import { randomUUID } from "node:crypto";
+
 import type { UserRecord, UserRole } from "../types/auth.js";
 import type { DatabasePool } from "../db/pool.js";
-import type { UserRepository } from "./userRepository.js";
+import type { CreateUserInput, UserRepository } from "./userRepository.js";
 
 type UserRow = {
   id: string;
@@ -59,6 +61,39 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
       );
 
       return rows[0] ? rowToUserRecord(rows[0]) : null;
+    },
+
+    async createUser(input: CreateUserInput): Promise<UserRecord> {
+      const id = randomUUID();
+      const { rows } = await pool.query<UserRow>(
+        `INSERT INTO users (id, email, password_hash, role, clinic_id, clinic_name, mfa_enabled, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, false, true)
+         RETURNING *`,
+        [
+          id,
+          input.email.trim().toLowerCase(),
+          input.passwordHash,
+          input.role,
+          input.clinicId,
+          input.clinicName,
+        ],
+      );
+
+      const row = rows[0];
+      if (!row) {
+        throw new Error("Failed to create user — no row returned");
+      }
+
+      return rowToUserRecord(row);
+    },
+
+    async listByClinic(clinicId: string): Promise<UserRecord[]> {
+      const { rows } = await pool.query<UserRow>(
+        "SELECT * FROM users WHERE clinic_id = $1 ORDER BY email",
+        [clinicId],
+      );
+
+      return rows.map(rowToUserRecord);
     },
   };
 }

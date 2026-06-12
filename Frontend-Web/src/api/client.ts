@@ -4,8 +4,10 @@ import type {
   ApiErrorBody,
   AuthSession,
   AuthUser,
+  CreateUserRequest,
   HealthResponse,
   LoginResponse,
+  StaffUser,
 } from "../types/index.js";
 import type {
   CreateProductRequest,
@@ -153,6 +155,27 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function listUsers(clinicId: string): Promise<StaffUser[]> {
+    return request<StaffUser[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/users`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createUser(clinicId: string, body: CreateUserRequest): Promise<StaffUser> {
+    return request<StaffUser>(
+      config,
+      `/api/v1/clinics/${clinicId}/users`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -163,6 +186,8 @@ export function createApiClient(config: AppConfig) {
     listInventory,
     handleScan,
     createProduct,
+    listUsers,
+    createUser,
   };
 }
 

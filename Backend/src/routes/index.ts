@@ -13,6 +13,7 @@ import {
 import { createInventoryRouter } from "./inventoryRoutes.js";
 import { createProductRouter } from "./productRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
+import { createUserRouter } from "./userRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -63,6 +64,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId/inventory", createInventoryRouter(deps));
   router.use("/clinics/:clinicId/scans", createScanRouter(deps));
   router.use("/clinics/:clinicId/products", createProductRouter(deps));
+  router.use("/clinics/:clinicId/users", createUserRouter(deps));
 
   return router;
 }

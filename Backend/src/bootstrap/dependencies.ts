@@ -9,6 +9,7 @@ import { createPostgresUserRepository } from "../repositories/userRepository.pos
 import { createRedisClient } from "../redis/client.js";
 import { createAuditService } from "../services/auditService.js";
 import { createAuthService } from "../services/authService.js";
+import { createUserService } from "../services/userService.js";
 import type { Logger } from "../utils/logger.js";
 import type { DatabasePool } from "../db/pool.js";
 import type { RedisClient } from "../redis/client.js";
@@ -16,6 +17,7 @@ import type { RedisClient } from "../redis/client.js";
 export type AppDependencies = {
   authService: ReturnType<typeof createAuthService>;
   auditService: ReturnType<typeof createAuditService>;
+  userService: ReturnType<typeof createUserService>;
   catalogRepository: ReturnType<typeof createInMemoryCatalogRepository>;
   inventoryRepository: ReturnType<typeof createInMemoryInventoryRepository>;
   databasePool: DatabasePool | null;
@@ -53,6 +55,7 @@ export async function createAppDependencies(
   }
 
   const authService = createAuthService(config, userRepository, auditService);
+  const userService = createUserService(userRepository, auditService);
 
   if (redisClient) {
     await redisClient.connect();
@@ -69,6 +72,7 @@ export async function createAppDependencies(
   return {
     authService,
     auditService,
+    userService,
     catalogRepository,
     inventoryRepository,
     databasePool,

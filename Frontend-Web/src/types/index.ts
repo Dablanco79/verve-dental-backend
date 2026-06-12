@@ -44,3 +44,18 @@ export type ApiErrorBody = {
     message: string;
   };
 };
+
+export type StaffUser = {
+  id: string;
+  email: string;
+  role: UserRole;
+  clinicId: string;
+  clinicName: string;
+};
+
+export type CreateUserRequest = {
+  email: string;
+  password: string;
+  role: UserRole;
+  clinicName: string;
+};
