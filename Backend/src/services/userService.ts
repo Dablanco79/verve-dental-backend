@@ -20,8 +20,8 @@ export type CreateUserParams = {
   email: string;
   password: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 function toPublicUser(user: UserRecord): PublicUser {
@@ -29,8 +29,8 @@ function toPublicUser(user: UserRecord): PublicUser {
     id: user.id,
     email: user.email,
     role: user.role,
-    clinicId: user.clinicId,
-    clinicName: user.clinicName,
+    homeClinicId: user.homeClinicId,
+    homeClinicName: user.homeClinicName,
   };
 }
 
@@ -42,7 +42,7 @@ export function createUserService(
     if (caller.role === "owner_admin") return;
 
     if (caller.role === "group_practice_manager") {
-      if (caller.clinicId !== targetClinicId) {
+      if (caller.homeClinicId !== targetClinicId) {
         throw new AppError(403, "FORBIDDEN", "You can only manage users in your own clinic");
       }
       return;
@@ -65,7 +65,7 @@ export function createUserService(
     caller: AuthenticatedUser,
     params: CreateUserParams,
   ): Promise<PublicUser> {
-    assertCanManageClinic(caller, params.clinicId);
+    assertCanManageClinic(caller, params.homeClinicId);
 
     // Managers can only invite clinical_staff — they cannot escalate privileges.
     if (caller.role === "group_practice_manager" && params.role !== "clinical_staff") {
@@ -87,14 +87,14 @@ export function createUserService(
       email: params.email,
       passwordHash,
       role: params.role,
-      clinicId: params.clinicId,
-      clinicName: params.clinicName,
+      homeClinicId: params.homeClinicId,
+      homeClinicName: params.homeClinicName,
     });
 
     audit.logAuthEvent("user.created", {
       userId: caller.id,
       email: caller.email,
-      clinicId: caller.clinicId,
+      clinicId: caller.homeClinicId,
     });
 
     return toPublicUser(user);

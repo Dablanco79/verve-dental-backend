@@ -81,7 +81,7 @@ export function enforceTenantParam(paramName = "clinicId") {
       return;
     }
 
-    if (req.user.clinicId !== clinicId) {
+    if (req.user.homeClinicId !== clinicId) {
       next(
         new AppError(
           403,

@@ -24,8 +24,8 @@ type UserRow = {
   email: string;
   password_hash: string;
   role: string;
-  clinic_id: string;
-  clinic_name: string;
+  home_clinic_id: string;
+  home_clinic_name: string;
   mfa_enabled: boolean;
   is_active: boolean;
 };
@@ -36,8 +36,8 @@ function rowToUserRecord(row: UserRow): UserRecord {
     email: row.email,
     passwordHash: row.password_hash,
     role: row.role as UserRole,
-    clinicId: row.clinic_id,
-    clinicName: row.clinic_name,
+    homeClinicId: row.home_clinic_id,
+    homeClinicName: row.home_clinic_name,
     mfaEnabled: row.mfa_enabled,
     isActive: row.is_active,
   };
@@ -66,7 +66,7 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
     async createUser(input: CreateUserInput): Promise<UserRecord> {
       const id = randomUUID();
       const { rows } = await pool.query<UserRow>(
-        `INSERT INTO users (id, email, password_hash, role, clinic_id, clinic_name, mfa_enabled, is_active)
+        `INSERT INTO users (id, email, password_hash, role, home_clinic_id, home_clinic_name, mfa_enabled, is_active)
          VALUES ($1, $2, $3, $4, $5, $6, false, true)
          RETURNING *`,
         [
@@ -74,8 +74,8 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
           input.email.trim().toLowerCase(),
           input.passwordHash,
           input.role,
-          input.clinicId,
-          input.clinicName,
+          input.homeClinicId,
+          input.homeClinicName,
         ],
       );
 

@@ -26,8 +26,8 @@ type DemoUser = {
   id: string;
   email: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 const DEMO_USERS: DemoUser[] = [
@@ -35,29 +35,29 @@ const DEMO_USERS: DemoUser[] = [
     id: SEED_USER_IDS.clinicAAdmin,
     email: "admin@clinic-a.au",
     role: "owner_admin",
-    clinicId: SEED_CLINIC_A_ID,
-    clinicName: "Verve Dental Clinic A",
+    homeClinicId: SEED_CLINIC_A_ID,
+    homeClinicName: "Verve Dental Clinic A",
   },
   {
     id: SEED_USER_IDS.clinicAManager,
     email: "manager@clinic-a.au",
     role: "group_practice_manager",
-    clinicId: SEED_CLINIC_A_ID,
-    clinicName: "Verve Dental Clinic A",
+    homeClinicId: SEED_CLINIC_A_ID,
+    homeClinicName: "Verve Dental Clinic A",
   },
   {
     id: SEED_USER_IDS.clinicAStaff,
     email: "staff@clinic-a.au",
     role: "clinical_staff",
-    clinicId: SEED_CLINIC_A_ID,
-    clinicName: "Verve Dental Clinic A",
+    homeClinicId: SEED_CLINIC_A_ID,
+    homeClinicName: "Verve Dental Clinic A",
   },
   {
     id: SEED_USER_IDS.clinicBAdmin,
     email: "admin@clinic-b.au",
     role: "owner_admin",
-    clinicId: SEED_CLINIC_B_ID,
-    clinicName: "Verve Dental Clinic B",
+    homeClinicId: SEED_CLINIC_B_ID,
+    homeClinicName: "Verve Dental Clinic B",
   },
 ];
 
@@ -84,7 +84,7 @@ export async function seedDemoUsers(
   for (const user of DEMO_USERS) {
     await pool.query(
       `INSERT INTO users
-         (id, email, password_hash, role, clinic_id, clinic_name, mfa_enabled)
+         (id, email, password_hash, role, home_clinic_id, home_clinic_name, mfa_enabled)
        VALUES ($1, $2, $3, $4, $5, $6, false)
        ON CONFLICT (id) DO NOTHING`,
       [
@@ -92,8 +92,8 @@ export async function seedDemoUsers(
         user.email,
         passwordHash,
         user.role,
-        user.clinicId,
-        user.clinicName,
+        user.homeClinicId,
+        user.homeClinicName,
       ],
     );
   }

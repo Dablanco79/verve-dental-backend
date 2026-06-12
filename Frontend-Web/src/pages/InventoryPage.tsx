@@ -58,7 +58,7 @@ export function InventoryPage() {
     setIsLoading(true);
 
     try {
-      const inventory = await apiClient.listInventory(user.clinicId);
+      const inventory = await apiClient.listInventory(user.homeClinicId);
       setItems(inventory);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unable to load inventory";
@@ -88,7 +88,7 @@ export function InventoryPage() {
     setScanNotice(null);
 
     try {
-      const result = await apiClient.handleScan(user.clinicId, values);
+      const result = await apiClient.handleScan(user.homeClinicId, values);
       setScanNotice(buildScanNotice(result));
       await loadInventory();
     } finally {
@@ -110,7 +110,7 @@ export function InventoryPage() {
           <div>
             <h2>Scanner</h2>
             <p className="inventory-page__subtitle">
-              {user ? `${user.clinicName} — scan to deduct or receive stock` : "Clinic inventory"}
+              {user ? `${user.homeClinicName} — scan to deduct or receive stock` : "Clinic inventory"}
             </p>
           </div>
           <div className="inventory-page__actions">

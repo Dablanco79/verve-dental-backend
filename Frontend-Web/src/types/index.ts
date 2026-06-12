@@ -13,8 +13,9 @@ export type AuthUser = {
   id: string;
   email: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  /** Payroll / contract location — not the clinic currently being accessed via URL. */
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 export type AuthSession = {
@@ -49,8 +50,8 @@ export type StaffUser = {
   id: string;
   email: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 export type CreateUserRequest = {

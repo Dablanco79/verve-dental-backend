@@ -2,18 +2,25 @@ import type { AuthenticatedUser } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 
 /**
- * Resolves the clinic_id scope for application-layer queries.
- * Owner/admin may access any clinic when an explicit target is provided.
+ * Resolves the clinic scope for application-layer queries.
+ *
+ * `user.homeClinicId`  — the user's payroll/contract location (on every JWT).
+ * `requestedClinicId`  — the clinic whose data is being accessed (from the URL).
+ *
+ * owner_admin may access any clinic; all other roles are restricted to their
+ * homeClinicId.  When Roster support arrives, replace the simple homeClinicId
+ * check with a roster-membership lookup so rostered staff can access the clinic
+ * they are working at on a given shift.
  */
 export function resolveTenantClinicId(
   user: AuthenticatedUser,
   requestedClinicId?: string,
 ): string {
   if (user.role === "owner_admin") {
-    return requestedClinicId ?? user.clinicId;
+    return requestedClinicId ?? user.homeClinicId;
   }
 
-  if (requestedClinicId && requestedClinicId !== user.clinicId) {
+  if (requestedClinicId && requestedClinicId !== user.homeClinicId) {
     throw new AppError(
       403,
       "TENANT_ACCESS_DENIED",
@@ -21,7 +28,7 @@ export function resolveTenantClinicId(
     );
   }
 
-  return user.clinicId;
+  return user.homeClinicId;
 }
 
 /**

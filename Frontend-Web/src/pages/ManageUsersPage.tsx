@@ -39,7 +39,7 @@ export function ManageUsersPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const result = await apiClient.listUsers(user.clinicId);
+      const result = await apiClient.listUsers(user.homeClinicId);
       setUsers(result);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load users");
@@ -71,11 +71,11 @@ export function ManageUsersPage() {
     setIsSubmitting(true);
 
     try {
-      const created = await apiClient.createUser(user.clinicId, {
+      const created = await apiClient.createUser(user.homeClinicId, {
         email: form.email.trim(),
         password: form.password,
         role: form.role,
-        clinicName: user.clinicName,
+        clinicName: user.homeClinicName,
       });
 
       setUsers((prev) => [...prev, created]);
@@ -96,7 +96,7 @@ export function ManageUsersPage() {
           <div>
             <h2>Manage staff accounts</h2>
             <p className="inventory-page__subtitle">
-              {user.clinicName} — {users.length} account{users.length !== 1 ? "s" : ""}
+              {user.homeClinicName} — {users.length} account{users.length !== 1 ? "s" : ""}
             </p>
           </div>
           <div className="inventory-page__actions">
@@ -227,7 +227,7 @@ export function ManageUsersPage() {
                     <td>
                       <span className="inventory-badge">{ROLE_LABELS[u.role]}</span>
                     </td>
-                    <td>{u.clinicName}</td>
+                    <td>{u.homeClinicName}</td>
                   </tr>
                 ))}
               </tbody>

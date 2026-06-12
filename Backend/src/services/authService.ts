@@ -47,8 +47,8 @@ export function createAuthService(
       id: user.id,
       email: user.email,
       role: user.role,
-      clinicId: user.clinicId,
-      clinicName: user.clinicName,
+      homeClinicId: user.homeClinicId,
+      homeClinicName: user.homeClinicName,
     };
   }
 
@@ -57,8 +57,8 @@ export function createAuthService(
       sub: user.id,
       email: user.email,
       role: user.role,
-      clinicId: user.clinicId,
-      clinicName: user.clinicName,
+      homeClinicId: user.homeClinicId,
+      homeClinicName: user.homeClinicName,
       type: "access",
     };
 
@@ -153,7 +153,7 @@ export function createAuthService(
       audit.logAuthEvent("auth.login.failure", {
         email,
         userId: user.id,
-        clinicId: user.clinicId,
+        clinicId: user.homeClinicId,
         reason: "invalid_credentials",
         ...auditContext,
       });
@@ -166,7 +166,7 @@ export function createAuthService(
       audit.logAuthEvent("auth.login.mfa_required", {
         userId: user.id,
         email: user.email,
-        clinicId: user.clinicId,
+        clinicId: user.homeClinicId,
         ...auditContext,
       });
 
@@ -182,7 +182,7 @@ export function createAuthService(
     audit.logAuthEvent("auth.login.success", {
       userId: user.id,
       email: user.email,
-      clinicId: user.clinicId,
+      clinicId: user.homeClinicId,
       ...auditContext,
     });
 
@@ -238,7 +238,7 @@ export function createAuthService(
     audit.logAuthEvent("auth.mfa.success", {
       userId: user.id,
       email: user.email,
-      clinicId: user.clinicId,
+      clinicId: user.homeClinicId,
       ...auditContext,
     });
 
@@ -276,7 +276,7 @@ export function createAuthService(
       audit.logAuthEvent("auth.refresh.success", {
         userId: user.id,
         email: user.email,
-        clinicId: user.clinicId,
+        clinicId: user.homeClinicId,
         ...auditContext,
       });
 
@@ -320,8 +320,8 @@ export function createAuthService(
       id: payload.sub,
       email: payload.email,
       role: payload.role,
-      clinicId: payload.clinicId,
-      clinicName: payload.clinicName,
+      homeClinicId: payload.homeClinicId,
+      homeClinicName: payload.homeClinicName,
     };
   }
 
@@ -330,7 +330,7 @@ export function createAuthService(
       return true;
     }
 
-    return user.clinicId === clinicId;
+    return user.homeClinicId === clinicId;
   }
 
   return {

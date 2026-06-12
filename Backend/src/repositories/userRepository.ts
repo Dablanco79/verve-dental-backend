@@ -7,8 +7,8 @@ export type CreateUserInput = {
   email: string;
   passwordHash: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 export interface UserRepository {
@@ -39,8 +39,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       email: "admin@clinic-a.au",
       passwordHash,
       role: "owner_admin",
-      clinicId: SEED_CLINIC_A_ID,
-      clinicName: "Verve Dental Clinic A",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
       mfaEnabled: true,
       isActive: true,
     },
@@ -49,8 +49,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       email: "staff@clinic-a.au",
       passwordHash,
       role: "clinical_staff",
-      clinicId: SEED_CLINIC_A_ID,
-      clinicName: "Verve Dental Clinic A",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
       mfaEnabled: false,
       isActive: true,
     },
@@ -59,8 +59,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       email: "manager@clinic-a.au",
       passwordHash,
       role: "group_practice_manager",
-      clinicId: SEED_CLINIC_A_ID,
-      clinicName: "Verve Dental Clinic A",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
       mfaEnabled: true,
       isActive: true,
     },
@@ -69,8 +69,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       email: "admin@clinic-b.au",
       passwordHash,
       role: "owner_admin",
-      clinicId: SEED_CLINIC_B_ID,
-      clinicName: "Verve Dental Clinic B",
+      homeClinicId: SEED_CLINIC_B_ID,
+      homeClinicName: "Verve Dental Clinic B",
       mfaEnabled: false,
       isActive: true,
     },
@@ -92,8 +92,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
         email: input.email.trim().toLowerCase(),
         passwordHash: input.passwordHash,
         role: input.role,
-        clinicId: input.clinicId,
-        clinicName: input.clinicName,
+        homeClinicId: input.homeClinicId,
+        homeClinicName: input.homeClinicName,
         mfaEnabled: false,
         isActive: true,
       };
@@ -102,7 +102,7 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
     },
 
     listByClinic(clinicId: string): Promise<UserRecord[]> {
-      return Promise.resolve(users.filter((u) => u.clinicId === clinicId));
+      return Promise.resolve(users.filter((u) => u.homeClinicId === clinicId));
     },
   };
 }

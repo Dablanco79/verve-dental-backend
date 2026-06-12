@@ -84,7 +84,7 @@ export function AddProductPage() {
     setIsSubmitting(true);
 
     try {
-      await apiClient.createProduct(user.clinicId, {
+      await apiClient.createProduct(user.homeClinicId, {
         sku: sku.trim(),
         name: name.trim(),
         description: description.trim() || undefined,
@@ -115,7 +115,7 @@ export function AddProductPage() {
             <h2>Add new product</h2>
             <p className="inventory-page__subtitle">
               Create a master catalog item, barcode mapping, and clinic stock row for{" "}
-              {user.clinicName}.
+              {user.homeClinicName}.
             </p>
           </div>
           <Link to="/inventory" className="link-button">

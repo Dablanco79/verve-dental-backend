@@ -50,8 +50,8 @@ export function createUserHandlers(userService: UserService) {
         email: body.email,
         password: body.password,
         role: body.role,
-        clinicId,
-        clinicName: body.clinicName,
+        homeClinicId: clinicId,
+        homeClinicName: body.clinicName,
       });
 
       res.status(201).json({ data: user });

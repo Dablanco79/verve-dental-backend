@@ -63,8 +63,8 @@ export function HomePage() {
               <dd>{user.role}</dd>
             </div>
             <div>
-              <dt>Clinic</dt>
-              <dd>{user.clinicName}</dd>
+              <dt>Home clinic</dt>
+              <dd>{user.homeClinicName}</dd>
             </div>
           </dl>
         ) : null}

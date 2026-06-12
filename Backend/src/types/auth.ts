@@ -11,8 +11,13 @@ export type UserRecord = {
   email: string;
   passwordHash: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  /**
+   * The user's permanent payroll / contract location.
+   * Distinct from the rostered_clinic_id that Roster entries will carry
+   * when a staff member works at a different location on a given shift.
+   */
+  homeClinicId: string;
+  homeClinicName: string;
   mfaEnabled: boolean;
   isActive: boolean;
 };
@@ -21,16 +26,17 @@ export type AuthenticatedUser = {
   id: string;
   email: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  /** Payroll / contract location — not the clinic currently being accessed via URL. */
+  homeClinicId: string;
+  homeClinicName: string;
 };
 
 export type AccessTokenPayload = {
   sub: string;
   email: string;
   role: UserRole;
-  clinicId: string;
-  clinicName: string;
+  homeClinicId: string;
+  homeClinicName: string;
   type: "access";
 };
 

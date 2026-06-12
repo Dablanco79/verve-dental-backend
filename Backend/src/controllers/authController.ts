@@ -97,7 +97,7 @@ export function createAuthHandlers(authService: AuthService) {
       res.status(200).json({
         data: {
           clinicId: req.params.clinicId,
-          clinicName: req.user?.clinicName ?? "Unknown clinic",
+          homeClinicName: req.user?.homeClinicName ?? "Unknown clinic",
           accessedBy: req.user?.email,
           message: "Tenant-scoped resource access verified",
         },
