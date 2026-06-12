@@ -1,11 +1,301 @@
 openapi: 3.0.3
 info:
   title: Verve Dental Operational Suite API
-  version: 0.1.0
-  description: OpenAPI-first contract for the Verve Backend (Module 01 scaffold).
+  version: 0.5.0
+  description: OpenAPI contract for the Verve Backend (Module 03 — Inventory & Scanning).
 servers:
   - url: http://localhost:3000
     description: Local development
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    InventoryItem:
+      type: object
+      required:
+        - id
+        - clinicId
+        - masterSku
+        - name
+        - quantityOnHand
+        - reorderPoint
+        - isBelowReorderPoint
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        masterSku:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        unitOfMeasure:
+          type: string
+        quantityOnHand:
+          type: integer
+          minimum: 0
+        reorderPoint:
+          type: integer
+          minimum: 0
+        unitCostCents:
+          type: integer
+        unitCostOverrideCents:
+          type: integer
+          nullable: true
+        supplierPreference:
+          type: string
+          nullable: true
+        isBelowReorderPoint:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    InventoryAdjustment:
+      type: object
+      required:
+        - id
+        - clinicId
+        - clinicInventoryItemId
+        - adjustmentType
+        - quantityDelta
+        - quantityBefore
+        - quantityAfter
+        - performedByUserId
+        - performedByEmail
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        clinicInventoryItemId:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        adjustmentType:
+          type: string
+          enum: [scan_deduct, manual_adjust, receive, transfer_in, transfer_out]
+        quantityDelta:
+          type: integer
+        quantityBefore:
+          type: integer
+        quantityAfter:
+          type: integer
+        reason:
+          type: string
+          nullable: true
+        performedByUserId:
+          type: string
+          format: uuid
+        performedByEmail:
+          type: string
+        referenceId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    InventoryAdjustResponse:
+      type: object
+      required: [item, adjustment]
+      properties:
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        adjustment:
+          $ref: "#/components/schemas/InventoryAdjustment"
+    InventoryAdjustRequest:
+      type: object
+      required: [itemId, quantityDelta]
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        quantityDelta:
+          type: integer
+          description: Non-zero integer; negative values deduct stock
+        reason:
+          type: string
+          maxLength: 255
+    ScanRequest:
+      type: object
+      required: [barcodeValue]
+      properties:
+        barcodeValue:
+          type: string
+          maxLength: 255
+          description: >-
+            Scanned barcode (EAN-13, GS1, Code128, QR, Data Matrix) or primary
+            product SKU (e.g. VRV-GLV-001)
+        barcodeFormat:
+          type: string
+          enum: [gs1, ean13, code128, qr, data_matrix]
+          description: Optional hint when the scanner reports symbology
+        quantity:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Units to deduct or receive (default 1 per scan)
+        mode:
+          type: string
+          enum: [deduct, receive]
+          default: deduct
+          description: deduct removes stock; receive adds stock on delivery
+        reason:
+          type: string
+          maxLength: 255
+          description: Optional delivery reference when mode is receive
+    CreateProductRequest:
+      type: object
+      required:
+        - sku
+        - name
+        - category
+        - unitOfMeasure
+        - defaultUnitCostCents
+        - barcodeValue
+        - barcodeFormat
+        - initialQuantity
+        - reorderPoint
+      properties:
+        sku:
+          type: string
+          maxLength: 64
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 500
+        category:
+          type: string
+          maxLength: 128
+        unitOfMeasure:
+          type: string
+          maxLength: 32
+        defaultUnitCostCents:
+          type: integer
+          minimum: 0
+        barcodeValue:
+          type: string
+          maxLength: 255
+        barcodeFormat:
+          type: string
+          enum: [gs1, ean13, code128, qr, data_matrix]
+        initialQuantity:
+          type: integer
+          minimum: 0
+        reorderPoint:
+          type: integer
+          minimum: 0
+        unitCostOverrideCents:
+          type: integer
+          minimum: 0
+        supplierPreference:
+          type: string
+          maxLength: 128
+    CreateProductResponse:
+      type: object
+      required: [masterItem, barcodeMapping, clinicItem]
+      properties:
+        masterItem:
+          type: object
+        barcodeMapping:
+          $ref: "#/components/schemas/BarcodeMappingSummary"
+        clinicItem:
+          $ref: "#/components/schemas/InventoryItem"
+    BarcodeMappingSummary:
+      type: object
+      required: [id, masterCatalogItemId, barcodeValue, barcodeFormat, isPrimary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        barcodeValue:
+          type: string
+        barcodeFormat:
+          type: string
+          enum: [gs1, ean13, code128, qr, data_matrix]
+        isPrimary:
+          type: boolean
+    DraftPoLine:
+      type: object
+      required:
+        - id
+        - draftPurchaseOrderId
+        - masterCatalogItemId
+        - clinicInventoryItemId
+        - quantity
+        - reason
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        draftPurchaseOrderId:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        clinicInventoryItemId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ScanResponse:
+      type: object
+      required: [mode, item, adjustment, barcode, draftPoLineAdded, draftPoLine]
+      properties:
+        mode:
+          type: string
+          enum: [deduct, receive]
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        adjustment:
+          $ref: "#/components/schemas/InventoryAdjustment"
+        barcode:
+          type: object
+          required: [detectedFormat, lookupKey, mapping]
+          properties:
+            detectedFormat:
+              type: string
+              enum: [gs1, ean13, code128, qr, data_matrix]
+            lookupKey:
+              type: string
+            mapping:
+              $ref: "#/components/schemas/BarcodeMappingSummary"
+        draftPoLineAdded:
+          type: boolean
+        draftPoLine:
+          $ref: "#/components/schemas/DraftPoLine"
+          nullable: true
 paths:
   /api/v1/health:
     get:
@@ -16,21 +306,296 @@ paths:
       responses:
         "200":
           description: Service is healthy
+  /api/v1/auth/login:
+    post:
+      summary: Authenticate with email and password
+      operationId: login
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Authenticated or MFA challenge issued
+        "401":
+          description: Invalid credentials
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: Complete MFA challenge
+      operationId: verifyMfa
+      tags:
+        - Auth
+      responses:
+        "200":
+          description: Tokens issued
+  /api/v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      operationId: refreshToken
+      tags:
+        - Auth
+      responses:
+        "200":
+          description: New tokens issued
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke refresh token
+      operationId: logout
+      tags:
+        - Auth
+      responses:
+        "204":
+          description: Logged out
+  /api/v1/auth/me:
+    get:
+      summary: Current authenticated user
+      operationId: getCurrentUser
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user profile
+        "401":
+          description: Unauthorized
+  /api/v1/clinics/{clinicId}/summary:
+    get:
+      summary: Tenant-scoped clinic summary (isolation test endpoint)
+      operationId: getClinicSummary
+      tags:
+        - Clinics
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Clinic summary
+        "403":
+          description: Tenant access denied
+  /api/v1/clinics/{clinicId}/inventory:
+    get:
+      summary: List clinic inventory
+      operationId: listClinicInventory
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Inventory items for the clinic
           content:
             application/json:
               schema:
                 type: object
-                required:
-                  - status
-                  - service
-                  - timestamp
                 properties:
-                  status:
-                    type: string
-                    example: ok
-                  service:
-                    type: string
-                    example: "@verve/backend"
-                  timestamp:
-                    type: string
-                    format: date-time
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InventoryItem"
+        "401":
+          description: Unauthorized
+        "403":
+          description: Tenant access denied or insufficient role
+  /api/v1/clinics/{clinicId}/inventory/{itemId}:
+    get:
+      summary: Get inventory item detail
+      operationId: getInventoryItem
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: itemId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Inventory item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InventoryItem"
+        "404":
+          description: Item not found
+  /api/v1/clinics/{clinicId}/inventory/adjust:
+    post:
+      summary: Manually adjust clinic inventory
+      operationId: adjustClinicInventory
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryAdjustRequest"
+      responses:
+        "200":
+          description: Updated item and audit record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InventoryAdjustResponse"
+        "400":
+          description: Validation error or insufficient stock
+        "403":
+          description: Insufficient permissions (manager/admin only)
+  /api/v1/clinics/{clinicId}/inventory/adjustments:
+    get:
+      summary: List inventory adjustment audit history
+      operationId: listInventoryAdjustments
+      tags:
+        - Inventory
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            maximum: 100
+      responses:
+        "200":
+          description: Adjustment audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InventoryAdjustment"
+        "403":
+          description: Insufficient permissions (manager/admin only)
+  /api/v1/clinics/{clinicId}/products:
+    post:
+      summary: Add a new product to the master catalog and clinic inventory
+      operationId: createClinicProduct
+      tags:
+        - Products
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Product created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CreateProductResponse"
+        "403":
+          description: Insufficient permissions (manager/admin only)
+        "409":
+          description: Duplicate SKU or barcode
+  /api/v1/clinics/{clinicId}/scans:
+    post:
+      summary: Process a barcode scan to deduct or receive stock
+      operationId: handleScan
+      tags:
+        - Scanning
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: clinicId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRequest"
+      responses:
+        "200":
+          description: Stock deducted; audit record created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ScanResponse"
+        "400":
+          description: Validation error or insufficient stock
+        "401":
+          description: Unauthorized
+        "403":
+          description: Tenant access denied
+        "404":
+          description: Barcode or clinic inventory item not found

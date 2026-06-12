@@ -44,6 +44,33 @@ body {
   font-size: 2rem;
 }
 
+.app-shell__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.app-shell__nav a {
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  color: #486581;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  background: #e0e7ef;
+}
+
+.app-shell__nav a.active {
+  color: #ffffff;
+  background: #102a43;
+}
+
+.app-shell__main {
+  display: grid;
+  gap: 1.5rem;
+}
+
 .status-card {
   padding: 1.5rem;
   border: 1px solid #d9e2ec;
@@ -77,4 +104,351 @@ body {
 .status-card__error {
   margin: 0;
   color: #ba1a1a;
+}
+
+.status-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.auth-card {
+  padding: 1.5rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  background: #ffffff;
+  margin-bottom: 1.5rem;
+}
+
+.auth-card__hint {
+  color: #627d98;
+  font-size: 0.875rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.auth-form input {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.auth-form button,
+.link-button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  background: #102a43;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button {
+  background: transparent;
+  color: #486581;
+  text-decoration: underline;
+}
+
+.loading-message,
+.footer-link {
+  padding: 1rem 0;
+}
+
+.footer-link a {
+  color: #486581;
+}
+
+.inventory-page__section h2 {
+  margin-bottom: 0.35rem;
+}
+
+.inventory-page__subtitle {
+  margin: 0;
+  color: #627d98;
+  font-size: 0.9rem;
+}
+
+.inventory-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.button-link {
+  display: inline-block;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  background: #102a43;
+  color: #ffffff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.scan-mode-toggle {
+  display: inline-flex;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: #e0e7ef;
+  gap: 0.2rem;
+}
+
+.scan-mode-toggle__btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  background: transparent;
+  color: #486581;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scan-mode-toggle__btn--active {
+  background: #102a43;
+  color: #ffffff;
+}
+
+.scan-mode-toggle__btn--receive.scan-mode-toggle__btn--active {
+  background: #0f5132;
+}
+
+.scan-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.scan-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.scan-form__field {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.scan-form__field--grow {
+  flex: 1 1 220px;
+}
+
+.scan-form__field--narrow {
+  width: 5.5rem;
+}
+
+.scan-form__field input,
+.scan-form__field select {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.scan-form__submit {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.65rem 1.1rem;
+  background: #102a43;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.scan-form__submit--receive {
+  background: #0f5132;
+}
+
+.scan-form__submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.scan-form__hint {
+  margin: 0;
+  color: #627d98;
+  font-size: 0.85rem;
+}
+
+.scan-form__hint code {
+  font-size: 0.8rem;
+}
+
+.inventory-notice {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: #e3f9e5;
+  color: #0f5132;
+}
+
+.inventory-notice--info {
+  background: #fff3cd;
+  color: #664d03;
+}
+
+.inventory-notice--receive {
+  background: #d8f3dc;
+  color: #0f5132;
+}
+
+.product-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.product-form__section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.product-form__section legend {
+  margin-bottom: 0.75rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.product-form__grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.product-form__full {
+  grid-column: 1 / -1;
+}
+
+.product-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.product-form input,
+.product-form select {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.product-form__actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.65rem 1.1rem;
+  background: #102a43;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.product-form__actions button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.inventory-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.inventory-summary__alert {
+  color: #9b1c1c;
+  font-weight: 600;
+}
+
+.inventory-summary__ok {
+  color: #0f5132;
+  font-weight: 600;
+}
+
+.inventory-table-wrap {
+  overflow-x: auto;
+}
+
+.inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.inventory-table th,
+.inventory-table td {
+  padding: 0.75rem 0.5rem;
+  border-bottom: 1px solid #d9e2ec;
+  text-align: left;
+  vertical-align: top;
+}
+
+.inventory-table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #627d98;
+}
+
+.inventory-table__row--low {
+  background: #fff5f5;
+}
+
+.inventory-table__name {
+  display: block;
+  font-weight: 600;
+}
+
+.inventory-table__meta {
+  display: block;
+  margin-top: 0.15rem;
+  color: #627d98;
+  font-size: 0.8rem;
+}
+
+.inventory-table__numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-badge {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inventory-badge--low {
+  background: #fde2e2;
+  color: #9b1c1c;
+}
+
+.inventory-badge--ok {
+  background: #e3f9e5;
+  color: #0f5132;
+}
+
+.inventory-empty {
+  margin: 0;
+  color: #627d98;
 }

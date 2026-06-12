@@ -31,5 +31,8 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Build Backend
+        run: npm run build --workspace=@verve/backend
+
       - name: Build Frontend-Web
         run: npm run build --workspace=@verve/frontend-web

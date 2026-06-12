@@ -1,1 +1,26 @@
 node_modules/
+
+# Build output
+dist/
+build/
+.next/
+.expo/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (large, low AI value)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

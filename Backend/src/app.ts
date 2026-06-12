@@ -3,17 +3,28 @@ import express from "express";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 
+import type { AppDependencies } from "./bootstrap/dependencies.js";
 import type { EnvConfig } from "./config/index.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { createApiRouter } from "./routes/index.js";
+import { createCorsOriginHandler } from "./utils/cors.js";
 import type { Logger } from "./utils/logger.js";
 
-export function createApp(config: EnvConfig, logger: Logger) {
+export function createApp(
+  config: EnvConfig,
+  logger: Logger,
+  deps: AppDependencies,
+) {
   const app = express();
 
   app.disable("x-powered-by");
   app.use(helmet());
-  app.use(cors());
+  app.use(
+    cors({
+      origin: createCorsOriginHandler(config.CORS_ORIGIN),
+      credentials: true,
+    }),
+  );
   app.use(express.json({ limit: "1mb" }));
   app.use(
     pinoHttp({
@@ -22,8 +33,8 @@ export function createApp(config: EnvConfig, logger: Logger) {
     }),
   );
 
-  app.use("/api/v1", createApiRouter());
-  app.use(errorHandler(logger));
+  app.use("/api/v1", createApiRouter(deps));
+  app.use(errorHandler(logger, config));
 
   return app;
 }

@@ -4,7 +4,43 @@ export type HealthResponse = {
   timestamp: string;
 };
 
-export type ApiError = {
-  message: string;
-  status?: number;
+export type UserRole =
+  | "owner_admin"
+  | "group_practice_manager"
+  | "clinical_staff";
+
+export type AuthUser = {
+  id: string;
+  email: string;
+  role: UserRole;
+  clinicId: string;
+  clinicName: string;
+};
+
+export type AuthSession = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  user: AuthUser;
+};
+
+export type LoginResponse =
+  | {
+      requiresMfa: false;
+      accessToken: string;
+      refreshToken: string;
+      expiresIn: number;
+      user: AuthUser;
+    }
+  | {
+      requiresMfa: true;
+      mfaToken: string;
+      user: AuthUser;
+    };
+
+export type ApiErrorBody = {
+  error: {
+    code: string;
+    message: string;
+  };
 };

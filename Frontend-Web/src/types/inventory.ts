@@ -1,0 +1,100 @@
+export type BarcodeFormat = "gs1" | "ean13" | "code128" | "qr" | "data_matrix";
+
+export type ScanMode = "deduct" | "receive";
+
+export type InventoryItem = {
+  id: string;
+  clinicId: string;
+  masterCatalogItemId: string;
+  masterSku: string;
+  name: string;
+  category: string;
+  unitOfMeasure: string;
+  quantityOnHand: number;
+  reorderPoint: number;
+  unitCostCents: number;
+  unitCostOverrideCents: number | null;
+  supplierPreference: string | null;
+  isBelowReorderPoint: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type InventoryAdjustment = {
+  id: string;
+  clinicId: string;
+  clinicInventoryItemId: string;
+  masterCatalogItemId: string;
+  adjustmentType: string;
+  quantityDelta: number;
+  quantityBefore: number;
+  quantityAfter: number;
+  reason: string | null;
+  performedByUserId: string;
+  performedByEmail: string;
+  referenceId: string | null;
+  createdAt: string;
+};
+
+export type ScanRequest = {
+  barcodeValue: string;
+  barcodeFormat?: BarcodeFormat;
+  quantity?: number;
+  mode?: ScanMode;
+  reason?: string;
+};
+
+export type CreateProductRequest = {
+  sku: string;
+  name: string;
+  description?: string;
+  category: string;
+  unitOfMeasure: string;
+  defaultUnitCostCents: number;
+  barcodeValue: string;
+  barcodeFormat: BarcodeFormat;
+  initialQuantity: number;
+  reorderPoint: number;
+  unitCostOverrideCents?: number;
+  supplierPreference?: string;
+};
+
+export type CreateProductResponse = {
+  masterItem: {
+    id: string;
+    sku: string;
+    name: string;
+  };
+  barcodeMapping: {
+    barcodeValue: string;
+    barcodeFormat: BarcodeFormat;
+  };
+  clinicItem: InventoryItem;
+};
+
+export type ScanResponse = {
+  mode: ScanMode;
+  item: InventoryItem;
+  adjustment: InventoryAdjustment;
+  barcode: {
+    detectedFormat: BarcodeFormat;
+    lookupKey: string;
+    mapping: {
+      id: string;
+      masterCatalogItemId: string;
+      barcodeValue: string;
+      barcodeFormat: BarcodeFormat;
+      isPrimary: boolean;
+    };
+  };
+  draftPoLineAdded: boolean;
+  draftPoLine: {
+    id: string;
+    draftPurchaseOrderId: string;
+    masterCatalogItemId: string;
+    clinicInventoryItemId: string;
+    quantity: number;
+    reason: string;
+    createdAt: string;
+  } | null;
+};
