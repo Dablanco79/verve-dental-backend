@@ -89,21 +89,23 @@ export async function createAppDependencies(
   logger: Logger,
 ): Promise<AppDependencies> {
   // ---------------------------------------------------------------------------
-  // Production startup guard — fail fast if required infrastructure is absent.
+  // Deployed-environment startup guard — fail fast if required infrastructure
+  // is absent in staging or production.
   //
   // In development / test the in-memory fallbacks keep the server runnable
-  // without real infra.  In production, starting without a real database or
-  // Redis session store is a misconfiguration, not a graceful degradation.
+  // without real infra.  In staging and production, starting without a real
+  // database or Redis session store is a misconfiguration, not a graceful
+  // degradation.
   // ---------------------------------------------------------------------------
-  if (config.NODE_ENV === "production") {
+  if (config.NODE_ENV === "production" || config.NODE_ENV === "staging") {
     if (!config.DATABASE_URL) {
       throw new Error(
-        "DATABASE_URL is required in production — refusing to start with in-memory repositories",
+        `DATABASE_URL is required in ${config.NODE_ENV} — refusing to start with in-memory repositories`,
       );
     }
     if (!config.REDIS_URL) {
       throw new Error(
-        "REDIS_URL is required in production — refusing to start without Redis for session storage",
+        `REDIS_URL is required in ${config.NODE_ENV} — refusing to start without Redis for session storage`,
       );
     }
   }

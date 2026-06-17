@@ -11,8 +11,10 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
-  // Comma-separated list of allowed CORS origins, or `*` to allow any origin.
-  // Production: set to your deployed frontend URL(s), e.g. https://app.vervedental.com.au
+  // Comma-separated list of allowed CORS origins.
+  // Staging/production: must be explicit HTTPS frontend URL(s) — wildcard (*) is rejected.
+  // Development/test: defaults to http://localhost:5173; wildcard is permitted.
+  // Example: https://app.vervedental.com.au,https://staging.vervedental.com.au
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
@@ -37,8 +39,23 @@ const envSchema = z.object({
 
 export type EnvConfig = z.infer<typeof envSchema>;
 
-function assertProductionCorsOrigin(config: EnvConfig): void {
-  if (config.NODE_ENV !== "production") {
+/**
+ * Validates CORS_ORIGIN for deployed environments (staging and production).
+ *
+ * Rules enforced in staging and production:
+ *   • Wildcard (*) is rejected — it is incompatible with cookie-based auth
+ *     and is a misconfiguration signal.
+ *   • Empty origin list is rejected.
+ *   • Localhost-only origins are rejected — they indicate a missing deployment
+ *     configuration rather than a valid deployed setup.
+ *
+ * Development and test are unrestricted (this function is a no-op for them).
+ *
+ * Exported so config-validation tests can call it directly with an EnvConfig
+ * object rather than manipulating process.env.
+ */
+export function assertDeployedCorsOrigin(config: EnvConfig): void {
+  if (config.NODE_ENV !== "production" && config.NODE_ENV !== "staging") {
     return;
   }
 
@@ -46,8 +63,11 @@ function assertProductionCorsOrigin(config: EnvConfig): void {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  if (origins.includes("*")) {
-    return;
+  if (origins.length === 0 || origins.includes("*")) {
+    throw new Error(
+      `CORS_ORIGIN must not be wildcard (*) or empty when NODE_ENV=${config.NODE_ENV} — ` +
+        "set it to your deployed frontend HTTPS URL(s)",
+    );
   }
 
   const onlyLocalOrigins = origins.every(
@@ -57,7 +77,7 @@ function assertProductionCorsOrigin(config: EnvConfig): void {
 
   if (onlyLocalOrigins) {
     throw new Error(
-      "CORS_ORIGIN must be set to your production frontend URL(s) when NODE_ENV=production",
+      `CORS_ORIGIN must be set to your ${config.NODE_ENV} frontend URL(s) when NODE_ENV=${config.NODE_ENV}`,
     );
   }
 }
@@ -70,7 +90,7 @@ export function loadConfig(): EnvConfig {
     throw new Error(`Invalid environment configuration: ${JSON.stringify(formatted)}`);
   }
 
-  assertProductionCorsOrigin(result.data);
+  assertDeployedCorsOrigin(result.data);
 
   return result.data;
 }

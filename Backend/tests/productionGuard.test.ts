@@ -5,11 +5,16 @@
  * when required infrastructure environment variables are missing in production,
  * rather than silently falling back to in-memory state.
  *
+ * Also covers:
+ *   • Staging fail-closed (DATABASE_URL / REDIS_URL required)
+ *   • CORS wildcard rejection for staging and production
+ *
  * All tests are network-free: the guards fire before any pool/client is
  * connected, so no real database or Redis instance is required.
  */
 
 import { createAppDependencies } from "../src/bootstrap/dependencies.js";
+import { assertDeployedCorsOrigin } from "../src/config/index.js";
 import { createLogger } from "../src/utils/logger.js";
 import type { EnvConfig } from "../src/config/index.js";
 
@@ -117,5 +122,151 @@ describe("Non-production startup — in-memory fallback allowed", () => {
     expect(deps.redisClient).toBeNull();
 
     await deps.shutdown();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Staging — infrastructure fail-closed (network-free: throw before connect())
+// ---------------------------------------------------------------------------
+
+describe("Staging startup guard — missing DATABASE_URL", () => {
+  it("throws before connecting when DATABASE_URL is absent", async () => {
+    const config = makeConfig({ NODE_ENV: "staging", DATABASE_URL: undefined });
+
+    await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
+      /DATABASE_URL.*required.*staging/i,
+    );
+  });
+
+  it("error message mentions refusing to start with in-memory repositories", async () => {
+    const config = makeConfig({ NODE_ENV: "staging", DATABASE_URL: undefined });
+
+    await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
+      /in-memory/i,
+    );
+  });
+});
+
+describe("Staging startup guard — missing REDIS_URL", () => {
+  it("throws before connecting when REDIS_URL is absent", async () => {
+    const config = makeConfig({ NODE_ENV: "staging", REDIS_URL: undefined });
+
+    await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
+      /REDIS_URL.*required.*staging/i,
+    );
+  });
+
+  it("error message mentions session storage", async () => {
+    const config = makeConfig({ NODE_ENV: "staging", REDIS_URL: undefined });
+
+    await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
+      /session/i,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CORS hardening — wildcard and localhost rejection for staging and production
+//
+// Uses assertDeployedCorsOrigin() directly (it receives an EnvConfig object)
+// so no process.env manipulation is needed.
+// ---------------------------------------------------------------------------
+
+describe("CORS hardening — staging rejects wildcard origin", () => {
+  it("throws when CORS_ORIGIN is *", () => {
+    const config = makeConfig({ NODE_ENV: "staging", CORS_ORIGIN: "*" });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN is empty string", () => {
+    const config = makeConfig({ NODE_ENV: "staging", CORS_ORIGIN: "" });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard.*or.*empty|empty.*or.*wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN list contains a wildcard entry", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN: "https://staging.vervedental.com.au,*",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN contains only localhost", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN: "http://localhost:5173",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/staging/i);
+  });
+
+  it("passes for a valid HTTPS staging origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN: "https://staging.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+});
+
+describe("CORS hardening — production rejects wildcard origin", () => {
+  it("throws when CORS_ORIGIN is *", () => {
+    const config = makeConfig({ NODE_ENV: "production", CORS_ORIGIN: "*" });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN is empty string", () => {
+    const config = makeConfig({ NODE_ENV: "production", CORS_ORIGIN: "" });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard.*or.*empty|empty.*or.*wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN list contains a wildcard entry", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "https://app.vervedental.com.au,*",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/wildcard/i);
+  });
+
+  it("throws when CORS_ORIGIN contains only localhost", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "http://localhost:5173",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/production/i);
+  });
+
+  it("passes for a valid HTTPS production origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "https://app.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+});
+
+describe("CORS hardening — development allows local and wildcard configuration", () => {
+  it("permits CORS_ORIGIN=* in development", () => {
+    const config = makeConfig({ NODE_ENV: "development", CORS_ORIGIN: "*" });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+
+  it("permits localhost origin in development", () => {
+    const config = makeConfig({
+      NODE_ENV: "development",
+      CORS_ORIGIN: "http://localhost:5173",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
   });
 });
