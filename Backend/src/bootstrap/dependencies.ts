@@ -163,7 +163,10 @@ export async function createAppDependencies(
   if (connectedPool) {
     logger.info("PostgreSQL connection pool ready");
 
-    await runBootstrapMigrations(connectedPool, logger);
+    await runBootstrapMigrations(connectedPool, logger, {
+      nodeEnv: config.NODE_ENV,
+      migrateOnStartup: config.MIGRATE_ON_STARTUP,
+    });
 
     // Bootstrap seed order — sequence is load-bearing:
     //   1. clinics        — no RLS; must exist before users (future FK guard)

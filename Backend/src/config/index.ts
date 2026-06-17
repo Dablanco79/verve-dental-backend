@@ -35,6 +35,21 @@ const envSchema = z.object({
   MFA_ENCRYPTION_KEY: z
     .string()
     .min(64, "MFA_ENCRYPTION_KEY must be at least 64 hex characters (32 bytes)"),
+  /**
+   * Migration startup gate.
+   *
+   * In staging and production, runBootstrapMigrations() blocks startup when
+   * pending migrations exist unless this is explicitly set to "true".
+   *
+   * Development and test ignore this flag — migrations always run automatically.
+   *
+   * Set via environment variable:   MIGRATE_ON_STARTUP=true
+   * Or run the explicit migration command:   npm run migrate
+   */
+  MIGRATE_ON_STARTUP: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

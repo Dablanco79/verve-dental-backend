@@ -16,7 +16,7 @@ type BootstrapMigration = {
   sql: string;
 };
 
-const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
+export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
   {
     /**
      * Creates the users table with home_clinic_id / home_clinic_name columns.
@@ -1254,10 +1254,28 @@ const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
  */
 const MIGRATION_ADVISORY_LOCK_KEY = 5_432_001n;
 
+export type MigrationRunOptions = {
+  /**
+   * Current NODE_ENV.  Staging and production trigger the migration gate.
+   * Defaults to "development" (auto-apply, no gate).
+   */
+  nodeEnv?: string;
+  /**
+   * When true, pending migrations are applied even in staging/production.
+   * Set via MIGRATE_ON_STARTUP=true or by running `npm run migrate`.
+   * Ignored in development/test (migrations always apply there).
+   */
+  migrateOnStartup?: boolean;
+};
+
 export async function runBootstrapMigrations(
   pool: DatabasePool,
   logger: Logger,
+  options: MigrationRunOptions = {},
 ): Promise<void> {
+  const { nodeEnv = "development", migrateOnStartup = false } = options;
+  const isRestrictedEnv = nodeEnv === "staging" || nodeEnv === "production";
+
   // Check-out a dedicated connection so the transaction and the advisory lock
   // are both scoped to the same physical session.  pg_advisory_xact_lock is
   // automatically released when the transaction commits or rolls back, so two
@@ -1279,16 +1297,29 @@ export async function runBootstrapMigrations(
       )
     `);
 
-    for (const migration of BOOTSTRAP_MIGRATIONS) {
-      const { rows } = await client.query<{ id: string }>(
-        "SELECT id FROM schema_migrations WHERE id = $1",
-        [migration.id],
+    // Fetch all already-applied migration IDs in a single round-trip.
+    const { rows: appliedRows } = await client.query<{ id: string }>(
+      "SELECT id FROM schema_migrations",
+    );
+    const applied = new Set(appliedRows.map((r) => r.id));
+    const pending = BOOTSTRAP_MIGRATIONS.filter((m) => !applied.has(m.id));
+
+    // ── Migration gate ────────────────────────────────────────────────────────
+    // In staging and production, block startup when pending migrations exist
+    // unless the operator has explicitly opted in via MIGRATE_ON_STARTUP=true
+    // or by running `npm run migrate`.  This prevents unreviewed DDL from
+    // being silently applied during a normal deployment.
+    if (pending.length > 0 && isRestrictedEnv && !migrateOnStartup) {
+      const pendingIds = pending.map((m) => m.id).join(", ");
+      throw new Error(
+        `[Migration Gate] ${String(pending.length)} pending migration(s) detected in ${nodeEnv}. ` +
+          `Startup blocked to prevent unreviewed DDL changes. ` +
+          `Pending: ${pendingIds}. ` +
+          `Run 'npm run migrate' to apply intentionally, or set MIGRATE_ON_STARTUP=true.`,
       );
+    }
 
-      if (rows.length > 0) {
-        continue;
-      }
-
+    for (const migration of pending) {
       await client.query(migration.sql);
       await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [
         migration.id,

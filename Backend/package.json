@@ -14,6 +14,7 @@
     "typecheck": "node ../node_modules/typescript/lib/tsc.js --noEmit",
     "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
+    "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/runMigrate.ts",
     "test:coverage": "npm run test -- --coverage"
   },
   "dependencies": {

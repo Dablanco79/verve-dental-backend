@@ -93,6 +93,7 @@ function makeTestConfig(): EnvConfig {
     REDIS_URL: undefined,
     REDIS_TLS: "auto",
     MFA_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
+    MIGRATE_ON_STARTUP: false,
   };
 }
 

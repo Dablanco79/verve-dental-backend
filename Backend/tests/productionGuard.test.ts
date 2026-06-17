@@ -39,6 +39,7 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     REDIS_URL: "redis://cache.example.com:6379",
     REDIS_TLS: "auto",
     MFA_ENCRYPTION_KEY: "0".repeat(64),
+    MIGRATE_ON_STARTUP: false,
     ...overrides,
   };
 }
