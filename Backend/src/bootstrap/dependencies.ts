@@ -170,9 +170,33 @@ export async function createAppDependencies(
     //   4. installRlsPoolHook — installed AFTER seeds; seed fns manage their own
     //                           withTenantContext() calls internally and do not rely
     //                           on the per-request hook.
-    await seedClinics(connectedPool, logger);
-    await seedDemoUsers(connectedPool, logger);
-    await seedInventory(connectedPool, logger);
+    //
+    // SECURITY: Demo seeding is restricted to development and test.  In staging
+    // and production these calls are skipped entirely.  seedDemoUsers() also
+    // enforces this internally as a second line of defence.
+    const isDemoSeedEnv =
+      config.NODE_ENV === "development" || config.NODE_ENV === "test";
+
+    if (isDemoSeedEnv) {
+      await seedClinics(connectedPool, logger);
+      await seedDemoUsers(connectedPool, logger, config.NODE_ENV);
+      await seedInventory(connectedPool, logger);
+    } else {
+      // Warn operators when the users table is empty so they know they must
+      // create an initial admin account through proper onboarding — not seeding.
+      const { rows } = await connectedPool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM users",
+      );
+      const userCount = parseInt(rows[0]?.count ?? "0", 10);
+      if (userCount === 0) {
+        logger.warn(
+          { env: config.NODE_ENV },
+          "⚠️  Users table is empty and demo seeding is disabled (NODE_ENV=%s). " +
+            "Create an initial admin account before accepting traffic.",
+          config.NODE_ENV,
+        );
+      }
+    }
 
     // Install the AsyncLocalStorage hook AFTER migrations and seeds so that
     // RLS policies are in place and seed data exists before the hook starts

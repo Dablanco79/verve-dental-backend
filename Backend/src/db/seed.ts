@@ -7,6 +7,10 @@
  * MFA is disabled for all seeded accounts because real TOTP is wired in
  * Module 04+. The DEV_MFA_CODE bypass is blocked in production, so leaving
  * mfa_enabled = true would prevent login until TOTP is implemented.
+ *
+ * SECURITY: Demo seeding is disabled outside development and test environments.
+ * Passing env="staging" or env="production" is a no-op — the function returns
+ * immediately without touching the database.
  */
 
 import bcrypt from "bcryptjs";
@@ -137,7 +141,16 @@ const DEMO_USERS: DemoUser[] = [
 export async function seedDemoUsers(
   pool: DatabasePool,
   logger: Logger,
+  env: string,
 ): Promise<void> {
+  if (env !== "development" && env !== "test") {
+    logger.warn(
+      { env },
+      "Demo user seeding is disabled in this environment — skipping (only runs in development/test)",
+    );
+    return;
+  }
+
   // The users table has FORCE ROW LEVEL SECURITY (migration 015).
   // Seed runs before any request context exists, so we must use owner_admin
   // mode to bypass the tenant policy.  This is safe: seed only runs on a
