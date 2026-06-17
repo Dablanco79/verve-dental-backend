@@ -17,7 +17,7 @@
 import request from "supertest";
 import { generateSync } from "otplib";
 
-import { loginAndGetAccessToken, loginAndGetTokens } from "./helpers/auth.js";
+import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiData<T> = { data: T };
@@ -192,8 +192,9 @@ describe("MFA enrollment + login flow", () => {
     });
 
     expect(loginRes.status).toBe(200);
-    expect(loginRes.body.data.requiresMfa).toBe(true);
-    expect(loginRes.body.data.mfaToken).toEqual(expect.any(String));
+    const loginData1 = (loginRes.body as ApiData<{ requiresMfa: boolean; mfaToken: string }>).data;
+    expect(loginData1.requiresMfa).toBe(true);
+    expect(loginData1.mfaToken).toEqual(expect.any(String));
   });
 
   it("verifies with the enrolled secret and issues tokens", async () => {
@@ -211,7 +212,7 @@ describe("MFA enrollment + login flow", () => {
       email: "manager@clinic-a.au",
       password: "password123",
     });
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    const { mfaToken } = (loginRes.body as ApiData<{ mfaToken: string }>).data;
 
     // Login step 2 — verify with enrolled secret
     const verifyCode = generateSync({ secret });
@@ -221,8 +222,9 @@ describe("MFA enrollment + login flow", () => {
     });
 
     expect(verifyRes.status).toBe(200);
-    expect(verifyRes.body.data.accessToken).toEqual(expect.any(String));
-    expect(verifyRes.body.data.refreshToken).toEqual(expect.any(String));
+    const verifyData = (verifyRes.body as ApiData<{ accessToken: string; refreshToken: string }>).data;
+    expect(verifyData.accessToken).toEqual(expect.any(String));
+    expect(verifyData.refreshToken).toEqual(expect.any(String));
   });
 
   it("loginAndGetTokens helper works transparently for enrolled MFA users", async () => {
@@ -244,7 +246,7 @@ describe("MFA enrollment + login flow", () => {
       password: "password123",
     });
 
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    const { mfaToken } = (loginRes.body as ApiData<{ mfaToken: string }>).data;
     const mfaCode = generateSync({ secret });
 
     const mfaRes = await request(app).post("/api/v1/auth/mfa/verify").send({
@@ -253,7 +255,7 @@ describe("MFA enrollment + login flow", () => {
     });
 
     expect(mfaRes.status).toBe(200);
-    expect(mfaRes.body.data.accessToken).toEqual(expect.any(String));
+    expect((mfaRes.body as ApiData<{ accessToken: string }>).data.accessToken).toEqual(expect.any(String));
   });
 
   it("non-privileged roles do not require MFA even after enrollment (current policy)", async () => {
@@ -274,7 +276,10 @@ describe("MFA enrollment + login flow", () => {
     });
 
     expect(loginRes.status).toBe(200);
-    expect(loginRes.body.data.requiresMfa).toBe(false);
-    expect(loginRes.body.data.accessToken).toEqual(expect.any(String));
+    const loginDataFinal = (
+      loginRes.body as ApiData<{ requiresMfa: boolean; accessToken: string }>
+    ).data;
+    expect(loginDataFinal.requiresMfa).toBe(false);
+    expect(loginDataFinal.accessToken).toEqual(expect.any(String));
   });
 });

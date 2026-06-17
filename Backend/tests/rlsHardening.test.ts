@@ -54,12 +54,12 @@ describe("installRlsPoolHook — fail-closed behavior", () => {
     const queries: string[] = [];
 
     const client = {
-      query: jest.fn(async (sql: string) => {
+      query: jest.fn((sql: string) => {
         queries.push(typeof sql === "string" ? sql : "?");
         if (opts.queryFails && sql.includes("set_config")) {
-          throw new Error("pg: connection reset");
+          return Promise.reject(new Error("pg: connection reset"));
         }
-        return { rows: [], rowCount: 0 };
+        return Promise.resolve({ rows: [], rowCount: 0 });
       }),
       release: jest.fn((err?: Error) => {
         released.push(err);
@@ -72,7 +72,7 @@ describe("installRlsPoolHook — fail-closed behavior", () => {
 
   function makePool(client: ReturnType<typeof makeMockClient>) {
     return {
-      connect: jest.fn(async () => client),
+      connect: jest.fn(() => Promise.resolve(client)),
     } as unknown as import("../src/db/pool.js").DatabasePool;
   }
 
@@ -94,7 +94,7 @@ describe("installRlsPoolHook — fail-closed behavior", () => {
     });
   });
 
-  it("destroys client and throws when context injection fails", async () => {
+  it("destroys client and throws when context injection fails", () => {
     const client = makeMockClient({ queryFails: true });
     const pool = makePool(client);
     installRlsPoolHook(pool);
@@ -110,10 +110,12 @@ describe("installRlsPoolHook — fail-closed behavior", () => {
   it("pool.connect is replaced after installRlsPoolHook", () => {
     const client = makeMockClient({});
     const pool = makePool(client);
-    const originalConnect = pool.connect;
+    // Cast to plain object so we compare function references without unbound-method warnings
+    const poolObj = pool as unknown as { connect: unknown };
+    const originalConnect = poolObj.connect;
     installRlsPoolHook(pool);
     // The hook replaces pool.connect
-    expect(pool.connect).not.toBe(originalConnect);
+    expect(poolObj.connect).not.toBe(originalConnect);
   });
 });
 
@@ -137,7 +139,7 @@ describe("rlsTenantContextMiddleware — context binding", () => {
 
   it("non-owner uses homeClinicId regardless of URL param", (done) => {
     const req = makeReq("group_practice_manager", "home-clinic-id", "url-clinic-id");
-    const mw = rlsTenantContextMiddleware(null);
+    const mw = rlsTenantContextMiddleware();
     const next: NextFunction = () => {
       // At this point the async context is active; we cannot easily inspect
       // tenantStorage from the test without exporting a getter.
@@ -149,14 +151,14 @@ describe("rlsTenantContextMiddleware — context binding", () => {
 
   it("owner_admin uses URL param as clinicId", (done) => {
     const req = makeReq("owner_admin", "home-clinic-id", "url-clinic-id");
-    const mw = rlsTenantContextMiddleware(null);
+    const mw = rlsTenantContextMiddleware();
     const next: NextFunction = () => { done(); };
     mw(req, res, next);
   });
 
   it("falls through without setting context when req.user is absent", (done) => {
     const req = { params: {} } as unknown as Request;
-    const mw = rlsTenantContextMiddleware(null);
+    const mw = rlsTenantContextMiddleware();
     const next: NextFunction = () => { done(); };
     mw(req, res, next);
   });
@@ -166,7 +168,7 @@ describe("rlsTenantContextMiddleware — context binding", () => {
       user: { id: "u1", role: "clinical_staff", homeClinicId: undefined },
       params: {},
     } as unknown as Request;
-    const mw = rlsTenantContextMiddleware(null);
+    const mw = rlsTenantContextMiddleware();
     const next: NextFunction = () => { done(); };
     mw(req, res, next);
   });
@@ -184,7 +186,7 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  if (SKIP || !pool) return;
+  if (SKIP) return;
   await pool.end();
 });
 
@@ -282,7 +284,7 @@ describe("RLS hardening — inventory_adjustments is append-only", () => {
            (SELECT master_catalog_item_id FROM clinic_inventory_items WHERE id = $3),
            'manual_add', 1, 1, $4, 'admin@clinic-a.au')
          ON CONFLICT (id) DO NOTHING`,
-        [ADJ_ID, SEED_CLINIC_A_ID, items[0]!.id, SEED_USER_IDS.clinicAAdmin],
+        [ADJ_ID, SEED_CLINIC_A_ID, (items[0] as { id: string }).id, SEED_USER_IDS.clinicAAdmin],
       ),
     );
   });
@@ -365,7 +367,7 @@ describe("RLS hardening — audit_events is append-only", () => {
     const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM audit_events WHERE id = $1", [AUDIT_ID]),
     );
-    expect(rows[0]?.id).toBe(AUDIT_ID);
+    expect((rows[0] as { id: string } | undefined)?.id).toBe(AUDIT_ID);
   });
 
   it("DELETE is blocked at RLS layer (no DELETE policy on audit_events)", async () => {
@@ -506,7 +508,7 @@ describe("RLS hardening — payment_records is append-only", () => {
     const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM payment_records WHERE id = $1", [PAY_ID]),
     );
-    expect(rows[0]?.id).toBe(PAY_ID);
+    expect((rows[0] as { id: string } | undefined)?.id).toBe(PAY_ID);
   });
 
   it("DELETE is blocked at RLS layer (no DELETE policy on payment_records)", async () => {
@@ -592,7 +594,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
     const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM roster_entry_audit WHERE id = $1", [AUDIT_ROW_ID]),
     );
-    expect(rows[0]?.id).toBe(AUDIT_ROW_ID);
+    expect((rows[0] as { id: string } | undefined)?.id).toBe(AUDIT_ROW_ID);
   });
 
   it("DELETE is blocked at RLS layer (no DELETE policy on roster_entry_audit)", async () => {

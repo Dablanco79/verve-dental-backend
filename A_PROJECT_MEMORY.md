@@ -3,9 +3,9 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** Sprint 4A — HttpOnly Refresh Cookie Bridge  
+**Current Phase:** CI Cleanup — Post Sprint 4B  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
-**Status:** 25 suites / **505/505 tests green** — 0 TypeScript errors — Sprint 4A cookie bridge complete
+**Status:** 25 backend suites / **505/505 tests green** + 4 frontend suites / **16/16 tests green** — 0 TypeScript errors — 0 lint warnings — CI cleanup complete
 
 ---
 
@@ -62,6 +62,8 @@
 - [x] `express-rate-limit` on `/auth/login`, `/auth/mfa/verify`, `/auth/refresh`
 - [x] Full schema migrations CLI — bootstrap runner covers migrations 003–015 (Module 13 complete)
 - [x] **Sprint 4A** — HttpOnly refresh-token cookie bridge (`cookie-parser`, `setRefreshCookie`/`clearRefreshCookie` in authController, cookie-first with body fallback on `/auth/refresh` and `/auth/logout`)
+- [x] **Sprint 4B** — Frontend cookie migration: `tokenStorage.ts` stores access token only; `AuthContext` calls `refresh()` with no body on session restore; `logout()` sends no `refreshToken`; all `fetch` calls use `credentials: "include"`
+- [x] **CI Cleanup** — Fixed all GitHub Actions lint failures: `AuthContext.tsx` split into `AuthContext.tsx` (context def) + `AuthProvider.tsx` (component, fast-refresh clean); `rlsTenantContextMiddleware` `_pool` param removed; `rlsIsolation/rlsHardening.test.ts` dead `!pool` condition removed; typed `bodyData` helpers + `!` assertions replaced with `as` casts in 6 backend test files; `require-await`/`unbound-method`/unused-var issues fixed in `pendingMfaEncryption`/`rlsHardening` tests
 - [x] Database RLS policies — Module 13 complete (14 tables, 17 policies, `withTenantContext`, AsyncLocalStorage pool hook)
 
 ### Dev seed accounts (password: `password123`)
@@ -81,7 +83,7 @@
 - **CORS:** Controlled by `CORS_ORIGIN` env var. Never use `cors()` with no options.
 - **Production safety:** Error handler redacts `.message` from unhandled errors in `NODE_ENV=production`.
 - **Frontend API base:** `VITE_API_BASE_URL=""` (empty) means same-origin via Vite proxy. Set to full URL in production.
-- **Auth:** Access token in `Authorization: Bearer`. Refresh token stored client-side until Module 02 hardening (httpOnly cookies planned for production).
+- **Auth:** Access token in `Authorization: Bearer` stored in `localStorage` via `tokenStorage.ts`. Refresh token is **never stored client-side** — Sprint 4B migrated to HttpOnly cookie (set by backend on login/MFA/refresh). `credentials: "include"` on all `fetch` calls.
 
 ### Module 03 — Inventory & Scanning (in progress)
 

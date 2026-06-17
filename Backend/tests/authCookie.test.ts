@@ -18,6 +18,15 @@ import { SEED_ADMIN_TOTP_SECRET } from "../src/repositories/userRepository.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 // ---------------------------------------------------------------------------
+// Typed response helpers
+// ---------------------------------------------------------------------------
+
+/** Safely extract the error code from an error-envelope response body. */
+function bodyErrorCode(res: request.Response): string {
+  return (res.body as { error: { code: string } }).error.code;
+}
+
+// ---------------------------------------------------------------------------
 // Cookie parsing helpers
 // ---------------------------------------------------------------------------
 
@@ -65,7 +74,7 @@ describe("Login — HttpOnly cookie", () => {
     expect(cookie).toBeDefined();
 
     // Cookie must carry the HttpOnly flag (case-insensitive as per spec).
-    expect(cookie!.toLowerCase()).toContain("httponly");
+    expect((cookie as string).toLowerCase()).toContain("httponly");
   });
 
   it("includes the refreshToken in the JSON body as well (bridge mode)", async () => {
@@ -73,8 +82,9 @@ describe("Login — HttpOnly cookie", () => {
     const res = await doLogin(app);
 
     expect(res.status).toBe(200);
-    expect(typeof res.body.data.refreshToken).toBe("string");
-    expect(res.body.data.refreshToken.length).toBeGreaterThan(0);
+    const { refreshToken } = (res.body as { data: { refreshToken: string } }).data;
+    expect(typeof refreshToken).toBe("string");
+    expect(refreshToken.length).toBeGreaterThan(0);
   });
 
   it("does not set a refresh cookie when MFA is required (tokens not yet issued)", async () => {
@@ -83,7 +93,7 @@ describe("Login — HttpOnly cookie", () => {
     const res = await doLogin(app, "admin@clinic-a.au");
 
     expect(res.status).toBe(200);
-    expect(res.body.data.requiresMfa).toBe(true);
+    expect((res.body as { data: { requiresMfa: boolean } }).data.requiresMfa).toBe(true);
 
     // No refresh cookie should be set at this stage — tokens are issued after MFA
     const cookie = findRefreshCookie(res);
@@ -102,8 +112,8 @@ describe("MFA verify — HttpOnly cookie", () => {
     // Step 1: trigger MFA challenge
     const loginRes = await doLogin(app, "admin@clinic-a.au");
     expect(loginRes.status).toBe(200);
-    expect(loginRes.body.data.requiresMfa).toBe(true);
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    expect((loginRes.body as { data: { requiresMfa: boolean } }).data.requiresMfa).toBe(true);
+    const { mfaToken } = (loginRes.body as { data: { mfaToken: string } }).data;
 
     // Step 2: verify with a real TOTP code from the known seed secret
     const totpCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
@@ -115,14 +125,14 @@ describe("MFA verify — HttpOnly cookie", () => {
 
     const cookie = findRefreshCookie(mfaRes);
     expect(cookie).toBeDefined();
-    expect(cookie!.toLowerCase()).toContain("httponly");
+    expect((cookie as string).toLowerCase()).toContain("httponly");
   });
 
   it("also returns refreshToken in the JSON body after MFA verify (bridge mode)", async () => {
     const app = await createTestApp();
 
     const loginRes = await doLogin(app, "admin@clinic-a.au");
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    const { mfaToken } = (loginRes.body as { data: { mfaToken: string } }).data;
     const totpCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
 
     const mfaRes = await request(app)
@@ -130,7 +140,7 @@ describe("MFA verify — HttpOnly cookie", () => {
       .send({ mfaToken, code: totpCode });
 
     expect(mfaRes.status).toBe(200);
-    expect(typeof mfaRes.body.data.refreshToken).toBe("string");
+    expect(typeof (mfaRes.body as { data: { refreshToken: string } }).data.refreshToken).toBe("string");
   });
 });
 
@@ -144,8 +154,9 @@ describe("Refresh — cookie only (no body token)", () => {
     const loginRes = await doLogin(app);
     expect(loginRes.status).toBe(200);
 
-    const cookieHeader = findRefreshCookie(loginRes)!;
-    const cookieValue = cookieNameValue(cookieHeader); // "refreshToken=<jwt>"
+    const rawCookie = findRefreshCookie(loginRes);
+    expect(rawCookie).toBeDefined();
+    const cookieValue = cookieNameValue(rawCookie as string); // "refreshToken=<jwt>"
 
     const refreshRes = await request(app)
       .post("/api/v1/auth/refresh")
@@ -154,15 +165,20 @@ describe("Refresh — cookie only (no body token)", () => {
       .send({});
 
     expect(refreshRes.status).toBe(200);
-    expect(typeof refreshRes.body.data.accessToken).toBe("string");
-    expect(typeof refreshRes.body.data.refreshToken).toBe("string");
+    const { accessToken, refreshToken } = (
+      refreshRes.body as { data: { accessToken: string; refreshToken: string } }
+    ).data;
+    expect(typeof accessToken).toBe("string");
+    expect(typeof refreshToken).toBe("string");
   });
 
   it("rotates the cookie on each cookie-based refresh", async () => {
     const app = await createTestApp();
     const loginRes = await doLogin(app);
 
-    const firstCookie = cookieNameValue(findRefreshCookie(loginRes)!);
+    const rawLoginCookie = findRefreshCookie(loginRes);
+    expect(rawLoginCookie).toBeDefined();
+    const firstCookie = cookieNameValue(rawLoginCookie as string);
 
     const refreshRes = await request(app)
       .post("/api/v1/auth/refresh")
@@ -174,7 +190,7 @@ describe("Refresh — cookie only (no body token)", () => {
     const rotatedCookie = findRefreshCookie(refreshRes);
     expect(rotatedCookie).toBeDefined();
     // Rotated cookie value must differ from the original
-    expect(cookieNameValue(rotatedCookie!)).not.toBe(firstCookie);
+    expect(cookieNameValue(rotatedCookie as string)).not.toBe(firstCookie);
   });
 
   it("returns 400 when neither cookie nor body token is provided", async () => {
@@ -185,7 +201,7 @@ describe("Refresh — cookie only (no body token)", () => {
       .send({});
 
     expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("MISSING_REFRESH_TOKEN");
+    expect(bodyErrorCode(res)).toBe("MISSING_REFRESH_TOKEN");
   });
 });
 
@@ -197,7 +213,7 @@ describe("Refresh — body token fallback (backwards compatibility)", () => {
   it("still works when the token is sent in the JSON body without a cookie", async () => {
     const app = await createTestApp();
     const loginRes = await doLogin(app);
-    const { refreshToken } = loginRes.body.data as { refreshToken: string };
+    const { refreshToken } = (loginRes.body as { data: { refreshToken: string } }).data;
 
     const refreshRes = await request(app)
       .post("/api/v1/auth/refresh")
@@ -205,7 +221,7 @@ describe("Refresh — body token fallback (backwards compatibility)", () => {
       .send({ refreshToken });
 
     expect(refreshRes.status).toBe(200);
-    expect(typeof refreshRes.body.data.accessToken).toBe("string");
+    expect(typeof (refreshRes.body as { data: { accessToken: string } }).data.accessToken).toBe("string");
   });
 
   it("cookie token takes precedence over a body token when both are present", async () => {
@@ -215,8 +231,10 @@ describe("Refresh — body token fallback (backwards compatibility)", () => {
     const session1 = await doLogin(app);
     const session2 = await doLogin(app);
 
-    const cookieToken = cookieNameValue(findRefreshCookie(session1)!);
-    const bodyToken = (session2.body.data as { refreshToken: string }).refreshToken;
+    const rawSession1Cookie = findRefreshCookie(session1);
+    expect(rawSession1Cookie).toBeDefined();
+    const cookieToken = cookieNameValue(rawSession1Cookie as string);
+    const { refreshToken: bodyToken } = (session2.body as { data: { refreshToken: string } }).data;
 
     // Send cookie from session1 + body token from session2
     const refreshRes = await request(app)
@@ -243,8 +261,11 @@ describe("Logout — clears the refresh cookie", () => {
   it("sends a Set-Cookie header that expires the refresh cookie", async () => {
     const app = await createTestApp();
     const loginRes = await doLogin(app);
-    const cookieValue = cookieNameValue(findRefreshCookie(loginRes)!);
-    const { refreshToken } = loginRes.body.data as { refreshToken: string };
+
+    const rawLoginCookie = findRefreshCookie(loginRes);
+    expect(rawLoginCookie).toBeDefined();
+    const cookieValue = cookieNameValue(rawLoginCookie as string);
+    const { refreshToken } = (loginRes.body as { data: { refreshToken: string } }).data;
 
     const logoutRes = await request(app)
       .post("/api/v1/auth/logout")
@@ -258,14 +279,17 @@ describe("Logout — clears the refresh cookie", () => {
     const clearedCookie = setCookies.find((c) => c.startsWith("refreshToken="));
     expect(clearedCookie).toBeDefined();
     // clearCookie sets Expires to epoch or Max-Age=0
-    const lower = clearedCookie!.toLowerCase();
+    const lower = (clearedCookie as string).toLowerCase();
     expect(lower.includes("expires=") || lower.includes("max-age=0")).toBe(true);
   });
 
   it("revokes the refresh token when it comes from the cookie", async () => {
     const app = await createTestApp();
     const loginRes = await doLogin(app);
-    const cookieValue = cookieNameValue(findRefreshCookie(loginRes)!);
+
+    const rawLoginCookie = findRefreshCookie(loginRes);
+    expect(rawLoginCookie).toBeDefined();
+    const cookieValue = cookieNameValue(rawLoginCookie as string);
 
     // Logout sending cookie only (no body token)
     const logoutRes = await request(app)
@@ -280,13 +304,13 @@ describe("Logout — clears the refresh cookie", () => {
       .set("Cookie", cookieValue)
       .send({});
     expect(refreshRes.status).toBe(401);
-    expect(refreshRes.body.error.code).toBe("INVALID_REFRESH_TOKEN");
+    expect(bodyErrorCode(refreshRes)).toBe("INVALID_REFRESH_TOKEN");
   });
 
   it("revokes the refresh token when it comes from the body (legacy path)", async () => {
     const app = await createTestApp();
     const loginRes = await doLogin(app);
-    const { refreshToken } = loginRes.body.data as { refreshToken: string };
+    const { refreshToken } = (loginRes.body as { data: { refreshToken: string } }).data;
 
     const logoutRes = await request(app)
       .post("/api/v1/auth/logout")
@@ -297,6 +321,6 @@ describe("Logout — clears the refresh cookie", () => {
       .post("/api/v1/auth/refresh")
       .send({ refreshToken });
     expect(refreshRes.status).toBe(401);
-    expect(refreshRes.body.error.code).toBe("INVALID_REFRESH_TOKEN");
+    expect(bodyErrorCode(refreshRes)).toBe("INVALID_REFRESH_TOKEN");
   });
 });

@@ -66,7 +66,7 @@ describe("encryptTotpSecret / decryptTotpSecret — AES-256-GCM", () => {
     const ciphertext = encryptTotpSecret(PLAINTEXT, KEY);
     // Flip the last hex character of the encrypted payload
     const parts = ciphertext.split(":");
-    const last = parts[2]!;
+    const last = parts[2] as string;
     const flipped = last.slice(0, -1) + (last.endsWith("a") ? "b" : "a");
     const tampered = [...parts.slice(0, 2), flipped].join(":");
     expect(() => decryptTotpSecret(tampered, KEY)).toThrow();
@@ -98,10 +98,11 @@ describe("MFA enrollment — stored secret is encrypted", () => {
     const user = await userRepo.findById(SEED_USER_IDS.clinicAStaff);
 
     expect(user).not.toBeNull();
+    const u = user as NonNullable<typeof user>;
     // The stored value must NOT equal the plaintext
-    expect(user!.totpSecret).not.toBe(ENROLLED_PLAINTEXT);
+    expect(u.totpSecret).not.toBe(ENROLLED_PLAINTEXT);
     // Must match the encrypted format: <hex>:<hex>:<hex>
-    expect(user!.totpSecret).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
+    expect(u.totpSecret).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
   });
 
   it("seed admin's stored totpSecret is already encrypted at repository init", async () => {
@@ -111,8 +112,9 @@ describe("MFA enrollment — stored secret is encrypted", () => {
     const admin = await userRepo.findById(SEED_USER_IDS.clinicAAdmin);
 
     expect(admin).not.toBeNull();
+    const a = admin as NonNullable<typeof admin>;
     // Stored value must follow the encrypted format, not a raw Base32 string
-    expect(admin!.totpSecret).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
+    expect(a.totpSecret).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/);
   });
 });
 
@@ -150,8 +152,9 @@ describe("MFA authentication with encrypted secrets — HTTP integration", () =>
     });
 
     expect(loginRes.status).toBe(200);
-    expect(loginRes.body.data.requiresMfa).toBe(true);
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    const loginData = (loginRes.body as ApiData<{ requiresMfa: boolean; mfaToken: string }>).data;
+    expect(loginData.requiresMfa).toBe(true);
+    const { mfaToken } = loginData;
 
     // 5. Complete MFA — the service decrypts the stored secret before verifying
     const verifyCode = generateSync({ secret });
@@ -161,8 +164,9 @@ describe("MFA authentication with encrypted secrets — HTTP integration", () =>
     });
 
     expect(verifyRes.status).toBe(200);
-    expect(verifyRes.body.data.accessToken).toEqual(expect.any(String));
-    expect(verifyRes.body.data.refreshToken).toEqual(expect.any(String));
+    const verifyData = (verifyRes.body as ApiData<{ accessToken: string; refreshToken: string }>).data;
+    expect(verifyData.accessToken).toEqual(expect.any(String));
+    expect(verifyData.refreshToken).toEqual(expect.any(String));
   });
 
   it("wrong code still returns 401 INVALID_MFA_CODE with encrypted secrets", async () => {
@@ -187,7 +191,7 @@ describe("MFA authentication with encrypted secrets — HTTP integration", () =>
       password: "password123",
     });
 
-    const { mfaToken } = loginRes.body.data as { mfaToken: string };
+    const { mfaToken } = (loginRes.body as ApiData<{ mfaToken: string }>).data;
 
     const realCode = generateSync({ secret });
     const wrongCode = realCode === "000000" ? "000001" : "000000";

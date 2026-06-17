@@ -32,7 +32,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage
   // context so installRlsPoolHook can inject app.current_clinic_id on every checkout.
-  const rlsContext = rlsTenantContextMiddleware(deps.databasePool);
+  const rlsContext = rlsTenantContextMiddleware();
 
   const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,

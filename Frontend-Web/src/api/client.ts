@@ -124,21 +124,17 @@ export function createApiClient(config: AppConfig) {
     });
   }
 
-  async function refresh(refreshToken: string): Promise<AuthSession> {
+  async function refresh(): Promise<AuthSession> {
     return request<AuthSession>(config, "/api/v1/auth/refresh", {
       method: "POST",
-      body: JSON.stringify({ refreshToken }),
     });
   }
 
-  async function logout(refreshToken: string | null): Promise<void> {
+  async function logout(): Promise<void> {
     await request<undefined>(
       config,
       "/api/v1/auth/logout",
-      {
-        method: "POST",
-        body: JSON.stringify({ refreshToken: refreshToken ?? undefined }),
-      },
+      { method: "POST" },
       tokenStorage.getAccessToken(),
     );
   }

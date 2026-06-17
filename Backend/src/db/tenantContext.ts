@@ -255,9 +255,7 @@ export function installRlsPoolHook(pool: DatabasePool): void {
  * The AsyncLocalStorage context propagates automatically through all
  * async/await chains spawned within the request handler.
  */
-export function rlsTenantContextMiddleware(
-  _pool: DatabasePool | null,
-): (req: Request, res: Response, next: NextFunction) => void {
+export function rlsTenantContextMiddleware(): (req: Request, res: Response, next: NextFunction) => void {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       next();

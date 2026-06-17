@@ -202,7 +202,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (SKIP || !pool) return;
+  if (SKIP) return;
 
   // Clean up all inserted test fixtures using owner_admin bypass
   await asOwnerAdmin(async (client) => {

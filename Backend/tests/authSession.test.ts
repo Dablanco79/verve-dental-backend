@@ -51,7 +51,7 @@ describe("Refresh token rotation", () => {
     const res = await doRefresh(app, original);
 
     expect(res.status).toBe(200);
-    const data = res.body.data as RefreshData;
+    const data = (res.body as { data: RefreshData }).data;
     expect(data.accessToken).toEqual(expect.any(String));
     expect(data.refreshToken).toEqual(expect.any(String));
     // The rotated refresh token must be a different value
@@ -76,11 +76,11 @@ describe("Refresh token rotation", () => {
     const { refreshToken: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
     const first = await doRefresh(app, original);
-    const { refreshToken: rotated } = first.body.data as RefreshData;
+    const { refreshToken: rotated } = (first.body as { data: RefreshData }).data;
 
     const second = await doRefresh(app, rotated);
     expect(second.status).toBe(200);
-    expect((second.body.data as RefreshData).refreshToken).not.toBe(rotated);
+    expect((second.body as { data: RefreshData }).data.refreshToken).not.toBe(rotated);
   });
 });
 

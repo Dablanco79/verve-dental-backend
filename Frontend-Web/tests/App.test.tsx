@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
-import { AuthProvider } from "../src/auth/AuthContext.js";
+import { AuthProvider } from "../src/auth/AuthProvider.js";
 import { LoginPage } from "../src/pages/LoginPage.js";
 
 vi.mock("../src/api/client.js", () => ({
@@ -10,7 +10,7 @@ vi.mock("../src/api/client.js", () => ({
     getHealth: vi.fn(),
     login: vi.fn(),
     verifyMfa: vi.fn(),
-    refresh: vi.fn(),
+    refresh: vi.fn().mockRejectedValue(new Error("No refresh cookie")),
     logout: vi.fn(),
     getMe: vi.fn(),
   }),
@@ -18,9 +18,8 @@ vi.mock("../src/api/client.js", () => ({
 
 vi.mock("../src/auth/tokenStorage.js", () => ({
   getAccessToken: vi.fn(() => null),
-  getRefreshToken: vi.fn(() => null),
-  setTokens: vi.fn(),
-  clearTokens: vi.fn(),
+  setAccessToken: vi.fn(),
+  clearAccessToken: vi.fn(),
 }));
 
 describe("LoginPage", () => {

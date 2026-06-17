@@ -56,14 +56,15 @@ function makeMockUser(overrides: Partial<UserRecord> = {}): UserRecord {
 function makeMockUserRepo(initial: UserRecord = makeMockUser()): UserRepository {
   let record = { ...initial };
   return {
-    findByEmail: async () => null,
-    findById: async (id) => (id === record.id ? record : null),
-    createUser: async () => record,
-    listByClinic: async () => [],
-    getClinicName: async () => null,
-    updatePassword: async () => {},
-    setUserMfaEnrollment: async (_id, totpSecret) => {
+    findByEmail: () => Promise.resolve(null),
+    findById: (id) => Promise.resolve(id === record.id ? record : null),
+    createUser: () => Promise.resolve(record),
+    listByClinic: () => Promise.resolve([]),
+    getClinicName: () => Promise.resolve(null),
+    updatePassword: () => Promise.resolve(),
+    setUserMfaEnrollment: (_id, totpSecret) => {
       record = { ...record, totpSecret, mfaEnabled: true };
+      return Promise.resolve();
     },
   };
 }
@@ -110,25 +111,25 @@ function makeMockRedis(): { client: RedisClient; store: Map<string, string> } {
     sadd: () => pipeline,
     srem: () => pipeline,
     expire: () => pipeline,
-    exec: async () => null as [Error | null, unknown][] | null,
+    exec: () => Promise.resolve(null as [Error | null, unknown][] | null),
   };
 
   const client = {
-    connect: async () => {},
-    quit: async () => "OK" as string,
-    on: (_: string, __: unknown) => client,
-    set: async (key: string, value: string) => {
+    connect: () => Promise.resolve(),
+    quit: () => Promise.resolve("OK" as string),
+    on: () => client,
+    set: (key: string, value: string) => {
       store.set(key, value);
-      return "OK" as const;
+      return Promise.resolve("OK" as const);
     },
-    get: async (key: string) => store.get(key) ?? null,
-    del: async (key: string) => {
+    get: (key: string) => Promise.resolve(store.get(key) ?? null),
+    del: (key: string) => {
       store.delete(key);
-      return 1;
+      return Promise.resolve(1);
     },
-    sadd: async () => 0,
-    srem: async () => 0,
-    smembers: async () => [] as string[],
+    sadd: () => Promise.resolve(0),
+    srem: () => Promise.resolve(0),
+    smembers: () => Promise.resolve([] as string[]),
     pipeline: () => pipeline,
   } as unknown as RedisClient;
 
