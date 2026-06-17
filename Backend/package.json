@@ -13,7 +13,7 @@
     "start": "node dist/index.js",
     "typecheck": "node ../node_modules/typescript/lib/tsc.js --noEmit",
     "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
-    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
+    "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
     "test:coverage": "npm run test -- --coverage"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "otplib": "^13.4.1",
     "pg": "^8.21.0",
     "pino": "^9.7.0",
     "pino-http": "^10.4.0",

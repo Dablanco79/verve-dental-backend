@@ -18,6 +18,20 @@ export type UserRecord = {
    */
   homeClinicId: string;
   homeClinicName: string;
+  /**
+   * How this staff member is compensated.
+   * 'hourly'     → clock-in/out timesheet; ordinary + overtime hour buckets.
+   * 'commission' → percentage-of-collections; attendance log only, no clock-in.
+   * Used by the roster-completion hook to select the correct entry type.
+   * Defaults to 'hourly' for backward compatibility with pre-009 rows.
+   */
+  payrollTrack: import("./payroll.js").StaffPayrollTrack;
+  /**
+   * AES-256-GCM encrypted Base32 TOTP secret (format: hex_iv:hex_authTag:hex_ciphertext).
+   * Null until the user completes MFA enrollment via POST /auth/mfa/confirm.
+   * Decrypt with mfaCrypto.decryptTotpSecret before passing to otplib.
+   */
+  totpSecret: string | null;
   mfaEnabled: boolean;
   isActive: boolean;
 };

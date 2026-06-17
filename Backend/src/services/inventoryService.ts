@@ -4,13 +4,22 @@ import type {
   InventoryAdjustment,
 } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
+import type { CreateAuditEventInput } from "../types/analytics.js";
+
+// Narrow write-only audit dependency.
+type AuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
 
 export type InventoryActor = {
   id: string;
   email: string;
 };
 
-export function createInventoryService(inventoryRepository: InventoryRepository) {
+export function createInventoryService(
+  inventoryRepository: InventoryRepository,
+  auditWriter?: AuditWriter,
+) {
   return {
     listInventory(clinicId: string): Promise<ClinicInventoryItemView[]> {
       return inventoryRepository.listClinicInventory(clinicId);
@@ -83,6 +92,25 @@ export function createInventoryService(inventoryRepository: InventoryRepository)
       if (!item) {
         throw new AppError(500, "INTERNAL_ERROR", "Failed to load updated inventory item");
       }
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "inventory_adjustment",
+        entityId: adjustment.id,
+        action: "manual_adjust",
+        actorId: performedBy.id,
+        actorEmail: performedBy.email,
+        metadata: {
+          itemId,
+          sku: item.masterSku,
+          quantityDelta,
+          quantityBefore: adjustment.quantityBefore,
+          quantityAfter: adjustment.quantityAfter,
+          reason,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
 
       return { item, adjustment };
     },

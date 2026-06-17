@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import React, { useState } from "react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -28,7 +28,7 @@ export function AccountPage() {
 
   if (!user) return null;
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setFormError(null);
     setSuccessMessage(null);
@@ -109,7 +109,7 @@ export function AccountPage() {
         ) : (
           <form
             className="product-form"
-            onSubmit={(event) => void handleSubmit(event)}
+            onSubmit={(event) => { void handleSubmit(event); }}
             aria-label="Change password"
           >
             <fieldset className="product-form__section">

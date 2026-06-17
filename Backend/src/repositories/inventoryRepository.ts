@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  AdjustmentType,
   ClinicInventoryItem,
   ClinicInventoryItemView,
   DraftPoLine,
   DraftPurchaseOrder,
   InventoryAdjustment,
 } from "../types/inventory.js";
+import {
+  PoAlreadySubmittedError,
+  PoNotFoundError,
+} from "../types/purchaseOrderErrors.js";
 import type { CatalogRepository } from "./catalogRepository.js";
 import { buildClinicInventorySeed } from "./seed/inventorySeed.js";
 
@@ -32,6 +37,20 @@ export interface InventoryRepository {
     clinicId: string,
     options?: { limit?: number },
   ): Promise<InventoryAdjustment[]>;
+  /**
+   * Returns a Map of masterCatalogItemId → total absolute units consumed for
+   * adjustments of `options.type` recorded on or after `options.since`.
+   *
+   * This method pushes the type and date predicates directly to the storage
+   * engine (SQL WHERE clause or in-memory filter) so the caller never needs to
+   * pull an unbounded or capped adjustment list and filter it in application
+   * memory.  The result type is intentionally a Map for O(1) per-SKU lookup
+   * inside the forecasting algorithm.
+   */
+  getConsumptionVolume(
+    clinicId: string,
+    options: { type: AdjustmentType; since: Date },
+  ): Promise<Map<string, number>>;
   findOrCreateDraftPo(
     clinicId: string,
     createdByUserId: string,
@@ -40,6 +59,18 @@ export interface InventoryRepository {
     line: Omit<DraftPoLine, "id" | "createdAt">,
   ): Promise<DraftPoLine>;
   listDraftPoLines(clinicId: string): Promise<DraftPoLine[]>;
+  /** List all purchase orders for a clinic (any status). */
+  listPurchaseOrders(clinicId: string): Promise<DraftPurchaseOrder[]>;
+  /** Find a single PO by ID, scoped to the clinic for tenant safety. */
+  findPurchaseOrderById(
+    clinicId: string,
+    poId: string,
+  ): Promise<DraftPurchaseOrder | null>;
+  /** Transition a draft PO to submitted status. Throws if not found or already submitted. */
+  submitPurchaseOrder(
+    clinicId: string,
+    poId: string,
+  ): Promise<DraftPurchaseOrder>;
   createClinicInventoryItem(
     item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">,
   ): Promise<ClinicInventoryItem>;
@@ -83,7 +114,7 @@ export function createInMemoryInventoryRepository(
       return views.filter((view): view is ClinicInventoryItemView => view !== null);
     },
 
-    async findClinicInventoryItem(
+    findClinicInventoryItem(
       clinicId: string,
       itemId: string,
     ): Promise<ClinicInventoryItemView | null> {
@@ -92,13 +123,13 @@ export function createInMemoryInventoryRepository(
       );
 
       if (!item) {
-        return null;
+        return Promise.resolve(null);
       }
 
       return toInventoryView(item);
     },
 
-    async findClinicInventoryByMasterItemId(
+    findClinicInventoryByMasterItemId(
       clinicId: string,
       masterCatalogItemId: string,
     ): Promise<ClinicInventoryItem | null> {
@@ -108,10 +139,10 @@ export function createInMemoryInventoryRepository(
           entry.masterCatalogItemId === masterCatalogItemId,
       );
 
-      return item ? { ...item } : null;
+      return Promise.resolve(item ? { ...item } : null);
     },
 
-    async updateQuantity(
+    updateQuantity(
       clinicId: string,
       itemId: string,
       newQuantity: number,
@@ -121,13 +152,13 @@ export function createInMemoryInventoryRepository(
       );
 
       if (index === -1) {
-        throw new Error(`Clinic inventory item not found: ${itemId}`);
+        return Promise.reject(new Error(`Clinic inventory item not found: ${itemId}`));
       }
 
       const existing = clinicInventory[index];
 
       if (!existing) {
-        throw new Error(`Clinic inventory item not found: ${itemId}`);
+        return Promise.reject(new Error(`Clinic inventory item not found: ${itemId}`));
       }
 
       const updated: ClinicInventoryItem = {
@@ -137,7 +168,7 @@ export function createInMemoryInventoryRepository(
       };
 
       clinicInventory[index] = updated;
-      return { ...updated };
+      return Promise.resolve({ ...updated });
     },
 
     recordAdjustment(
@@ -165,6 +196,24 @@ export function createInMemoryInventoryRepository(
         .map((entry) => ({ ...entry }));
 
       return Promise.resolve(clinicAdjustments);
+    },
+
+    getConsumptionVolume(
+      clinicId: string,
+      options: { type: AdjustmentType; since: Date },
+    ): Promise<Map<string, number>> {
+      const result = new Map<string, number>();
+
+      for (const adj of adjustments) {
+        if (adj.clinicId !== clinicId) continue;
+        if (adj.adjustmentType !== options.type) continue;
+        if (adj.createdAt < options.since) continue;
+
+        const current = result.get(adj.masterCatalogItemId) ?? 0;
+        result.set(adj.masterCatalogItemId, current + Math.abs(adj.quantityDelta));
+      }
+
+      return Promise.resolve(result);
     },
 
     findOrCreateDraftPo(
@@ -220,7 +269,58 @@ export function createInMemoryInventoryRepository(
       );
     },
 
-    async createClinicInventoryItem(
+    listPurchaseOrders(clinicId: string): Promise<DraftPurchaseOrder[]> {
+      return Promise.resolve(
+        draftOrders
+          .filter((order) => order.clinicId === clinicId)
+          .map((order) => ({ ...order }))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+      );
+    },
+
+    findPurchaseOrderById(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder | null> {
+      const order = draftOrders.find(
+        (o) => o.clinicId === clinicId && o.id === poId,
+      );
+      return Promise.resolve(order ? { ...order } : null);
+    },
+
+    submitPurchaseOrder(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder> {
+      const index = draftOrders.findIndex(
+        (o) => o.clinicId === clinicId && o.id === poId,
+      );
+
+      if (index === -1) {
+        return Promise.reject(new PoNotFoundError(poId));
+      }
+
+      const existing = draftOrders[index];
+
+      if (!existing) {
+        return Promise.reject(new PoNotFoundError(poId));
+      }
+
+      if (existing.status !== "draft") {
+        return Promise.reject(new PoAlreadySubmittedError());
+      }
+
+      const updated: DraftPurchaseOrder = {
+        ...existing,
+        status: "submitted",
+        updatedAt: new Date(),
+      };
+
+      draftOrders[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    createClinicInventoryItem(
       item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">,
     ): Promise<ClinicInventoryItem> {
       const now = new Date();
@@ -232,7 +332,7 @@ export function createInMemoryInventoryRepository(
       };
 
       clinicInventory.push(record);
-      return { ...record };
+      return Promise.resolve({ ...record });
     },
   };
 }

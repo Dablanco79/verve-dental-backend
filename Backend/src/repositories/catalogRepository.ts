@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { BarcodeFormat, BarcodeMapping, MasterCatalogItem } from "../types/inventory.js";
+import type { BarcodeMapping, MasterCatalogItem } from "../types/inventory.js";
 import {
   buildBarcodeMappingSeed,
   buildMasterCatalogSeed,

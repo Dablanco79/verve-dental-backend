@@ -111,18 +111,18 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${params.length}`);
+        conditions.push(`status = $${String(params.length)}`);
       }
       // Overlap math: the shift overlaps [from, to) when
       //   shift_start_at < to  AND  shift_end_at > from
       // This correctly captures overnight shifts that straddle a boundary.
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${params.length}`);
+        conditions.push(`shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${params.length}`);
+        conditions.push(`shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
@@ -144,11 +144,11 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${params.length}`);
+        conditions.push(`shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${params.length}`);
+        conditions.push(`shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
@@ -174,15 +174,15 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${params.length}`);
+        conditions.push(`status = $${String(params.length)}`);
       }
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${params.length}`);
+        conditions.push(`shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${params.length}`);
+        conditions.push(`shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
@@ -205,23 +205,23 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       if (input.shiftStartAt !== undefined) {
         params.push(input.shiftStartAt);
-        setClauses.push(`shift_start_at = $${params.length}`);
+        setClauses.push(`shift_start_at = $${String(params.length)}`);
       }
       if (input.shiftEndAt !== undefined) {
         params.push(input.shiftEndAt);
-        setClauses.push(`shift_end_at = $${params.length}`);
+        setClauses.push(`shift_end_at = $${String(params.length)}`);
       }
       if (input.shiftType !== undefined) {
         params.push(input.shiftType);
-        setClauses.push(`shift_type = $${params.length}`);
+        setClauses.push(`shift_type = $${String(params.length)}`);
       }
       if (input.status !== undefined) {
         params.push(input.status);
-        setClauses.push(`status = $${params.length}`);
+        setClauses.push(`status = $${String(params.length)}`);
       }
       if (input.notes !== undefined) {
         params.push(input.notes);
-        setClauses.push(`notes = $${params.length}`);
+        setClauses.push(`notes = $${String(params.length)}`);
       }
 
       params.push(entryId);
@@ -236,7 +236,7 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         const { rows } = await client.query<RosterEntryRow>(
           `UPDATE roster_entries
            SET ${setClauses.join(", ")}
-           WHERE id = $${idIdx} AND status <> 'cancelled'
+           WHERE id = $${String(idIdx)} AND status <> 'cancelled'
            RETURNING *`,
           params,
         );

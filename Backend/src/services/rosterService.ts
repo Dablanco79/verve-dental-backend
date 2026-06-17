@@ -1,4 +1,4 @@
-import type { AuthenticatedUser } from "../types/auth.js";
+import type { AuthenticatedUser, UserRecord } from "../types/auth.js";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
@@ -6,8 +6,27 @@ import type {
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
+import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { CreateAuditEventInput } from "../types/analytics.js";
+
+// Narrow write-only audit dependency.
+type AuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
+
+/**
+ * Minimal interface of TimesheetService consumed by RosterService.
+ * Using a structural type (not an import) breaks the potential circular
+ * dependency between rosterService ↔ timesheetService.
+ */
+type RosterCompletionHook = {
+  generateFromCompletedRoster(
+    rosterEntry: RosterEntry,
+    staffUser: UserRecord,
+  ): Promise<unknown>;
+};
 
 /**
  * Fields the service consumer must supply.  Everything else (staffEmail,
@@ -28,6 +47,21 @@ export type RosterService = ReturnType<typeof createRosterService>;
 export function createRosterService(
   rosterRepository: RosterRepository,
   userRepository: UserRepository,
+  /**
+   * Module 06 — canonical clinic lookup.
+   * Replaces the previous `userRepository.getClinicName()` workaround that
+   * derived clinic names from the user roster ORDER BY email LIMIT 1.
+   * The clinicRepository is the authoritative source of clinic metadata.
+   */
+  clinicRepository: ClinicRepository,
+  /**
+   * Optional hook fired after a roster entry transitions to 'completed'.
+   * Injected by dependencies.ts to avoid a circular import between
+   * rosterService and timesheetService.
+   */
+  onRosterCompleted?: RosterCompletionHook,
+  /** Optional audit writer — injected by the route factory when available. */
+  auditWriter?: AuditWriter,
 ) {
   /**
    * Returns true when the caller is entitled to see the full clinic roster.
@@ -140,23 +174,30 @@ export function createRosterService(
         throw new AppError(400, "USER_INACTIVE", "Staff user account is not active");
       }
 
-      // TODO: Module 06 — Migrate to canonical clinics reference table.
-      // Currently deriving the clinic name from the users table (ORDER BY email
-      // LIMIT 1) as a deterministic workaround.  Once a first-class `clinics`
-      // table is introduced in Module 06, replace this call with a direct lookup
-      // on that table to make the name truly authoritative and independent of
-      // the user roster.
-      const rosteredClinicName = await userRepository.getClinicName(clinicId);
+      // Module 06 — resolve clinic name from the canonical clinics table.
+      // The clinic record is the authoritative source; its name is independent
+      // of which users happen to be homed at the clinic.
+      const rosteredClinic = await clinicRepository.findById(clinicId);
 
-      if (!rosteredClinicName) {
+      if (!rosteredClinic) {
         throw new AppError(
           404,
           "CLINIC_NOT_FOUND",
-          "Target clinic not found or has no members",
+          "Target clinic not found",
         );
       }
 
-      return rosterRepository.createEntry({
+      if (!rosteredClinic.isActive) {
+        throw new AppError(
+          400,
+          "CLINIC_INACTIVE",
+          "Cannot roster staff to an inactive clinic",
+        );
+      }
+
+      const rosteredClinicName = rosteredClinic.name;
+
+      const entry = await rosterRepository.createEntry({
         ...input,
         rosteredClinicId: clinicId,
         rosteredClinicName,
@@ -164,6 +205,26 @@ export function createRosterService(
         createdByUserId: caller.id,
         createdByEmail: caller.email,
       });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "roster_entry",
+        entityId: entry.id,
+        action: "created",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          staffUserId: entry.staffUserId,
+          staffEmail: entry.staffEmail,
+          shiftType: entry.shiftType,
+          shiftStartAt: entry.shiftStartAt.toISOString(),
+          shiftEndAt: entry.shiftEndAt.toISOString(),
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return entry;
     },
 
     async updateEntry(
@@ -195,10 +256,40 @@ export function createRosterService(
         );
       }
 
-      return rosterRepository.updateEntry(entryId, input, {
+      const updated = await rosterRepository.updateEntry(entryId, input, {
         userId: caller.id,
         email: caller.email,
       });
+
+      // ── Roster-completion hook ───────────────────────────────────────────
+      // Fire after a successful status transition to 'completed'.
+      // The hook auto-generates the appropriate timesheet entry (commission
+      // attendance log or hourly draft) based on the staff member's payroll
+      // track.  We await it so the caller sees an error if generation fails.
+      if (input.status === "completed" && onRosterCompleted) {
+        const staffUser = await userRepository.findById(updated.staffUserId);
+        if (staffUser) {
+          await onRosterCompleted.generateFromCompletedRoster(updated, staffUser);
+        }
+      }
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "roster_entry",
+        entityId: entryId,
+        action: input.status === "completed" ? "completed" : "updated",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          previousStatus: existing.status,
+          newStatus: updated.status,
+          changes: Object.keys(input),
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return updated;
     },
 
     async cancelEntry(
@@ -218,11 +309,29 @@ export function createRosterService(
         throw new AppError(409, "ALREADY_CANCELLED", "Roster entry is already cancelled");
       }
 
-      return rosterRepository.updateEntry(
+      const cancelled = await rosterRepository.updateEntry(
         entryId,
         { status: "cancelled" },
         { userId: caller.id, email: caller.email },
       );
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "roster_entry",
+        entityId: entryId,
+        action: "cancelled",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          previousStatus: existing.status,
+          staffUserId: existing.staffUserId,
+          staffEmail: existing.staffEmail,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return cancelled;
     },
   };
 }

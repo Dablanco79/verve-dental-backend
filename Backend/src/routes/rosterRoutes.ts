@@ -22,6 +22,17 @@ export function createRosterRouter(deps: AppDependencies): Router {
   const rosterService = createRosterService(
     deps.rosterRepository,
     deps.userRepository,
+    // ── Module 06 — canonical clinic lookup ──────────────────────────────────
+    // clinicRepository replaces the previous userRepository.getClinicName()
+    // workaround; clinic names are now resolved from the authoritative source.
+    deps.clinicRepository,
+    // Inject the timesheet completion hook so the roster service auto-generates
+    // timesheet entries when a shift is marked 'completed'.
+    deps.timesheetService,
+    // ── Module 08 — audit trail ───────────────────────────────────────────────
+    // Write roster lifecycle events (created, updated, completed, cancelled)
+    // to the append-only audit_events log.
+    deps.analyticsRepository,
   );
   const handlers = createRosterHandlers(rosterService);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);

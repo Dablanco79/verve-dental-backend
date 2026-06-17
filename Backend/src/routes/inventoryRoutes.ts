@@ -20,7 +20,7 @@ const INVENTORY_MANAGE_ROLES = ["owner_admin", "group_practice_manager"] as cons
 
 export function createInventoryRouter(deps: AppDependencies): Router {
   const router = Router({ mergeParams: true });
-  const inventoryService = createInventoryService(deps.inventoryRepository);
+  const inventoryService = createInventoryService(deps.inventoryRepository, deps.analyticsRepository);
   const handlers = createInventoryHandlers(inventoryService);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
 

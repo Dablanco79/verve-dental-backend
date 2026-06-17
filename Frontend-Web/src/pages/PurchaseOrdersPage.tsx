@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -33,6 +33,10 @@ export function PurchaseOrdersPage() {
   const [lines, setLines] = useState<PurchaseOrderLine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const loadLines = useCallback(async () => {
     if (!user) return;
@@ -52,6 +56,49 @@ export function PurchaseOrdersPage() {
     void loadLines();
   }, [loadLines]);
 
+  /** Collect unique draft PO IDs so we can render a submit button per PO group. */
+  const draftPoIds = useMemo(
+    () => [
+      ...new Set(
+        lines
+          .filter((l) => l.orderStatus === "draft")
+          .map((l) => l.draftPurchaseOrderId),
+      ),
+    ],
+    [lines],
+  );
+
+  async function handleSubmit(poId: string) {
+    if (!user) return;
+    setSubmittingPoId(poId);
+    setSubmitError(null);
+    try {
+      await apiClient.submitPurchaseOrder(user.homeClinicId, poId);
+      await loadLines();
+    } catch (err: unknown) {
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to submit purchase order",
+      );
+    } finally {
+      setSubmittingPoId(null);
+    }
+  }
+
+  async function handleExport() {
+    if (!user) return;
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      await apiClient.exportPurchaseOrdersCsv(user.homeClinicId);
+    } catch (err: unknown) {
+      setExportError(
+        err instanceof Error ? err.message : "Failed to export purchase orders",
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   if (!user) return null;
 
   if (!canManageUsers(user.role)) {
@@ -65,11 +112,19 @@ export function PurchaseOrdersPage() {
           <div>
             <h2>Purchase orders</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — auto-generated lines when stock falls below reorder
-              point
+              {user.homeClinicName} — auto-generated lines when stock falls below
+              reorder point
             </p>
           </div>
           <div className="inventory-page__actions">
+            <button
+              type="button"
+              className="button-link"
+              onClick={() => void handleExport()}
+              disabled={isExporting || isLoading || lines.length === 0}
+            >
+              {isExporting ? "Exporting…" : "Export CSV"}
+            </button>
             <button
               type="button"
               className="button-link"
@@ -81,6 +136,18 @@ export function PurchaseOrdersPage() {
           </div>
         </div>
 
+        {exportError && (
+          <p className="status-card__error" role="alert">
+            {exportError}
+          </p>
+        )}
+
+        {submitError && (
+          <p className="status-card__error" role="alert">
+            {submitError}
+          </p>
+        )}
+
         {loadError ? (
           <p className="status-card__error">{loadError}</p>
         ) : isLoading ? (
@@ -89,8 +156,8 @@ export function PurchaseOrdersPage() {
           <div className="po-empty">
             <p className="po-empty__title">No purchase order lines yet.</p>
             <p className="po-empty__hint">
-              Lines are created automatically when a barcode scan causes stock to drop
-              below the reorder point.
+              Lines are created automatically when a barcode scan causes stock
+              to drop below the reorder point.
             </p>
           </div>
         ) : (
@@ -103,6 +170,7 @@ export function PurchaseOrdersPage() {
                   <th>Trigger</th>
                   <th>Status</th>
                   <th>Created</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -115,15 +183,67 @@ export function PurchaseOrdersPage() {
                     <td className="inventory-table__numeric">{line.quantity}</td>
                     <td>{formatReason(line.reason)}</td>
                     <td>
-                      <span className="po-badge po-badge--draft">
-                        {line.orderStatus === "draft" ? "Draft" : "Submitted"}
+                      <span
+                        className={
+                          line.orderStatus === "submitted"
+                            ? "po-badge po-badge--submitted"
+                            : "po-badge po-badge--draft"
+                        }
+                      >
+                        {line.orderStatus === "submitted" ? "Submitted" : "Draft"}
                       </span>
                     </td>
-                    <td className="inventory-table__meta">{formatDate(line.createdAt)}</td>
+                    <td className="inventory-table__meta">
+                      {formatDate(line.createdAt)}
+                    </td>
+                    <td>
+                      {line.orderStatus === "draft" ? (
+                        <button
+                          type="button"
+                          className="button-link po-submit-btn"
+                          onClick={() =>
+                            void handleSubmit(line.draftPurchaseOrderId)
+                          }
+                          disabled={
+                            submittingPoId === line.draftPurchaseOrderId
+                          }
+                          aria-label={`Submit purchase order for ${line.itemName}`}
+                        >
+                          {submittingPoId === line.draftPurchaseOrderId
+                            ? "Submitting…"
+                            : "Submit PO"}
+                        </button>
+                      ) : (
+                        <span className="inventory-table__meta">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {draftPoIds.length > 0 && (
+          <div className="po-batch-actions">
+            {draftPoIds.map((poId) => {
+              const poLineCount = lines.filter(
+                (l) => l.draftPurchaseOrderId === poId && l.orderStatus === "draft",
+              ).length;
+              return (
+                <button
+                  key={poId}
+                  type="button"
+                  className="button-primary"
+                  onClick={() => void handleSubmit(poId)}
+                  disabled={submittingPoId === poId}
+                >
+                  {submittingPoId === poId
+                    ? "Submitting…"
+                    : `Submit draft PO (${String(poLineCount)} line${poLineCount !== 1 ? "s" : ""})`}
+                </button>
+              );
+            })}
           </div>
         )}
       </section>
@@ -135,6 +255,14 @@ export function PurchaseOrdersPage() {
             <dd>{lines.length}</dd>
           </div>
           <div className="po-summary__stat">
+            <dt>Draft lines</dt>
+            <dd>{lines.filter((l) => l.orderStatus === "draft").length}</dd>
+          </div>
+          <div className="po-summary__stat">
+            <dt>Submitted lines</dt>
+            <dd>{lines.filter((l) => l.orderStatus === "submitted").length}</dd>
+          </div>
+          <div className="po-summary__stat">
             <dt>Total units needed</dt>
             <dd>{lines.reduce((sum, l) => sum + l.quantity, 0)}</dd>
           </div>
@@ -143,9 +271,6 @@ export function PurchaseOrdersPage() {
             <dd>{new Set(lines.map((l) => l.masterSku)).size}</dd>
           </div>
         </dl>
-        <p className="po-summary__hint">
-          Submit functionality coming in a future module. Export and ordering workflows will be added with Module 04.
-        </p>
       </section>
     </AppShell>
   );

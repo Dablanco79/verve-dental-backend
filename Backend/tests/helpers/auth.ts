@@ -1,17 +1,44 @@
 import type { Express } from "express";
+import { generateSync } from "otplib";
 import request from "supertest";
+
+import { SEED_ADMIN_TOTP_SECRET } from "../../src/repositories/userRepository.js";
 
 type LoginData = {
   requiresMfa: boolean;
   accessToken?: string;
+  refreshToken?: string;
   mfaToken?: string;
 };
 
+type TokenPair = {
+  accessToken: string;
+  refreshToken: string;
+};
+
+/**
+ * Log in and return only the access token. MFA-aware: generates a real TOTP
+ * code from the seed user's known secret rather than using a static bypass.
+ */
 export async function loginAndGetAccessToken(
   app: Express,
   email: string,
   password = "password123",
 ): Promise<string> {
+  const { accessToken } = await loginAndGetTokens(app, email, password);
+  return accessToken;
+}
+
+/**
+ * Log in and return both the access token and the refresh token.
+ * Handles the MFA challenge flow by generating a real TOTP code from the
+ * seed admin's known Base32 secret (SEED_ADMIN_TOTP_SECRET).
+ */
+export async function loginAndGetTokens(
+  app: Express,
+  email: string,
+  password = "password123",
+): Promise<TokenPair> {
   const loginResponse = await request(app).post("/api/v1/auth/login").send({
     email,
     password,
@@ -24,23 +51,31 @@ export async function loginAndGetAccessToken(
   }
 
   if (body.data.requiresMfa) {
+    const totpCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+
     const mfaResponse = await request(app).post("/api/v1/auth/mfa/verify").send({
       mfaToken: body.data.mfaToken,
-      code: "000000",
+      code: totpCode,
     });
 
-    const mfaBody = mfaResponse.body as { data: { accessToken: string } };
+    const mfaBody = mfaResponse.body as { data: { accessToken: string; refreshToken: string } };
 
     if (mfaResponse.status !== 200) {
       throw new Error(`MFA failed for ${email}: ${String(mfaResponse.status)}`);
     }
 
-    return mfaBody.data.accessToken;
+    return {
+      accessToken: mfaBody.data.accessToken,
+      refreshToken: mfaBody.data.refreshToken,
+    };
   }
 
-  if (!body.data.accessToken) {
-    throw new Error(`Missing access token for ${email}`);
+  if (!body.data.accessToken || !body.data.refreshToken) {
+    throw new Error(`Missing tokens for ${email}`);
   }
 
-  return body.data.accessToken;
+  return {
+    accessToken: body.data.accessToken,
+    refreshToken: body.data.refreshToken,
+  };
 }

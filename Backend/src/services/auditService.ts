@@ -6,6 +6,9 @@ export type AuthAuditEvent =
   | "auth.login.mfa_required"
   | "auth.mfa.success"
   | "auth.mfa.failure"
+  | "auth.mfa.setup_initiated"
+  | "auth.mfa.confirm_failure"
+  | "auth.mfa.enrolled"
   | "auth.refresh.success"
   | "auth.refresh.failure"
   | "auth.logout"
@@ -15,6 +18,12 @@ export type AuthAuditEvent =
   | "auth.password.changed"
   | "auth.password.reset";
 
+export type PurchaseOrderAuditEvent =
+  | "purchase_order.submitted"
+  | "purchase_order.csv_exported";
+
+export type AuditEvent = AuthAuditEvent | PurchaseOrderAuditEvent;
+
 export type AuditContext = {
   userId?: string;
   email?: string;
@@ -22,6 +31,8 @@ export type AuditContext = {
   ipAddress?: string;
   userAgent?: string;
   reason?: string;
+  /** Generic resource identifier (e.g. poId for purchase order events). */
+  resourceId?: string;
 };
 
 export function createAuditService(logger: Logger) {
@@ -35,6 +46,23 @@ export function createAuditService(logger: Logger) {
         },
         `Auth audit: ${event}`,
       );
+    },
+
+    /** Log any application-level audit event. */
+    logEvent(event: AuditEvent, context: AuditContext = {}): void {
+      logger.info(
+        {
+          audit: true,
+          event,
+          ...context,
+        },
+        `Audit: ${event}`,
+      );
+    },
+
+    /** Log an internal error (non-audit, for unexpected exceptions). */
+    logError(message: string, err: unknown): void {
+      logger.error({ err }, message);
     },
   };
 }

@@ -20,6 +20,13 @@ export function createAuthenticateMiddleware(
   audit: AuditService,
 ) {
   return (req: Request, _res: Response, next: NextFunction): void => {
+    // Short-circuit: req.user is set when the global /clinics/:clinicId
+    // middleware already authenticated this request (RLS middleware path).
+    if (req.user) {
+      next();
+      return;
+    }
+
     const token = getBearerToken(req);
 
     if (!token) {

@@ -1,6 +1,11 @@
 import request from "supertest";
+import { generateSync } from "otplib";
 
-import { SEED_CLINIC_A_ID, SEED_CLINIC_B_ID } from "../src/repositories/userRepository.js";
+import {
+  SEED_CLINIC_A_ID,
+  SEED_CLINIC_B_ID,
+  SEED_ADMIN_TOTP_SECRET,
+} from "../src/repositories/userRepository.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiData<T> = { data: T };
@@ -63,15 +68,44 @@ describe("Auth API", () => {
     expect(loginResponse.status).toBe(200);
     expect(loginBody.data.requiresMfa).toBe(true);
 
+    const validCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+
     const mfaResponse = await request(app).post("/api/v1/auth/mfa/verify").send({
       mfaToken: loginBody.data.mfaToken,
-      code: "000000",
+      code: validCode,
     });
 
     const mfaBody = mfaResponse.body as ApiData<{ accessToken: string }>;
 
     expect(mfaResponse.status).toBe(200);
     expect(mfaBody.data.accessToken).toEqual(expect.any(String));
+  });
+
+  it("rejects an invalid TOTP code during MFA verification", async () => {
+    const app = await createTestApp();
+
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      email: "admin@clinic-a.au",
+      password: "password123",
+    });
+
+    const loginBody = loginResponse.body as ApiData<LoginData>;
+    expect(loginResponse.status).toBe(200);
+    expect(loginBody.data.requiresMfa).toBe(true);
+
+    // Derive a code that is guaranteed to differ from the real current token.
+    const realCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const wrongCode = realCode === "000000" ? "000001" : "000000";
+
+    const mfaResponse = await request(app).post("/api/v1/auth/mfa/verify").send({
+      mfaToken: loginBody.data.mfaToken,
+      code: wrongCode,
+    });
+
+    const errorBody = mfaResponse.body as ApiError;
+
+    expect(mfaResponse.status).toBe(401);
+    expect(errorBody.error.code).toBe("INVALID_MFA_CODE");
   });
 
   it("returns current user from /auth/me", async () => {

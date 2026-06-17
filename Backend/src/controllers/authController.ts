@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 import type { AuthService } from "../services/authService.js";
+import { AppError } from "../types/errors.js";
 import { parseBody } from "../utils/validation.js";
 
 const loginSchema = z.object({
@@ -24,6 +25,10 @@ const logoutSchema = z.object({
 
 const mfaVerifySchema = z.object({
   mfaToken: z.string().min(1),
+  code: z.string().length(6),
+});
+
+const mfaConfirmSchema = z.object({
   code: z.string().length(6),
 });
 
@@ -84,9 +89,9 @@ export function createAuthHandlers(authService: AuthService) {
       });
     },
 
-    logout(req: Request, res: Response): void {
+    async logout(req: Request, res: Response): Promise<void> {
       const body = parseBody(logoutSchema, req.body ?? {});
-      authService.logout(body.refreshToken, {
+      await authService.logout(body.refreshToken, {
         userId: req.user?.id,
         ...auditContext(req),
       });
@@ -101,8 +106,8 @@ export function createAuthHandlers(authService: AuthService) {
     async changePassword(req: Request, res: Response): Promise<void> {
       const body = parseBody(changePasswordSchema, req.body);
 
-      // req.user is guaranteed by the authenticate middleware on this route.
-      const userId = req.user!.id;
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+      const userId = req.user.id;
 
       await authService.changePassword(
         userId,
@@ -112,6 +117,24 @@ export function createAuthHandlers(authService: AuthService) {
       );
 
       res.status(200).json({ data: { message: "Password changed successfully. Please log in again." } });
+    },
+
+    async setupMfa(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+
+      const result = await authService.setupMfa(req.user.id, auditContext(req));
+
+      res.status(200).json({ data: result });
+    },
+
+    async confirmMfa(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+
+      const body = parseBody(mfaConfirmSchema, req.body);
+
+      await authService.confirmMfa(req.user.id, body.code, auditContext(req));
+
+      res.status(200).json({ data: { message: "MFA enrollment complete" } });
     },
 
     getClinicSummary(req: Request, res: Response): void {

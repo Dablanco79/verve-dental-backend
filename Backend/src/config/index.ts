@@ -24,6 +24,15 @@ const envSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   // auto: enable TLS when REDIS_URL uses rediss://; true/false to force.
   REDIS_TLS: z.enum(["auto", "true", "false"]).default("auto"),
+  /**
+   * 64-character hex string (32 bytes) used for AES-256-GCM encryption of
+   * TOTP secrets at rest.  Generate with:
+   *   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   * Required when MFA enrollment is active.
+   */
+  MFA_ENCRYPTION_KEY: z
+    .string()
+    .min(64, "MFA_ENCRYPTION_KEY must be at least 64 hex characters (32 bytes)"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

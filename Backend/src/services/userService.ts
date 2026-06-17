@@ -127,7 +127,7 @@ export function createUserService(
 
     const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     await userRepository.updatePassword(targetUserId, hashedPassword);
-    authService.revokeAllUserTokens(targetUserId);
+    await authService.revokeAllUserTokens(targetUserId);
 
     audit.logAuthEvent("auth.password.reset", {
       userId: caller.id,

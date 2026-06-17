@@ -2,7 +2,13 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth.js";
-import { canManageUsers } from "../../utils/roles.js";
+import {
+  canManageBilling,
+  canManageUsers,
+  canViewAnalytics,
+  canViewClinicSettings,
+  canViewLaborForecast,
+} from "../../utils/roles.js";
 
 
 type AppShellProps = {
@@ -15,7 +21,7 @@ export function AppShell({ children }: AppShellProps) {
 
   async function handleLogout(): Promise<void> {
     await logout();
-    navigate("/login");
+    await navigate("/login");
   }
 
   return (
@@ -33,11 +39,25 @@ export function AppShell({ children }: AppShellProps) {
           <NavLink to="/inventory">Inventory</NavLink>
           <NavLink to="/roster">Roster</NavLink>
           <NavLink to="/my-shifts">My Shifts</NavLink>
+          <NavLink to="/timesheets">Timesheets</NavLink>
+          <NavLink to="/leave">Leave</NavLink>
           {user && canManageUsers(user.role) ? (
             <>
               <NavLink to="/users">Users</NavLink>
               <NavLink to="/purchase-orders">Purchase Orders</NavLink>
             </>
+          ) : null}
+          {user && canViewLaborForecast(user.role) ? (
+            <NavLink to="/forecast/labor">Labor Forecast</NavLink>
+          ) : null}
+          {user && canManageBilling(user.role) ? (
+            <NavLink to="/billing">Billing</NavLink>
+          ) : null}
+          {user && canViewAnalytics(user.role) ? (
+            <NavLink to="/analytics">Analytics</NavLink>
+          ) : null}
+          {user && canViewClinicSettings(user.role) ? (
+            <NavLink to="/settings/clinic">Clinic Settings</NavLink>
           ) : null}
         </nav>
 
@@ -50,7 +70,7 @@ export function AppShell({ children }: AppShellProps) {
               <button
                 type="button"
                 className="app-shell__logout"
-                onClick={() => void handleLogout()}
+                onClick={() => { void handleLogout(); }}
               >
                 Log out
               </button>

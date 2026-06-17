@@ -29,6 +29,10 @@ import type {
   DraftPurchaseOrder,
   InventoryAdjustment,
 } from "../types/inventory.js";
+import {
+  PoAlreadySubmittedError,
+  PoNotFoundError,
+} from "../types/purchaseOrderErrors.js";
 import type { InventoryRepository } from "./inventoryRepository.js";
 
 // ─── Row types ───────────────────────────────────────────────────────────────
@@ -279,6 +283,30 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       return rows.map(rowToAdjustment);
     },
 
+    async getConsumptionVolume(
+      clinicId: string,
+      options: { type: AdjustmentType; since: Date },
+    ): Promise<Map<string, number>> {
+      type ConsumptionRow = { master_catalog_item_id: string; total_consumed: string };
+
+      const { rows } = await pool.query<ConsumptionRow>(
+        `SELECT master_catalog_item_id,
+                SUM(ABS(quantity_delta))::text AS total_consumed
+         FROM inventory_adjustments
+         WHERE clinic_id       = $1
+           AND adjustment_type = $2
+           AND created_at      >= $3
+         GROUP BY master_catalog_item_id`,
+        [clinicId, options.type, options.since],
+      );
+
+      const result = new Map<string, number>();
+      for (const row of rows) {
+        result.set(row.master_catalog_item_id, parseFloat(row.total_consumed));
+      }
+      return result;
+    },
+
     async findOrCreateDraftPo(
       clinicId: string,
       createdByUserId: string,
@@ -339,6 +367,55 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
         [clinicId],
       );
       return rows.map(rowToDraftPoLine);
+    },
+
+    async listPurchaseOrders(clinicId: string): Promise<DraftPurchaseOrder[]> {
+      const { rows } = await pool.query<DraftPoRow>(
+        `SELECT * FROM draft_purchase_orders
+         WHERE clinic_id = $1
+         ORDER BY created_at DESC`,
+        [clinicId],
+      );
+      return rows.map(rowToDraftPo);
+    },
+
+    async findPurchaseOrderById(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder | null> {
+      const { rows } = await pool.query<DraftPoRow>(
+        `SELECT * FROM draft_purchase_orders
+         WHERE clinic_id = $1 AND id = $2 LIMIT 1`,
+        [clinicId, poId],
+      );
+      return rows[0] ? rowToDraftPo(rows[0]) : null;
+    },
+
+    async submitPurchaseOrder(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder> {
+      const { rows } = await pool.query<DraftPoRow>(
+        `UPDATE draft_purchase_orders
+         SET status = 'submitted', updated_at = now()
+         WHERE clinic_id = $1 AND id = $2 AND status = 'draft'
+         RETURNING *`,
+        [clinicId, poId],
+      );
+
+      if (!rows[0]) {
+        // Distinguish not-found from already-submitted.
+        const { rows: existing } = await pool.query<DraftPoRow>(
+          `SELECT * FROM draft_purchase_orders WHERE clinic_id = $1 AND id = $2 LIMIT 1`,
+          [clinicId, poId],
+        );
+        if (!existing[0]) {
+          throw new PoNotFoundError(poId);
+        }
+        throw new PoAlreadySubmittedError();
+      }
+
+      return rowToDraftPo(rows[0]);
     },
 
     async createClinicInventoryItem(

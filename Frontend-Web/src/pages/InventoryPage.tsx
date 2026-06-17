@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -48,29 +48,58 @@ export function InventoryPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanNotice, setScanNotice] = useState<ScanNotice | null>(null);
+  // Monotonically-increasing counter used to discard responses from
+  // superseded fetches. Each loadInventory call snapshots the current id;
+  // state updates are only applied when the snapshot still matches.
+  // NOTE: apiClient.listInventory does not accept an AbortSignal, so the
+  // underlying network request is NOT cancelled — only stale state updates
+  // are suppressed. Passing a signal to the client is a future improvement.
+  const requestIdRef = useRef({ id: 0 });
 
   const loadInventory = useCallback(async () => {
     if (!user) {
+      // Clear the spinner immediately — there is no authenticated user to
+      // fetch inventory for, so the loading state must not persist.
+      setIsLoading(false);
       return;
     }
+
+    const requestId = ++requestIdRef.current.id;
 
     setError(null);
     setIsLoading(true);
 
     try {
       const inventory = await apiClient.listInventory(user.homeClinicId);
-      setItems(inventory);
+      // Discard the response if a newer request has started since this
+      // one was dispatched.
+      if (requestId === requestIdRef.current.id) {
+        setItems(inventory);
+      }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unable to load inventory";
-      setError(message);
-      setItems([]);
+      if (requestId === requestIdRef.current.id) {
+        const message = err instanceof Error ? err.message : "Unable to load inventory";
+        setError(message);
+        setItems([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current.id) {
+        setIsLoading(false);
+      }
     }
   }, [user]);
 
   useEffect(() => {
     void loadInventory();
+    // Capture the ref object so the cleanup closes over it directly, which
+    // satisfies react-hooks/exhaustive-deps. Because requestIdRef.current is
+    // never reassigned (only its .id property is mutated), this is always the
+    // same object and incrementing .id in the cleanup correctly invalidates
+    // any in-flight response without cancelling the underlying network request.
+    const requestTracker = requestIdRef.current;
+    return () => {
+      requestTracker.id++;
+    };
   }, [loadInventory]);
 
   async function handleScan(values: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -65,6 +65,9 @@ export function ManageUsersPage() {
   if (!user) return null;
 
   if (!canManageUsers(user.role)) {
+    // TODO: Replace this silent redirect with an explicit Access Denied panel
+    // (h2 + explanation + back-link inside AppShell) to match the UX pattern
+    // introduced in AddProductPage. Confirm with product before changing.
     return <Navigate to="/" replace />;
   }
 
@@ -72,7 +75,7 @@ export function ManageUsersPage() {
   const availableRoles =
     user.role === "owner_admin" ? ALL_ROLES : (["clinical_staff"] as UserRole[]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!user) return;
 
@@ -99,7 +102,7 @@ export function ManageUsersPage() {
     }
   }
 
-  async function handleResetPassword(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleResetPassword(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!user || !resetState) return;
 
@@ -170,7 +173,7 @@ export function ManageUsersPage() {
         {showForm ? (
           <form
             className="product-form"
-            onSubmit={(event) => void handleSubmit(event)}
+            onSubmit={(event) => { void handleSubmit(event); }}
             aria-label="Create new staff account"
           >
             <fieldset className="product-form__section">
@@ -294,7 +297,7 @@ export function ManageUsersPage() {
                         <td colSpan={4}>
                           <form
                             className="reset-password-form"
-                            onSubmit={(event) => void handleResetPassword(event)}
+                            onSubmit={(event) => { void handleResetPassword(event); }}
                             aria-label={`Reset password for ${u.email}`}
                           >
                             <label>

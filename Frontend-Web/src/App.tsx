@@ -11,6 +11,13 @@ import { ManageUsersPage } from "./pages/ManageUsersPage.js";
 import { MyShiftsPage } from "./pages/MyShiftsPage.js";
 import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage.js";
 import { RosterCalendarPage } from "./pages/RosterCalendarPage.js";
+import { LaborForecastPage } from "./pages/LaborForecastPage.js";
+import { ClinicSettingsPage } from "./pages/ClinicSettingsPage.js";
+import { BillingLedgerPage } from "./pages/BillingLedgerPage.js";
+import { AnalyticsDashboardPage } from "./pages/AnalyticsDashboardPage.js";
+import { AuditTrailPage } from "./pages/AuditTrailPage.js";
+import { TimesheetsPage } from "./pages/TimesheetsPage.js";
+import { LeavePage } from "./pages/LeavePage.js";
 
 export function App() {
   return (
@@ -27,6 +34,13 @@ export function App() {
             <Route path="/roster" element={<RosterCalendarPage />} />
             <Route path="/my-shifts" element={<MyShiftsPage />} />
             <Route path="/account" element={<AccountPage />} />
+            <Route path="/forecast/labor" element={<LaborForecastPage />} />
+            <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
+            <Route path="/timesheets" element={<TimesheetsPage />} />
+            <Route path="/leave" element={<LeavePage />} />
+            <Route path="/billing" element={<BillingLedgerPage />} />
+            <Route path="/analytics" element={<AnalyticsDashboardPage />} />
+            <Route path="/analytics/audit" element={<AuditTrailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

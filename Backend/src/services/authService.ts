@@ -1,8 +1,11 @@
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
+import { generateSecret, generateURI, verifySync } from "otplib";
 import { randomUUID } from "node:crypto";
 
 import type { EnvConfig } from "../config/index.js";
+import { decryptTotpSecret, encryptTotpSecret } from "../utils/mfaCrypto.js";
+import type { RedisClient } from "../redis/client.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { AuditService } from "./auditService.js";
 import type {
@@ -19,8 +22,6 @@ import type {
 import { AppError } from "../types/errors.js";
 
 const MFA_REQUIRED_ROLES: UserRole[] = ["owner_admin", "group_practice_manager"];
-// DEV-only bypass code — never valid in production. Real TOTP wired in Module 04+.
-const DEV_MFA_CODE = "000000";
 
 type RefreshTokenRecord = {
   userId: string;
@@ -39,8 +40,111 @@ export function createAuthService(
   config: EnvConfig,
   userRepository: UserRepository,
   audit: AuditService,
+  redisClient: RedisClient | null = null,
 ) {
+  // In-memory fallback store — used when Redis is unavailable (local dev / tests).
   const refreshTokens = new Map<string, RefreshTokenRecord>();
+
+  // ---------------------------------------------------------------------------
+  // Refresh-token store helpers (Redis-first, Map fallback)
+  //
+  // Redis key schema:
+  //   refresh:{jti}          → userId string, TTL = JWT expiry seconds
+  //   user_tokens:{userId}   → Redis Set of active JTIs (for bulk revocation)
+  // ---------------------------------------------------------------------------
+
+  async function saveRefreshToken(jti: string, userId: string, ttlSeconds: number): Promise<void> {
+    if (redisClient) {
+      // Single pipeline batch: SET the token, index the JTI into the user set,
+      // and (re)set the set's TTL so stale JTIs never accumulate beyond one extra
+      // hour after the most-recently-issued token expires naturally.
+      await redisClient
+        .pipeline()
+        .set(`refresh:${jti}`, userId, "EX", ttlSeconds)
+        .sadd(`user_tokens:${userId}`, jti)
+        .expire(`user_tokens:${userId}`, ttlSeconds + 3600)
+        .exec();
+    } else {
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+      refreshTokens.set(jti, { userId, expiresAt });
+    }
+  }
+
+  async function getRefreshTokenUserId(jti: string): Promise<string | null> {
+    if (redisClient) {
+      return redisClient.get(`refresh:${jti}`);
+    }
+    return refreshTokens.get(jti)?.userId ?? null;
+  }
+
+  async function deleteRefreshToken(jti: string, userId: string): Promise<void> {
+    if (redisClient) {
+      // Single pipeline batch: DEL the token key and SREM the JTI from the user
+      // index together, reducing the partial-failure window vs. two sequential awaits.
+      await redisClient
+        .pipeline()
+        .del(`refresh:${jti}`)
+        .srem(`user_tokens:${userId}`, jti)
+        .exec();
+    } else {
+      refreshTokens.delete(jti);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pending MFA enrollment secret store (Redis-first, Map fallback)
+  //
+  // Redis key schema:
+  //   pending_mfa:{userId}   → base32 TOTP secret string, TTL = 10 minutes
+  //
+  // The secret is stored only until the user submits a valid first TOTP code
+  // to POST /auth/mfa/confirm.  On success the secret is persisted to the DB
+  // and the pending key is deleted.  On expiry the user must call /setup again.
+  // ---------------------------------------------------------------------------
+
+  const PENDING_MFA_TTL_SECONDS = 600; // 10 minutes
+  const pendingMfaSecrets = new Map<string, { secret: string; expiresAt: Date }>();
+
+  async function savePendingMfaSecret(userId: string, secret: string): Promise<void> {
+    const ciphertext = encryptTotpSecret(secret, config.MFA_ENCRYPTION_KEY);
+    if (redisClient) {
+      await redisClient.set(`pending_mfa:${userId}`, ciphertext, "EX", PENDING_MFA_TTL_SECONDS);
+    } else {
+      const expiresAt = new Date(Date.now() + PENDING_MFA_TTL_SECONDS * 1000);
+      pendingMfaSecrets.set(userId, { secret: ciphertext, expiresAt });
+    }
+  }
+
+  async function getPendingMfaSecret(userId: string): Promise<string | null> {
+    let ciphertext: string | null;
+    if (redisClient) {
+      ciphertext = await redisClient.get(`pending_mfa:${userId}`);
+    } else {
+      const entry = pendingMfaSecrets.get(userId);
+      if (!entry) return null;
+      if (entry.expiresAt <= new Date()) {
+        pendingMfaSecrets.delete(userId);
+        return null;
+      }
+      ciphertext = entry.secret;
+    }
+    if (!ciphertext) return null;
+    try {
+      return decryptTotpSecret(ciphertext, config.MFA_ENCRYPTION_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  async function deletePendingMfaSecret(userId: string): Promise<void> {
+    if (redisClient) {
+      await redisClient.del(`pending_mfa:${userId}`);
+    } else {
+      pendingMfaSecrets.delete(userId);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
 
   function toPublicUser(user: UserRecord): PublicUser {
     return {
@@ -69,7 +173,7 @@ export function createAuthService(
     return jwt.sign(payload, config.JWT_ACCESS_SECRET, signOptions);
   }
 
-  function signRefreshToken(userId: string): string {
+  async function signRefreshToken(userId: string): Promise<string> {
     const jti = randomUUID();
     const payload: RefreshTokenPayload = {
       sub: userId,
@@ -88,13 +192,15 @@ export function createAuthService(
       ? new Date(decoded.exp * 1000)
       : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    refreshTokens.set(jti, { userId, expiresAt });
+    const ttlSeconds = Math.max(1, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+    await saveRefreshToken(jti, userId, ttlSeconds);
+
     return token;
   }
 
-  function issueTokens(user: UserRecord): AuthTokens {
+  async function issueTokens(user: UserRecord): Promise<AuthTokens> {
     const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user.id);
+    const refreshToken = await signRefreshToken(user.id);
     const decoded = jwt.decode(accessToken) as { exp?: number; iat?: number } | null;
     const expiresIn =
       decoded?.exp && decoded.iat ? decoded.exp - decoded.iat : 900;
@@ -177,7 +283,7 @@ export function createAuthService(
       };
     }
 
-    const tokens = issueTokens(user);
+    const tokens = await issueTokens(user);
 
     audit.logAuthEvent("auth.login.success", {
       userId: user.id,
@@ -216,7 +322,19 @@ export function createAuthService(
       throw new AppError(401, "INVALID_MFA_TOKEN", "Invalid MFA challenge token");
     }
 
-    const isValidCode = config.NODE_ENV !== "production" && code === DEV_MFA_CODE;
+    const user = await userRepository.findById(payload.sub);
+
+    if (!user?.isActive) {
+      throw new AppError(401, "INVALID_MFA_TOKEN", "Invalid MFA challenge token");
+    }
+
+    const plaintextSecret = user.totpSecret
+      ? decryptTotpSecret(user.totpSecret, config.MFA_ENCRYPTION_KEY)
+      : null;
+
+    const isValidCode =
+      !!plaintextSecret &&
+      verifySync({ token: code, secret: plaintextSecret }).valid;
 
     if (!isValidCode) {
       audit.logAuthEvent("auth.mfa.failure", {
@@ -227,13 +345,7 @@ export function createAuthService(
       throw new AppError(401, "INVALID_MFA_CODE", "Invalid MFA code");
     }
 
-    const user = await userRepository.findById(payload.sub);
-
-    if (!user?.isActive) {
-      throw new AppError(401, "INVALID_MFA_TOKEN", "Invalid MFA challenge token");
-    }
-
-    const tokens = issueTokens(user);
+    const tokens = await issueTokens(user);
 
     audit.logAuthEvent("auth.mfa.success", {
       userId: user.id,
@@ -257,21 +369,21 @@ export function createAuthService(
       }
 
       const refreshPayload = payload as unknown as RefreshTokenPayload;
-      const stored = refreshTokens.get(refreshPayload.jti);
+      const storedUserId = await getRefreshTokenUserId(refreshPayload.jti);
 
-      if (!stored || stored.userId !== refreshPayload.sub) {
+      if (!storedUserId || storedUserId !== refreshPayload.sub) {
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
       }
 
-      const user = await userRepository.findById(stored.userId);
+      const user = await userRepository.findById(storedUserId);
 
       if (!user?.isActive) {
-        refreshTokens.delete(refreshPayload.jti);
+        await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
       }
 
-      refreshTokens.delete(refreshPayload.jti);
-      const tokens = issueTokens(user);
+      await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+      const tokens = await issueTokens(user);
 
       audit.logAuthEvent("auth.refresh.success", {
         userId: user.id,
@@ -294,16 +406,20 @@ export function createAuthService(
     }
   }
 
-  function logout(
+  async function logout(
     refreshToken: string | undefined,
     auditContext: { userId?: string; ipAddress?: string; userAgent?: string },
-  ): void {
+  ): Promise<void> {
     if (refreshToken) {
       try {
         const payload = parseJwtPayload(jwt.verify(refreshToken, config.JWT_REFRESH_SECRET));
 
-        if (payload.type === "refresh" && typeof payload.jti === "string") {
-          refreshTokens.delete(payload.jti);
+        if (
+          payload.type === "refresh" &&
+          typeof payload.jti === "string" &&
+          typeof payload.sub === "string"
+        ) {
+          await deleteRefreshToken(payload.jti, payload.sub);
         }
       } catch {
         // Ignore invalid tokens on logout.
@@ -334,14 +450,29 @@ export function createAuthService(
   }
 
   /**
-   * Revokes all in-memory refresh tokens belonging to a user.
+   * Revokes all refresh tokens belonging to a user.
+   * With Redis: reads the per-user JTI set, deletes each token key, then deletes the set.
+   * With Map fallback: iterates the in-memory map and removes matching entries.
    * Called after a password change or admin reset so existing sessions are
    * invalidated and the user must log in again with the new credentials.
    */
-  function revokeAllUserTokens(userId: string): void {
-    for (const [jti, record] of refreshTokens) {
-      if (record.userId === userId) {
-        refreshTokens.delete(jti);
+  async function revokeAllUserTokens(userId: string): Promise<void> {
+    if (redisClient) {
+      const jtis = await redisClient.smembers(`user_tokens:${userId}`);
+      // Build a single pipeline batch for all deletes so they are sent in one
+      // round-trip, shrinking the partial-failure window vs. Promise.all with
+      // independent awaits.
+      const pipe = redisClient.pipeline();
+      for (const jti of jtis) {
+        pipe.del(`refresh:${jti}`);
+      }
+      pipe.del(`user_tokens:${userId}`);
+      await pipe.exec();
+    } else {
+      for (const [jti, record] of refreshTokens) {
+        if (record.userId === userId) {
+          refreshTokens.delete(jti);
+        }
       }
     }
   }
@@ -373,10 +504,106 @@ export function createAuthService(
 
     const hashedPassword = await bcrypt.hash(newPassword, 12);
     await userRepository.updatePassword(userId, hashedPassword);
-    revokeAllUserTokens(userId);
+    await revokeAllUserTokens(userId);
 
     audit.logAuthEvent("auth.password.changed", {
       userId,
+      email: user.email,
+      clinicId: user.homeClinicId,
+      ...auditContext,
+    });
+  }
+
+  /**
+   * Begins TOTP enrollment for the authenticated user.
+   *
+   * Generates a fresh Base32 TOTP secret, stores it as a pending enrollment
+   * in Redis (or in-memory fallback) with a 10-minute TTL, and returns the
+   * secret plus an otpauth:// URI that authenticator apps can scan as a QR code.
+   *
+   * The secret is NOT written to the database yet — that only happens when the
+   * user confirms with a valid TOTP code via confirmMfa().
+   */
+  async function setupMfa(
+    userId: string,
+    auditContext: { ipAddress?: string; userAgent?: string },
+  ): Promise<{ secret: string; uri: string }> {
+    const user = await userRepository.findById(userId);
+
+    if (!user?.isActive) {
+      throw new AppError(404, "NOT_FOUND", "User not found");
+    }
+
+    const secret = generateSecret();
+
+    await savePendingMfaSecret(userId, secret);
+
+    const uri = generateURI({
+      issuer: "Verve Dental",
+      label: user.email,
+      secret,
+    });
+
+    audit.logAuthEvent("auth.mfa.setup_initiated", {
+      userId: user.id,
+      email: user.email,
+      clinicId: user.homeClinicId,
+      ...auditContext,
+    });
+
+    return { secret, uri };
+  }
+
+  /**
+   * Completes TOTP enrollment for the authenticated user.
+   *
+   * Loads the pending secret stored by setupMfa(), verifies the submitted TOTP
+   * code against it, and on success writes the secret to users.totp_secret and
+   * sets mfa_enabled = true.  The pending key is then deleted.
+   *
+   * Fails with 400 MFA_SETUP_REQUIRED when no pending setup exists (expired or
+   * /setup was never called), and 401 INVALID_MFA_CODE when the code is wrong.
+   */
+  async function confirmMfa(
+    userId: string,
+    code: string,
+    auditContext: { ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    const user = await userRepository.findById(userId);
+
+    if (!user?.isActive) {
+      throw new AppError(404, "NOT_FOUND", "User not found");
+    }
+
+    const pendingSecret = await getPendingMfaSecret(userId);
+
+    if (!pendingSecret) {
+      throw new AppError(
+        400,
+        "MFA_SETUP_REQUIRED",
+        "No pending MFA setup found — call POST /auth/mfa/setup first",
+      );
+    }
+
+    const isValid = verifySync({ token: code, secret: pendingSecret }).valid;
+
+    if (!isValid) {
+      audit.logAuthEvent("auth.mfa.confirm_failure", {
+        userId: user.id,
+        email: user.email,
+        clinicId: user.homeClinicId,
+        reason: "invalid_mfa_code",
+        ...auditContext,
+      });
+      throw new AppError(401, "INVALID_MFA_CODE", "Invalid MFA code");
+    }
+
+    const encryptedSecret = encryptTotpSecret(pendingSecret, config.MFA_ENCRYPTION_KEY);
+    await userRepository.setUserMfaEnrollment(userId, encryptedSecret);
+    await deletePendingMfaSecret(userId);
+
+    audit.logAuthEvent("auth.mfa.enrolled", {
+      userId: user.id,
       email: user.email,
       clinicId: user.homeClinicId,
       ...auditContext,
@@ -392,6 +619,8 @@ export function createAuthService(
     canAccessClinic,
     changePassword,
     revokeAllUserTokens,
+    setupMfa,
+    confirmMfa,
   };
 }
 

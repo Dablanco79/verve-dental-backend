@@ -24,6 +24,36 @@ import type {
   RosterEntry,
   UpdateShiftRequest,
 } from "../types/roster.js";
+import type { LaborForecastSummary } from "../types/forecast.js";
+import type { ClinicData, UpdateClinicData } from "../types/clinic.js";
+import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
+import type {
+  AuditEvent,
+  AuditEventsFilters,
+  AuditEventsPage,
+  DashboardFilters,
+  DashboardKpis,
+  InventoryReport,
+  RevenueReport,
+  RevenueReportFilters,
+  StaffReport,
+  StaffReportFilters,
+} from "../types/analytics.js";
+import type {
+  ApproveLeaveRequest,
+  ApproveTimesheetRequest,
+  ClockInRequest,
+  ClockOutRequest,
+  CreateLeaveRequest,
+  CreateManualTimesheetRequest,
+  LeaveFilters,
+  LeaveRequest,
+  RejectLeaveRequest,
+  RejectTimesheetRequest,
+  TimesheetEntry,
+  TimesheetFilters,
+  VerifyAttendanceRequest,
+} from "../types/payroll.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -199,10 +229,65 @@ export function createApiClient(config: AppConfig) {
   async function listPurchaseOrders(clinicId: string): Promise<PurchaseOrderLine[]> {
     return request<PurchaseOrderLine[]>(
       config,
-      `/api/v1/clinics/${clinicId}/purchase-orders`,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders`,
       {},
       requireAccessToken(),
     );
+  }
+
+  async function submitPurchaseOrder(
+    clinicId: string,
+    poId: string,
+  ): Promise<{ purchaseOrder: { id: string; status: string }; lines: PurchaseOrderLine[] }> {
+    return request<{ purchaseOrder: { id: string; status: string }; lines: PurchaseOrderLine[] }>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/submit`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({}),
+      },
+      requireAccessToken(),
+    );
+  }
+
+  async function exportPurchaseOrdersCsv(clinicId: string): Promise<void> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/export.csv`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      // Attempt to extract a structured backend error message.
+      let errorMessage = `Export failed (${String(response.status)})`;
+      try {
+        const errJson = await response.json() as { error?: { message?: string } };
+        if (errJson.error?.message) {
+          errorMessage = errJson.error.message;
+        }
+      } catch {
+        // Non-JSON body — keep the status-code message.
+      }
+      throw new Error(errorMessage);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filenameMatch = /filename="([^"]+)"/.exec(disposition);
+    const filename = filenameMatch?.[1] ?? `purchase-orders-${clinicId}.csv`;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function listRoster(
@@ -272,6 +357,81 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function getClinic(clinicId: string): Promise<ClinicData> {
+    return request<ClinicData>(
+      config,
+      `/api/v1/clinics/${clinicId}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function updateClinicSettings(
+    clinicId: string,
+    data: UpdateClinicData,
+  ): Promise<ClinicData> {
+    return request<ClinicData>(
+      config,
+      `/api/v1/clinics/${clinicId}`,
+      { method: "PATCH", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
+  // ── Billing ────────────────────────────────────────────────────────────────
+
+  async function listInvoices(
+    clinicId: string,
+    filters: InvoiceFilters = {},
+  ): Promise<Invoice[]> {
+    const query = new URLSearchParams();
+    if (filters.status) query.set("status", filters.status);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<Invoice[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/billing/invoices${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getInvoice(clinicId: string, invoiceId: string): Promise<Invoice> {
+    return request<Invoice>(
+      config,
+      `/api/v1/clinics/${clinicId}/billing/invoices/${invoiceId}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function recordPayment(
+    clinicId: string,
+    invoiceId: string,
+    body: RecordPaymentRequest,
+  ): Promise<void> {
+    await request<unknown>(
+      config,
+      `/api/v1/clinics/${clinicId}/billing/invoices/${invoiceId}/payments`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function getLaborForecast(
+    clinicId: string,
+    forecastDays?: number,
+  ): Promise<LaborForecastSummary> {
+    const qs = forecastDays !== undefined ? `?forecastDays=${String(forecastDays)}` : "";
+    return request<LaborForecastSummary>(
+      config,
+      `/api/v1/clinics/${clinicId}/forecast/labor${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function resetUserPassword(
     clinicId: string,
     userId: string,
@@ -284,6 +444,275 @@ export function createApiClient(config: AppConfig) {
         method: "POST",
         body: JSON.stringify(body),
       },
+      requireAccessToken(),
+    );
+  }
+
+  // ── Analytics ──────────────────────────────────────────────────────────────
+
+  async function getAnalyticsDashboard(
+    clinicId: string,
+    filters: DashboardFilters = {},
+  ): Promise<DashboardKpis> {
+    const qs =
+      filters.periodDays !== undefined ? `?periodDays=${String(filters.periodDays)}` : "";
+    return request<DashboardKpis>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/dashboard${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getAnalyticsRevenue(
+    clinicId: string,
+    filters: RevenueReportFilters = {},
+  ): Promise<RevenueReport> {
+    const qs = filters.months !== undefined ? `?months=${String(filters.months)}` : "";
+    return request<RevenueReport>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/revenue${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getAnalyticsInventory(clinicId: string): Promise<InventoryReport> {
+    return request<InventoryReport>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/inventory`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getAnalyticsStaff(
+    clinicId: string,
+    filters: StaffReportFilters = {},
+  ): Promise<StaffReport> {
+    const qs =
+      filters.periodDays !== undefined ? `?periodDays=${String(filters.periodDays)}` : "";
+    return request<StaffReport>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/staff${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listAuditEvents(
+    clinicId: string,
+    filters: AuditEventsFilters = {},
+  ): Promise<AuditEventsPage> {
+    const query = new URLSearchParams();
+    if (filters.entityType) query.set("entityType", filters.entityType);
+    if (filters.actorId) query.set("actorId", filters.actorId);
+    if (filters.entityId) query.set("entityId", filters.entityId);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.limit !== undefined) query.set("limit", String(filters.limit));
+    if (filters.offset !== undefined) query.set("offset", String(filters.offset));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<AuditEventsPage>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/audit-events${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getAuditEvent(clinicId: string, eventId: string): Promise<AuditEvent> {
+    return request<AuditEvent>(
+      config,
+      `/api/v1/clinics/${clinicId}/analytics/audit-events/${eventId}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  // ── Timesheets ──────────────────────────────────────────────────────────────
+
+  async function listTimesheets(
+    clinicId: string,
+    filters: TimesheetFilters = {},
+  ): Promise<TimesheetEntry[]> {
+    const query = new URLSearchParams();
+    if (filters.shiftDate) query.set("shiftDate", filters.shiftDate);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.payrollType) query.set("payrollType", filters.payrollType);
+    if (filters.attendanceStatus) query.set("attendanceStatus", filters.attendanceStatus);
+    if (filters.timesheetStatus) query.set("timesheetStatus", filters.timesheetStatus);
+    if (filters.pendingApprovalOnly) query.set("pendingApprovalOnly", "true");
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<TimesheetEntry[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function clockIn(
+    clinicId: string,
+    body: ClockInRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/clock-in`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function clockOut(
+    clinicId: string,
+    timesheetId: string,
+    body: ClockOutRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/clock-out`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function createManualTimesheetEntry(
+    clinicId: string,
+    body: CreateManualTimesheetRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function approveTimesheet(
+    clinicId: string,
+    timesheetId: string,
+    body: ApproveTimesheetRequest = {},
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/approve`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function rejectTimesheet(
+    clinicId: string,
+    timesheetId: string,
+    body: RejectTimesheetRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/reject`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function verifyCommissionAttendance(
+    clinicId: string,
+    timesheetId: string,
+    body: VerifyAttendanceRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/verify-attendance`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  // ── Leave ───────────────────────────────────────────────────────────────────
+
+  async function listLeave(
+    clinicId: string,
+    filters: LeaveFilters = {},
+  ): Promise<LeaveRequest[]> {
+    const query = new URLSearchParams();
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.leaveType) query.set("leaveType", filters.leaveType);
+    if (filters.status) query.set("status", filters.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<LeaveRequest[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listMyLeave(
+    clinicId: string,
+    filters: LeaveFilters = {},
+  ): Promise<LeaveRequest[]> {
+    const query = new URLSearchParams();
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.leaveType) query.set("leaveType", filters.leaveType);
+    if (filters.status) query.set("status", filters.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<LeaveRequest[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/me${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createLeaveRequest(
+    clinicId: string,
+    body: CreateLeaveRequest,
+  ): Promise<LeaveRequest> {
+    return request<LeaveRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function approveLeave(
+    clinicId: string,
+    leaveId: string,
+    body: ApproveLeaveRequest = {},
+  ): Promise<LeaveRequest> {
+    return request<LeaveRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/approve`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function rejectLeave(
+    clinicId: string,
+    leaveId: string,
+    body: RejectLeaveRequest,
+  ): Promise<LeaveRequest> {
+    return request<LeaveRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/reject`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function withdrawLeave(
+    clinicId: string,
+    leaveId: string,
+  ): Promise<LeaveRequest> {
+    return request<LeaveRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/withdraw`,
+      { method: "POST" },
       requireAccessToken(),
     );
   }
@@ -303,11 +732,38 @@ export function createApiClient(config: AppConfig) {
     changePassword,
     resetUserPassword,
     listPurchaseOrders,
+    submitPurchaseOrder,
+    exportPurchaseOrdersCsv,
     listRoster,
     getMyShifts,
     createShift,
     updateShift,
     cancelShift,
+    getLaborForecast,
+    getClinic,
+    updateClinicSettings,
+    listInvoices,
+    getInvoice,
+    recordPayment,
+    getAnalyticsDashboard,
+    getAnalyticsRevenue,
+    getAnalyticsInventory,
+    getAnalyticsStaff,
+    listAuditEvents,
+    getAuditEvent,
+    listTimesheets,
+    clockIn,
+    clockOut,
+    createManualTimesheetEntry,
+    approveTimesheet,
+    rejectTimesheet,
+    verifyCommissionAttendance,
+    listLeave,
+    listMyLeave,
+    createLeaveRequest,
+    approveLeave,
+    rejectLeave,
+    withdrawLeave,
   };
 }
 

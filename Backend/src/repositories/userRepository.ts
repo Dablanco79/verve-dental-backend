@@ -2,6 +2,8 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 
 import type { UserRecord, UserRole } from "../types/auth.js";
+import type { StaffPayrollTrack } from "../types/payroll.js";
+import { encryptTotpSecret } from "../utils/mfaCrypto.js";
 
 export type CreateUserInput = {
   email: string;
@@ -9,6 +11,8 @@ export type CreateUserInput = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  /** Defaults to 'hourly' when not supplied (backward-compat with pre-009 callers). */
+  payrollTrack?: StaffPayrollTrack;
 };
 
 export interface UserRepository {
@@ -23,10 +27,23 @@ export interface UserRepository {
    */
   getClinicName(clinicId: string): Promise<string | null>;
   updatePassword(userId: string, hashedPassword: string): Promise<void>;
+  /**
+   * Persists a confirmed TOTP secret and sets mfa_enabled = true atomically.
+   * Called only after the user submits a valid first code during enrollment.
+   */
+  setUserMfaEnrollment(userId: string, totpSecret: string): Promise<void>;
 }
 
 export const SEED_CLINIC_A_ID = "11111111-1111-4111-8111-111111111111";
 export const SEED_CLINIC_B_ID = "22222222-2222-4222-8222-222222222222";
+
+/**
+ * Fixed Base32 TOTP secret for the in-memory dev/test admin seed user.
+ * Used by tests to generate valid TOTP codes without a real enrollment flow.
+ * Never appears in production — Postgres seeds keep mfa_enabled=false and
+ * totp_secret=null until a real user enrolls via /auth/mfa/setup.
+ */
+export const SEED_ADMIN_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
 export const SEED_USER_IDS = {
   clinicAAdmin: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -37,7 +54,9 @@ export const SEED_USER_IDS = {
 
 const DEFAULT_DEV_PASSWORD = "password123";
 
-export async function createInMemoryUserRepository(): Promise<UserRepository> {
+export async function createInMemoryUserRepository(
+  encryptionKey: string,
+): Promise<UserRepository> {
   const passwordHash = await bcrypt.hash(DEFAULT_DEV_PASSWORD, 10);
 
   const users: UserRecord[] = [
@@ -48,6 +67,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       role: "owner_admin",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      payrollTrack: "commission",
+      totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
       mfaEnabled: true,
       isActive: true,
     },
@@ -58,6 +79,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       role: "clinical_staff",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      payrollTrack: "hourly",
+      totpSecret: null,
       mfaEnabled: false,
       isActive: true,
     },
@@ -68,7 +91,9 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       role: "group_practice_manager",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
-      mfaEnabled: true,
+      payrollTrack: "hourly",
+      totpSecret: null,
+      mfaEnabled: false,
       isActive: true,
     },
     {
@@ -78,6 +103,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       role: "owner_admin",
       homeClinicId: SEED_CLINIC_B_ID,
       homeClinicName: "Verve Dental Clinic B",
+      payrollTrack: "commission",
+      totpSecret: null,
       mfaEnabled: false,
       isActive: true,
     },
@@ -101,6 +128,8 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
         role: input.role,
         homeClinicId: input.homeClinicId,
         homeClinicName: input.homeClinicName,
+        payrollTrack: input.payrollTrack ?? "hourly",
+        totpSecret: null,
         mfaEnabled: false,
         isActive: true,
       };
@@ -121,6 +150,15 @@ export async function createInMemoryUserRepository(): Promise<UserRepository> {
       const user = users.find((u) => u.id === userId);
       if (user) {
         user.passwordHash = hashedPassword;
+      }
+      return Promise.resolve();
+    },
+
+    setUserMfaEnrollment(userId: string, totpSecret: string): Promise<void> {
+      const user = users.find((u) => u.id === userId);
+      if (user) {
+        user.totpSecret = totpSecret;
+        user.mfaEnabled = true;
       }
       return Promise.resolve();
     },

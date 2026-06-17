@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -76,7 +76,7 @@ function formatTime(isoString: string): string {
 
 /** "YYYY-MM-DD" from a local Date */
 function toDateInput(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${date.getFullYear().toString()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /** "HH:mm" from a UTC ISO string, displayed in local time */
@@ -205,7 +205,7 @@ export function RosterCalendarPage() {
     setFormError(null);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!user) return;
     setFormError(null);
@@ -308,7 +308,7 @@ export function RosterCalendarPage() {
             <button
               type="button"
               className="button-link roster-refresh-btn"
-              onClick={() => void loadWeek()}
+              onClick={() => { void loadWeek(); }}
               disabled={isLoading}
             >
               {isLoading ? "Loading…" : "Refresh"}
@@ -420,7 +420,7 @@ export function RosterCalendarPage() {
 
             <form
               className="roster-form"
-              onSubmit={(e) => void handleSubmit(e)}
+              onSubmit={(e) => { void handleSubmit(e); }}
             >
               {/* Staff member — only shown when creating */}
               {editingEntry ? (
@@ -541,7 +541,7 @@ export function RosterCalendarPage() {
                   <button
                     type="button"
                     className="roster-form__danger-btn"
-                    onClick={() => void handleCancelShift()}
+                    onClick={() => { void handleCancelShift(); }}
                     disabled={isSubmitting}
                   >
                     Cancel shift
