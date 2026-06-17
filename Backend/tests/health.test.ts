@@ -14,7 +14,6 @@ type ApiError = { error: { code: string; message: string } };
 type LoginData = {
   requiresMfa: boolean;
   accessToken?: string;
-  refreshToken?: string;
   mfaToken?: string;
   user: { homeClinicId: string; email: string };
 };
@@ -189,12 +188,19 @@ describe("Auth API", () => {
       password: "password123",
     });
 
-    const loginBody = loginResponse.body as ApiData<LoginData>;
-    const refreshToken = loginBody.data.refreshToken ?? "";
+    expect(loginResponse.status).toBe(200);
 
-    const refreshResponse = await request(app).post("/api/v1/auth/refresh").send({
-      refreshToken,
-    });
+    // Extract the HttpOnly refresh cookie set by login
+    const setCookieHeader = loginResponse.headers["set-cookie"] as string | string[] | undefined;
+    const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : [];
+    const refreshCookieFull = cookies.find((c) => c.startsWith("refreshToken="));
+    expect(refreshCookieFull).toBeDefined();
+    const refreshCookie = (refreshCookieFull as string).split(";")[0] ?? "";
+
+    const refreshResponse = await request(app)
+      .post("/api/v1/auth/refresh")
+      .set("Cookie", refreshCookie)
+      .send();
 
     const refreshBody = refreshResponse.body as ApiData<{ accessToken: string; user: { email: string } }>;
 

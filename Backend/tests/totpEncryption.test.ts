@@ -164,9 +164,9 @@ describe("MFA authentication with encrypted secrets — HTTP integration", () =>
     });
 
     expect(verifyRes.status).toBe(200);
-    const verifyData = (verifyRes.body as ApiData<{ accessToken: string; refreshToken: string }>).data;
+    const verifyData = (verifyRes.body as ApiData<{ accessToken: string }>).data;
     expect(verifyData.accessToken).toEqual(expect.any(String));
-    expect(verifyData.refreshToken).toEqual(expect.any(String));
+    expect(verifyData).not.toHaveProperty("refreshToken");
   });
 
   it("wrong code still returns 401 INVALID_MFA_CODE with encrypted secrets", async () => {

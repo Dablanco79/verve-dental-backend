@@ -20,7 +20,6 @@ export type AuthUser = {
 
 export type AuthSession = {
   accessToken: string;
-  refreshToken: string;
   expiresIn: number;
   user: AuthUser;
 };
@@ -29,7 +28,6 @@ export type LoginResponse =
   | {
       requiresMfa: false;
       accessToken: string;
-      refreshToken: string;
       expiresIn: number;
       user: AuthUser;
     }

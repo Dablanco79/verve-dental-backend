@@ -2,9 +2,9 @@
  * Auth Session Lifecycle tests
  *
  * Covers the scenarios that health.test.ts does not:
- *   - Refresh token rotation (old token rejected, new token usable)
- *   - Logout revokes the presented refresh token
- *   - Logout without a token body is harmless (no revocation)
+ *   - Refresh cookie rotation (old cookie rejected, new cookie usable)
+ *   - Logout revokes the refresh cookie
+ *   - Logout without a cookie is harmless (no revocation)
  *   - Malformed refresh tokens are rejected
  *   - Multiple concurrent sessions (logout one, other survives)
  *   - changePassword revokes all sessions for that user
@@ -21,48 +21,56 @@ import {
   SEED_CLINIC_A_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
-import { loginAndGetTokens } from "./helpers/auth.js";
+import { extractRefreshCookie, loginAndGetTokens } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiError = { error: { code: string; message: string } };
-type RefreshData = { accessToken: string; refreshToken: string };
+type RefreshData = { accessToken: string };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function doRefresh(app: Awaited<ReturnType<typeof createTestApp>>, refreshToken: string) {
-  return request(app).post("/api/v1/auth/refresh").send({ refreshToken });
+async function doRefresh(app: Awaited<ReturnType<typeof createTestApp>>, refreshCookie: string) {
+  return request(app)
+    .post("/api/v1/auth/refresh")
+    .set("Cookie", refreshCookie)
+    .send();
 }
 
-async function doLogout(app: Awaited<ReturnType<typeof createTestApp>>, body: object) {
-  return request(app).post("/api/v1/auth/logout").send(body);
+async function doLogout(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  refreshCookie?: string,
+) {
+  const req = request(app).post("/api/v1/auth/logout");
+  if (refreshCookie) req.set("Cookie", refreshCookie);
+  return req.send();
 }
 
 // ---------------------------------------------------------------------------
-// Refresh token rotation
+// Refresh cookie rotation
 // ---------------------------------------------------------------------------
 
-describe("Refresh token rotation", () => {
-  it("returns a new access token and a new refresh token on each rotation", async () => {
+describe("Refresh cookie rotation", () => {
+  it("returns a new access token and rotates the refresh cookie on each rotation", async () => {
     const app = await createTestApp();
-    const { refreshToken: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
+    const { refreshCookie: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
     const res = await doRefresh(app, original);
 
     expect(res.status).toBe(200);
     const data = (res.body as { data: RefreshData }).data;
     expect(data.accessToken).toEqual(expect.any(String));
-    expect(data.refreshToken).toEqual(expect.any(String));
-    // The rotated refresh token must be a different value
-    expect(data.refreshToken).not.toBe(original);
+
+    const rotatedCookie = extractRefreshCookie(res);
+    expect(rotatedCookie).not.toBe(original);
   });
 
-  it("rejects the original refresh token once it has been rotated", async () => {
+  it("rejects the original refresh cookie once it has been rotated", async () => {
     const app = await createTestApp();
-    const { refreshToken: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
+    const { refreshCookie: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
-    // First rotation — consumes the original token
+    // First rotation — consumes the original cookie
     await doRefresh(app, original);
 
     // Replay of the original must be rejected
@@ -71,16 +79,18 @@ describe("Refresh token rotation", () => {
     expect((replayRes.body as ApiError).error.code).toBe("INVALID_REFRESH_TOKEN");
   });
 
-  it("the rotated token can itself be used for a further rotation", async () => {
+  it("the rotated cookie can itself be used for a further rotation", async () => {
     const app = await createTestApp();
-    const { refreshToken: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
+    const { refreshCookie: original } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
     const first = await doRefresh(app, original);
-    const { refreshToken: rotated } = (first.body as { data: RefreshData }).data;
+    const rotated = extractRefreshCookie(first);
 
     const second = await doRefresh(app, rotated);
     expect(second.status).toBe(200);
-    expect((second.body as { data: RefreshData }).data.refreshToken).not.toBe(rotated);
+
+    const secondRotated = extractRefreshCookie(second);
+    expect(secondRotated).not.toBe(rotated);
   });
 });
 
@@ -89,28 +99,28 @@ describe("Refresh token rotation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Logout", () => {
-  it("returns 204 and revokes the presented refresh token", async () => {
+  it("returns 204 and revokes the refresh cookie", async () => {
     const app = await createTestApp();
-    const { refreshToken } = await loginAndGetTokens(app, "staff@clinic-a.au");
+    const { refreshCookie } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
-    const logoutRes = await doLogout(app, { refreshToken });
+    const logoutRes = await doLogout(app, refreshCookie);
     expect(logoutRes.status).toBe(204);
 
-    const refreshRes = await doRefresh(app, refreshToken);
+    const refreshRes = await doRefresh(app, refreshCookie);
     expect(refreshRes.status).toBe(401);
     expect((refreshRes.body as ApiError).error.code).toBe("INVALID_REFRESH_TOKEN");
   });
 
-  it("returns 204 when no refresh token is supplied and does not invalidate the active token", async () => {
+  it("returns 204 when no cookie is present and does not invalidate the active token", async () => {
     const app = await createTestApp();
-    const { refreshToken } = await loginAndGetTokens(app, "staff@clinic-a.au");
+    const { refreshCookie } = await loginAndGetTokens(app, "staff@clinic-a.au");
 
-    // Logout with an empty body — valid but performs no revocation
-    const logoutRes = await doLogout(app, {});
+    // Logout without any cookie — valid but performs no revocation
+    const logoutRes = await doLogout(app);
     expect(logoutRes.status).toBe(204);
 
-    // The original token is still valid
-    const refreshRes = await doRefresh(app, refreshToken);
+    // The original cookie is still valid
+    const refreshRes = await doRefresh(app, refreshCookie);
     expect(refreshRes.status).toBe(200);
   });
 });
@@ -123,7 +133,7 @@ describe("Invalid refresh tokens", () => {
   it("rejects a malformed (non-JWT) refresh token with 401", async () => {
     const app = await createTestApp();
 
-    const res = await doRefresh(app, "this.is.not.a.jwt");
+    const res = await doRefresh(app, "refreshToken=this.is.not.a.jwt");
     expect(res.status).toBe(401);
     expect((res.body as ApiError).error.code).toBe("INVALID_REFRESH_TOKEN");
   });
@@ -137,7 +147,7 @@ describe("Invalid refresh tokens", () => {
       ".eyJzdWIiOiJ1c2VyLTEiLCJ0eXBlIjoicmVmcmVzaCIsImp0aSI6ImZha2UifQ" +
       ".INVALIDSIGNATURE";
 
-    const res = await doRefresh(app, fakeToken);
+    const res = await doRefresh(app, `refreshToken=${fakeToken}`);
     expect(res.status).toBe(401);
     expect((res.body as ApiError).error.code).toBe("INVALID_REFRESH_TOKEN");
   });
@@ -154,14 +164,14 @@ describe("Multiple concurrent sessions", () => {
     const session2 = await loginAndGetTokens(app, "staff@clinic-a.au");
 
     // Logout session 1 only
-    await doLogout(app, { refreshToken: session1.refreshToken });
+    await doLogout(app, session1.refreshCookie);
 
     // Session 1 is revoked
-    const res1 = await doRefresh(app, session1.refreshToken);
+    const res1 = await doRefresh(app, session1.refreshCookie);
     expect(res1.status).toBe(401);
 
     // Session 2 is unaffected
-    const res2 = await doRefresh(app, session2.refreshToken);
+    const res2 = await doRefresh(app, session2.refreshCookie);
     expect(res2.status).toBe(200);
   });
 });
@@ -171,7 +181,7 @@ describe("Multiple concurrent sessions", () => {
 // ---------------------------------------------------------------------------
 
 describe("changePassword", () => {
-  it("revokes all active refresh tokens for the user who changed their password", async () => {
+  it("revokes all active refresh cookies for the user who changed their password", async () => {
     const app = await createTestApp();
     const session1 = await loginAndGetTokens(app, "staff@clinic-a.au");
     const session2 = await loginAndGetTokens(app, "staff@clinic-a.au");
@@ -184,10 +194,10 @@ describe("changePassword", () => {
       .send({ currentPassword: "password123", newPassword: "newPassword123!" });
     expect(changeRes.status).toBe(200);
 
-    const res1 = await doRefresh(app, session1.refreshToken);
+    const res1 = await doRefresh(app, session1.refreshCookie);
     expect(res1.status).toBe(401);
 
-    const res2 = await doRefresh(app, session2.refreshToken);
+    const res2 = await doRefresh(app, session2.refreshCookie);
     expect(res2.status).toBe(401);
   });
 });
@@ -214,11 +224,11 @@ describe("Admin resetPassword (revokeAllUserTokens)", () => {
       .send({ newPassword: "resetPassword456!" });
     expect(resetRes.status).toBe(200);
 
-    // Both staff refresh tokens must now be invalid
-    const res1 = await doRefresh(app, staffSession1.refreshToken);
+    // Both staff refresh cookies must now be invalid
+    const res1 = await doRefresh(app, staffSession1.refreshCookie);
     expect(res1.status).toBe(401);
 
-    const res2 = await doRefresh(app, staffSession2.refreshToken);
+    const res2 = await doRefresh(app, staffSession2.refreshCookie);
     expect(res2.status).toBe(401);
   });
 
@@ -239,11 +249,11 @@ describe("Admin resetPassword (revokeAllUserTokens)", () => {
       .send({ newPassword: "resetPassword456!" });
 
     // Staff session is revoked
-    const staffRes = await doRefresh(app, staffSession.refreshToken);
+    const staffRes = await doRefresh(app, staffSession.refreshCookie);
     expect(staffRes.status).toBe(401);
 
     // Manager's own session is unaffected
-    const managerRes = await doRefresh(app, managerTokens.refreshToken);
+    const managerRes = await doRefresh(app, managerTokens.refreshCookie);
     expect(managerRes.status).toBe(200);
   });
 });

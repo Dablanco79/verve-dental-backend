@@ -222,9 +222,9 @@ describe("MFA enrollment + login flow", () => {
     });
 
     expect(verifyRes.status).toBe(200);
-    const verifyData = (verifyRes.body as ApiData<{ accessToken: string; refreshToken: string }>).data;
+    const verifyData = (verifyRes.body as ApiData<{ accessToken: string }>).data;
     expect(verifyData.accessToken).toEqual(expect.any(String));
-    expect(verifyData.refreshToken).toEqual(expect.any(String));
+    expect(verifyData).not.toHaveProperty("refreshToken");
   });
 
   it("loginAndGetTokens helper works transparently for enrolled MFA users", async () => {

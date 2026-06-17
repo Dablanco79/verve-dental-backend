@@ -3,9 +3,9 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** CI Cleanup — Post Sprint 4B  
+**Current Phase:** Sprint 4C Complete — Cookie-Only Refresh Tokens  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
-**Status:** 25 backend suites / **505/505 tests green** + 4 frontend suites / **16/16 tests green** — 0 TypeScript errors — 0 lint warnings — CI cleanup complete
+**Status:** 25 backend suites / **506/506 tests green** + 4 frontend suites / **16/16 tests green** — 0 TypeScript errors — 0 lint warnings
 
 ---
 
@@ -64,6 +64,7 @@
 - [x] **Sprint 4A** — HttpOnly refresh-token cookie bridge (`cookie-parser`, `setRefreshCookie`/`clearRefreshCookie` in authController, cookie-first with body fallback on `/auth/refresh` and `/auth/logout`)
 - [x] **Sprint 4B** — Frontend cookie migration: `tokenStorage.ts` stores access token only; `AuthContext` calls `refresh()` with no body on session restore; `logout()` sends no `refreshToken`; all `fetch` calls use `credentials: "include"`
 - [x] **CI Cleanup** — Fixed all GitHub Actions lint failures: `AuthContext.tsx` split into `AuthContext.tsx` (context def) + `AuthProvider.tsx` (component, fast-refresh clean); `rlsTenantContextMiddleware` `_pool` param removed; `rlsIsolation/rlsHardening.test.ts` dead `!pool` condition removed; typed `bodyData` helpers + `!` assertions replaced with `as` casts in 6 backend test files; `require-await`/`unbound-method`/unused-var issues fixed in `pendingMfaEncryption`/`rlsHardening` tests
+- [x] **Sprint 4C** — Legacy refresh-token bridge fully removed: `refreshToken` stripped from all JSON response bodies (login, MFA verify, refresh); body-token fallback removed from `/auth/refresh` and `/auth/logout`; `refreshSchema`/`logoutSchema` deleted; `AuthSession`/`LoginResponse` frontend types trimmed; `tests/helpers/auth.ts` updated to cookie-based `loginAndGetTokens`; `authCookie.test.ts` rewritten for cookie-only contract; `authSession.test.ts` fully migrated to cookie-based helpers; `health.test.ts`, `mfaEnrollment.test.ts`, `totpEncryption.test.ts`, and `authCookieMigration.test.tsx` updated
 - [x] Database RLS policies — Module 13 complete (14 tables, 17 policies, `withTenantContext`, AsyncLocalStorage pool hook)
 
 ### Dev seed accounts (password: `password123`)

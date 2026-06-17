@@ -1,8 +1,8 @@
 /**
- * Sprint 4B — Cookie Migration tests
+ * Sprint 4C — Cookie-Only tests
  *
  * Verifies that:
- *   - login stores only the access token (refresh token never persisted)
+ *   - login stores only the access token (refresh token never in response body)
  *   - MFA verify stores only the access token
  *   - session restore uses cookie-based refresh (no refreshToken in body)
  *   - logout does not send a refreshToken and clears only the access token
@@ -73,7 +73,6 @@ const ADMIN_USER: AuthUser = {
 
 const SESSION: AuthSession = {
   accessToken: "access-token-abc",
-  refreshToken: "refresh-token-xyz", // backend still sends this; must NOT be stored
   expiresIn: 900,
   user: ADMIN_USER,
 };

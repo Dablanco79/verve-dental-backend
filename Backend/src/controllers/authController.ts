@@ -16,15 +16,6 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
-// refreshToken is optional — may be supplied via HttpOnly cookie instead.
-const refreshSchema = z.object({
-  refreshToken: z.string().min(1).optional(),
-});
-
-const logoutSchema = z.object({
-  refreshToken: z.string().min(1).optional(),
-});
-
 const mfaVerifySchema = z.object({
   mfaToken: z.string().min(1),
   code: z.string().length(6),
@@ -97,12 +88,13 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
         return;
       }
 
-      // Set HttpOnly cookie and keep refreshToken in JSON for migration bridge.
       setRefreshCookie(res, result.tokens.refreshToken);
+      const { accessToken, expiresIn } = result.tokens;
       res.status(200).json({
         data: {
           requiresMfa: false,
-          ...result.tokens,
+          accessToken,
+          expiresIn,
           user: result.user,
         },
       });
@@ -112,48 +104,38 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
       const body = parseBody(mfaVerifySchema, req.body);
       const result = await authService.verifyMfa(body.mfaToken, body.code, auditContext(req));
 
-      // Set HttpOnly cookie and keep refreshToken in JSON for migration bridge.
       setRefreshCookie(res, result.tokens.refreshToken);
+      const { accessToken: mfaAccessToken, expiresIn: mfaExpiresIn } = result.tokens;
       res.status(200).json({
         data: {
-          ...result.tokens,
+          accessToken: mfaAccessToken,
+          expiresIn: mfaExpiresIn,
           user: result.user,
         },
       });
     },
 
     async refresh(req: Request, res: Response): Promise<void> {
-      // Prefer the HttpOnly cookie; fall back to request body for backwards compatibility.
-      const cookieToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
-      let refreshToken: string;
-
-      if (cookieToken) {
-        refreshToken = cookieToken;
-      } else {
-        const body = parseBody(refreshSchema, req.body ?? {});
-        if (!body.refreshToken) {
-          throw new AppError(400, "MISSING_REFRESH_TOKEN", "Refresh token required in cookie or body");
-        }
-        refreshToken = body.refreshToken;
+      const refreshToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+      if (!refreshToken) {
+        throw new AppError(400, "MISSING_REFRESH_TOKEN", "Refresh token required");
       }
 
       const result = await authService.refresh(refreshToken, auditContext(req));
 
-      // Rotate the cookie along with the new token pair.
       setRefreshCookie(res, result.tokens.refreshToken);
+      const { accessToken, expiresIn } = result.tokens;
       res.status(200).json({
         data: {
-          ...result.tokens,
+          accessToken,
+          expiresIn,
           user: result.user,
         },
       });
     },
 
     async logout(req: Request, res: Response): Promise<void> {
-      // Accept token from cookie first, then body, for full backwards compatibility.
-      const cookieToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
-      const body = parseBody(logoutSchema, req.body ?? {});
-      const tokenToRevoke = cookieToken ?? body.refreshToken;
+      const tokenToRevoke = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
 
       await authService.logout(tokenToRevoke, {
         userId: req.user?.id,
