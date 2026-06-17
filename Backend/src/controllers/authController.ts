@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 
+import type { EnvConfig } from "../config/index.js";
 import type { AuthService } from "../services/authService.js";
 import { AppError } from "../types/errors.js";
 import { parseBody } from "../utils/validation.js";
@@ -15,8 +16,9 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
+// refreshToken is optional — may be supplied via HttpOnly cookie instead.
 const refreshSchema = z.object({
-  refreshToken: z.string().min(1),
+  refreshToken: z.string().min(1).optional(),
 });
 
 const logoutSchema = z.object({
@@ -32,6 +34,23 @@ const mfaConfirmSchema = z.object({
   code: z.string().length(6),
 });
 
+const REFRESH_COOKIE_NAME = "refreshToken";
+
+/** Parse a JWT expiry string like "7d", "15m", "3600s" into milliseconds. */
+function parseTtlMs(ttl: string): number {
+  const match = /^(\d+)([smhd])$/.exec(ttl);
+  if (!match) return 7 * 24 * 60 * 60 * 1000;
+  const value = parseInt(match[1] ?? "0", 10);
+  const unit = match[2] ?? "d";
+  switch (unit) {
+    case "s": return value * 1000;
+    case "m": return value * 60 * 1000;
+    case "h": return value * 60 * 60 * 1000;
+    case "d": return value * 24 * 60 * 60 * 1000;
+    default: return 7 * 24 * 60 * 60 * 1000;
+  }
+}
+
 function auditContext(req: Request) {
   return {
     ipAddress: req.ip,
@@ -39,7 +58,29 @@ function auditContext(req: Request) {
   };
 }
 
-export function createAuthHandlers(authService: AuthService) {
+export function createAuthHandlers(authService: AuthService, config: EnvConfig) {
+  const cookieMaxAge = parseTtlMs(config.JWT_REFRESH_EXPIRES_IN);
+
+  function setRefreshCookie(res: Response, token: string): void {
+    res.cookie(REFRESH_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: config.NODE_ENV === "production",
+      sameSite: "strict",
+      // Scoped to auth endpoints — covers /auth/refresh and /auth/logout.
+      path: "/api/v1/auth",
+      maxAge: cookieMaxAge,
+    });
+  }
+
+  function clearRefreshCookie(res: Response): void {
+    res.clearCookie(REFRESH_COOKIE_NAME, {
+      httpOnly: true,
+      secure: config.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/api/v1/auth",
+    });
+  }
+
   return {
     async login(req: Request, res: Response): Promise<void> {
       const body = parseBody(loginSchema, req.body);
@@ -56,6 +97,8 @@ export function createAuthHandlers(authService: AuthService) {
         return;
       }
 
+      // Set HttpOnly cookie and keep refreshToken in JSON for migration bridge.
+      setRefreshCookie(res, result.tokens.refreshToken);
       res.status(200).json({
         data: {
           requiresMfa: false,
@@ -69,6 +112,8 @@ export function createAuthHandlers(authService: AuthService) {
       const body = parseBody(mfaVerifySchema, req.body);
       const result = await authService.verifyMfa(body.mfaToken, body.code, auditContext(req));
 
+      // Set HttpOnly cookie and keep refreshToken in JSON for migration bridge.
+      setRefreshCookie(res, result.tokens.refreshToken);
       res.status(200).json({
         data: {
           ...result.tokens,
@@ -78,9 +123,24 @@ export function createAuthHandlers(authService: AuthService) {
     },
 
     async refresh(req: Request, res: Response): Promise<void> {
-      const body = parseBody(refreshSchema, req.body);
-      const result = await authService.refresh(body.refreshToken, auditContext(req));
+      // Prefer the HttpOnly cookie; fall back to request body for backwards compatibility.
+      const cookieToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
+      let refreshToken: string;
 
+      if (cookieToken) {
+        refreshToken = cookieToken;
+      } else {
+        const body = parseBody(refreshSchema, req.body ?? {});
+        if (!body.refreshToken) {
+          throw new AppError(400, "MISSING_REFRESH_TOKEN", "Refresh token required in cookie or body");
+        }
+        refreshToken = body.refreshToken;
+      }
+
+      const result = await authService.refresh(refreshToken, auditContext(req));
+
+      // Rotate the cookie along with the new token pair.
+      setRefreshCookie(res, result.tokens.refreshToken);
       res.status(200).json({
         data: {
           ...result.tokens,
@@ -90,12 +150,17 @@ export function createAuthHandlers(authService: AuthService) {
     },
 
     async logout(req: Request, res: Response): Promise<void> {
+      // Accept token from cookie first, then body, for full backwards compatibility.
+      const cookieToken = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
       const body = parseBody(logoutSchema, req.body ?? {});
-      await authService.logout(body.refreshToken, {
+      const tokenToRevoke = cookieToken ?? body.refreshToken;
+
+      await authService.logout(tokenToRevoke, {
         userId: req.user?.id,
         ...auditContext(req),
       });
 
+      clearRefreshCookie(res);
       res.status(204).send();
     },
 

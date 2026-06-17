@@ -28,7 +28,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
   const router = Router();
-  const authHandlers = createAuthHandlers(deps.authService);
+  const authHandlers = createAuthHandlers(deps.authService, config);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage
   // context so installRlsPoolHook can inject app.current_clinic_id on every checkout.

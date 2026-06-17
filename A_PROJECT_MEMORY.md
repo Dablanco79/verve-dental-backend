@@ -3,9 +3,9 @@
 **Purpose:** This document is Cursor's long-term memory source. Update it after each module completion to maintain architectural context across sessions.
 
 **Last Updated:** June 2026  
-**Current Phase:** MVP Hardening — Purchase Order Submit + CSV Export  
+**Current Phase:** Sprint 4A — HttpOnly Refresh Cookie Bridge  
 **Grade:** Enterprise (Production-Ready, Australian-Compliant)  
-**Status:** 17 suites / **367/367 tests green** — 0 TypeScript errors — Module 13 RLS complete (14 tables, 17 policies)
+**Status:** 25 suites / **505/505 tests green** — 0 TypeScript errors — Sprint 4A cookie bridge complete
 
 ---
 
@@ -61,6 +61,7 @@
 - [x] `trust proxy` set so `req.ip` resolves real client IP behind Render load balancer
 - [x] `express-rate-limit` on `/auth/login`, `/auth/mfa/verify`, `/auth/refresh`
 - [x] Full schema migrations CLI — bootstrap runner covers migrations 003–015 (Module 13 complete)
+- [x] **Sprint 4A** — HttpOnly refresh-token cookie bridge (`cookie-parser`, `setRefreshCookie`/`clearRefreshCookie` in authController, cookie-first with body fallback on `/auth/refresh` and `/auth/logout`)
 - [x] Database RLS policies — Module 13 complete (14 tables, 17 policies, `withTenantContext`, AsyncLocalStorage pool hook)
 
 ### Dev seed accounts (password: `password123`)
