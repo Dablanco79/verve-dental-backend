@@ -196,6 +196,25 @@ async function asOwnerAdmin<T>(fn: (client: pg.PoolClient) => Promise<T>): Promi
   return withTenantContext(pool, SEED_CLINIC_A_ID, fn, true);
 }
 
+/**
+ * Runs `fn` inside a tenant context with the non-superuser `verve_app` role so
+ * FORCE ROW LEVEL SECURITY policies are exercised even when the CI DATABASE_URL
+ * connects as a PostgreSQL superuser (which bypasses all RLS by design).
+ *
+ * Use this helper for every test assertion that checks RLS enforcement.
+ * Use `asOwnerAdmin` (superuser) for fixture setup/teardown only.
+ */
+async function withRlsCtx<T>(
+  clinicId: string,
+  fn: (client: pg.PoolClient) => Promise<T>,
+  ownerAdmin = false,
+): Promise<T> {
+  return withTenantContext(pool, clinicId, async (c) => {
+    await c.query("SET LOCAL ROLE verve_app");
+    return fn(c);
+  }, ownerAdmin);
+}
+
 // ─── No-context SELECT blocked on users table ─────────────────────────────────
 
 describe("RLS hardening — users table no-context block", () => {
@@ -204,6 +223,10 @@ describe("RLS hardening — users table no-context block", () => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // Switch to non-superuser role so FORCE ROW LEVEL SECURITY is applied.
+      // CI connects as a PostgreSQL superuser (POSTGRES_USER in Docker), which
+      // bypasses all RLS — SET LOCAL ROLE ensures policies are exercised.
+      await client.query("SET LOCAL ROLE verve_app");
       await client.query(
         `SELECT set_config('app.current_clinic_id', '', true),
                 set_config('app.owner_admin_mode', 'false', true)`,
@@ -221,7 +244,7 @@ describe("RLS hardening — users table no-context block", () => {
 
   it("owner_admin context can read users across clinics", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, AUTH_BYPASS_CLINIC_ID, (c) =>
+    const { rows } = await withRlsCtx(AUTH_BYPASS_CLINIC_ID, (c) =>
       c.query("SELECT id FROM users LIMIT 10"),
       true,
     );
@@ -234,8 +257,7 @@ describe("RLS hardening — users table no-context block", () => {
 describe("RLS hardening — auth lookup path", () => {
   it("findByEmail equivalent works via owner_admin context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(
-      pool,
+    const { rows } = await withRlsCtx(
       AUTH_BYPASS_CLINIC_ID,
       (c) => c.query<{ email: string }>(
         "SELECT email FROM users WHERE email = $1 LIMIT 1",
@@ -248,8 +270,7 @@ describe("RLS hardening — auth lookup path", () => {
 
   it("findById equivalent works via owner_admin context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(
-      pool,
+    const { rows } = await withRlsCtx(
       AUTH_BYPASS_CLINIC_ID,
       (c) => c.query<{ id: string }>(
         "SELECT id FROM users WHERE id = $1 LIMIT 1",
@@ -278,11 +299,11 @@ describe("RLS hardening — inventory_adjustments is append-only", () => {
       c.query(
         `INSERT INTO inventory_adjustments
            (id, clinic_id, clinic_inventory_item_id, master_catalog_item_id,
-            adjustment_type, quantity_delta, quantity_after, adjusted_by_user_id,
-            adjusted_by_email)
+            adjustment_type, quantity_delta, quantity_before, quantity_after,
+            performed_by_user_id, performed_by_email)
          VALUES ($1, $2, $3,
            (SELECT master_catalog_item_id FROM clinic_inventory_items WHERE id = $3),
-           'manual_add', 1, 1, $4, 'admin@clinic-a.au')
+           'manual_adjust', 1, 0, 1, $4, 'admin@clinic-a.au')
          ON CONFLICT (id) DO NOTHING`,
         [ADJ_ID, SEED_CLINIC_A_ID, (items[0] as { id: string }).id, SEED_USER_IDS.clinicAAdmin],
       ),
@@ -305,7 +326,7 @@ describe("RLS hardening — inventory_adjustments is append-only", () => {
 
   it("SELECT is allowed in correct clinic context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM inventory_adjustments WHERE id = $1", [ADJ_ID]),
     );
     // May not exist if beforeAll skipped due to no items
@@ -314,7 +335,7 @@ describe("RLS hardening — inventory_adjustments is append-only", () => {
 
   it("DELETE is blocked at RLS layer (no DELETE policy)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("DELETE FROM inventory_adjustments WHERE id = $1", [ADJ_ID]),
     );
     // RLS blocks DELETE — 0 rows affected, no error thrown
@@ -323,7 +344,7 @@ describe("RLS hardening — inventory_adjustments is append-only", () => {
 
   it("UPDATE is blocked at RLS layer (no UPDATE policy)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query(
         "UPDATE inventory_adjustments SET quantity_delta = 99 WHERE id = $1",
         [ADJ_ID],
@@ -364,7 +385,7 @@ describe("RLS hardening — audit_events is append-only", () => {
 
   it("SELECT is allowed in correct clinic context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM audit_events WHERE id = $1", [AUDIT_ID]),
     );
     expect((rows[0] as { id: string } | undefined)?.id).toBe(AUDIT_ID);
@@ -372,7 +393,7 @@ describe("RLS hardening — audit_events is append-only", () => {
 
   it("DELETE is blocked at RLS layer (no DELETE policy on audit_events)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("DELETE FROM audit_events WHERE id = $1", [AUDIT_ID]),
     );
     expect(rowCount).toBe(0);
@@ -380,7 +401,7 @@ describe("RLS hardening — audit_events is append-only", () => {
 
   it("UPDATE is blocked at RLS layer (no UPDATE policy on audit_events)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query(
         "UPDATE audit_events SET action = 'tampered' WHERE id = $1",
         [AUDIT_ID],
@@ -391,7 +412,7 @@ describe("RLS hardening — audit_events is append-only", () => {
 
   it("Clinic B cannot access Clinic A audit events", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_B_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_B_ID, (c) =>
       c.query("SELECT id FROM audit_events WHERE id = $1", [AUDIT_ID]),
     );
     expect(rows).toHaveLength(0);
@@ -412,8 +433,7 @@ describe("RLS hardening — seed bootstrap validation", () => {
 
   it("users table has rows (seedDemoUsers succeeded under FORCE RLS)", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(
-      pool,
+    const { rows } = await withRlsCtx(
       AUTH_BYPASS_CLINIC_ID,
       (c) => c.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM users"),
       true,
@@ -423,8 +443,7 @@ describe("RLS hardening — seed bootstrap validation", () => {
 
   it("clinic_inventory_items has rows (seedInventory succeeded under FORCE RLS)", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(
-      pool,
+    const { rows } = await withRlsCtx(
       SEED_CLINIC_A_ID,
       (c) => c.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM clinic_inventory_items WHERE clinic_id = $1",
@@ -441,8 +460,7 @@ describe("RLS hardening — pool hook fail-closed (integration)", () => {
   it("withTenantContext owner_admin SELECT works on users table", async () => {
     if (SKIP) return;
     // Prove the auth-lookup path works end-to-end
-    const { rows } = await withTenantContext(
-      pool,
+    const { rows } = await withRlsCtx(
       AUTH_BYPASS_CLINIC_ID,
       (c) => c.query("SELECT email FROM users ORDER BY email LIMIT 1"),
       true,
@@ -475,10 +493,11 @@ describe("RLS hardening — payment_records is append-only", () => {
       await c.query(
         `INSERT INTO payment_records (
            id, clinic_id, invoice_id, payment_method, status,
-           amount_cents, transaction_at
-         ) VALUES ($1, $2, $3, 'bank_transfer', 'confirmed', 11000, now())
+           amount_cents, transaction_at,
+           recorded_by_user_id, recorded_by_email
+         ) VALUES ($1, $2, $3, 'bank_transfer', 'confirmed', 11000, now(), $4, 'admin@clinic-a.au')
          ON CONFLICT (id) DO NOTHING`,
-        [PAY_ID, SEED_CLINIC_A_ID, INV_ID],
+        [PAY_ID, SEED_CLINIC_A_ID, INV_ID, SEED_USER_IDS.clinicAAdmin],
       );
     });
   });
@@ -505,7 +524,7 @@ describe("RLS hardening — payment_records is append-only", () => {
 
   it("SELECT is allowed in the correct clinic context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM payment_records WHERE id = $1", [PAY_ID]),
     );
     expect((rows[0] as { id: string } | undefined)?.id).toBe(PAY_ID);
@@ -513,7 +532,7 @@ describe("RLS hardening — payment_records is append-only", () => {
 
   it("DELETE is blocked at RLS layer (no DELETE policy on payment_records)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("DELETE FROM payment_records WHERE id = $1", [PAY_ID]),
     );
     expect(rowCount).toBe(0);
@@ -521,7 +540,7 @@ describe("RLS hardening — payment_records is append-only", () => {
 
   it("UPDATE is blocked at RLS layer (no UPDATE policy on payment_records)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query(
         "UPDATE payment_records SET amount_cents = 0 WHERE id = $1",
         [PAY_ID],
@@ -532,7 +551,7 @@ describe("RLS hardening — payment_records is append-only", () => {
 
   it("Clinic B cannot access Clinic A payment records", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_B_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_B_ID, (c) =>
       c.query("SELECT id FROM payment_records WHERE id = $1", [PAY_ID]),
     );
     expect(rows).toHaveLength(0);
@@ -558,8 +577,9 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
         `INSERT INTO roster_entries (
            id, rostered_clinic_id, rostered_clinic_name,
            staff_user_id, staff_email,
-           shift_start_at, shift_end_at, shift_type, status
-         ) VALUES ($1, $2, 'Test Clinic A', $3, 'admin@clinic-a.au', $4, $5, 'standard', 'scheduled')
+           shift_start_at, shift_end_at, shift_type, status,
+           created_by_user_id
+         ) VALUES ($1, $2, 'Test Clinic A', $3, 'admin@clinic-a.au', $4, $5, 'standard', 'scheduled', $3)
          ON CONFLICT (id) DO NOTHING`,
         [ROSTER_ID, SEED_CLINIC_A_ID, SEED_USER_IDS.clinicAAdmin, start, end],
       );
@@ -591,7 +611,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
 
   it("SELECT is allowed in the correct clinic context", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("SELECT id FROM roster_entry_audit WHERE id = $1", [AUDIT_ROW_ID]),
     );
     expect((rows[0] as { id: string } | undefined)?.id).toBe(AUDIT_ROW_ID);
@@ -599,7 +619,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
 
   it("DELETE is blocked at RLS layer (no DELETE policy on roster_entry_audit)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query("DELETE FROM roster_entry_audit WHERE id = $1", [AUDIT_ROW_ID]),
     );
     expect(rowCount).toBe(0);
@@ -607,7 +627,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
 
   it("UPDATE is blocked at RLS layer (no UPDATE policy on roster_entry_audit)", async () => {
     if (SKIP) return;
-    const { rowCount } = await withTenantContext(pool, SEED_CLINIC_A_ID, (c) =>
+    const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query(
         "UPDATE roster_entry_audit SET action = 'tampered' WHERE id = $1",
         [AUDIT_ROW_ID],
@@ -618,7 +638,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
 
   it("Clinic B cannot access Clinic A roster audit rows", async () => {
     if (SKIP) return;
-    const { rows } = await withTenantContext(pool, SEED_CLINIC_B_ID, (c) =>
+    const { rows } = await withRlsCtx(SEED_CLINIC_B_ID, (c) =>
       c.query("SELECT id FROM roster_entry_audit WHERE id = $1", [AUDIT_ROW_ID]),
     );
     expect(rows).toHaveLength(0);
