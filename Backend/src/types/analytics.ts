@@ -9,6 +9,7 @@
 // ─── Audit entity types ───────────────────────────────────────────────────────
 
 export const AUDIT_ENTITY_TYPES = [
+  "auth",
   "invoice",
   "payment",
   "line_item",

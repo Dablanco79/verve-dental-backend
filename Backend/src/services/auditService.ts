@@ -1,3 +1,5 @@
+import { AUTH_BYPASS_CLINIC_ID } from "../db/tenantContext.js";
+import type { AnalyticsRepository } from "../repositories/analyticsRepository.js";
 import type { Logger } from "../utils/logger.js";
 
 export type AuthAuditEvent =
@@ -38,7 +40,67 @@ export type AuditContext = {
   resourceId?: string;
 };
 
-export function createAuditService(logger: Logger) {
+/**
+ * Stable sentinel UUID used as actor_id / entity_id in audit_events rows
+ * when no real user identity is available (e.g. login failure with an
+ * unrecognised email).  Reuses the auth-bypass clinic ID constant so both
+ * the DB and log analysts see the same recognisable nil-UUID sentinel.
+ */
+const SYSTEM_ACTOR_ID = AUTH_BYPASS_CLINIC_ID;
+
+/**
+ * Builds safe, non-sensitive metadata for an audit_events row.
+ *
+ * Deliberately omits: userId, email, clinicId (stored in dedicated columns),
+ * and any value that could be a token, password, TOTP code, or raw credential.
+ */
+function buildSafeMetadata(context: AuditContext): Record<string, unknown> {
+  const meta: Record<string, unknown> = {};
+  if (context.ipAddress) meta.ipAddress = context.ipAddress;
+  if (context.userAgent) meta.userAgent = context.userAgent;
+  if (context.role) meta.role = context.role;
+  if (context.reason) meta.reason = context.reason;
+  if (context.resourceId) meta.resourceId = context.resourceId;
+  return meta;
+}
+
+export function createAuditService(
+  logger: Logger,
+  analyticsRepository: AnalyticsRepository | null = null,
+) {
+  /**
+   * Persists a security/auth event to audit_events using owner-admin DB
+   * context so the INSERT succeeds even outside a normal tenant request.
+   *
+   * Called fire-and-forget — errors are swallowed after logging so that a DB
+   * hiccup NEVER blocks or fails the authentication operation itself.
+   */
+  function persistAuthAuditEvent(event: AuditEvent, context: AuditContext): void {
+    if (!analyticsRepository) return;
+
+    const clinicId = context.clinicId ?? AUTH_BYPASS_CLINIC_ID;
+    const actorId = context.userId ?? SYSTEM_ACTOR_ID;
+    const actorEmail = context.email ?? "system";
+    const entityType = event.startsWith("user.") ? "user" : "auth";
+    // For user-management events the entity being modified is the resource;
+    // for auth events the entity is the actor themselves.
+    const entityId = context.resourceId ?? context.userId ?? SYSTEM_ACTOR_ID;
+
+    analyticsRepository
+      .recordEventAdmin({
+        clinicId,
+        entityType,
+        entityId,
+        action: event,
+        actorId,
+        actorEmail,
+        metadata: buildSafeMetadata(context),
+      })
+      .catch((err: unknown) => {
+        logger.error({ err, event }, "audit_events persistence failed (non-fatal)");
+      });
+  }
+
   return {
     logAuthEvent(event: AuthAuditEvent, context: AuditContext = {}): void {
       logger.info(
@@ -49,6 +111,7 @@ export function createAuditService(logger: Logger) {
         },
         `Auth audit: ${event}`,
       );
+      persistAuthAuditEvent(event, context);
     },
 
     /** Log any application-level audit event. */
@@ -61,6 +124,12 @@ export function createAuditService(logger: Logger) {
         },
         `Audit: ${event}`,
       );
+      // Only persist auth/user-management events through this path.
+      // Domain events (purchase orders, etc.) are recorded via analyticsRepository
+      // directly by their own service layers.
+      if (event.startsWith("auth.") || event.startsWith("user.")) {
+        persistAuthAuditEvent(event, context);
+      }
     },
 
     /** Log an internal error (non-audit, for unexpected exceptions). */

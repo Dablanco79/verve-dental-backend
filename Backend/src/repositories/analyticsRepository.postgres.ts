@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import { withTenantContext } from "../db/tenantContext.js";
 import type {
   AuditEvent,
   AuditEventsPage,
@@ -66,6 +67,35 @@ export function createPostgresAnalyticsRepository(
       const row = result.rows[0];
       if (!row) throw new Error("INSERT audit_events returned no row");
       return rowToEvent(row);
+    },
+
+    async recordEventAdmin(input: CreateAuditEventInput): Promise<AuditEvent> {
+      return withTenantContext(
+        pool,
+        input.clinicId,
+        async (client) => {
+          const result = await client.query<AuditEventRow>(
+            `INSERT INTO audit_events
+               (clinic_id, entity_type, entity_id, action,
+                actor_id, actor_email, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING *`,
+            [
+              input.clinicId,
+              input.entityType,
+              input.entityId,
+              input.action,
+              input.actorId,
+              input.actorEmail,
+              JSON.stringify(input.metadata),
+            ],
+          );
+          const row = result.rows[0];
+          if (!row) throw new Error("INSERT audit_events (admin) returned no row");
+          return rowToEvent(row);
+        },
+        true, // ownerAdmin=true — bypasses clinic_id RLS check for auth events
+      );
     },
 
     async listEvents(

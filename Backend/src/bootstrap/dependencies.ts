@@ -110,7 +110,6 @@ export async function createAppDependencies(
     }
   }
 
-  const auditService = createAuditService(logger);
   const databasePool = createDatabasePool(config);
   const redisClient = createRedisClient(config);
 
@@ -265,6 +264,7 @@ export async function createAppDependencies(
     }
   }
 
+  const auditService = createAuditService(logger, analyticsRepository);
   const authService = createAuthService(config, userRepository, auditService, connectedRedis);
   const userService = createUserService(userRepository, auditService, authService);
   const purchaseOrderService = createPurchaseOrderService(

@@ -19,6 +19,16 @@ export interface AnalyticsRepository {
   /** Persist a structured audit event for a clinic-scoped action. */
   recordEvent(input: CreateAuditEventInput): Promise<AuditEvent>;
 
+  /**
+   * Persist an audit event using owner-admin DB context, bypassing the
+   * per-request AsyncLocalStorage RLS tenant context.  Used for auth/security
+   * events that occur outside the normal tenant request lifecycle (login,
+   * refresh, password change, MFA operations).
+   *
+   * Callers MUST NOT pass secrets, tokens, passwords, or MFA codes.
+   */
+  recordEventAdmin(input: CreateAuditEventInput): Promise<AuditEvent>;
+
   /** Paginated, filterable audit trail for a clinic. */
   listEvents(
     clinicId: string,
@@ -310,6 +320,10 @@ export function createInMemoryAnalyticsRepository(): AnalyticsRepository {
         limit,
         offset,
       });
+    },
+
+    recordEventAdmin(input: CreateAuditEventInput): Promise<AuditEvent> {
+      return this.recordEvent(input);
     },
 
     getEvent(id: string, clinicId: string): Promise<AuditEvent | null> {
