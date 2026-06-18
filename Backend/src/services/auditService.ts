@@ -4,6 +4,7 @@ export type AuthAuditEvent =
   | "auth.login.success"
   | "auth.login.failure"
   | "auth.login.mfa_required"
+  | "auth.login.mfa_enrollment_required"
   | "auth.mfa.success"
   | "auth.mfa.failure"
   | "auth.mfa.setup_initiated"
@@ -11,6 +12,7 @@ export type AuthAuditEvent =
   | "auth.mfa.enrolled"
   | "auth.refresh.success"
   | "auth.refresh.failure"
+  | "auth.refresh.mfa_enrollment_required"
   | "auth.logout"
   | "auth.unauthorized"
   | "auth.forbidden"
@@ -27,6 +29,7 @@ export type AuditEvent = AuthAuditEvent | PurchaseOrderAuditEvent;
 export type AuditContext = {
   userId?: string;
   email?: string;
+  role?: string;
   clinicId?: string;
   ipAddress?: string;
   userAgent?: string;

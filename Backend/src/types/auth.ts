@@ -65,6 +65,21 @@ export type MfaChallengePayload = {
   type: "mfa_challenge";
 };
 
+/**
+ * Short-lived token (15 min) issued at login when a privileged user has not
+ * yet enrolled MFA.  It carries the same user fields as an access token but
+ * uses type "mfa_enrollment" so the authenticate middleware rejects it for all
+ * endpoints except POST /auth/mfa/setup and POST /auth/mfa/confirm.
+ */
+export type MfaEnrollmentPayload = {
+  sub: string;
+  email: string;
+  role: UserRole;
+  homeClinicId: string;
+  homeClinicName: string;
+  type: "mfa_enrollment";
+};
+
 export type AuthTokens = {
   accessToken: string;
   refreshToken: string;
@@ -82,5 +97,11 @@ export type LoginResult =
   | {
       kind: "mfa_required";
       mfaToken: string;
+      user: PublicUser;
+    }
+  | {
+      /** Privileged user (owner_admin / group_practice_manager) with mfa_enabled = false. */
+      kind: "mfa_enrollment_required";
+      enrollmentToken: string;
       user: PublicUser;
     };

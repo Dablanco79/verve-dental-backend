@@ -88,6 +88,20 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
         return;
       }
 
+      if (result.kind === "mfa_enrollment_required") {
+        // Credentials are valid but no tokens are issued. The client must
+        // call POST /auth/mfa/setup → POST /auth/mfa/confirm using the
+        // short-lived enrollmentToken as a Bearer token, then log in again.
+        res.status(200).json({
+          data: {
+            requiresMfaEnrollment: true,
+            enrollmentToken: result.enrollmentToken,
+            user: result.user,
+          },
+        });
+        return;
+      }
+
       setRefreshCookie(res, result.tokens.refreshToken);
       const { accessToken, expiresIn } = result.tokens;
       res.status(200).json({

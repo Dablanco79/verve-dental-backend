@@ -53,6 +53,62 @@ export function createAuthenticateMiddleware(
   };
 }
 
+/**
+ * Middleware for POST /auth/mfa/setup and POST /auth/mfa/confirm.
+ *
+ * Accepts either:
+ *   - A standard Bearer access token (already-enrolled user triggering re-setup)
+ *   - An MFA enrollment token issued at login for privileged users who have not
+ *     yet enrolled (type "mfa_enrollment")
+ *
+ * All other token types (mfa_challenge, refresh) are rejected.
+ */
+export function createMfaSetupMiddleware(
+  authService: AuthService,
+  audit: AuditService,
+) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (req.user) {
+      next();
+      return;
+    }
+
+    const token = getBearerToken(req);
+
+    if (!token) {
+      audit.logAuthEvent("auth.unauthorized", {
+        reason: "missing_token",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
+      next(new AppError(401, "UNAUTHORIZED", "Authentication required"));
+      return;
+    }
+
+    // Try standard access token first (re-enrollment by an already-enrolled user).
+    try {
+      req.user = authService.authenticateAccessToken(token);
+      next();
+      return;
+    } catch {
+      // Not a valid access token — fall through to enrollment token check.
+    }
+
+    // Try MFA enrollment token (privileged user completing first enrollment).
+    try {
+      req.user = authService.verifyMfaEnrollmentToken(token);
+      next();
+    } catch {
+      audit.logAuthEvent("auth.unauthorized", {
+        reason: "invalid_token",
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
+      next(new AppError(401, "UNAUTHORIZED", "Invalid or expired token"));
+    }
+  };
+}
+
 export function requireRoles(...roles: UserRole[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {

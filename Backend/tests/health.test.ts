@@ -6,6 +6,7 @@ import {
   SEED_CLINIC_B_ID,
   SEED_ADMIN_TOTP_SECRET,
 } from "../src/repositories/userRepository.js";
+import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiData<T> = { data: T };
@@ -152,13 +153,8 @@ describe("Auth API", () => {
   it("allows owner/admin cross-clinic access", async () => {
     const app = await createTestApp();
 
-    const loginResponse = await request(app).post("/api/v1/auth/login").send({
-      email: "admin@clinic-b.au",
-      password: "password123",
-    });
-
-    const loginBody = loginResponse.body as ApiData<LoginData>;
-    const accessToken = loginBody.data.accessToken ?? "";
+    // admin@clinic-b.au is owner_admin with MFA — use the MFA-aware helper
+    const accessToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
 
     const summaryResponse = await request(app)
       .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/summary`)

@@ -181,6 +181,8 @@ describe("Multiple concurrent sessions", () => {
 // ---------------------------------------------------------------------------
 
 describe("changePassword", () => {
+  // Timeout raised: change-password performs bcrypt.compare + bcrypt.hash(cost 12),
+  // which is CPU-heavy and can exceed 5 s under parallel test load.
   it("revokes all active refresh cookies for the user who changed their password", async () => {
     const app = await createTestApp();
     const session1 = await loginAndGetTokens(app, "staff@clinic-a.au");
@@ -199,7 +201,7 @@ describe("changePassword", () => {
 
     const res2 = await doRefresh(app, session2.refreshCookie);
     expect(res2.status).toBe(401);
-  });
+  }, 15000);
 });
 
 // ---------------------------------------------------------------------------
@@ -207,6 +209,9 @@ describe("changePassword", () => {
 // ---------------------------------------------------------------------------
 
 describe("Admin resetPassword (revokeAllUserTokens)", () => {
+  // Timeout raised: manager login now requires an MFA round-trip (MFA enforcement
+  // for group_practice_manager), and reset-password runs bcrypt — both are
+  // CPU-heavy and can exceed 5 s under parallel test load.
   it("revokes all active sessions for the target user when a manager resets their password", async () => {
     const app = await createTestApp();
 
@@ -230,9 +235,10 @@ describe("Admin resetPassword (revokeAllUserTokens)", () => {
 
     const res2 = await doRefresh(app, staffSession2.refreshCookie);
     expect(res2.status).toBe(401);
-  });
+  }, 15000);
 
   it("does not revoke sessions belonging to other users when one user's password is reset", async () => {
+    // Timeout raised: manager login now requires MFA + reset-password runs bcrypt.
     const app = await createTestApp();
 
     // Two different users have active sessions
@@ -255,5 +261,5 @@ describe("Admin resetPassword (revokeAllUserTokens)", () => {
     // Manager's own session is unaffected
     const managerRes = await doRefresh(app, managerTokens.refreshCookie);
     expect(managerRes.status).toBe(200);
-  });
+  }, 15000);
 });

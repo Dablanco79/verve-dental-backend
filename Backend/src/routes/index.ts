@@ -8,6 +8,7 @@ import { createAuthHandlers } from "../controllers/authController.js";
 import { getHealth } from "../controllers/healthController.js";
 import {
   createAuthenticateMiddleware,
+  createMfaSetupMiddleware,
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
@@ -31,6 +32,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const router = Router();
   const authHandlers = createAuthHandlers(deps.authService, config);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+  const mfaSetupAuth = createMfaSetupMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage
   // context so installRlsPoolHook can inject app.current_clinic_id on every checkout.
   const rlsContext = rlsTenantContextMiddleware();
@@ -53,8 +55,8 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
 
   router.post("/auth/login", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.login(req, res)));
   router.post("/auth/mfa/verify", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.verifyMfa(req, res)));
-  router.post("/auth/mfa/setup", authRateLimiter, originGuard, authenticate, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
-  router.post("/auth/mfa/confirm", authRateLimiter, originGuard, authenticate, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));
+  router.post("/auth/mfa/setup", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
+  router.post("/auth/mfa/confirm", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));
   router.post("/auth/refresh", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.refresh(req, res)));
   router.post("/auth/logout", originGuard, asyncHandler((req, res) => authHandlers.logout(req, res)));
   router.get("/auth/me", authenticate, (req, res) => {

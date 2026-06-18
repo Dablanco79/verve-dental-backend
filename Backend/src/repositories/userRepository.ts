@@ -38,7 +38,7 @@ export const SEED_CLINIC_A_ID = "11111111-1111-4111-8111-111111111111";
 export const SEED_CLINIC_B_ID = "22222222-2222-4222-8222-222222222222";
 
 /**
- * Fixed Base32 TOTP secret for the in-memory dev/test admin seed user.
+ * Fixed Base32 TOTP secret shared by all MFA-enrolled seed users.
  * Used by tests to generate valid TOTP codes without a real enrollment flow.
  * Never appears in production — Postgres seeds keep mfa_enabled=false and
  * totp_secret=null until a real user enrolls via /auth/mfa/setup.
@@ -50,6 +50,10 @@ export const SEED_USER_IDS = {
   clinicAStaff: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   clinicAManager: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   clinicBAdmin: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  /** owner_admin without MFA — used only in MFA enforcement tests. */
+  clinicAAdminNoMfa: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  /** group_practice_manager without MFA — used only in MFA enforcement tests. */
+  clinicAManagerNoMfa: "ffffffff-ffff-4fff-8fff-ffffffffffff",
 } as const;
 
 const DEFAULT_DEV_PASSWORD = "password123";
@@ -92,8 +96,10 @@ export async function createInMemoryUserRepository(
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
       payrollTrack: "hourly",
-      totpSecret: null,
-      mfaEnabled: false,
+      // MFA enrolled — loginAndGetTokens uses SEED_ADMIN_TOTP_SECRET to complete
+      // the MFA challenge, keeping all existing integration tests passing.
+      totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
+      mfaEnabled: true,
       isActive: true,
     },
     {
@@ -104,6 +110,32 @@ export async function createInMemoryUserRepository(
       homeClinicId: SEED_CLINIC_B_ID,
       homeClinicName: "Verve Dental Clinic B",
       payrollTrack: "commission",
+      // MFA enrolled — loginAndGetTokens uses SEED_ADMIN_TOTP_SECRET for MFA.
+      totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
+      mfaEnabled: true,
+      isActive: true,
+    },
+    // ── No-MFA privileged seed users (enforcement tests only) ──────────────
+    {
+      id: SEED_USER_IDS.clinicAAdminNoMfa,
+      email: "admin-nomfa@clinic-a.au",
+      passwordHash,
+      role: "owner_admin",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
+      payrollTrack: "commission",
+      totpSecret: null,
+      mfaEnabled: false,
+      isActive: true,
+    },
+    {
+      id: SEED_USER_IDS.clinicAManagerNoMfa,
+      email: "manager-nomfa@clinic-a.au",
+      passwordHash,
+      role: "group_practice_manager",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
+      payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
       isActive: true,

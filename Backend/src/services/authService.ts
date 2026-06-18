@@ -14,6 +14,7 @@ import type {
   AuthTokens,
   LoginResult,
   MfaChallengePayload,
+  MfaEnrollmentPayload,
   PublicUser,
   RefreshTokenPayload,
   UserRecord,
@@ -219,6 +220,52 @@ export function createAuthService(
     });
   }
 
+  /**
+   * Issues a short-lived (15 min) enrollment token when a privileged user
+   * logs in without MFA enrolled.  The token carries the same user fields as
+   * an access token but has type "mfa_enrollment", so the standard
+   * authenticate middleware rejects it for all routes except
+   * POST /auth/mfa/setup and POST /auth/mfa/confirm.
+   */
+  function signMfaEnrollmentToken(user: UserRecord): string {
+    const payload: MfaEnrollmentPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      homeClinicId: user.homeClinicId,
+      homeClinicName: user.homeClinicName,
+      type: "mfa_enrollment",
+    };
+
+    return jwt.sign(payload, config.JWT_ACCESS_SECRET, { expiresIn: "15m" });
+  }
+
+  /**
+   * Verifies an MFA enrollment token and returns the caller as an
+   * AuthenticatedUser so the MFA setup/confirm handlers can identify the user.
+   * Throws 401 UNAUTHORIZED on any failure.
+   */
+  function verifyMfaEnrollmentToken(token: string): AuthenticatedUser {
+    try {
+      const payload = parseJwtPayload(jwt.verify(token, config.JWT_ACCESS_SECRET));
+
+      if (payload.type !== "mfa_enrollment") {
+        throw new AppError(401, "UNAUTHORIZED", "Invalid enrollment token");
+      }
+
+      return {
+        id: payload.sub as string,
+        email: payload.email as string,
+        role: payload.role as UserRole,
+        homeClinicId: payload.homeClinicId as string,
+        homeClinicName: payload.homeClinicName as string,
+      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(401, "UNAUTHORIZED", "Invalid or expired enrollment token");
+    }
+  }
+
   function verifyAccessToken(token: string): AccessTokenPayload {
     try {
       const payload = parseJwtPayload(jwt.verify(token, config.JWT_ACCESS_SECRET));
@@ -268,17 +315,34 @@ export function createAuthService(
 
     const publicUser = toPublicUser(user);
 
-    if (user.mfaEnabled && MFA_REQUIRED_ROLES.includes(user.role)) {
-      audit.logAuthEvent("auth.login.mfa_required", {
+    if (MFA_REQUIRED_ROLES.includes(user.role)) {
+      if (user.mfaEnabled) {
+        audit.logAuthEvent("auth.login.mfa_required", {
+          userId: user.id,
+          email: user.email,
+          clinicId: user.homeClinicId,
+          ...auditContext,
+        });
+
+        return {
+          kind: "mfa_required",
+          mfaToken: signMfaChallenge(user),
+          user: publicUser,
+        };
+      }
+
+      // Privileged user with mfa_enabled = false — do not issue tokens.
+      audit.logAuthEvent("auth.login.mfa_enrollment_required", {
         userId: user.id,
         email: user.email,
         clinicId: user.homeClinicId,
+        role: user.role,
         ...auditContext,
       });
 
       return {
-        kind: "mfa_required",
-        mfaToken: signMfaChallenge(user),
+        kind: "mfa_enrollment_required",
+        enrollmentToken: signMfaEnrollmentToken(user),
         user: publicUser,
       };
     }
@@ -380,6 +444,21 @@ export function createAuthService(
       if (!user?.isActive) {
         await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+      }
+
+      // Enforce MFA enrollment on refresh: a privileged user who somehow holds
+      // a refresh token (e.g. token pre-dates enforcement) cannot silently
+      // bypass the requirement by skipping the login gate.
+      if (!user.mfaEnabled && MFA_REQUIRED_ROLES.includes(user.role)) {
+        await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+        audit.logAuthEvent("auth.refresh.mfa_enrollment_required", {
+          userId: user.id,
+          email: user.email,
+          clinicId: user.homeClinicId,
+          role: user.role,
+          ...auditContext,
+        });
+        throw new AppError(403, "MFA_ENROLLMENT_REQUIRED", "MFA enrollment is required for your role");
       }
 
       await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
@@ -616,6 +695,7 @@ export function createAuthService(
     refresh,
     logout,
     authenticateAccessToken,
+    verifyMfaEnrollmentToken,
     canAccessClinic,
     changePassword,
     revokeAllUserTokens,
