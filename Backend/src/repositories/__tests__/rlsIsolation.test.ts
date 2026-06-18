@@ -50,7 +50,7 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../userRepository.js";
-import { SEED_MASTER_CATALOG_IDS } from "../seed/inventorySeed.js";
+import { SEED_CLINIC_INVENTORY_IDS } from "../seed/inventorySeed.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test constants
@@ -59,10 +59,6 @@ import { SEED_MASTER_CATALOG_IDS } from "../seed/inventorySeed.js";
 const DB_URL = process.env["DATABASE_URL"];
 const SKIP = !DB_URL;
 
-// Fixed catalog item UUID from the seed data — matches SEED_MASTER_CATALOG_IDS.nitrileGloves
-// in inventorySeed.ts (the value used by seedInventory() when populating master_catalog_items).
-const SEED_GLOVES_ITEM_ID = SEED_MASTER_CATALOG_IDS.nitrileGloves;
-
 let pool: pg.Pool;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,9 +66,10 @@ let pool: pg.Pool;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FX = {
-  // clinic_inventory_items
-  invItemA: "f1111111-f111-4111-8111-f11111111111",
-  invItemB: "f2222222-f222-4222-8222-f22222222222",
+  // clinic_inventory_items — reuse rows created by seedInventory() to avoid
+  // colliding with the unique constraint on (clinic_id, master_catalog_item_id).
+  invItemA: SEED_CLINIC_INVENTORY_IDS.clinicAGloves,
+  invItemB: SEED_CLINIC_INVENTORY_IDS.clinicBGloves,
   // draft_purchase_orders
   poA: "f3333333-f333-4333-8333-f33333333333",
   poB: "f4444444-f444-4444-8444-f44444444444",
@@ -145,16 +142,6 @@ beforeAll(async () => {
         ($2, 'Test Clinic B', 'Australia/Sydney', 'standard', true)
       ON CONFLICT (id) DO NOTHING
     `, [SEED_CLINIC_A_ID, SEED_CLINIC_B_ID]);
-
-    // clinic_inventory_items — one per clinic pointing at the gloves catalog item
-    await client.query(`
-      INSERT INTO clinic_inventory_items
-        (id, clinic_id, master_catalog_item_id, quantity_on_hand, reorder_point)
-      VALUES
-        ($1, $3, $5, 10, 3),
-        ($2, $4, $5, 20, 5)
-      ON CONFLICT (id) DO NOTHING
-    `, [FX.invItemA, FX.invItemB, SEED_CLINIC_A_ID, SEED_CLINIC_B_ID, SEED_GLOVES_ITEM_ID]);
 
     // draft_purchase_orders — one per clinic
     await client.query(`
@@ -235,7 +222,6 @@ afterAll(async () => {
     await client.query(`DELETE FROM invoices WHERE id IN ($1, $2)`, [FX.invA, FX.invB]);
     await client.query(`DELETE FROM timesheet_entries WHERE id IN ($1, $2)`, [FX.tsA, FX.tsB]);
     await client.query(`DELETE FROM draft_purchase_orders WHERE id IN ($1, $2)`, [FX.poA, FX.poB]);
-    await client.query(`DELETE FROM clinic_inventory_items WHERE id IN ($1, $2)`, [FX.invItemA, FX.invItemB]);
   });
 
   await pool.end();

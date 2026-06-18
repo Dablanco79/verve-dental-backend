@@ -629,7 +629,7 @@ describe("RLS hardening — roster_entry_audit is append-only", () => {
     if (SKIP) return;
     const { rowCount } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
       c.query(
-        "UPDATE roster_entry_audit SET action = 'tampered' WHERE id = $1",
+        "UPDATE roster_entry_audit SET action = 'updated' WHERE id = $1",
         [AUDIT_ROW_ID],
       ),
     );
