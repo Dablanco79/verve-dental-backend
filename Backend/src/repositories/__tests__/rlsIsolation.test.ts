@@ -73,7 +73,13 @@ const FX = {
   // draft_purchase_orders
   poA: "f3333333-f333-4333-8333-f33333333333",
   poB: "f4444444-f444-4444-8444-f44444444444",
-  // timesheet_entries — roster_entry_id intentionally null (hourly_manual)
+  // roster_entries — minimal backing shifts required by the timesheet fixtures.
+  // Each timesheet row carries a distinct roster_entry_id so the composite
+  // unique constraint UNIQUE NULLS NOT DISTINCT (roster_entry_id, payroll_type)
+  // resolves to different keys and does not collide.
+  rosterA: "fc111111-fc11-4c11-8c11-fc1111111111",
+  rosterB: "fc222222-fc22-4c22-8c22-fc2222222222",
+  // timesheet_entries — hourly_auto linked to rosterA / rosterB above
   tsA: "f5555555-f555-4555-8555-f55555555555",
   tsB: "f6666666-f666-4666-8666-f66666666666",
   // invoices
@@ -153,26 +159,46 @@ beforeAll(async () => {
     `, [FX.poA, FX.poB, SEED_CLINIC_A_ID, SEED_CLINIC_B_ID,
         SEED_USER_IDS.clinicAAdmin, SEED_USER_IDS.clinicBAdmin]);
 
-    // timesheet_entries — hourly_manual, no roster_entry_id
-    const today = new Date().toISOString().slice(0, 10);
+    // roster_entries — one per clinic, backing the timesheet fixtures below.
+    // Using a fixed past date so the shifts are stable across CI runs.
+    await client.query(`
+      INSERT INTO roster_entries (
+        id, rostered_clinic_id, rostered_clinic_name,
+        staff_user_id, staff_email,
+        shift_start_at, shift_end_at, shift_type, status,
+        created_by_user_id
+      ) VALUES
+        ($1, $3, 'Test Clinic A', $5, 'admin@clinic-a.au',
+         '2026-01-15T09:00:00Z', '2026-01-15T17:00:00Z', 'standard', 'scheduled', $5),
+        ($2, $4, 'Test Clinic B', $6, 'admin@clinic-b.au',
+         '2026-01-15T09:00:00Z', '2026-01-15T17:00:00Z', 'standard', 'scheduled', $6)
+      ON CONFLICT (id) DO NOTHING
+    `, [FX.rosterA, FX.rosterB, SEED_CLINIC_A_ID, SEED_CLINIC_B_ID,
+        SEED_USER_IDS.clinicAAdmin, SEED_USER_IDS.clinicBAdmin]);
+
+    // timesheet_entries — hourly_auto linked to the roster entries above.
+    // Each row has a distinct roster_entry_id, giving constraint keys
+    // (FX.rosterA, 'hourly_auto') and (FX.rosterB, 'hourly_auto') which do
+    // not collide with each other or with the NULLS NOT DISTINCT behaviour.
     await client.query(`
       INSERT INTO timesheet_entries (
         id, payroll_type, staff_user_id, staff_email,
         clinic_id, rostered_clinic_id, rostered_clinic_name,
+        roster_entry_id,
         shift_date, shift_start_at, shift_end_at,
         attendance_status, timesheet_status, generated_by
       ) VALUES
-        ($1, 'hourly_manual', $3, 'admin@clinic-a.au',
-         $5, $5, 'Test Clinic A',
-         $7, $7::date + interval '8 hours', $7::date + interval '17 hours',
-         'present', 'draft', 'manager_manual'),
-        ($2, 'hourly_manual', $4, 'admin@clinic-b.au',
-         $6, $6, 'Test Clinic B',
-         $7, $7::date + interval '8 hours', $7::date + interval '17 hours',
-         'present', 'draft', 'manager_manual')
+        ($1, 'hourly_auto', $3, 'admin@clinic-a.au',
+         $5, $5, 'Test Clinic A', $7,
+         '2026-01-15', '2026-01-15T09:00:00Z', '2026-01-15T17:00:00Z',
+         'present', 'draft', 'system_auto'),
+        ($2, 'hourly_auto', $4, 'admin@clinic-b.au',
+         $6, $6, 'Test Clinic B', $8,
+         '2026-01-15', '2026-01-15T09:00:00Z', '2026-01-15T17:00:00Z',
+         'present', 'draft', 'system_auto')
       ON CONFLICT (id) DO NOTHING
     `, [FX.tsA, FX.tsB, SEED_USER_IDS.clinicAAdmin, SEED_USER_IDS.clinicBAdmin,
-        SEED_CLINIC_A_ID, SEED_CLINIC_B_ID, today]);
+        SEED_CLINIC_A_ID, SEED_CLINIC_B_ID, FX.rosterA, FX.rosterB]);
 
     // invoices — one per clinic
     await client.query(`
@@ -221,6 +247,8 @@ afterAll(async () => {
     await client.query(`DELETE FROM leave_requests WHERE id IN ($1, $2)`, [FX.leaveA, FX.leaveB]);
     await client.query(`DELETE FROM invoices WHERE id IN ($1, $2)`, [FX.invA, FX.invB]);
     await client.query(`DELETE FROM timesheet_entries WHERE id IN ($1, $2)`, [FX.tsA, FX.tsB]);
+    // Delete roster_entries after timesheet_entries (FK: timesheet_entries.roster_entry_id)
+    await client.query(`DELETE FROM roster_entries WHERE id IN ($1, $2)`, [FX.rosterA, FX.rosterB]);
     await client.query(`DELETE FROM draft_purchase_orders WHERE id IN ($1, $2)`, [FX.poA, FX.poB]);
   });
 
