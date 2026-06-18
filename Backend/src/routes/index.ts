@@ -11,6 +11,7 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { createOriginGuard } from "../middleware/originGuard.js";
 import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
 import { createAnalyticsRouter } from "./analyticsRoutes.js";
 import { createBillingRouter } from "./billingRoutes.js";
@@ -44,14 +45,18 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     skip: () => config.NODE_ENV === "test",
   }) as unknown as RequestHandler;
 
+  // Origin guard: validates Origin/Referer against CORS_ORIGIN in staging/production.
+  // No-op pass-through in development/test so existing flows are unaffected.
+  const originGuard = createOriginGuard(config);
+
   router.get("/health", getHealth);
 
-  router.post("/auth/login", authRateLimiter, asyncHandler((req, res) => authHandlers.login(req, res)));
-  router.post("/auth/mfa/verify", authRateLimiter, asyncHandler((req, res) => authHandlers.verifyMfa(req, res)));
-  router.post("/auth/mfa/setup", authRateLimiter, authenticate, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
-  router.post("/auth/mfa/confirm", authRateLimiter, authenticate, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));
-  router.post("/auth/refresh", authRateLimiter, asyncHandler((req, res) => authHandlers.refresh(req, res)));
-  router.post("/auth/logout", asyncHandler((req, res) => authHandlers.logout(req, res)));
+  router.post("/auth/login", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.login(req, res)));
+  router.post("/auth/mfa/verify", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.verifyMfa(req, res)));
+  router.post("/auth/mfa/setup", authRateLimiter, originGuard, authenticate, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
+  router.post("/auth/mfa/confirm", authRateLimiter, originGuard, authenticate, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));
+  router.post("/auth/refresh", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.refresh(req, res)));
+  router.post("/auth/logout", originGuard, asyncHandler((req, res) => authHandlers.logout(req, res)));
   router.get("/auth/me", authenticate, (req, res) => {
     authHandlers.me(req, res);
   });

@@ -84,7 +84,7 @@ function allAppliedIds(): string[] {
 function queriesSeen(
   client: ReturnType<typeof makeMockPool>["client"],
 ): string[] {
-  return client.query.mock.calls.map((c) => c[0] as string);
+  return client.query.mock.calls.map((c) => c[0]);
 }
 
 // ---------------------------------------------------------------------------
