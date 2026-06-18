@@ -5,7 +5,10 @@ import { Router } from "express";
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import type { EnvConfig } from "../config/index.js";
 import { createAuthHandlers } from "../controllers/authController.js";
-import { getHealth } from "../controllers/healthController.js";
+import {
+  createReadinessHandler,
+  getHealth,
+} from "../controllers/healthController.js";
 import {
   createAuthenticateMiddleware,
   createMfaSetupMiddleware,
@@ -52,6 +55,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const originGuard = createOriginGuard(config);
 
   router.get("/health", getHealth);
+  router.get("/ready", asyncHandler(createReadinessHandler(deps.healthService)));
 
   router.post("/auth/login", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.login(req, res)));
   router.post("/auth/mfa/verify", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.verifyMfa(req, res)));

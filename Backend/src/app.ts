@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import type { Request } from "express";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 
@@ -36,6 +39,39 @@ export function createApp(
     pinoHttp({
       logger,
       autoLogging: config.NODE_ENV !== "test",
+      // Propagate or generate a deterministic request ID for distributed tracing.
+      // Incoming x-request-id (from a gateway/load-balancer) is honoured; a new
+      // UUID v4 is generated for requests that arrive without one.
+      genReqId: (req, res) => {
+        const incoming = req.headers["x-request-id"];
+        const id =
+          (Array.isArray(incoming) ? incoming[0] : incoming) ?? randomUUID();
+        res.setHeader("X-Request-Id", id);
+        return id;
+      },
+      // Enrich every log line with structured operational context.
+      // customProps runs at response time, after auth middleware has populated
+      // req.user and Express has matched the route — so all fields are available.
+      customProps: (req) => {
+        const r = req as unknown as Request;
+        const props: Record<string, unknown> = {
+          // pino-http sets req.id via genReqId above; cast needed because
+          // IncomingMessage doesn't carry id in its vanilla TS types.
+          requestId: (req as { id?: string }).id,
+        };
+        if (r.user?.id !== undefined) {
+          props["userId"] = r.user.id;
+        }
+        if (r.params["clinicId"] !== undefined) {
+          props["tenantId"] = r.params["clinicId"];
+        }
+        // req.route is populated by Express after the route handler is matched.
+        const routePath = (r.route as { path?: string } | undefined)?.path;
+        if (routePath !== undefined) {
+          props["route"] = routePath;
+        }
+        return props;
+      },
     }),
   );
 

@@ -40,6 +40,7 @@ import { createAnalyticsService } from "../services/analyticsService.js";
 import { createAuditService } from "../services/auditService.js";
 import { createAuthService } from "../services/authService.js";
 import { createBillingService } from "../services/billingService.js";
+import { createHealthService } from "../services/healthService.js";
 import { createLeaveService } from "../services/leaveService.js";
 import { createPurchaseOrderService } from "../services/purchaseOrderService.js";
 import { createTimesheetService } from "../services/timesheetService.js";
@@ -58,6 +59,7 @@ import type { TimesheetRepository } from "../repositories/timesheetRepository.js
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { BillingService } from "../services/billingService.js";
+import type { HealthService } from "../services/healthService.js";
 import type { LeaveService } from "../services/leaveService.js";
 import type { PurchaseOrderService } from "../services/purchaseOrderService.js";
 
@@ -70,6 +72,7 @@ export type AppDependencies = {
   billingService: BillingService;
   analyticsService: AnalyticsService;
   purchaseOrderService: PurchaseOrderService;
+  healthService: HealthService;
   userRepository: UserRepository;
   catalogRepository: CatalogRepository;
   clinicRepository: ClinicRepository;
@@ -264,6 +267,7 @@ export async function createAppDependencies(
     }
   }
 
+  const healthService = createHealthService(connectedPool, connectedRedis);
   const auditService = createAuditService(logger, analyticsRepository);
   const authService = createAuthService(config, userRepository, auditService, connectedRedis);
   const userService = createUserService(userRepository, auditService, authService);
@@ -303,6 +307,7 @@ export async function createAppDependencies(
     billingService,
     analyticsService,
     purchaseOrderService,
+    healthService,
     userRepository,
     catalogRepository,
     clinicRepository,

@@ -21,19 +21,26 @@ export function errorHandler(logger: Logger, config: Pick<EnvConfig, "NODE_ENV">
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _next: NextFunction,
   ): void => {
+    // req.id is injected by pino-http's genReqId (ReqId = string | number | object).
+    // Our genReqId always returns a UUID string, but pino-http's type is broader.
+    // Narrow to string to avoid Object stringification; non-string IDs become undefined.
+    const rawId = _req.id;
+    const requestId = typeof rawId === "string" ? rawId : undefined;
+
     if (error instanceof AppError) {
       // Operational errors — safe to surface to clients.
       res.status(error.statusCode).json({
         error: {
           code: error.code,
           message: error.message,
+          requestId,
         },
       });
       return;
     }
 
     // Unexpected errors — log full detail, but redact in production.
-    logger.error({ err: error }, "Unhandled request error");
+    logger.error({ err: error, requestId }, "Unhandled request error");
 
     const message =
       config.NODE_ENV === "production"
@@ -46,6 +53,7 @@ export function errorHandler(logger: Logger, config: Pick<EnvConfig, "NODE_ENV">
       error: {
         code: "INTERNAL_SERVER_ERROR",
         message,
+        requestId,
       },
     });
   };

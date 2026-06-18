@@ -6,11 +6,12 @@ import {
   SEED_CLINIC_B_ID,
   SEED_ADMIN_TOTP_SECRET,
 } from "../src/repositories/userRepository.js";
+import type { ReadinessResult } from "../src/services/healthService.js";
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiData<T> = { data: T };
-type ApiError = { error: { code: string; message: string } };
+type ApiError = { error: { code: string; message: string; requestId?: string } };
 
 type LoginData = {
   requiresMfa: boolean;
@@ -19,8 +20,11 @@ type LoginData = {
   user: { homeClinicId: string; email: string };
 };
 
+// ---------------------------------------------------------------------------
+// GET /api/v1/health — liveness probe
+// ---------------------------------------------------------------------------
 describe("GET /api/v1/health", () => {
-  it("returns service health status", async () => {
+  it("returns 200 with service metadata", async () => {
     const app = await createTestApp();
     const response = await request(app).get("/api/v1/health");
 
@@ -35,6 +39,124 @@ describe("GET /api/v1/health", () => {
     expect(body.status).toBe("ok");
     expect(body.service).toBe("@verve/backend");
     expect(body.timestamp).toEqual(expect.any(String));
+    // Timestamp must be a valid ISO-8601 date string.
+    expect(() => new Date(body.timestamp).toISOString()).not.toThrow();
+  });
+
+  it("does not require authentication", async () => {
+    const app = await createTestApp();
+    // No Authorization header — must still return 200.
+    const response = await request(app).get("/api/v1/health");
+    expect(response.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ready — readiness probe (in-memory / test environment)
+// ---------------------------------------------------------------------------
+describe("GET /api/v1/ready", () => {
+  it("returns 200 with readiness status and check details", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+
+    // In test mode DATABASE_URL and REDIS_URL are not set — both checks report
+    // 'ok' with an in-memory note, so overall status is 'ok'.
+    expect(response.status).toBe(200);
+
+    const body = response.body as ReadinessResult;
+
+    expect(body.status).toBe("ok");
+    expect(body.timestamp).toEqual(expect.any(String));
+    expect(() => new Date(body.timestamp).toISOString()).not.toThrow();
+
+    expect(body.checks).toBeDefined();
+    expect(body.checks.database).toMatchObject({ status: "ok" });
+    expect(body.checks.redis).toMatchObject({ status: "ok" });
+  });
+
+  it("includes ready: true when all checks pass", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+    const body = response.body as ReadinessResult;
+
+    expect(typeof body.ready).toBe("boolean");
+    expect(body.ready).toBe(true);
+  });
+
+  it("includes critical flag per check (database=true, redis=false)", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+    const body = response.body as ReadinessResult;
+
+    expect(body.checks.database.critical).toBe(true);
+    expect(body.checks.redis.critical).toBe(false);
+  });
+
+  it("includes latencyMs for each check", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+    const body = response.body as ReadinessResult;
+
+    expect(typeof body.checks.database.latencyMs).toBe("number");
+    expect(typeof body.checks.redis.latencyMs).toBe("number");
+    expect(body.checks.database.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(body.checks.redis.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports in-memory mode message when no infrastructure is configured", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+    const body = response.body as ReadinessResult;
+
+    // Both checks use in-memory fallbacks in the test environment.
+    expect(body.checks.database.message).toMatch(/in-memory/);
+    expect(body.checks.redis.message).toMatch(/in-memory/);
+  });
+
+  it("does not require authentication", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/ready");
+    expect(response.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structured logging — X-Request-Id header propagation
+// ---------------------------------------------------------------------------
+describe("Structured logging — X-Request-Id", () => {
+  it("returns X-Request-Id header on every response", async () => {
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/health");
+
+    expect(response.headers["x-request-id"]).toEqual(expect.any(String));
+    expect(response.headers["x-request-id"]).toHaveLength(36); // UUID v4
+  });
+
+  it("echoes a client-supplied x-request-id back in the response header", async () => {
+    const app = await createTestApp();
+    const clientId = "test-trace-id-abc123";
+
+    const response = await request(app)
+      .get("/api/v1/health")
+      .set("x-request-id", clientId);
+
+    expect(response.headers["x-request-id"]).toBe(clientId);
+  });
+
+  it("generates a unique X-Request-Id when none is supplied", async () => {
+    const app = await createTestApp();
+
+    const [r1, r2] = await Promise.all([
+      request(app).get("/api/v1/health"),
+      request(app).get("/api/v1/health"),
+    ]);
+
+    const id1 = r1.headers["x-request-id"] as string;
+    const id2 = r2.headers["x-request-id"] as string;
+
+    expect(id1).toBeDefined();
+    expect(id2).toBeDefined();
+    expect(id1).not.toBe(id2);
   });
 });
 

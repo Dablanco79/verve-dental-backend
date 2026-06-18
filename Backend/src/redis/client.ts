@@ -18,6 +18,7 @@ type RedisPipeline = {
 type IORedisInstance = {
   connect(): Promise<void>;
   quit(): Promise<string>;
+  ping(): Promise<string>;
   /** Subset of the EventEmitter API — used to register the error guard. */
   on(event: "error", listener: (err: Error & { code?: string }) => void): IORedisInstance;
 
