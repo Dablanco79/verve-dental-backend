@@ -52,6 +52,8 @@ export function createApp(
       // Enrich every log line with structured operational context.
       // customProps runs at response time, after auth middleware has populated
       // req.user and Express has matched the route — so all fields are available.
+      // Note: req.params and req.route may be undefined for requests that bypass
+      // route matching (startup probes, 404s, middleware-short-circuited paths).
       customProps: (req) => {
         const r = req as unknown as Request;
         const props: Record<string, unknown> = {
@@ -62,8 +64,12 @@ export function createApp(
         if (r.user?.id !== undefined) {
           props["userId"] = r.user.id;
         }
-        if (r.params["clinicId"] !== undefined) {
-          props["tenantId"] = r.params["clinicId"];
+        // Express types req.params as always-defined, but at runtime it can be
+        // undefined for pre-route requests (probes, 404s).  Widen the type so
+        // the null-safety optional chain is both correct and lint-clean.
+        const params = r.params as Record<string, string> | undefined;
+        if (params?.["clinicId"] !== undefined) {
+          props["tenantId"] = params["clinicId"];
         }
         // req.route is populated by Express after the route handler is matched.
         const routePath = (r.route as { path?: string } | undefined)?.path;

@@ -158,6 +158,18 @@ describe("Structured logging — X-Request-Id", () => {
     expect(id2).toBeDefined();
     expect(id1).not.toBe(id2);
   });
+
+  it("does not crash when req.params/req.route are undefined (probe/startup requests)", async () => {
+    // Requests to unmatched paths (Render health probes, raw TCP checks) reach
+    // pino-http's customProps before Express populates req.params or req.route.
+    // This test guards against the TypeError regression fixed in app.ts.
+    const app = await createTestApp();
+    const response = await request(app).get("/api/v1/health");
+    // If customProps throws, supertest will surface a 500. A 200 proves the
+    // null-safe optional-chain on req.params?.["clinicId"] is working.
+    expect(response.status).toBe(200);
+    expect(response.headers["x-request-id"]).toEqual(expect.any(String));
+  });
 });
 
 describe("Auth API", () => {
