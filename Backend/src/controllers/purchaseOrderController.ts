@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 
 import type { PurchaseOrderService } from "../services/purchaseOrderService.js";
 import { AppError } from "../types/errors.js";
+import { zodToDetails } from "../utils/validation.js";
 
 // ─── Parameter validation ─────────────────────────────────────────────────────
 
@@ -17,7 +18,9 @@ function parseUuidParam(raw: string | string[] | undefined, name: string): strin
   const value = typeof raw === "string" ? raw : (Array.isArray(raw) ? (raw[0] ?? "") : "");
   const result = uuidSchema.safeParse(value);
   if (!result.success) {
-    throw new AppError(400, "VALIDATION_ERROR", `Invalid ${name}: must be a valid UUID`);
+    throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+      { field: name, message: `${name} must be a valid UUID` },
+    ]);
   }
   return result.data;
 }
@@ -51,7 +54,7 @@ export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
 
       const parseResult = submitPoBodySchema.safeParse(req.body ?? {});
       if (!parseResult.success) {
-        throw new AppError(400, "VALIDATION_ERROR", parseResult.error.message);
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parseResult.error));
       }
 
       const clinicId = parseUuidParam(req.params.clinicId, "clinicId");

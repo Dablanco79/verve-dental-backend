@@ -120,7 +120,7 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
 
       const row = rows[0];
       if (!row) {
-        throw new Error("Failed to create user — no row returned");
+        throw new AppError(500, "INTERNAL_ERROR", "Failed to create user");
       }
 
       return rowToUserRecord(row);

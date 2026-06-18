@@ -51,6 +51,7 @@ import { createLaborForecastService } from "../services/laborForecastService.js"
 import type { LaborForecastSummary, RoleLaborProjection } from "../services/laborForecastService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../types/errors.js";
+import { zodToDetails } from "../utils/validation.js";
 
 // ── Role gates ────────────────────────────────────────────────────────────────
 
@@ -98,8 +99,9 @@ function requireUuidParam(req: Request, paramName: string): string {
   if (!UUID_REGEX.test(value)) {
     throw new AppError(
       400,
-      "INVALID_PARAM",
-      `Path parameter '${paramName}' must be a valid UUID`,
+      "VALIDATION_ERROR",
+      "Request validation failed",
+      [{ field: paramName, message: `${paramName} must be a valid UUID` }],
     );
   }
 
@@ -209,11 +211,7 @@ function createLaborForecastHandlers(deps: AppDependencies) {
       const parsed = laborForecastQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        throw new AppError(
-          400,
-          "INVALID_QUERY",
-          parsed.error.issues.map((i) => i.message).join("; "),
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       // Resolve clinic timezone for calendar-day boundary calibration.

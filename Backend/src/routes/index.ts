@@ -17,6 +17,10 @@ import {
 } from "../middleware/authMiddleware.js";
 import { createOriginGuard } from "../middleware/originGuard.js";
 import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { createAnalyticsRouter } from "./analyticsRoutes.js";
 import { createBillingRouter } from "./billingRoutes.js";
 import { createClinicRouter } from "./clinicRoutes.js";
@@ -77,6 +81,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     "/clinics/:clinicId/summary",
     authenticate,
     enforceTenantParam("clinicId"),
+    validateParams(clinicIdParamsSchema),
     (req, res) => {
       authHandlers.getClinicSummary(req, res);
     },

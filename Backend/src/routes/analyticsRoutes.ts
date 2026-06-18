@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
@@ -7,7 +8,17 @@ import {
   requireRoles,
 } from "../middleware/authMiddleware.js";
 import { createAnalyticsHandlers } from "../controllers/analyticsController.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+
+// Validates :clinicId + :eventId for the single-event detail route.
+const analyticsEventParamsSchema = z.object({
+  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  eventId: z.string().uuid("eventId must be a valid UUID"),
+});
 
 /**
  * Analytics & Audit Trail routes — mounted at /clinics/:clinicId/analytics
@@ -39,12 +50,13 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
   const h = createAnalyticsHandlers(deps.analyticsService);
 
   // All analytics routes require manager/admin + tenant enforcement.
-  const guards = [authenticate, tenantGuard, managerOrAdmin] as const;
+  const guards = [authenticate, tenantGuard, managerOrAdmin];
 
   // ── KPI dashboard ─────────────────────────────────────────────────────────
   router.get(
     "/dashboard",
     ...guards,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.getDashboard(req, res)),
   );
 
@@ -52,6 +64,7 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
   router.get(
     "/revenue",
     ...guards,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.getRevenue(req, res)),
   );
 
@@ -59,6 +72,7 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
   router.get(
     "/inventory",
     ...guards,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.getInventory(req, res)),
   );
 
@@ -66,6 +80,7 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
   router.get(
     "/staff",
     ...guards,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.getStaff(req, res)),
   );
 
@@ -73,12 +88,14 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
   router.get(
     "/audit-events",
     ...guards,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.listAuditEvents(req, res)),
   );
 
   router.get(
     "/audit-events/:eventId",
     ...guards,
+    validateParams(analyticsEventParamsSchema),
     asyncHandler((req, res) => h.getAuditEvent(req, res)),
   );
 

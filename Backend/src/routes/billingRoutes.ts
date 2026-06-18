@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
@@ -7,7 +8,24 @@ import {
   requireRoles,
 } from "../middleware/authMiddleware.js";
 import { createBillingHandlers } from "../controllers/billingController.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+
+// ── Param schemas ─────────────────────────────────────────────────────────────
+
+const invoiceParamsSchema = z.object({
+  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  invoiceId: z.string().uuid("invoiceId must be a valid UUID"),
+});
+
+const lineItemParamsSchema = z.object({
+  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  invoiceId: z.string().uuid("invoiceId must be a valid UUID"),
+  lineItemId: z.string().uuid("lineItemId must be a valid UUID"),
+});
 
 /**
  * Billing routes — mounted at /clinics/:clinicId/billing
@@ -48,6 +66,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     "/invoices",
     authenticate,
     tenantGuard,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.listInvoices(req, res)),
   );
 
@@ -56,6 +75,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.createInvoice(req, res)),
   );
 
@@ -63,6 +83,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     "/invoices/:invoiceId",
     authenticate,
     tenantGuard,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.getInvoice(req, res)),
   );
 
@@ -73,6 +94,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.issueInvoice(req, res)),
   );
 
@@ -81,6 +103,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.voidInvoice(req, res)),
   );
 
@@ -90,6 +113,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     "/invoices/:invoiceId/line-items",
     authenticate,
     tenantGuard,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.listLineItems(req, res)),
   );
 
@@ -98,6 +122,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.addLineItem(req, res)),
   );
 
@@ -106,6 +131,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(lineItemParamsSchema),
     asyncHandler((req, res) => h.removeLineItem(req, res)),
   );
 
@@ -115,6 +141,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     "/invoices/:invoiceId/payments",
     authenticate,
     tenantGuard,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.listPayments(req, res)),
   );
 
@@ -123,6 +150,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
     authenticate,
     tenantGuard,
     managerOrAdmin,
+    validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.recordPayment(req, res)),
   );
 

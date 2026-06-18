@@ -33,6 +33,7 @@ import {
   PoAlreadySubmittedError,
   PoNotFoundError,
 } from "../types/purchaseOrderErrors.js";
+import { AppError } from "../types/errors.js";
 import type { InventoryRepository } from "./inventoryRepository.js";
 
 // ─── Row types ───────────────────────────────────────────────────────────────
@@ -234,7 +235,7 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       );
 
       const row = rows[0];
-      if (!row) throw new Error(`Clinic inventory item not found: ${itemId}`);
+      if (!row) throw new AppError(404, "NOT_FOUND", `Inventory item not found: ${itemId}`);
       return rowToClinicInventoryItem(row);
     },
 
@@ -264,7 +265,7 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to record adjustment — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to record adjustment");
       return rowToAdjustment(row);
     },
 
@@ -330,7 +331,7 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to create draft PO — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create draft purchase order");
       return rowToDraftPo(row);
     },
 
@@ -353,7 +354,7 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to add draft PO line — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to add draft PO line");
       return rowToDraftPoLine(row);
     },
 
@@ -438,7 +439,7 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to create clinic inventory item — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create clinic inventory item");
       return rowToClinicInventoryItem(row);
     },
   };

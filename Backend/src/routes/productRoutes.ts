@@ -7,6 +7,10 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { createProductService } from "../services/productService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -23,6 +27,7 @@ export function createProductRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  router.use(validateParams(clinicIdParamsSchema));
 
   router.post(
     "/",

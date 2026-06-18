@@ -19,6 +19,7 @@
 
 import type { DatabasePool } from "../db/pool.js";
 import type { BarcodeFormat, BarcodeMapping, MasterCatalogItem } from "../types/inventory.js";
+import { AppError } from "../types/errors.js";
 import type { CatalogRepository } from "./catalogRepository.js";
 
 type MasterCatalogRow = {
@@ -131,7 +132,7 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to create master catalog item — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create master catalog item");
       return rowToMasterItem(row);
     },
 
@@ -152,7 +153,7 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to create barcode mapping — no row returned");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create barcode mapping");
       return rowToBarcodeMapping(row);
     },
   };

@@ -14,6 +14,7 @@ import type {
 } from "../types/billing.js";
 import type { BillingRepository } from "./billingRepository.js";
 import type { DatabasePool } from "../db/pool.js";
+import { AppError } from "../types/errors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row mappers — DB snake_case → TypeScript camelCase
@@ -184,7 +185,7 @@ export function createPostgresBillingRepository(
         ],
       );
       const row = rows[0];
-      if (!row) throw new Error("createInvoice: INSERT returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create invoice");
       return mapInvoice(row);
     },
 
@@ -281,7 +282,7 @@ export function createPostgresBillingRepository(
         [...params, invoiceId, clinicId],
       );
       const row = rows[0];
-      if (!row) throw new Error("updateInvoice: invoice not found or UPDATE returned no row");
+      if (!row) throw new AppError(404, "NOT_FOUND", "Invoice not found");
       return mapInvoice(row);
     },
 
@@ -332,7 +333,7 @@ export function createPostgresBillingRepository(
         ],
       );
       const row = rows[0];
-      if (!row) throw new Error("refreshInvoiceTotals: UPDATE returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to refresh invoice totals");
       return mapInvoice(row);
     },
 
@@ -353,7 +354,7 @@ export function createPostgresBillingRepository(
         [clinicId],
       );
       const seqRow = rows[0];
-      if (!seqRow) throw new Error("nextInvoiceNumber: sequence UPDATE returned no row");
+      if (!seqRow) throw new AppError(500, "INTERNAL_ERROR", "Failed to generate invoice number");
       const seq = Number(seqRow.last_seq);
       const year = new Date().getFullYear();
       return `INV-${String(year)}-${String(seq).padStart(6, "0")}`;
@@ -413,7 +414,7 @@ export function createPostgresBillingRepository(
         ],
       );
       const row = rows[0];
-      if (!row) throw new Error("addLineItem: INSERT returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to add line item");
       return mapLineItem(row);
     },
 
@@ -476,7 +477,7 @@ export function createPostgresBillingRepository(
         ],
       );
       const row = rows[0];
-      if (!row) throw new Error("recordPayment: INSERT returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to record payment");
       return mapPayment(row);
     },
 
@@ -526,7 +527,7 @@ export function createPostgresBillingRepository(
         [paidCents, invoiceId, clinicId],
       );
       const row = rows[0];
-      if (!row) throw new Error("refreshInvoicePaymentTotals: UPDATE returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to refresh invoice payment totals");
       return mapInvoice(row);
     },
   };

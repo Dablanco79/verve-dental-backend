@@ -8,6 +8,7 @@ import {
   PAYMENT_METHODS,
 } from "../types/billing.js";
 import type { BillingService } from "../services/billingService.js";
+import { zodToDetails } from "../utils/validation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod schemas
@@ -94,11 +95,7 @@ export function createBillingHandlers(billingService: BillingService) {
 
       const queryResult = listInvoicesQuerySchema.safeParse(req.query);
       if (!queryResult.success) {
-        throw new AppError(
-          400,
-          "VALIDATION_ERROR",
-          queryResult.error.issues[0]?.message ?? "Invalid query parameters",
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(queryResult.error));
       }
 
       const invoices = await billingService.listInvoices(
@@ -115,11 +112,7 @@ export function createBillingHandlers(billingService: BillingService) {
 
       const result = createInvoiceSchema.safeParse(req.body);
       if (!result.success) {
-        throw new AppError(
-          400,
-          "VALIDATION_ERROR",
-          result.error.issues[0]?.message ?? "Invalid request body",
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(result.error));
       }
 
       const { dueAt, ...rest } = result.data;
@@ -173,11 +166,7 @@ export function createBillingHandlers(billingService: BillingService) {
 
       const result = voidInvoiceSchema.safeParse(req.body);
       if (!result.success) {
-        throw new AppError(
-          400,
-          "VALIDATION_ERROR",
-          result.error.issues[0]?.message ?? "Invalid request body",
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(result.error));
       }
 
       const invoice = await billingService.voidInvoice(
@@ -215,11 +204,7 @@ export function createBillingHandlers(billingService: BillingService) {
 
       const result = addLineItemSchema.safeParse(req.body);
       if (!result.success) {
-        throw new AppError(
-          400,
-          "VALIDATION_ERROR",
-          result.error.issues[0]?.message ?? "Invalid request body",
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(result.error));
       }
 
       const { lineItem, invoice } = await billingService.addLineItem(
@@ -274,11 +259,7 @@ export function createBillingHandlers(billingService: BillingService) {
 
       const result = recordPaymentSchema.safeParse(req.body);
       if (!result.success) {
-        throw new AppError(
-          400,
-          "VALIDATION_ERROR",
-          result.error.issues[0]?.message ?? "Invalid request body",
-        );
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(result.error));
       }
 
       const { transactionAt, ...rest } = result.data;

@@ -5,6 +5,7 @@ import type {
   CreateClinicInput,
   UpdateClinicInput,
 } from "../types/clinic.js";
+import { AppError } from "../types/errors.js";
 import type { ClinicRepository } from "./clinicRepository.js";
 
 // ─── DB row shape ─────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ export function createPostgresClinicRepository(
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Clinic INSERT returned no row — database error");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create clinic");
       return toClinic(row);
     },
 

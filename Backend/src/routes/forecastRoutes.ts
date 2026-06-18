@@ -48,6 +48,7 @@ import {
 import { createForecastService } from "../services/forecastService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../types/errors.js";
+import { zodToDetails } from "../utils/validation.js";
 import type { Request, Response } from "express";
 import type { ForecastOptions } from "../services/forecastService.js";
 
@@ -94,8 +95,9 @@ function requireUuidParam(req: Request, paramName: string): string {
   if (!UUID_REGEX.test(value)) {
     throw new AppError(
       400,
-      "INVALID_PARAM",
-      `Path parameter '${paramName}' must be a valid UUID`,
+      "VALIDATION_ERROR",
+      "Request validation failed",
+      [{ field: paramName, message: `${paramName} must be a valid UUID` }],
     );
   }
 
@@ -114,11 +116,7 @@ function parseForecastQuery(req: Request): Omit<ForecastOptions, "timezone"> {
   const parsed = forecastQuerySchema.safeParse(req.query);
 
   if (!parsed.success) {
-    throw new AppError(
-      400,
-      "INVALID_QUERY",
-      parsed.error.issues.map((i) => i.message).join("; "),
-    );
+    throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
   }
 
   return {

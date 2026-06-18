@@ -196,3 +196,91 @@ describe("Inventory API (Session 2)", () => {
     expect(body.error.code).toBe("UNAUTHORIZED");
   });
 });
+
+// ---------------------------------------------------------------------------
+// UUID param validation (Sprint I — coverage pass)
+// ---------------------------------------------------------------------------
+
+describe("Inventory param validation", () => {
+  it("returns 400 VALIDATION_ERROR for a malformed clinicId on GET /inventory", async () => {
+    const app = await createTestApp();
+    // Use owner_admin so enforceTenantParam passes through and validateParams fires
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const response = await request(app)
+      .get("/api/v1/clinics/not-a-uuid/inventory")
+      .set("Authorization", `Bearer ${token}`);
+
+    const body = response.body as ApiError;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("returns 400 VALIDATION_ERROR for a malformed itemId on GET /inventory/:itemId", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const response = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/inventory/not-a-uuid`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const body = response.body as ApiError;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("returns 400 VALIDATION_ERROR for an invalid limit on GET /inventory/adjustments", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const response = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/inventory/adjustments?limit=-5`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const body = response.body as ApiError;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+    expect(body.error).toHaveProperty("details");
+  });
+
+  it("returns 400 VALIDATION_ERROR for a non-numeric limit on GET /inventory/adjustments", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const response = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/inventory/adjustments?limit=banana`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const body = response.body as ApiError;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("still returns 200 for a valid itemId on GET /inventory/:itemId", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const response = await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/inventory/${SEED_CLINIC_INVENTORY_IDS.clinicAGloves}`,
+      )
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+  });
+
+  it("still returns 200 for a valid limit on GET /inventory/adjustments", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const response = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/inventory/adjustments?limit=10`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+  });
+});

@@ -7,7 +7,7 @@ import type {
   InventoryAdjustment,
 } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
-import { parseBody } from "../utils/validation.js";
+import { parseBody, zodToDetails } from "../utils/validation.js";
 
 const adjustSchema = z.object({
   itemId: z.string().uuid(),
@@ -126,9 +126,16 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
 
     async listAdjustments(req: Request, res: Response): Promise<void> {
       const clinicId = routeParam(req.params.clinicId);
-      const query = adjustmentsQuerySchema.safeParse(req.query);
-      const limit = query.success ? query.data.limit : undefined;
-      const adjustments = await inventoryService.listAdjustments(clinicId, limit);
+      const parsed = adjustmentsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(parsed.error),
+        );
+      }
+      const adjustments = await inventoryService.listAdjustments(clinicId, parsed.data.limit);
 
       res.status(200).json({
         data: adjustments.map(serializeAdjustment),

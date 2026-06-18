@@ -169,6 +169,19 @@ describe("Analytics API — authentication and RBAC", () => {
     expect(res.status).toBe(200);
     expect((res.body as { data: DashboardKpis }).data.clinicId).toBe(SEED_CLINIC_A_ID);
   });
+
+  it("returns 400 VALIDATION_ERROR for a malformed clinicId (Sprint I coverage pass)", async () => {
+    const app = await createTestApp();
+    // Use owner_admin so enforceTenantParam passes through — only validateParams fires
+    const token = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const res = await request(app)
+      .get("/api/v1/clinics/not-a-uuid/analytics/dashboard")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(400);
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -207,7 +220,7 @@ describe("GET /analytics/dashboard", () => {
     expect((res.body as { data: DashboardKpis }).data.periodDays).toBe(7);
   });
 
-  it("returns 400 INVALID_QUERY for periodDays=0 (below minimum)", async () => {
+  it("returns 400 VALIDATION_ERROR for periodDays=0 (below minimum)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -216,10 +229,10 @@ describe("GET /analytics/dashboard", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("returns 400 INVALID_QUERY for periodDays=999 (above maximum)", async () => {
+  it("returns 400 VALIDATION_ERROR for periodDays=999 (above maximum)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -228,7 +241,7 @@ describe("GET /analytics/dashboard", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 });
 
@@ -284,7 +297,7 @@ describe("GET /analytics/revenue", () => {
     expect((res.body as { data: RevenueReport }).data.months).toBe(3);
   });
 
-  it("returns 400 INVALID_QUERY for months=0", async () => {
+  it("returns 400 VALIDATION_ERROR for months=0", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -293,10 +306,10 @@ describe("GET /analytics/revenue", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("returns 400 INVALID_QUERY for months=25 (above maximum)", async () => {
+  it("returns 400 VALIDATION_ERROR for months=25 (above maximum)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -305,7 +318,7 @@ describe("GET /analytics/revenue", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 });
 
@@ -348,7 +361,7 @@ describe("GET /analytics/inventory", () => {
     expect(report.totalItems).toBeGreaterThan(0);
   });
 
-  it("returns 400 INVALID_QUERY for periodDays=0", async () => {
+  it("returns 400 VALIDATION_ERROR for periodDays=0", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -357,7 +370,7 @@ describe("GET /analytics/inventory", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 });
 
@@ -487,7 +500,7 @@ describe("GET /analytics/audit-events", () => {
     expect((res.body as { data: AuditEventsPage }).data.limit).toBe(5);
   });
 
-  it("returns 400 INVALID_QUERY for limit=0 (below minimum)", async () => {
+  it("returns 400 VALIDATION_ERROR for limit=0 (below minimum)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -496,10 +509,10 @@ describe("GET /analytics/audit-events", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("returns 400 INVALID_QUERY for limit=201 (above maximum)", async () => {
+  it("returns 400 VALIDATION_ERROR for limit=201 (above maximum)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -508,10 +521,10 @@ describe("GET /analytics/audit-events", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("returns 400 INVALID_QUERY for an invalid actorId (non-UUID)", async () => {
+  it("returns 400 VALIDATION_ERROR for an invalid actorId (non-UUID)", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -520,7 +533,7 @@ describe("GET /analytics/audit-events", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_QUERY");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
   it("manager cannot read a different clinic's audit events (tenant isolation)", async () => {
@@ -578,7 +591,7 @@ describe("GET /analytics/audit-events/:eventId", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns 400 INVALID_PARAM when eventId is not a valid UUID", async () => {
+  it("returns 400 VALIDATION_ERROR when eventId is not a valid UUID", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
@@ -587,7 +600,7 @@ describe("GET /analytics/audit-events/:eventId", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect((res.body as ApiError).error.code).toBe("INVALID_PARAM");
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
   it("returns 404 AUDIT_EVENT_NOT_FOUND for a valid UUID that does not exist", async () => {

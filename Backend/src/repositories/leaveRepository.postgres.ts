@@ -111,7 +111,7 @@ export function createPostgresLeaveRepository(
       );
 
       const row = rows[0];
-      if (!row) throw new Error("Failed to create leave request");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create leave request");
       return toLeaveRequest(row);
     },
 

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import type { EnvConfig } from "../config/index.js";
 import { AppError } from "../types/errors.js";
+import type { ValidationDetail } from "../types/errors.js";
 import type { Logger } from "../utils/logger.js";
 
 export interface ApiErrorBody {
@@ -9,6 +10,7 @@ export interface ApiErrorBody {
     code: string;
     message: string;
     requestId?: string;
+    details?: readonly ValidationDetail[];
   };
 }
 
@@ -28,12 +30,19 @@ export function errorHandler(logger: Logger, config: Pick<EnvConfig, "NODE_ENV">
     const requestId = typeof rawId === "string" ? rawId : undefined;
 
     if (error instanceof AppError) {
-      // Operational errors — safe to surface to clients.
+      // 5xx AppErrors redact their message in production to avoid leaking
+      // internal implementation details.
+      const message =
+        error.statusCode >= 500 && config.NODE_ENV === "production"
+          ? "An unexpected error occurred"
+          : error.message;
+
       res.status(error.statusCode).json({
         error: {
           code: error.code,
-          message: error.message,
+          message,
           requestId,
+          ...(error.details !== undefined ? { details: error.details } : {}),
         },
       });
       return;

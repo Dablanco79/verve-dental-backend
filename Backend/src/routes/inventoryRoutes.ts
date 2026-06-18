@@ -7,6 +7,11 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+  clinicInventoryItemParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { createInventoryService } from "../services/inventoryService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -26,6 +31,7 @@ export function createInventoryRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  router.use(validateParams(clinicIdParamsSchema));
 
   router.get(
     "/",
@@ -48,6 +54,7 @@ export function createInventoryRouter(deps: AppDependencies): Router {
   router.get(
     "/:itemId",
     requireRoles(...INVENTORY_READ_ROLES),
+    validateParams(clinicInventoryItemParamsSchema),
     asyncHandler((req, res) => handlers.getInventoryItem(req, res)),
   );
 

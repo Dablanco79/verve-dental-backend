@@ -1,5 +1,6 @@
 import type { DatabasePool } from "../db/pool.js";
 import { withTenantContext } from "../db/tenantContext.js";
+import { AppError } from "../types/errors.js";
 import type {
   AuditEvent,
   AuditEventsPage,
@@ -65,7 +66,7 @@ export function createPostgresAnalyticsRepository(
         ],
       );
       const row = result.rows[0];
-      if (!row) throw new Error("INSERT audit_events returned no row");
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create audit event");
       return rowToEvent(row);
     },
 
@@ -91,7 +92,7 @@ export function createPostgresAnalyticsRepository(
             ],
           );
           const row = result.rows[0];
-          if (!row) throw new Error("INSERT audit_events (admin) returned no row");
+          if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create audit event");
           return rowToEvent(row);
         },
         true, // ownerAdmin=true — bypasses clinic_id RLS check for auth events

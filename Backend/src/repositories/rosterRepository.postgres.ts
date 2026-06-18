@@ -71,7 +71,7 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         );
 
         const row = rows[0];
-        if (!row) throw new Error("Failed to create roster entry");
+        if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create roster entry");
 
         const entry = toRosterEntry(row);
 

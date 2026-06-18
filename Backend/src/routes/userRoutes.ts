@@ -7,6 +7,11 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+  clinicUserParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createUserRouter(deps: AppDependencies): Router {
@@ -20,16 +25,19 @@ export function createUserRouter(deps: AppDependencies): Router {
 
   router.get(
     "/",
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => handlers.listUsers(req, res)),
   );
 
   router.post(
     "/",
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => handlers.createUser(req, res)),
   );
 
   router.post(
     "/:userId/reset-password",
+    validateParams(clinicUserParamsSchema),
     asyncHandler((req, res) => handlers.resetPassword(req, res)),
   );
 

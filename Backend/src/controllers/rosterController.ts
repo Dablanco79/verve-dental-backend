@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { RosterService } from "../services/rosterService.js";
 import type { RosterEntry } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
-import { parseBody } from "../utils/validation.js";
+import { parseBody, zodToDetails } from "../utils/validation.js";
 
 // { offset: true } accepts UTC (Z) and local offsets like +10:00 for AEST.
 const isoDatetime = () => z.string().datetime({ offset: true });
@@ -69,8 +69,9 @@ function requireUuidParam(req: Request, paramName: string): string {
   if (!UUID_REGEX.test(value)) {
     throw new AppError(
       400,
-      "INVALID_PARAM",
-      `Path parameter '${paramName}' must be a valid UUID`,
+      "VALIDATION_ERROR",
+      "Request validation failed",
+      [{ field: paramName, message: `${paramName} must be a valid UUID` }],
     );
   }
   return value;
@@ -116,11 +117,7 @@ export function createRosterHandlers(rosterService: RosterService) {
       const parsed = listQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const options = {
@@ -139,11 +136,7 @@ export function createRosterHandlers(rosterService: RosterService) {
       const parsed = listQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const options = {

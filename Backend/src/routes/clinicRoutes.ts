@@ -7,6 +7,10 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { createClinicService } from "../services/clinicService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -46,6 +50,7 @@ export function createClinicRouter(deps: AppDependencies): Router {
     "/",
     authenticate,
     enforceTenantParam("clinicId"),
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => handlers.getClinic(req, res)),
   );
 
@@ -60,6 +65,7 @@ export function createClinicRouter(deps: AppDependencies): Router {
     "/",
     authenticate,
     requireRoles("owner_admin"),
+    validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => handlers.updateClinic(req, res)),
   );
 

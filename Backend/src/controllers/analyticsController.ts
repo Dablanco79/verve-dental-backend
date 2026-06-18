@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AppError } from "../types/errors.js";
 import { AUDIT_ENTITY_TYPES } from "../types/analytics.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
+import { zodToDetails } from "../utils/validation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared query helpers
@@ -70,11 +71,9 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
       firstString(req.query["periodDays"]),
     );
     if (!parsedDays.success) {
-      throw new AppError(
-        400,
-        "INVALID_QUERY",
-        "periodDays must be an integer between 1 and 365",
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "periodDays", message: "periodDays must be an integer between 1 and 365" },
+      ]);
     }
 
     if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -93,11 +92,9 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
 
     const parsedMonths = monthsSchema.safeParse(firstString(req.query["months"]));
     if (!parsedMonths.success) {
-      throw new AppError(
-        400,
-        "INVALID_QUERY",
-        "months must be an integer between 1 and 24",
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "months", message: "months must be an integer between 1 and 24" },
+      ]);
     }
 
     if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -116,11 +113,9 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
 
     const parsedDays = periodDaysSchema.safeParse(firstString(req.query["periodDays"]));
     if (!parsedDays.success) {
-      throw new AppError(
-        400,
-        "INVALID_QUERY",
-        "periodDays must be an integer between 1 and 365",
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "periodDays", message: "periodDays must be an integer between 1 and 365" },
+      ]);
     }
 
     if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -139,11 +134,9 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
 
     const parsedDays = periodDaysSchema.safeParse(firstString(req.query["periodDays"]));
     if (!parsedDays.success) {
-      throw new AppError(
-        400,
-        "INVALID_QUERY",
-        "periodDays must be an integer between 1 and 365",
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "periodDays", message: "periodDays must be an integer between 1 and 365" },
+      ]);
     }
 
     if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
@@ -173,11 +166,7 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
 
     const parsed = auditEventsQuerySchema.safeParse(normalizedQuery);
     if (!parsed.success) {
-      throw new AppError(
-        400,
-        "INVALID_QUERY",
-        parsed.error.errors.map((e) => e.message).join("; "),
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
     }
 
     const { limit, offset, entityType, actorId, entityId, from, to } =
@@ -207,11 +196,9 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
 
     const parsedEventId = uuidParamSchema.safeParse(eventId);
     if (!parsedEventId.success) {
-      throw new AppError(
-        400,
-        "INVALID_PARAM",
-        "eventId must be a valid UUID",
-      );
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "eventId", message: "eventId must be a valid UUID" },
+      ]);
     }
 
     if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");

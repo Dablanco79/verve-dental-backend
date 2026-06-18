@@ -25,7 +25,7 @@ import {
   TIMESHEET_STATUSES,
 } from "../types/payroll.js";
 import { AppError } from "../types/errors.js";
-import { parseBody } from "../utils/validation.js";
+import { parseBody, zodToDetails } from "../utils/validation.js";
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 
@@ -44,8 +44,9 @@ function requireUuidParam(req: Request, paramName: string): string {
   if (!UUID_REGEX.test(value)) {
     throw new AppError(
       400,
-      "INVALID_PARAM",
-      `Path parameter '${paramName}' must be a valid UUID`,
+      "VALIDATION_ERROR",
+      "Request validation failed",
+      [{ field: paramName, message: `${paramName} must be a valid UUID` }],
     );
   }
   return value;
@@ -218,11 +219,7 @@ export function createLeaveHandlers(leaveService: LeaveService) {
       const parsed = listLeaveQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const requests = await leaveService.getLeaveForClinic(
@@ -246,11 +243,7 @@ export function createLeaveHandlers(leaveService: LeaveService) {
       const parsed = listLeaveQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const requests = await leaveService.getLeaveForStaff(
@@ -523,11 +516,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
       const parsed = listTimesheetsQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const entries = await timesheetService.listTimesheetsForClinic(
@@ -664,11 +653,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
       const parsed = forecastQuerySchema.safeParse(req.query);
 
       if (!parsed.success) {
-        res.status(400).json({
-          error: "INVALID_QUERY",
-          message: parsed.error.flatten().fieldErrors,
-        });
-        return;
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
       const entries = await timesheetService.getForecastLogsForClinic(

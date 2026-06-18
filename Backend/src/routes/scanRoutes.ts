@@ -7,6 +7,10 @@ import {
   enforceTenantParam,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import {
+  validateParams,
+  clinicIdParamsSchema,
+} from "../middleware/validationMiddleware.js";
 import { createScanService } from "../services/scanService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -24,6 +28,7 @@ export function createScanRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  router.use(validateParams(clinicIdParamsSchema));
 
   router.post(
     "/",
