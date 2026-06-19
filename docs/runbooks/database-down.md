@@ -156,12 +156,13 @@ curl -s -X POST https://<host>/api/v1/auth/login \
 | When | Escalate to |
 |------|-------------|
 | DB process cannot be restarted | Database Administrator / Cloud Provider Support |
-| Data loss suspected | Database Administrator — initiate backup restore procedure |
+| Data loss suspected | Database Administrator — initiate [backup restore procedure](./backup-restore.md) |
 | Outage > 30 minutes | Incident Commander |
 
 ---
 
 ## Related runbooks
 
+- [Backup & Restore](./backup-restore.md)
 - [Redis Unavailable](./redis-down.md)
 - [Deployment Failure](./deployment-failure.md)
