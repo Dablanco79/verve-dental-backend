@@ -13,6 +13,7 @@ import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage.js";
 import { RosterCalendarPage } from "./pages/RosterCalendarPage.js";
 import { LaborForecastPage } from "./pages/LaborForecastPage.js";
 import { ClinicSettingsPage } from "./pages/ClinicSettingsPage.js";
+import { SecurityPage } from "./pages/SecurityPage.js";
 import { BillingLedgerPage } from "./pages/BillingLedgerPage.js";
 import { AnalyticsDashboardPage } from "./pages/AnalyticsDashboardPage.js";
 import { AuditTrailPage } from "./pages/AuditTrailPage.js";
@@ -36,6 +37,7 @@ export function App() {
             <Route path="/account" element={<AccountPage />} />
             <Route path="/forecast/labor" element={<LaborForecastPage />} />
             <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
+            <Route path="/settings/security" element={<SecurityPage />} />
             <Route path="/timesheets" element={<TimesheetsPage />} />
             <Route path="/leave" element={<LeavePage />} />
             <Route path="/billing" element={<BillingLedgerPage />} />

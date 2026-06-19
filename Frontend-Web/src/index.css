@@ -2562,3 +2562,78 @@ body {
   font-size: 0.875rem;
   font-weight: 500;
 }
+
+/* ── MFA enrollment panel ──────────────────────────────────────────────────── */
+
+.mfa-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 480px;
+  margin-top: 1rem;
+}
+
+.mfa-panel__qr-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+  background: #fff;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.mfa-panel__qr-image {
+  display: block;
+  border-radius: 4px;
+}
+
+.mfa-panel__qr-fallback {
+  color: #627d98;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.mfa-panel__secret-wrap {
+  background: #f5f7fa;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.mfa-panel__secret-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #486581;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mfa-panel__secret-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.mfa-panel__secret-code {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.9375rem;
+  letter-spacing: 0.1em;
+  color: #102a43;
+  word-break: break-all;
+}
+
+.mfa-panel__secret-hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  color: #627d98;
+  line-height: 1.5;
+}
+
+.mfa-panel__instructions {
+  line-height: 1.7;
+  color: #486581;
+}

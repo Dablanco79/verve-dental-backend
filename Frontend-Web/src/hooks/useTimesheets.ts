@@ -68,11 +68,10 @@ export type UseTimesheetsResult = {
  *
  * **Role-aware fetching:**
  *   - `owner_admin` / `group_practice_manager` — calls
- *     `GET /clinics/:clinicId/timesheets` (clinic-wide list, filterable).
- *   - `clinical_staff` — calls the same endpoint but the backend scopes
- *     results to the authenticated user's own entries; the hook forwards
- *     filters identically so `pendingApprovalOnly` and date ranges work
- *     the same way for both tiers.
+ *     `GET /clinics/:clinicId/timesheets` (clinic-wide list, manager-only).
+ *   - `clinical_staff` — calls
+ *     `GET /clinics/:clinicId/timesheets/me` (own entries only).
+ *     The clinic-wide endpoint returns 403 for clinical_staff.
  *
  * Automatically re-fetches when `clinicId`, `role`, or `filters` change.
  * The hook is a no-op while `clinicId` is undefined.
@@ -96,10 +95,15 @@ export function useTimesheets(
     setIsLoading(true);
     setError(null);
 
-    // Both manager and staff roles call the same endpoint; the backend uses
-    // the JWT to scope clinical_staff results to their own entries.
-    void apiClient
-      .listTimesheets(clinicId, filters)
+    // Route based on role:
+    //   Managers → GET /timesheets   (clinic-wide list, PAYROLL_MANAGER_ROLES)
+    //   Staff    → GET /timesheets/me (own entries only, PAYROLL_ALL_ROLES)
+    // Using /timesheets for clinical_staff returns 403.
+    const listFn = canManagePayroll(role)
+      ? apiClient.listTimesheets(clinicId, filters)
+      : apiClient.listMyTimesheets(clinicId, filters);
+
+    void listFn
       .then((result) => {
         setTimesheets(result);
       })

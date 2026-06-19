@@ -149,7 +149,11 @@ describe("Sprint 4B — Cookie Migration", () => {
       renderWithAuth();
       await waitFor(() => { expect(ctx().isLoading).toBe(false); });
 
-      let result: { requiresMfa: boolean; mfaToken?: string } | undefined;
+      let result:
+        | { requiresMfa: true; mfaToken: string }
+        | { requiresMfaEnrollment: true }
+        | { requiresMfa: false }
+        | undefined;
       await act(async () => {
         result = await ctx().login(ADMIN_USER.email, "password123");
       });

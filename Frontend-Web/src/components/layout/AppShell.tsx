@@ -67,6 +67,9 @@ export function AppShell({ children }: AppShellProps) {
               <NavLink to="/account" className="app-shell__user-link">
                 {user.email}
               </NavLink>
+              <NavLink to="/settings/security" className="app-shell__user-link">
+                Security
+              </NavLink>
               <button
                 type="button"
                 className="app-shell__logout"

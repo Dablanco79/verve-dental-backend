@@ -35,7 +35,18 @@ export type LoginResponse =
       requiresMfa: true;
       mfaToken: string;
       user: AuthUser;
+    }
+  | {
+      requiresMfaEnrollment: true;
+      enrollmentToken: string;
+      user: AuthUser;
     };
+
+/** Response shape for POST /auth/mfa/setup */
+export type MfaSetupData = {
+  secret: string;
+  uri: string;
+};
 
 export type ApiErrorBody = {
   error: {

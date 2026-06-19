@@ -574,6 +574,23 @@ export function createTimesheetService(
       return timesheetRepository.getForecastLogs(clinicId, date);
     },
 
+    /**
+     * Returns the authenticated caller's own timesheet entries.
+     * Available to all roles — clinical_staff can view their own history,
+     * managers can also use this to see their personal entries separately
+     * from the clinic-wide list.
+     *
+     * Tenant isolation is enforced at the route layer via enforceTenantParam.
+     * Data scoping is enforced here by passing caller.id to listByStaff —
+     * the caller can never see another user's entries through this method.
+     */
+    async listMyTimesheets(
+      caller: AuthenticatedUser,
+      options?: ListTimesheetOptions,
+    ): Promise<TimesheetEntry[]> {
+      return timesheetRepository.listByStaff(caller.id, options);
+    },
+
     // ── Commission verification (manager) ─────────────────────────────────────
 
     /**

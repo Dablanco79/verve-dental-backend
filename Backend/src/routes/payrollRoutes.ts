@@ -144,6 +144,14 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.getForecastLogs(req, res)),
   );
 
+  // Staff (and managers) list their own timesheet entries.
+  // Declared BEFORE /:timesheetId to prevent Express route shadowing.
+  router.get(
+    "/me",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.listMyTimesheets(req, res)),
+  );
+
   // ── Clinic-wide list (manager) & manual entry (manager) ────────────────────
   router.get(
     "/",

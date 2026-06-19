@@ -526,6 +526,34 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
     },
 
     /**
+     * GET /clinics/:clinicId/timesheets/me
+     * Any authenticated role retrieves their own timesheet entries.
+     * Results are scoped to caller.id by the service — no manager access required.
+     * Managers and admins may also use this to view personal history separately
+     * from the clinic-wide GET /.
+     */
+    async listMyTimesheets(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const parsed = listTimesheetsQuerySchema.safeParse(req.query);
+
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+
+      const entries = await timesheetService.listMyTimesheets(caller, {
+        shiftDate: parsed.data.shiftDate,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        payrollType: parsed.data.payrollType,
+        attendanceStatus: parsed.data.attendanceStatus,
+        timesheetStatus: parsed.data.timesheetStatus,
+        pendingApprovalOnly: parsed.data.pendingApprovalOnly,
+      });
+
+      res.status(200).json({ data: entries.map(serializeTimesheet) });
+    },
+
+    /**
      * GET /clinics/:clinicId/timesheets
      * Manager/admin lists timesheet entries for the clinic.
      * Rich filter support: date range, payroll type, attendance/timesheet

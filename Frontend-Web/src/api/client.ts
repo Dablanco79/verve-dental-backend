@@ -8,6 +8,7 @@ import type {
   CreateUserRequest,
   HealthResponse,
   LoginResponse,
+  MfaSetupData,
   ResetPasswordRequest,
   StaffUser,
 } from "../types/index.js";
@@ -207,6 +208,34 @@ export function createApiClient(config: AppConfig) {
         body: JSON.stringify(body),
       },
       requireAccessToken(),
+    );
+  }
+
+  // ── MFA enrollment ─────────────────────────────────────────────────────────
+
+  /**
+   * Initiates MFA setup for the current user.
+   * Accepts either an enrollmentToken (forced enrollment at login) or falls
+   * back to the stored access token (voluntary enrollment from Settings).
+   * Returns the TOTP secret and otpauth:// URI needed to display the QR code.
+   */
+  async function setupMfa(enrollmentToken?: string): Promise<MfaSetupData> {
+    const token = enrollmentToken ?? requireAccessToken();
+    return request<MfaSetupData>(config, "/api/v1/auth/mfa/setup", { method: "POST" }, token);
+  }
+
+  /**
+   * Confirms MFA enrollment by submitting the first TOTP code.
+   * Uses the enrollmentToken when supplied; otherwise uses the access token.
+   * On success the backend marks MFA as enabled for the user.
+   */
+  async function confirmMfa(code: string, enrollmentToken?: string): Promise<void> {
+    const token = enrollmentToken ?? requireAccessToken();
+    await request<{ message: string }>(
+      config,
+      "/api/v1/auth/mfa/confirm",
+      { method: "POST", body: JSON.stringify({ code }) },
+      token,
     );
   }
 
@@ -528,6 +557,32 @@ export function createApiClient(config: AppConfig) {
 
   // ── Timesheets ──────────────────────────────────────────────────────────────
 
+  /**
+   * Lists the authenticated user's own timesheet entries.
+   * Calls GET /clinics/:clinicId/timesheets/me — available to all roles.
+   * clinical_staff must use this instead of listTimesheets (which is manager-only).
+   */
+  async function listMyTimesheets(
+    clinicId: string,
+    filters: TimesheetFilters = {},
+  ): Promise<TimesheetEntry[]> {
+    const query = new URLSearchParams();
+    if (filters.shiftDate) query.set("shiftDate", filters.shiftDate);
+    if (filters.from) query.set("from", filters.from);
+    if (filters.to) query.set("to", filters.to);
+    if (filters.payrollType) query.set("payrollType", filters.payrollType);
+    if (filters.attendanceStatus) query.set("attendanceStatus", filters.attendanceStatus);
+    if (filters.timesheetStatus) query.set("timesheetStatus", filters.timesheetStatus);
+    if (filters.pendingApprovalOnly) query.set("pendingApprovalOnly", "true");
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<TimesheetEntry[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/me${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function listTimesheets(
     clinicId: string,
     filters: TimesheetFilters = {},
@@ -717,6 +772,8 @@ export function createApiClient(config: AppConfig) {
     getHealth,
     login,
     verifyMfa,
+    setupMfa,
+    confirmMfa,
     refresh,
     logout,
     getMe,
@@ -747,6 +804,7 @@ export function createApiClient(config: AppConfig) {
     getAnalyticsStaff,
     listAuditEvents,
     getAuditEvent,
+    listMyTimesheets,
     listTimesheets,
     clockIn,
     clockOut,

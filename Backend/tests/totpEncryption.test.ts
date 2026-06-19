@@ -11,6 +11,7 @@
 
 import request from "supertest";
 import { generateSync } from "otplib";
+import { jest } from "@jest/globals";
 
 import { encryptTotpSecret, decryptTotpSecret } from "../src/utils/mfaCrypto.js";
 import { createInMemoryUserRepository, SEED_USER_IDS } from "../src/repositories/userRepository.js";
@@ -207,14 +208,29 @@ describe("MFA authentication with encrypted secrets — HTTP integration", () =>
 
   it("seed admin (pre-encrypted secret) can log in via MFA challenge", async () => {
     // admin@clinic-a.au is seeded with mfaEnabled=true and a pre-encrypted TOTP secret.
-    // The auth helper (loginAndGetTokens) generates codes from SEED_ADMIN_TOTP_SECRET
-    // (plaintext) and the service decrypts the stored ciphertext before verifying.
-    const app = await createTestApp();
+    // The auth helper generates a code via generateSync(SEED_ADMIN_TOTP_SECRET) and the
+    // server decrypts the stored ciphertext before calling verifySync.
+    //
+    // Fix for intermittent boundary race: pin Date.now() to the midpoint of the current
+    // 30-second TOTP step.  Because supertest runs the Express app in-process, the same
+    // frozen timestamp is seen by both generateSync (test side) and verifySync (server
+    // side), so the generated code is always valid regardless of wall-clock position.
+    // Production behavior is unaffected — no business logic is changed.
+    const TOTP_STEP_MS = 30_000;
+    const stableNow =
+      Math.floor(Date.now() / TOTP_STEP_MS) * TOTP_STEP_MS + TOTP_STEP_MS / 2;
+    const dateSpy = jest.spyOn(Date, "now").mockReturnValue(stableNow);
 
-    // loginAndGetAccessToken handles the MFA flow automatically for admin@clinic-a.au
-    const accessToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    try {
+      const app = await createTestApp();
 
-    expect(typeof accessToken).toBe("string");
-    expect(accessToken.length).toBeGreaterThan(0);
+      // loginAndGetAccessToken handles the MFA flow automatically for admin@clinic-a.au
+      const accessToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+      expect(typeof accessToken).toBe("string");
+      expect(accessToken.length).toBeGreaterThan(0);
+    } finally {
+      dateSpy.mockRestore();
+    }
   });
 });
