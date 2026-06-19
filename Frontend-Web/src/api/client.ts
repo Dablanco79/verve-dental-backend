@@ -13,6 +13,10 @@ import type {
   StaffUser,
 } from "../types/index.js";
 import type {
+  AdjustInventoryRequest,
+  AdjustInventoryResponse,
+  AdjustmentsFilters,
+  AdjustmentsPage,
   CreateProductRequest,
   CreateProductResponse,
   InventoryItem,
@@ -26,6 +30,10 @@ import type {
   UpdateShiftRequest,
 } from "../types/roster.js";
 import type { LaborForecastSummary } from "../types/forecast.js";
+import type {
+  MaterialShortfallAlert,
+  SkuDemandProjection,
+} from "../types/materialsForecast.js";
 import type { ClinicData, UpdateClinicData } from "../types/clinic.js";
 import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
 import type {
@@ -161,6 +169,74 @@ export function createApiClient(config: AppConfig) {
       {},
       requireAccessToken(),
     );
+  }
+
+  async function getInventoryItem(clinicId: string, itemId: string): Promise<InventoryItem> {
+    return request<InventoryItem>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/inventory/${encodeURIComponent(itemId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function adjustInventory(
+    clinicId: string,
+    body: AdjustInventoryRequest,
+  ): Promise<AdjustInventoryResponse> {
+    return request<AdjustInventoryResponse>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/inventory/adjust`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * Lists paginated inventory adjustments for a clinic.
+   * The backend returns { data: [...], pagination: { total, limit, offset } }
+   * which differs from the standard { data: T } envelope, so we parse the
+   * response body manually to capture both the items array and pagination.
+   */
+  async function listAdjustments(
+    clinicId: string,
+    filters: AdjustmentsFilters = {},
+  ): Promise<AdjustmentsPage> {
+    const query = new URLSearchParams();
+    if (filters.limit !== undefined) query.set("limit", String(filters.limit));
+    if (filters.offset !== undefined) query.set("offset", String(filters.offset));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/inventory/adjustments${qs}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      const errorBody = await response
+        .json()
+        .catch(() => null) as ApiErrorBody | null;
+      const message =
+        errorBody?.error.message ?? `Request failed (${String(response.status)})`;
+      throw new Error(message);
+    }
+
+    type RawEnvelope = {
+      data: InventoryItem[];
+      pagination: { total: number; limit: number; offset: number };
+    };
+    const envelope = await response.json() as RawEnvelope;
+    return {
+      items: envelope.data as unknown as AdjustmentsPage["items"],
+      total: envelope.pagination.total,
+      limit: envelope.pagination.limit,
+      offset: envelope.pagination.offset,
+    };
   }
 
   async function handleScan(clinicId: string, body: ScanRequest): Promise<ScanResponse> {
@@ -452,6 +528,32 @@ export function createApiClient(config: AppConfig) {
     return request<LaborForecastSummary>(
       config,
       `/api/v1/clinics/${clinicId}/forecast/labor${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getMaterialsForecast(
+    clinicId: string,
+    forecastDays?: number,
+  ): Promise<SkuDemandProjection[]> {
+    const qs = forecastDays !== undefined ? `?forecastDays=${String(forecastDays)}` : "";
+    return request<SkuDemandProjection[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/forecast/materials${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getMaterialsAlerts(
+    clinicId: string,
+    forecastDays?: number,
+  ): Promise<MaterialShortfallAlert[]> {
+    const qs = forecastDays !== undefined ? `?forecastDays=${String(forecastDays)}` : "";
+    return request<MaterialShortfallAlert[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/forecast/alerts${qs}`,
       {},
       requireAccessToken(),
     );
@@ -778,6 +880,9 @@ export function createApiClient(config: AppConfig) {
     logout,
     getMe,
     listInventory,
+    getInventoryItem,
+    adjustInventory,
+    listAdjustments,
     handleScan,
     createProduct,
     listUsers,
@@ -793,6 +898,8 @@ export function createApiClient(config: AppConfig) {
     updateShift,
     cancelShift,
     getLaborForecast,
+    getMaterialsForecast,
+    getMaterialsAlerts,
     getClinic,
     updateClinicSettings,
     listInvoices,

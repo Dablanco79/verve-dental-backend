@@ -111,3 +111,46 @@ export type ScanResponse = {
     createdAt: string;
   } | null;
 };
+
+// ── Inventory adjustment reason codes ─────────────────────────────────────────
+
+export const ADJUSTMENT_REASONS = [
+  "Stock received",
+  "Stock correction",
+  "Damaged stock",
+  "Expired stock",
+  "Stock count adjustment",
+  "Transfer in",
+  "Transfer out",
+  "Other",
+] as const;
+
+export type AdjustmentReason = (typeof ADJUSTMENT_REASONS)[number];
+
+// ── Manual adjust request / response ─────────────────────────────────────────
+
+export type AdjustInventoryRequest = {
+  itemId: string;
+  /** Positive = increase, negative = decrease. Must be non-zero. */
+  quantityDelta: number;
+  reason?: string;
+};
+
+export type AdjustInventoryResponse = {
+  item: InventoryItem;
+  adjustment: InventoryAdjustment;
+};
+
+// ── Paginated adjustments ─────────────────────────────────────────────────────
+
+export type AdjustmentsPage = {
+  items: InventoryAdjustment[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AdjustmentsFilters = {
+  limit?: number;
+  offset?: number;
+};

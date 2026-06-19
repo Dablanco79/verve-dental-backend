@@ -4,10 +4,13 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   canManageBilling,
+  canManageInventory,
   canManageUsers,
   canViewAnalytics,
+  canViewAdjustmentHistory,
   canViewClinicSettings,
   canViewLaborForecast,
+  canViewMaterialsForecast,
 } from "../../utils/roles.js";
 
 
@@ -37,6 +40,12 @@ export function AppShell({ children }: AppShellProps) {
             Dashboard
           </NavLink>
           <NavLink to="/inventory">Inventory</NavLink>
+          {user && canManageInventory(user.role) ? (
+            <NavLink to="/inventory/adjust">Adjust Stock</NavLink>
+          ) : null}
+          {user && canViewAdjustmentHistory(user.role) ? (
+            <NavLink to="/inventory/adjustments">Adj. History</NavLink>
+          ) : null}
           <NavLink to="/roster">Roster</NavLink>
           <NavLink to="/my-shifts">My Shifts</NavLink>
           <NavLink to="/timesheets">Timesheets</NavLink>
@@ -49,6 +58,9 @@ export function AppShell({ children }: AppShellProps) {
           ) : null}
           {user && canViewLaborForecast(user.role) ? (
             <NavLink to="/forecast/labor">Labor Forecast</NavLink>
+          ) : null}
+          {user && canViewMaterialsForecast(user.role) ? (
+            <NavLink to="/forecast/materials">Materials Forecast</NavLink>
           ) : null}
           {user && canManageBilling(user.role) ? (
             <NavLink to="/billing">Billing</NavLink>

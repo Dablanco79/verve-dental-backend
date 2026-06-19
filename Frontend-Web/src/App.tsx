@@ -5,6 +5,8 @@ import { ProtectedRoute } from "./auth/ProtectedRoute.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { HomePage } from "./pages/HomePage.js";
 import { AddProductPage } from "./pages/AddProductPage.js";
+import { AdjustmentHistoryPage } from "./pages/AdjustmentHistoryPage.js";
+import { InventoryAdjustPage } from "./pages/InventoryAdjustPage.js";
 import { InventoryPage } from "./pages/InventoryPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { ManageUsersPage } from "./pages/ManageUsersPage.js";
@@ -12,6 +14,7 @@ import { MyShiftsPage } from "./pages/MyShiftsPage.js";
 import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage.js";
 import { RosterCalendarPage } from "./pages/RosterCalendarPage.js";
 import { LaborForecastPage } from "./pages/LaborForecastPage.js";
+import { MaterialsForecastPage } from "./pages/MaterialsForecastPage.js";
 import { ClinicSettingsPage } from "./pages/ClinicSettingsPage.js";
 import { SecurityPage } from "./pages/SecurityPage.js";
 import { BillingLedgerPage } from "./pages/BillingLedgerPage.js";
@@ -30,12 +33,15 @@ export function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/inventory/products/new" element={<AddProductPage />} />
+            <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
+            <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
             <Route path="/users" element={<ManageUsersPage />} />
             <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
             <Route path="/roster" element={<RosterCalendarPage />} />
             <Route path="/my-shifts" element={<MyShiftsPage />} />
             <Route path="/account" element={<AccountPage />} />
             <Route path="/forecast/labor" element={<LaborForecastPage />} />
+            <Route path="/forecast/materials" element={<MaterialsForecastPage />} />
             <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
             <Route path="/settings/security" element={<SecurityPage />} />
             <Route path="/timesheets" element={<TimesheetsPage />} />

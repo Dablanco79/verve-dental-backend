@@ -8,7 +8,7 @@ import { ScanForm } from "../components/inventory/ScanForm.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat, InventoryItem, ScanMode, ScanResponse } from "../types/inventory.js";
-import { canManageProducts } from "../utils/roles.js";
+import { canManageInventory, canManageProducts, canViewAdjustmentHistory } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -143,8 +143,18 @@ export function InventoryPage() {
             </p>
           </div>
           <div className="inventory-page__actions">
+            {user && canManageInventory(user.role) ? (
+              <Link to="/inventory/adjust" className="button-link">
+                Adjust stock
+              </Link>
+            ) : null}
+            {user && canViewAdjustmentHistory(user.role) ? (
+              <Link to="/inventory/adjustments" className="link-button">
+                Adjustment history
+              </Link>
+            ) : null}
             {user && canManageProducts(user.role) ? (
-              <Link to="/inventory/products/new" className="button-link">
+              <Link to="/inventory/products/new" className="link-button">
                 Add product
               </Link>
             ) : null}

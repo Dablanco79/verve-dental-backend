@@ -18,6 +18,15 @@ export function canViewLaborForecast(role: UserRole): boolean {
 }
 
 /**
+ * Materials demand forecast and inventory planning dashboard.
+ * clinical_staff is excluded to keep planning workflows manager-only.
+ * Note: the backend allows all roles; the frontend applies a stricter gate.
+ */
+export function canViewMaterialsForecast(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
+}
+
+/**
  * Clinic settings page — clinical_staff is excluded.
  * group_practice_manager can view but cannot save (owner_admin only for mutations).
  */
@@ -54,6 +63,22 @@ export function canManagePayroll(role: UserRole): boolean {
  */
 export function canAccessTimesheets(): boolean {
   return true;
+}
+
+/**
+ * Manual inventory adjustments — restricted to admin / manager.
+ * clinical_staff may view stock but must not modify quantities directly.
+ */
+export function canManageInventory(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
+}
+
+/**
+ * Adjustment history log — restricted to admin / manager.
+ * Mirrors the backend requireRoles guard on GET /inventory/adjustments.
+ */
+export function canViewAdjustmentHistory(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
 }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
