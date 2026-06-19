@@ -7,6 +7,11 @@ import type {
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
+import type { CreateAuditEventInput } from "../types/analytics.js";
+
+type AuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -35,6 +40,7 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 export function createLeaveService(
   leaveRepository: LeaveRepository,
   rosterRepository: RosterRepository,
+  auditWriter?: AuditWriter,
 ) {
   return {
     /**
@@ -136,11 +142,31 @@ export function createLeaveService(
       );
       // ─────────────────────────────────────────────────────────────────────
 
-      return leaveRepository.updateStatus(leaveId, {
+      const approved = await leaveRepository.updateStatus(leaveId, {
         status: "approved",
         reviewedByUserId: caller.id,
         reviewNotes,
       });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "leave_request",
+        entityId: leaveId,
+        action: "approved",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          staffUserId: request.staffUserId,
+          startDate: request.startDate,
+          endDate: request.endDate,
+          leaveType: request.leaveType,
+          reviewNotes: reviewNotes ?? undefined,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return approved;
     },
 
     /** Manager rejects a leave request with a mandatory review note. */
@@ -174,11 +200,31 @@ export function createLeaveService(
         );
       }
 
-      return leaveRepository.updateStatus(leaveId, {
+      const rejected = await leaveRepository.updateStatus(leaveId, {
         status: "rejected",
         reviewedByUserId: caller.id,
         reviewNotes,
       });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "leave_request",
+        entityId: leaveId,
+        action: "rejected",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          staffUserId: request.staffUserId,
+          startDate: request.startDate,
+          endDate: request.endDate,
+          leaveType: request.leaveType,
+          reviewNotes,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return rejected;
     },
 
     /**

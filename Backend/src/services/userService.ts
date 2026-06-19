@@ -96,7 +96,8 @@ export function createUserService(
     audit.logAuthEvent("user.created", {
       userId: caller.id,
       email: caller.email,
-      clinicId: caller.homeClinicId,
+      clinicId: params.homeClinicId,
+      resourceId: user.id,
     });
 
     return toPublicUser(user);
@@ -132,7 +133,8 @@ export function createUserService(
     audit.logAuthEvent("auth.password.reset", {
       userId: caller.id,
       email: caller.email,
-      clinicId: caller.homeClinicId,
+      clinicId: target.homeClinicId,
+      resourceId: targetUserId,
     });
   }
 

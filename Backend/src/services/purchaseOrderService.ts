@@ -7,6 +7,11 @@ import {
   PoNotFoundError,
 } from "../types/purchaseOrderErrors.js";
 import { toCsvField } from "../utils/csvUtils.js";
+import type { CreateAuditEventInput } from "../types/analytics.js";
+
+type AuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
 
 // ─── Enrichment helper ────────────────────────────────────────────────────────
 
@@ -58,6 +63,7 @@ export function createPurchaseOrderService(
   inventoryRepository: InventoryRepository,
   catalogRepository: CatalogRepository,
   auditService: AuditService,
+  auditWriter?: AuditWriter,
 ) {
   return {
     async listPurchaseOrders(clinicId: string) {
@@ -105,6 +111,18 @@ export function createPurchaseOrderService(
         userId,
         clinicId,
         resourceId: poId,
+      });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "purchase_order",
+        entityId: poId,
+        action: "submitted",
+        actorId: userId,
+        actorEmail: "",
+        metadata: { poId },
+      }).catch((err: unknown) => {
+        auditService.logError("PO audit_events persistence failed (non-fatal)", err);
       });
 
       const allLines = await inventoryRepository.listDraftPoLines(clinicId);
@@ -159,6 +177,18 @@ export function createPurchaseOrderService(
       auditService.logEvent("purchase_order.csv_exported", {
         userId,
         clinicId,
+      });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "purchase_order",
+        entityId: clinicId,
+        action: "csv_exported",
+        actorId: userId,
+        actorEmail: "",
+        metadata: { filename, lineCount: rows.length },
+      }).catch((err: unknown) => {
+        auditService.logError("PO CSV audit_events persistence failed (non-fatal)", err);
       });
 
       return { csv, filename };

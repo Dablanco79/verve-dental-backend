@@ -36,7 +36,7 @@ export function createClinicRouter(deps: AppDependencies): Router {
     deps.authService,
     deps.auditService,
   );
-  const clinicService = createClinicService(deps.clinicRepository);
+  const clinicService = createClinicService(deps.clinicRepository, deps.analyticsRepository);
   const handlers = createClinicHandlers(clinicService);
 
   /**

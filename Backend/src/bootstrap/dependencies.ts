@@ -275,13 +275,14 @@ export async function createAppDependencies(
     inventoryRepository,
     catalogRepository,
     auditService,
+    analyticsRepository,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,
     userRepository,
     rosterRepository,
   );
-  const leaveService = createLeaveService(leaveRepository, rosterRepository);
+  const leaveService = createLeaveService(leaveRepository, rosterRepository, analyticsRepository);
   const billingService = createBillingService(billingRepository, analyticsRepository);
   const analyticsService = createAnalyticsService(
     analyticsRepository,

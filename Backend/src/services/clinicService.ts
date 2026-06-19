@@ -2,10 +2,18 @@ import type { AuthenticatedUser } from "../types/auth.js";
 import type { Clinic, UpdateClinicInput } from "../types/clinic.js";
 import { AppError } from "../types/errors.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
+import type { CreateAuditEventInput } from "../types/analytics.js";
+
+type AuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
 
 export type ClinicService = ReturnType<typeof createClinicService>;
 
-export function createClinicService(clinicRepository: ClinicRepository) {
+export function createClinicService(
+  clinicRepository: ClinicRepository,
+  auditWriter?: AuditWriter,
+) {
   /**
    * Asserts the caller is entitled to read the given clinic.
    *
@@ -99,6 +107,18 @@ export function createClinicService(clinicRepository: ClinicRepository) {
           "Clinic update failed unexpectedly",
         );
       }
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "clinic",
+        entityId: clinicId,
+        action: "updated",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: { changedFields: Object.keys(input) },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
 
       return updated;
     },

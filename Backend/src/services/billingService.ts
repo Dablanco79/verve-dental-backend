@@ -209,6 +209,23 @@ export function createBillingService(
         invoiceId,
       );
 
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "line_item",
+        entityId: lineItem.id,
+        action: "added",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          invoiceId,
+          description: lineItem.description,
+          quantity: lineItem.quantity,
+          unitPriceCents: lineItem.unitPriceCents,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
       return { lineItem, invoice: updatedInvoice };
     },
 
@@ -260,7 +277,25 @@ export function createBillingService(
       }
 
       await billingRepository.removeLineItem(clinicId, lineItemId, invoiceId);
-      return billingRepository.refreshInvoiceTotals(clinicId, invoiceId);
+      const refreshedInvoice = await billingRepository.refreshInvoiceTotals(clinicId, invoiceId);
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "line_item",
+        entityId: lineItemId,
+        action: "removed",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          invoiceId,
+          description: lineItem.description,
+          unitPriceCents: lineItem.unitPriceCents,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return refreshedInvoice;
     },
 
     // ── Invoice issuance ──────────────────────────────────────────────────────
