@@ -17,9 +17,21 @@ const adjustSchema = z.object({
   reason: z.string().trim().min(1).max(255).optional(),
 });
 
-const adjustmentsQuerySchema = z.object({
-  limit: z.coerce.number().int().positive().max(100).optional(),
+const paginationQuerySchema = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1, "limit must be at least 1")
+    .max(100, "limit cannot exceed 100")
+    .optional(),
+  offset: z.coerce
+    .number()
+    .int()
+    .min(0, "offset must be at least 0")
+    .optional(),
 });
+
+const adjustmentsQuerySchema = paginationQuerySchema;
 
 function serializeInventoryItem(item: ClinicInventoryItemView) {
   return {
@@ -83,10 +95,19 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
   return {
     async listInventory(req: Request, res: Response): Promise<void> {
       const clinicId = routeParam(req.params.clinicId);
-      const items = await inventoryService.listInventory(clinicId);
+      const parsed = paginationQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+
+      const page = await inventoryService.listInventoryPage(clinicId, {
+        limit: parsed.data.limit,
+        offset: parsed.data.offset,
+      });
 
       res.status(200).json({
-        data: items.map(serializeInventoryItem),
+        data: page.items.map(serializeInventoryItem),
+        pagination: { limit: page.limit, offset: page.offset, total: page.total },
       });
     },
 
@@ -135,10 +156,15 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
           zodToDetails(parsed.error),
         );
       }
-      const adjustments = await inventoryService.listAdjustments(clinicId, parsed.data.limit);
+
+      const page = await inventoryService.listAdjustmentsPage(clinicId, {
+        limit: parsed.data.limit,
+        offset: parsed.data.offset,
+      });
 
       res.status(200).json({
-        data: adjustments.map(serializeAdjustment),
+        data: page.items.map(serializeAdjustment),
+        pagination: { limit: page.limit, offset: page.offset, total: page.total },
       });
     },
   };

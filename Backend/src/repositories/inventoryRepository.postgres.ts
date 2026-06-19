@@ -22,12 +22,14 @@
 import type { DatabasePool } from "../db/pool.js";
 import type {
   AdjustmentType,
+  AdjustmentsPage,
   ClinicInventoryItem,
   ClinicInventoryItemView,
   DraftPoLine,
   DraftPoStatus,
   DraftPurchaseOrder,
   InventoryAdjustment,
+  InventoryPage,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -198,6 +200,29 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       return rows.map(rowToClinicInventoryView);
     },
 
+    async listClinicInventoryPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<InventoryPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count
+         FROM clinic_inventory_items ci
+         WHERE ci.clinic_id = $1`,
+        [clinicId],
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const { rows } = await pool.query<ClinicInventoryViewRow>(
+        `${INVENTORY_VIEW_SELECT} WHERE ci.clinic_id = $1 ORDER BY mci.name LIMIT $2 OFFSET $3`,
+        [clinicId, limit, offset],
+      );
+
+      return { items: rows.map(rowToClinicInventoryView), total, limit, offset };
+    },
+
     async findClinicInventoryItem(
       clinicId: string,
       itemId: string,
@@ -282,6 +307,30 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
         [clinicId, limit],
       );
       return rows.map(rowToAdjustment);
+    },
+
+    async listAdjustmentsPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<AdjustmentsPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM inventory_adjustments WHERE clinic_id = $1`,
+        [clinicId],
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const { rows } = await pool.query<AdjustmentRow>(
+        `SELECT * FROM inventory_adjustments
+         WHERE clinic_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [clinicId, limit, offset],
+      );
+
+      return { items: rows.map(rowToAdjustment), total, limit, offset };
     },
 
     async getConsumptionVolume(

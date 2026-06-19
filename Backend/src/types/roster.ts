@@ -81,3 +81,15 @@ export type ListRosterOptions = {
   to?: Date;
   status?: RosterStatus;
 };
+
+export type ListRosterPageOptions = ListRosterOptions & {
+  limit?: number;
+  offset?: number;
+};
+
+export type RosterPage = {
+  items: RosterEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+};

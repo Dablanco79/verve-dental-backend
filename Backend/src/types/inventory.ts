@@ -103,3 +103,19 @@ export type DraftPoLine = {
   reason: string;
   createdAt: Date;
 };
+
+// ── Pagination page types ─────────────────────────────────────────────────────
+
+export type InventoryPage = {
+  items: ClinicInventoryItemView[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AdjustmentsPage = {
+  items: InventoryAdjustment[];
+  total: number;
+  limit: number;
+  offset: number;
+};

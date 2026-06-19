@@ -49,8 +49,10 @@ import type {
   ClockMutation,
   CreateTimesheetEntryInput,
   ListTimesheetOptions,
+  ListTimesheetPageOptions,
   PayrollType,
   TimesheetEntry,
+  TimesheetPage,
   TimesheetStatus,
   UpdateTimesheetEntryInput,
 } from "../types/payroll.js";
@@ -349,6 +351,70 @@ export function createPostgresTimesheetRepository(
       );
 
       return rows.map(toTimesheetEntry);
+    },
+
+    // ── listByClinicPaginated ──────────────────────────────────────────────
+
+    async listByClinicPaginated(
+      clinicId: string,
+      options?: ListTimesheetPageOptions,
+    ): Promise<TimesheetPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const params: unknown[] = [clinicId];
+      const conditions: string[] = ["clinic_id = $1"];
+
+      if (options?.payrollType) {
+        params.push(options.payrollType);
+        conditions.push(`payroll_type = $${String(params.length)}`);
+      }
+
+      if (options?.attendanceStatus) {
+        params.push(options.attendanceStatus);
+        conditions.push(`attendance_status = $${String(params.length)}`);
+      }
+
+      if (options?.shiftDate) {
+        params.push(options.shiftDate);
+        conditions.push(`shift_date = $${String(params.length)}::date`);
+      } else {
+        if (options?.from) {
+          params.push(options.from);
+          conditions.push(`shift_date >= $${String(params.length)}::date`);
+        }
+        if (options?.to) {
+          params.push(options.to);
+          conditions.push(`shift_date <= $${String(params.length)}::date`);
+        }
+      }
+
+      if (options?.pendingApprovalOnly) {
+        conditions.push(`timesheet_status = 'submitted'`);
+      } else if (options?.timesheetStatus) {
+        params.push(options.timesheetStatus);
+        conditions.push(`timesheet_status = $${String(params.length)}`);
+      }
+
+      const where = conditions.join(" AND ");
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM timesheet_entries WHERE ${where}`,
+        params,
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const idx = params.length + 1;
+      params.push(limit, offset);
+      const { rows } = await pool.query<TimesheetEntryRow>(
+        `SELECT * FROM timesheet_entries
+         WHERE ${where}
+         ORDER BY shift_date DESC
+         LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
+        params,
+      );
+
+      return { items: rows.map(toTimesheetEntry), total, limit, offset };
     },
 
     // ── getForecastLogs ────────────────────────────────────────────────────

@@ -355,3 +355,29 @@ export type ListLeaveOptions = {
   leaveType?: LeaveType;
   status?: LeaveRequestStatus;
 };
+
+// ── Pagination option extensions ──────────────────────────────────────────────
+
+export type ListTimesheetPageOptions = ListTimesheetOptions & {
+  limit?: number;
+  offset?: number;
+};
+
+export type TimesheetPage = {
+  items: TimesheetEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ListLeavePageOptions = ListLeaveOptions & {
+  limit?: number;
+  offset?: number;
+};
+
+export type LeavePage = {
+  items: LeaveRequest[];
+  total: number;
+  limit: number;
+  offset: number;
+};

@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import type {
   CreateLeaveRequestInput,
+  LeavePage,
   LeaveRequest,
   ListLeaveOptions,
+  ListLeavePageOptions,
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 
@@ -16,6 +18,7 @@ export interface LeaveRepository {
   findById(id: string): Promise<LeaveRequest | null>;
   listByStaff(staffUserId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
   listByClinic(clinicId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
+  listByClinicPaginated(clinicId: string, options?: ListLeavePageOptions): Promise<LeavePage>;
   /**
    * Returns all approved leave requests covering the given date for a staff
    * member.  Used by the roster scheduler to block shift creation on leave days.
@@ -93,6 +96,28 @@ export function createInMemoryLeaveRepository(): LeaveRepository {
           .sort((a, b) => b.startDate.localeCompare(a.startDate))
           .map((r) => ({ ...r })),
       );
+    },
+
+    listByClinicPaginated(
+      clinicId: string,
+      options?: ListLeavePageOptions,
+    ): Promise<LeavePage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const all = records
+        .filter((r) => {
+          if (r.clinicId !== clinicId) return false;
+          if (options?.status && r.status !== options.status) return false;
+          if (options?.leaveType && r.leaveType !== options.leaveType) return false;
+          if (options?.from && r.endDate < options.from) return false;
+          if (options?.to && r.startDate > options.to) return false;
+          return true;
+        })
+        .sort((a, b) => b.startDate.localeCompare(a.startDate));
+      const total = all.length;
+      const page = all.slice(offset, offset + limit).map((r) => ({ ...r }));
+
+      return Promise.resolve({ items: page, total, limit, offset });
     },
 
     findApprovedOverlap(

@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AdjustmentType,
+  AdjustmentsPage,
   ClinicInventoryItem,
   ClinicInventoryItemView,
   DraftPoLine,
   DraftPurchaseOrder,
   InventoryAdjustment,
+  InventoryPage,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -17,6 +19,10 @@ import { buildClinicInventorySeed } from "./seed/inventorySeed.js";
 
 export interface InventoryRepository {
   listClinicInventory(clinicId: string): Promise<ClinicInventoryItemView[]>;
+  listClinicInventoryPage(
+    clinicId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<InventoryPage>;
   findClinicInventoryItem(
     clinicId: string,
     itemId: string,
@@ -37,6 +43,10 @@ export interface InventoryRepository {
     clinicId: string,
     options?: { limit?: number },
   ): Promise<InventoryAdjustment[]>;
+  listAdjustmentsPage(
+    clinicId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<AdjustmentsPage>;
   /**
    * Returns a Map of masterCatalogItemId → total absolute units consumed for
    * adjustments of `options.type` recorded on or after `options.since`.
@@ -112,6 +122,21 @@ export function createInMemoryInventoryRepository(
       const views = await Promise.all(items.map((item) => toInventoryView(item)));
 
       return views.filter((view): view is ClinicInventoryItemView => view !== null);
+    },
+
+    async listClinicInventoryPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<InventoryPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const items = clinicInventory.filter((entry) => entry.clinicId === clinicId);
+      const views = await Promise.all(items.map((item) => toInventoryView(item)));
+      const filtered = views.filter((view): view is ClinicInventoryItemView => view !== null);
+      const total = filtered.length;
+      const page = filtered.slice(offset, offset + limit);
+
+      return { items: page, total, limit, offset };
     },
 
     findClinicInventoryItem(
@@ -196,6 +221,21 @@ export function createInMemoryInventoryRepository(
         .map((entry) => ({ ...entry }));
 
       return Promise.resolve(clinicAdjustments);
+    },
+
+    listAdjustmentsPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<AdjustmentsPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const all = adjustments
+        .filter((entry) => entry.clinicId === clinicId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      const total = all.length;
+      const page = all.slice(offset, offset + limit).map((entry) => ({ ...entry }));
+
+      return Promise.resolve({ items: page, total, limit, offset });
     },
 
     getConsumptionVolume(

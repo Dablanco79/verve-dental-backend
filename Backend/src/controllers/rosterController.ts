@@ -49,6 +49,17 @@ const listQuerySchema = z
     status: z
       .enum(["scheduled", "confirmed", "completed", "cancelled"])
       .optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1, "limit must be at least 1")
+      .max(100, "limit cannot exceed 100")
+      .optional(),
+    offset: z.coerce
+      .number()
+      .int()
+      .min(0, "offset must be at least 0")
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.from && data.to && new Date(data.from) >= new Date(data.to)) {
@@ -124,10 +135,15 @@ export function createRosterHandlers(rosterService: RosterService) {
         from: parsed.data.from ? new Date(parsed.data.from) : undefined,
         to: parsed.data.to ? new Date(parsed.data.to) : undefined,
         status: parsed.data.status,
+        limit: parsed.data.limit,
+        offset: parsed.data.offset,
       };
 
-      const entries = await rosterService.listByClinic(caller, clinicId, options);
-      res.status(200).json({ data: entries.map(serializeEntry) });
+      const page = await rosterService.listByClinicPaginated(caller, clinicId, options);
+      res.status(200).json({
+        data: page.items.map(serializeEntry),
+        pagination: { limit: page.limit, offset: page.offset, total: page.total },
+      });
     },
 
     async getMyShifts(req: Request, res: Response): Promise<void> {

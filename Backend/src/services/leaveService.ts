@@ -2,8 +2,10 @@ import type { AuthenticatedUser } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import type {
   CreateLeaveRequestInput,
+  LeavePage,
   LeaveRequest,
   ListLeaveOptions,
+  ListLeavePageOptions,
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
@@ -284,6 +286,16 @@ export function createLeaveService(
     ): Promise<LeaveRequest[]> {
       assertReviewAccess(caller, clinicId);
       return leaveRepository.listByClinic(clinicId, options);
+    },
+
+    /** Paginated leave requests for a clinic (manager view). */
+    async getLeaveForClinicPaginated(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListLeavePageOptions,
+    ): Promise<LeavePage> {
+      assertReviewAccess(caller, clinicId);
+      return leaveRepository.listByClinicPaginated(clinicId, options);
     },
 
     /**

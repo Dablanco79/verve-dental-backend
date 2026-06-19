@@ -3,7 +3,9 @@ import { AppError } from "../types/errors.js";
 import type {
   CreateTimesheetEntryInput,
   ListTimesheetOptions,
+  ListTimesheetPageOptions,
   TimesheetEntry,
+  TimesheetPage,
 } from "../types/payroll.js";
 import type { RosterEntry } from "../types/roster.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
@@ -543,6 +545,15 @@ export function createTimesheetService(
     ): Promise<TimesheetEntry[]> {
       assertReviewAccess(caller, clinicId);
       return timesheetRepository.listByClinic(clinicId, options);
+    },
+
+    async listTimesheetsForClinicPaginated(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListTimesheetPageOptions,
+    ): Promise<TimesheetPage> {
+      assertReviewAccess(caller, clinicId);
+      return timesheetRepository.listByClinicPaginated(clinicId, options);
     },
 
     /**

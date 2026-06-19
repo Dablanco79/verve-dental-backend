@@ -2,7 +2,9 @@ import type { AuthenticatedUser, UserRecord } from "../types/auth.js";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
+  ListRosterPageOptions,
   RosterEntry,
+  RosterPage,
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
@@ -117,6 +119,17 @@ export function createRosterService(
       // shifts only — they never receive another staff member's roster data.
       // Uses the composite DB index instead of loading all staff shifts into memory.
       return rosterRepository.listByStaffAtClinic(caller.id, clinicId, options);
+    },
+
+    async listByClinicPaginated(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListRosterPageOptions,
+    ): Promise<RosterPage> {
+      if (hasFullClinicReadAccess(caller, clinicId)) {
+        return rosterRepository.listByClinicPaginated(clinicId, options);
+      }
+      return rosterRepository.listByStaffAtClinicPaginated(caller.id, clinicId, options);
     },
 
     async getEntry(

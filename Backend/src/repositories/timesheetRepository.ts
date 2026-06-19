@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import type {
   CreateTimesheetEntryInput,
   ListTimesheetOptions,
+  ListTimesheetPageOptions,
   TimesheetEntry,
+  TimesheetPage,
   UpdateTimesheetEntryInput,
 } from "../types/payroll.js";
 
@@ -22,6 +24,7 @@ export interface TimesheetRepository {
   findByRosterEntry(rosterEntryId: string): Promise<TimesheetEntry | null>;
   listByStaff(staffUserId: string, options?: ListTimesheetOptions): Promise<TimesheetEntry[]>;
   listByClinic(clinicId: string, options?: ListTimesheetOptions): Promise<TimesheetEntry[]>;
+  listByClinicPaginated(clinicId: string, options?: ListTimesheetPageOptions): Promise<TimesheetPage>;
   /**
    * Returns all commission_log entries for a clinic on a specific date where
    * attendance has been verified (present | absent | sick).
@@ -121,6 +124,31 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
           .sort((a, b) => b.shiftDate.localeCompare(a.shiftDate))
           .map((e) => ({ ...e })),
       );
+    },
+
+    listByClinicPaginated(
+      clinicId: string,
+      options?: ListTimesheetPageOptions,
+    ): Promise<TimesheetPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const all = entries
+        .filter((e) => {
+          if (e.clinicId !== clinicId) return false;
+          if (options?.payrollType && e.payrollType !== options.payrollType) return false;
+          if (options?.attendanceStatus && e.attendanceStatus !== options.attendanceStatus) return false;
+          if (options?.shiftDate && e.shiftDate !== options.shiftDate) return false;
+          if (options?.from && e.shiftDate < options.from) return false;
+          if (options?.to && e.shiftDate > options.to) return false;
+          if (options?.pendingApprovalOnly) return e.timesheetStatus === "submitted";
+          if (options?.timesheetStatus && e.timesheetStatus !== options.timesheetStatus) return false;
+          return true;
+        })
+        .sort((a, b) => b.shiftDate.localeCompare(a.shiftDate));
+      const total = all.length;
+      const page = all.slice(offset, offset + limit).map((e) => ({ ...e }));
+
+      return Promise.resolve({ items: page, total, limit, offset });
     },
 
     getForecastLogs(

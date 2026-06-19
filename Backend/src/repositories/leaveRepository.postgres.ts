@@ -30,10 +30,12 @@
 import { AppError } from "../types/errors.js";
 import type {
   CreateLeaveRequestInput,
+  LeavePage,
   LeaveRequest,
   LeaveRequestStatus,
   LeaveType,
   ListLeaveOptions,
+  ListLeavePageOptions,
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 import type { DatabasePool } from "../db/pool.js";
@@ -206,6 +208,59 @@ export function createPostgresLeaveRepository(
       );
 
       return rows.map(toLeaveRequest);
+    },
+
+    // ── listByClinicPaginated ──────────────────────────────────────────────
+
+    async listByClinicPaginated(
+      clinicId: string,
+      options?: ListLeavePageOptions,
+    ): Promise<LeavePage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const params: unknown[] = [clinicId];
+      const conditions: string[] = ["clinic_id = $1"];
+
+      if (options?.status) {
+        params.push(options.status);
+        conditions.push(`status = $${String(params.length)}`);
+      }
+
+      if (options?.leaveType) {
+        params.push(options.leaveType);
+        conditions.push(`leave_type = $${String(params.length)}`);
+      }
+
+      if (options?.from) {
+        params.push(options.from);
+        conditions.push(`end_date >= $${String(params.length)}::date`);
+      }
+
+      if (options?.to) {
+        params.push(options.to);
+        conditions.push(`start_date <= $${String(params.length)}::date`);
+      }
+
+      const where = conditions.join(" AND ");
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM leave_requests WHERE ${where}`,
+        params,
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const idx = params.length + 1;
+      params.push(limit, offset);
+      const { rows } = await pool.query<LeaveRequestRow>(
+        `SELECT * FROM leave_requests
+         WHERE ${where}
+         ORDER BY start_date DESC
+         LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
+        params,
+      );
+
+      return { items: rows.map(toLeaveRequest), total, limit, offset };
     },
 
     // ── findApprovedOverlap ────────────────────────────────────────────────

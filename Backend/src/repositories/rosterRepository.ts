@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
+  ListRosterPageOptions,
   RosterEntry,
+  RosterPage,
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 
@@ -11,6 +13,12 @@ export interface RosterRepository {
   createEntry(input: CreateRosterEntryInput): Promise<RosterEntry>;
   findEntryById(entryId: string): Promise<RosterEntry | null>;
   listByClinic(clinicId: string, options?: ListRosterOptions): Promise<RosterEntry[]>;
+  listByClinicPaginated(clinicId: string, options?: ListRosterPageOptions): Promise<RosterPage>;
+  listByStaffAtClinicPaginated(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListRosterPageOptions,
+  ): Promise<RosterPage>;
   listByStaff(
     staffUserId: string,
     options?: { from?: Date; to?: Date },
@@ -83,6 +91,27 @@ export function createInMemoryRosterRepository(): RosterRepository {
       );
     },
 
+    listByClinicPaginated(
+      clinicId: string,
+      options?: ListRosterPageOptions,
+    ): Promise<RosterPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const all = entries
+        .filter((e) => {
+          if (e.rosteredClinicId !== clinicId) return false;
+          if (options?.status && e.status !== options.status) return false;
+          if (options?.from && e.shiftEndAt <= options.from) return false;
+          if (options?.to && e.shiftStartAt >= options.to) return false;
+          return true;
+        })
+        .sort((a, b) => a.shiftStartAt.getTime() - b.shiftStartAt.getTime());
+      const total = all.length;
+      const page = all.slice(offset, offset + limit).map((e) => ({ ...e }));
+
+      return Promise.resolve({ items: page, total, limit, offset });
+    },
+
     listByStaff(
       staffUserId: string,
       options?: { from?: Date; to?: Date },
@@ -118,6 +147,29 @@ export function createInMemoryRosterRepository(): RosterRepository {
           .sort((a, b) => a.shiftStartAt.getTime() - b.shiftStartAt.getTime())
           .map((e) => ({ ...e })),
       );
+    },
+
+    listByStaffAtClinicPaginated(
+      staffUserId: string,
+      clinicId: string,
+      options?: ListRosterPageOptions,
+    ): Promise<RosterPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+      const all = entries
+        .filter((e) => {
+          if (e.staffUserId !== staffUserId) return false;
+          if (e.rosteredClinicId !== clinicId) return false;
+          if (options?.status && e.status !== options.status) return false;
+          if (options?.from && e.shiftEndAt <= options.from) return false;
+          if (options?.to && e.shiftStartAt >= options.to) return false;
+          return true;
+        })
+        .sort((a, b) => a.shiftStartAt.getTime() - b.shiftStartAt.getTime());
+      const total = all.length;
+      const page = all.slice(offset, offset + limit).map((e) => ({ ...e }));
+
+      return Promise.resolve({ items: page, total, limit, offset });
     },
 
     updateEntry(

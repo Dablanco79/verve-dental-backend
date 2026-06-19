@@ -1,7 +1,9 @@
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import type {
+  AdjustmentsPage,
   ClinicInventoryItemView,
   InventoryAdjustment,
+  InventoryPage,
 } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
@@ -120,6 +122,20 @@ export function createInventoryService(
       limit?: number,
     ): Promise<InventoryAdjustment[]> {
       return inventoryRepository.listAdjustments(clinicId, { limit });
+    },
+
+    listInventoryPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<InventoryPage> {
+      return inventoryRepository.listClinicInventoryPage(clinicId, options);
+    },
+
+    listAdjustmentsPage(
+      clinicId: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<AdjustmentsPage> {
+      return inventoryRepository.listAdjustmentsPage(clinicId, options);
     },
   };
 }

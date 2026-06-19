@@ -3,7 +3,9 @@ import type { DatabasePool } from "../db/pool.js";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
+  ListRosterPageOptions,
   RosterEntry,
+  RosterPage,
   RosterStatus,
   ShiftType,
   UpdateRosterEntryInput,
@@ -135,6 +137,50 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       return rows.map(toRosterEntry);
     },
 
+    async listByClinicPaginated(
+      clinicId: string,
+      options?: ListRosterPageOptions,
+    ): Promise<RosterPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const params: unknown[] = [clinicId];
+      const conditions: string[] = ["rostered_clinic_id = $1"];
+
+      if (options?.status) {
+        params.push(options.status);
+        conditions.push(`status = $${String(params.length)}`);
+      }
+      if (options?.from) {
+        params.push(options.from);
+        conditions.push(`shift_end_at > $${String(params.length)}`);
+      }
+      if (options?.to) {
+        params.push(options.to);
+        conditions.push(`shift_start_at < $${String(params.length)}`);
+      }
+
+      const where = conditions.join(" AND ");
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM roster_entries WHERE ${where}`,
+        params,
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const idx = params.length + 1;
+      params.push(limit, offset);
+      const { rows } = await pool.query<RosterEntryRow>(
+        `SELECT * FROM roster_entries
+         WHERE ${where}
+         ORDER BY shift_start_at ASC
+         LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
+        params,
+      );
+
+      return { items: rows.map(toRosterEntry), total, limit, offset };
+    },
+
     async listByStaff(
       staffUserId: string,
       options?: { from?: Date; to?: Date },
@@ -193,6 +239,54 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       );
 
       return rows.map(toRosterEntry);
+    },
+
+    async listByStaffAtClinicPaginated(
+      staffUserId: string,
+      clinicId: string,
+      options?: ListRosterPageOptions,
+    ): Promise<RosterPage> {
+      const limit = Math.min(options?.limit ?? 50, 100);
+      const offset = options?.offset ?? 0;
+
+      const params: unknown[] = [staffUserId, clinicId];
+      const conditions: string[] = [
+        "staff_user_id = $1",
+        "rostered_clinic_id = $2",
+      ];
+
+      if (options?.status) {
+        params.push(options.status);
+        conditions.push(`status = $${String(params.length)}`);
+      }
+      if (options?.from) {
+        params.push(options.from);
+        conditions.push(`shift_end_at > $${String(params.length)}`);
+      }
+      if (options?.to) {
+        params.push(options.to);
+        conditions.push(`shift_start_at < $${String(params.length)}`);
+      }
+
+      const where = conditions.join(" AND ");
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM roster_entries WHERE ${where}`,
+        params,
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const idx = params.length + 1;
+      params.push(limit, offset);
+      const { rows } = await pool.query<RosterEntryRow>(
+        `SELECT * FROM roster_entries
+         WHERE ${where}
+         ORDER BY shift_start_at ASC
+         LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
+        params,
+      );
+
+      return { items: rows.map(toRosterEntry), total, limit, offset };
     },
 
     async updateEntry(

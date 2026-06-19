@@ -170,6 +170,17 @@ const listLeaveQuerySchema = z
     to: isoDate().optional(),
     leaveType: z.enum(LEAVE_TYPES).optional(),
     status: z.enum(LEAVE_REQUEST_STATUSES).optional(),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1, "limit must be at least 1")
+      .max(100, "limit cannot exceed 100")
+      .optional(),
+    offset: z.coerce
+      .number()
+      .int()
+      .min(0, "offset must be at least 0")
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
@@ -222,13 +233,12 @@ export function createLeaveHandlers(leaveService: LeaveService) {
         throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
-      const requests = await leaveService.getLeaveForClinic(
-        caller,
-        clinicId,
-        parsed.data,
-      );
+      const page = await leaveService.getLeaveForClinicPaginated(caller, clinicId, parsed.data);
 
-      res.status(200).json({ data: requests.map(serializeLeave) });
+      res.status(200).json({
+        data: page.items.map(serializeLeave),
+        pagination: { limit: page.limit, offset: page.offset, total: page.total },
+      });
     },
 
     /**
@@ -430,6 +440,17 @@ const listTimesheetsQuerySchema = z
       .enum(["true", "false"])
       .optional()
       .transform((v) => (v === "true" ? true : v === "false" ? false : undefined)),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1, "limit must be at least 1")
+      .max(100, "limit cannot exceed 100")
+      .optional(),
+    offset: z.coerce
+      .number()
+      .int()
+      .min(0, "offset must be at least 0")
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
@@ -519,7 +540,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
-      const entries = await timesheetService.listTimesheetsForClinic(
+      const page = await timesheetService.listTimesheetsForClinicPaginated(
         caller,
         clinicId,
         {
@@ -530,10 +551,15 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
           attendanceStatus: parsed.data.attendanceStatus,
           timesheetStatus: parsed.data.timesheetStatus,
           pendingApprovalOnly: parsed.data.pendingApprovalOnly,
+          limit: parsed.data.limit,
+          offset: parsed.data.offset,
         },
       );
 
-      res.status(200).json({ data: entries.map(serializeTimesheet) });
+      res.status(200).json({
+        data: page.items.map(serializeTimesheet),
+        pagination: { limit: page.limit, offset: page.offset, total: page.total },
+      });
     },
 
     /**
