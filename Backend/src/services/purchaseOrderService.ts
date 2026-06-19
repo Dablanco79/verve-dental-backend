@@ -1,6 +1,8 @@
 import type { AuditService } from "./auditService.js";
 import type { CatalogRepository } from "../repositories/catalogRepository.js";
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
+import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
+import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import { AppError } from "../types/errors.js";
 import {
   PoAlreadySubmittedError,
@@ -8,6 +10,7 @@ import {
 } from "../types/purchaseOrderErrors.js";
 import { toCsvField } from "../utils/csvUtils.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
+import type { SupplierPricingEntry } from "../types/supplier.js";
 
 type AuditWriter = {
   recordEvent(input: CreateAuditEventInput): Promise<unknown>;
@@ -57,6 +60,61 @@ async function enrichLines(
   });
 }
 
+// ─── Cost estimation ──────────────────────────────────────────────────────────
+
+async function enrichWithCostEstimation(
+  line: {
+    id: string;
+    masterCatalogItemId: string;
+    quantity: number;
+    [key: string]: unknown;
+  },
+  supplierCatalogueRepo: SupplierCatalogueRepository,
+  supplierRepo: SupplierRepository,
+): Promise<{
+  supplierPricing: SupplierPricingEntry[];
+  estimatedUnitCostCents: number | null;
+  estimatedLineCostCents: number | null;
+}> {
+  const pricing = await supplierCatalogueRepo.listPricingForProduct(
+    line.masterCatalogItemId,
+  );
+
+  if (pricing.length === 0) {
+    return {
+      supplierPricing: [],
+      estimatedUnitCostCents: null,
+      estimatedLineCostCents: null,
+    };
+  }
+
+  // Resolve supplier names for all priced entries
+  const supplierPricing: SupplierPricingEntry[] = await Promise.all(
+    pricing.map(async (p) => {
+      const supplier = await supplierRepo.findSupplierById(p.supplierId);
+      return {
+        supplierProductId: p.id,
+        supplierId: p.supplierId,
+        supplierName: supplier?.supplierName ?? "Unknown supplier",
+        supplierCode: supplier?.supplierCode ?? null,
+        unitCostCents: p.unitCostCents,
+        supplierSku: p.supplierSku,
+      };
+    }),
+  );
+
+  // Only estimate when exactly one supplier has pricing — do not guess when
+  // multiple options exist without a preferred-supplier selection in place.
+  const singlePrice = pricing.length === 1 ? pricing[0] : null;
+  const estimatedUnitCostCents = singlePrice?.unitCostCents ?? null;
+  const estimatedLineCostCents =
+    estimatedUnitCostCents !== null
+      ? estimatedUnitCostCents * line.quantity
+      : null;
+
+  return { supplierPricing, estimatedUnitCostCents, estimatedLineCostCents };
+}
+
 // ─── Service factory ──────────────────────────────────────────────────────────
 
 export function createPurchaseOrderService(
@@ -64,6 +122,8 @@ export function createPurchaseOrderService(
   catalogRepository: CatalogRepository,
   auditService: AuditService,
   auditWriter?: AuditWriter,
+  supplierCatalogueRepository?: SupplierCatalogueRepository,
+  supplierRepository?: SupplierRepository,
 ) {
   return {
     async listPurchaseOrders(clinicId: string) {
@@ -76,7 +136,27 @@ export function createPurchaseOrderService(
         pos.map((po) => [po.id, po.status]),
       );
 
-      return enrichLines(lines, catalogRepository, poStatusMap);
+      const enriched = await enrichLines(lines, catalogRepository, poStatusMap);
+
+      if (!supplierCatalogueRepository || !supplierRepository) {
+        return enriched.map((line) => ({
+          ...line,
+          supplierPricing: [],
+          estimatedUnitCostCents: null,
+          estimatedLineCostCents: null,
+        }));
+      }
+
+      return Promise.all(
+        enriched.map(async (line) => {
+          const costData = await enrichWithCostEstimation(
+            line,
+            supplierCatalogueRepository,
+            supplierRepository,
+          );
+          return { ...line, ...costData };
+        }),
+      );
     },
 
     /**
@@ -132,7 +212,28 @@ export function createPurchaseOrderService(
       ]);
       const enriched = await enrichLines(poLines, catalogRepository, poStatusMap);
 
-      return { purchaseOrder: updatedPo, lines: enriched };
+      let lines;
+      if (supplierCatalogueRepository && supplierRepository) {
+        lines = await Promise.all(
+          enriched.map(async (line) => {
+            const costData = await enrichWithCostEstimation(
+              line,
+              supplierCatalogueRepository,
+              supplierRepository,
+            );
+            return { ...line, ...costData };
+          }),
+        );
+      } else {
+        lines = enriched.map((line) => ({
+          ...line,
+          supplierPricing: [],
+          estimatedUnitCostCents: null,
+          estimatedLineCostCents: null,
+        }));
+      }
+
+      return { purchaseOrder: updatedPo, lines };
     },
 
     async exportPurchaseOrdersCsv(clinicId: string, userId: string) {

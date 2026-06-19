@@ -34,6 +34,14 @@ import {
   createInMemoryBillingRepository,
 } from "../repositories/billingRepository.js";
 import { createPostgresBillingRepository } from "../repositories/billingRepository.postgres.js";
+import {
+  createInMemorySupplierRepository,
+} from "../repositories/supplierRepository.js";
+import { createPostgresSupplierRepository } from "../repositories/supplierRepository.postgres.js";
+import {
+  createInMemorySupplierCatalogueRepository,
+} from "../repositories/supplierCatalogueRepository.js";
+import { createPostgresSupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.postgres.js";
 import { installRlsPoolHook } from "../db/tenantContext.js";
 import { createRedisClient } from "../redis/client.js";
 import { createAnalyticsService } from "../services/analyticsService.js";
@@ -43,6 +51,10 @@ import { createBillingService } from "../services/billingService.js";
 import { createHealthService } from "../services/healthService.js";
 import { createLeaveService } from "../services/leaveService.js";
 import { createPurchaseOrderService } from "../services/purchaseOrderService.js";
+import { createSupplierService } from "../services/supplierService.js";
+import { createSupplierCatalogueService } from "../services/supplierCatalogueService.js";
+import { createCatalogueImportService } from "../services/catalogueImportService.js";
+import { createProductMatchingService } from "../services/productMatchingService.js";
 import { createTimesheetService } from "../services/timesheetService.js";
 import { createUserService } from "../services/userService.js";
 import type { Logger } from "../utils/logger.js";
@@ -57,11 +69,16 @@ import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { SupplierRepository } from "../repositories/supplierRepository.js";
+import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { BillingService } from "../services/billingService.js";
 import type { HealthService } from "../services/healthService.js";
 import type { LeaveService } from "../services/leaveService.js";
 import type { PurchaseOrderService } from "../services/purchaseOrderService.js";
+import type { SupplierService } from "../services/supplierService.js";
+import type { SupplierCatalogueService } from "../services/supplierCatalogueService.js";
+import type { CatalogueImportService } from "../services/catalogueImportService.js";
 
 export type AppDependencies = {
   authService: ReturnType<typeof createAuthService>;
@@ -72,6 +89,9 @@ export type AppDependencies = {
   billingService: BillingService;
   analyticsService: AnalyticsService;
   purchaseOrderService: PurchaseOrderService;
+  supplierService: SupplierService;
+  supplierCatalogueService: SupplierCatalogueService;
+  catalogueImportService: CatalogueImportService;
   healthService: HealthService;
   userRepository: UserRepository;
   catalogRepository: CatalogRepository;
@@ -82,6 +102,8 @@ export type AppDependencies = {
   leaveRepository: LeaveRepository;
   billingRepository: BillingRepository;
   analyticsRepository: AnalyticsRepository;
+  supplierRepository: SupplierRepository;
+  supplierCatalogueRepository: SupplierCatalogueRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -137,6 +159,8 @@ export async function createAppDependencies(
   let leaveRepository: LeaveRepository;
   let billingRepository: BillingRepository;
   let analyticsRepository: AnalyticsRepository;
+  let supplierRepository: SupplierRepository;
+  let supplierCatalogueRepository: SupplierCatalogueRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -220,9 +244,11 @@ export async function createAppDependencies(
     leaveRepository = createPostgresLeaveRepository(connectedPool);
     billingRepository = createPostgresBillingRepository(connectedPool);
     analyticsRepository = createPostgresAnalyticsRepository(connectedPool);
+    supplierRepository = createPostgresSupplierRepository(connectedPool);
+    supplierCatalogueRepository = createPostgresSupplierCatalogueRepository(connectedPool);
 
     logger.info(
-      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics)",
+      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers)",
     );
   } else {
     userRepository = await createInMemoryUserRepository(config.MFA_ENCRYPTION_KEY);
@@ -234,6 +260,8 @@ export async function createAppDependencies(
     leaveRepository = createInMemoryLeaveRepository();
     billingRepository = createInMemoryBillingRepository();
     analyticsRepository = createInMemoryAnalyticsRepository();
+    supplierRepository = createInMemorySupplierRepository();
+    supplierCatalogueRepository = createInMemorySupplierCatalogueRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -276,6 +304,25 @@ export async function createAppDependencies(
     catalogRepository,
     auditService,
     analyticsRepository,
+    supplierCatalogueRepository,
+    supplierRepository,
+  );
+
+  const supplierService = createSupplierService(supplierRepository, auditService);
+
+  const productMatchingService = createProductMatchingService(catalogRepository);
+
+  const supplierCatalogueService = createSupplierCatalogueService(
+    supplierCatalogueRepository,
+    supplierRepository,
+    catalogRepository,
+    auditService,
+  );
+
+  const catalogueImportService = createCatalogueImportService(
+    supplierCatalogueRepository,
+    supplierRepository,
+    productMatchingService,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,
@@ -308,6 +355,9 @@ export async function createAppDependencies(
     billingService,
     analyticsService,
     purchaseOrderService,
+    supplierService,
+    supplierCatalogueService,
+    catalogueImportService,
     healthService,
     userRepository,
     catalogRepository,
@@ -318,6 +368,8 @@ export async function createAppDependencies(
     leaveRepository,
     billingRepository,
     analyticsRepository,
+    supplierRepository,
+    supplierCatalogueRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

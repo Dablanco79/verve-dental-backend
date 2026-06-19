@@ -33,6 +33,7 @@ import { createPurchaseOrderRouter } from "./purchaseOrderRoutes.js";
 import { createRosterRouter } from "./rosterRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
+import { createSupplierRouter } from "./supplierRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -125,6 +126,10 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   // Clinic settings — GET/PATCH the canonical clinic entity (Module 06).
   // Registered LAST so all sub-path routers above are matched first.
   router.use("/clinics/:clinicId", createClinicRouter(deps));
+
+  // Procurement — supplier management, catalogue pricing, import (Sprint O).
+  // Global scope (not clinic-scoped): mirrors master_catalog_items pattern.
+  router.use("/suppliers", createSupplierRouter(deps));
 
   return router;
 }

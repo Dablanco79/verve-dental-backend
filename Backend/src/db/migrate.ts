@@ -1245,6 +1245,75 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         FOR INSERT WITH CHECK (app_is_owner_admin() OR clinic_id = app_current_clinic_id());
     `,
   },
+  {
+    /**
+     * Sprint O — Procurement Foundations.
+     *
+     * Suppliers are global (system-wide, not clinic-scoped), mirroring the
+     * master_catalog_items design.  A unique index on supplier_code prevents
+     * duplicate codes while allowing NULL codes (multiple suppliers without codes).
+     */
+    id: "017_suppliers_schema",
+    sql: `
+      CREATE TABLE IF NOT EXISTS suppliers (
+        id            uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        supplier_name text        NOT NULL,
+        supplier_code text,
+        contact_name  text,
+        email         text,
+        phone         text,
+        website       text,
+        notes         text,
+        active        boolean     NOT NULL DEFAULT true,
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        updated_at    timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_suppliers_active
+        ON suppliers (active);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_supplier_code
+        ON suppliers (supplier_code)
+        WHERE supplier_code IS NOT NULL;
+    `,
+  },
+  {
+    /**
+     * Sprint O — Supplier catalogue pricing.
+     *
+     * Each row represents one supplier's price for one product (master catalog item).
+     * The unique partial index on (supplier_id, master_catalog_item_id) WHERE active = true
+     * prevents duplicate active pricing entries while allowing a supplier to have
+     * historical inactive rows for the same product.
+     *
+     * unit_cost_cents: integer cents (e.g. 1250 = $12.50) — consistent with billing module.
+     */
+    id: "018_supplier_catalogue_schema",
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_catalogue (
+        id                     uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        supplier_id            uuid        NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+        master_catalog_item_id uuid        NOT NULL REFERENCES master_catalog_items(id),
+        supplier_sku           text,
+        supplier_description   text,
+        unit_cost_cents        integer     NOT NULL CHECK (unit_cost_cents >= 0),
+        unit_of_measure        text,
+        active                 boolean     NOT NULL DEFAULT true,
+        created_at             timestamptz NOT NULL DEFAULT now(),
+        updated_at             timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_supplier_catalogue_supplier_id
+        ON supplier_catalogue (supplier_id);
+
+      CREATE INDEX IF NOT EXISTS idx_supplier_catalogue_item_id
+        ON supplier_catalogue (master_catalog_item_id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_catalogue_active_unique
+        ON supplier_catalogue (supplier_id, master_catalog_item_id)
+        WHERE active = true;
+    `,
+  },
 ];
 
 /**

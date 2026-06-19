@@ -26,7 +26,14 @@ export type PurchaseOrderAuditEvent =
   | "purchase_order.submitted"
   | "purchase_order.csv_exported";
 
-export type AuditEvent = AuthAuditEvent | PurchaseOrderAuditEvent;
+export type SupplierAuditEvent =
+  | "supplier.created"
+  | "supplier.updated"
+  | "supplier_product.created"
+  | "supplier_product.updated"
+  | "catalogue.imported";
+
+export type AuditEvent = AuthAuditEvent | PurchaseOrderAuditEvent | SupplierAuditEvent;
 
 export type AuditContext = {
   userId?: string;

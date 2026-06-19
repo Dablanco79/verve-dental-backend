@@ -1,0 +1,97 @@
+import { randomUUID } from "node:crypto";
+
+import type {
+  CreateSupplierInput,
+  Supplier,
+  UpdateSupplierInput,
+} from "../types/supplier.js";
+
+// ─── Repository interface ─────────────────────────────────────────────────────
+
+export interface SupplierRepository {
+  listSuppliers(options?: { active?: boolean }): Promise<Supplier[]>;
+  findSupplierById(supplierId: string): Promise<Supplier | null>;
+  findSupplierByCode(supplierCode: string): Promise<Supplier | null>;
+  createSupplier(input: CreateSupplierInput): Promise<Supplier>;
+  updateSupplier(
+    supplierId: string,
+    input: UpdateSupplierInput,
+  ): Promise<Supplier | null>;
+}
+
+// ─── In-memory implementation ─────────────────────────────────────────────────
+
+export function createInMemorySupplierRepository(): SupplierRepository {
+  const suppliers: Supplier[] = [];
+
+  return {
+    listSuppliers(options = {}): Promise<Supplier[]> {
+      let result = suppliers.map((s) => ({ ...s }));
+      if (options.active !== undefined) {
+        result = result.filter((s) => s.active === options.active);
+      }
+      result.sort(
+        (a, b) => a.supplierName.localeCompare(b.supplierName),
+      );
+      return Promise.resolve(result);
+    },
+
+    findSupplierById(supplierId: string): Promise<Supplier | null> {
+      const found = suppliers.find((s) => s.id === supplierId);
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierByCode(supplierCode: string): Promise<Supplier | null> {
+      const normalized = supplierCode.trim().toUpperCase();
+      const found = suppliers.find(
+        (s) => s.supplierCode?.toUpperCase() === normalized,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    createSupplier(input: CreateSupplierInput): Promise<Supplier> {
+      const now = new Date();
+      const record: Supplier = {
+        id: randomUUID(),
+        supplierName: input.supplierName,
+        supplierCode: input.supplierCode ?? null,
+        contactName: input.contactName ?? null,
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        website: input.website ?? null,
+        notes: input.notes ?? null,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      suppliers.push(record);
+      return Promise.resolve({ ...record });
+    },
+
+    updateSupplier(
+      supplierId: string,
+      input: UpdateSupplierInput,
+    ): Promise<Supplier | null> {
+      const idx = suppliers.findIndex((s) => s.id === supplierId);
+      if (idx === -1) return Promise.resolve(null);
+
+      const existing = suppliers[idx];
+      if (!existing) return Promise.resolve(null);
+
+      const updated: Supplier = {
+        ...existing,
+        ...(input.supplierName !== undefined && { supplierName: input.supplierName }),
+        ...(input.supplierCode !== undefined && { supplierCode: input.supplierCode }),
+        ...(input.contactName !== undefined && { contactName: input.contactName }),
+        ...(input.email !== undefined && { email: input.email }),
+        ...(input.phone !== undefined && { phone: input.phone }),
+        ...(input.website !== undefined && { website: input.website }),
+        ...(input.notes !== undefined && { notes: input.notes }),
+        ...(input.active !== undefined && { active: input.active }),
+        updatedAt: new Date(),
+      };
+      suppliers[idx] = updated;
+      return Promise.resolve({ ...updated });
+    },
+  };
+}

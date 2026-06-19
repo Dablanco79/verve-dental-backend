@@ -208,6 +208,24 @@ components:
         format: uuid
       description: Audit event UUID.
 
+    supplierId:
+      name: supplierId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Supplier UUID.
+
+    supplierProductId:
+      name: supplierProductId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Supplier catalogue pricing entry UUID.
+
     limitParam:
       name: limit
       in: query
@@ -1917,6 +1935,301 @@ components:
               totalProjectedCost:
                 type: number
                 description: AUD dollars.
+
+    # ── Sprint O: Supplier schemas ───────────────────────────────────────────────
+
+    Supplier:
+      type: object
+      required: [id, supplierName, active, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        supplierName:
+          type: string
+          maxLength: 200
+        supplierCode:
+          type: string
+          nullable: true
+          maxLength: 50
+          description: Short internal reference code. Unique across all suppliers when set.
+        contactName:
+          type: string
+          nullable: true
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+          maxLength: 50
+        website:
+          type: string
+          format: uri
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateSupplierBody:
+      type: object
+      required: [supplierName]
+      properties:
+        supplierName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        supplierCode:
+          type: string
+          nullable: true
+          maxLength: 50
+        contactName:
+          type: string
+          nullable: true
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+          maxLength: 50
+        website:
+          type: string
+          format: uri
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
+
+    UpdateSupplierBody:
+      type: object
+      properties:
+        supplierName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        supplierCode:
+          type: string
+          nullable: true
+          maxLength: 50
+        contactName:
+          type: string
+          nullable: true
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+          maxLength: 50
+        website:
+          type: string
+          format: uri
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          maxLength: 2000
+        active:
+          type: boolean
+
+    SupplierProduct:
+      type: object
+      required: [id, supplierId, productId, unitCostCents, active, createdAt, updatedAt]
+      description: >
+        A supplier's price for a specific master catalog product.
+        `unitCostCents` is stored as integer cents (1250 = $12.50).
+      properties:
+        id:
+          type: string
+          format: uuid
+        supplierId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+          description: References master_catalog_items.id.
+        supplierSku:
+          type: string
+          nullable: true
+          maxLength: 100
+          description: Supplier's own SKU or item code for this product.
+        supplierDescription:
+          type: string
+          nullable: true
+          maxLength: 500
+        unitCostCents:
+          type: integer
+          minimum: 0
+          description: Unit cost in integer cents (e.g. 1250 = $12.50).
+        unitOfMeasure:
+          type: string
+          nullable: true
+          maxLength: 50
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateSupplierProductBody:
+      type: object
+      required: [productId, unitCostCents]
+      properties:
+        productId:
+          type: string
+          format: uuid
+        supplierSku:
+          type: string
+          nullable: true
+          maxLength: 100
+        supplierDescription:
+          type: string
+          nullable: true
+          maxLength: 500
+        unitCostCents:
+          type: integer
+          minimum: 0
+        unitOfMeasure:
+          type: string
+          nullable: true
+          maxLength: 50
+
+    UpdateSupplierProductBody:
+      type: object
+      properties:
+        supplierSku:
+          type: string
+          nullable: true
+          maxLength: 100
+        supplierDescription:
+          type: string
+          nullable: true
+          maxLength: 500
+        unitCostCents:
+          type: integer
+          minimum: 0
+        unitOfMeasure:
+          type: string
+          nullable: true
+          maxLength: 50
+        active:
+          type: boolean
+
+    ImportRow:
+      type: object
+      required: [rowNumber, matchStatus]
+      properties:
+        rowNumber:
+          type: integer
+          description: 1-based row number in the source file (row 1 = header).
+        supplierSku:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        rawUnitCost:
+          type: string
+          nullable: true
+          description: Raw unit cost string as it appeared in the file.
+        unitCostCents:
+          type: integer
+          nullable: true
+          description: Parsed unit cost in integer cents. Null if parsing failed.
+        unitOfMeasure:
+          type: string
+          nullable: true
+        matchedProductId:
+          type: string
+          format: uuid
+          nullable: true
+        matchedProductName:
+          type: string
+          nullable: true
+        matchedProductSku:
+          type: string
+          nullable: true
+        matchStatus:
+          type: string
+          enum: [barcode, sku, name, manual, unmatched]
+          description: >
+            How the row was matched to a master catalog product.
+            `barcode` = matched via barcode value;
+            `sku` = matched via SKU;
+            `name` = matched via exact name;
+            `manual` = caller-supplied productId override;
+            `unmatched` = no match found.
+        error:
+          type: string
+          nullable: true
+          description: Parse or import error message. Null on success.
+
+    ImportPreviewResult:
+      type: object
+      required: [supplierId, totalRows, matchedRows, unmatchedRows, errorRows, rows]
+      description: Phase-1 preview result — no writes performed.
+      properties:
+        supplierId:
+          type: string
+          format: uuid
+        totalRows:
+          type: integer
+        matchedRows:
+          type: integer
+        unmatchedRows:
+          type: integer
+        errorRows:
+          type: integer
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportRow"
+
+    ImportConfirmResult:
+      type: object
+      required: [supplierId, imported, updated, skipped, errors, rows]
+      description: Phase-2 confirm result — catalogue entries created or updated.
+      properties:
+        supplierId:
+          type: string
+          format: uuid
+        imported:
+          type: integer
+          description: New catalogue entries created.
+        updated:
+          type: integer
+          description: Existing active entries updated.
+        skipped:
+          type: integer
+          description: Rows skipped due to unmatched product.
+        errors:
+          type: integer
+          description: Rows that failed with a parse or persistence error.
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportRow"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -4624,6 +4937,403 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ── Sprint O: Supplier Management ─────────────────────────────────────────
+
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      tags: [Suppliers]
+      summary: List all suppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+          description: Filter by active status. Omit to return all.
+      responses:
+        "200":
+          description: Array of suppliers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Supplier"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSupplier
+      tags: [Suppliers]
+      summary: Create a supplier
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplierBody"
+      responses:
+        "201":
+          description: Supplier created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Supplier"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /suppliers/{supplierId}:
+    get:
+      operationId: getSupplier
+      tags: [Suppliers]
+      summary: Get a supplier by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+      responses:
+        "200":
+          description: Supplier detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Supplier"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateSupplier
+      tags: [Suppliers]
+      summary: Update a supplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSupplierBody"
+      responses:
+        "200":
+          description: Updated supplier.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Supplier"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ── Supplier Catalogue Pricing ───────────────────────────────────────────────
+
+  /suppliers/{supplierId}/catalogue:
+    get:
+      operationId: listSupplierCatalogue
+      tags: [Supplier Catalogue]
+      summary: List pricing entries for a supplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: productId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Array of supplier pricing entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SupplierProduct"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSupplierProduct
+      tags: [Supplier Catalogue]
+      summary: Add a pricing entry for a product
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupplierProductBody"
+      responses:
+        "201":
+          description: Pricing entry created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProduct"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /suppliers/{supplierId}/catalogue/{supplierProductId}:
+    get:
+      operationId: getSupplierProduct
+      tags: [Supplier Catalogue]
+      summary: Get a single pricing entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+        - $ref: "#/components/parameters/supplierProductId"
+      responses:
+        "200":
+          description: Pricing entry detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProduct"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateSupplierProduct
+      tags: [Supplier Catalogue]
+      summary: Update a pricing entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+        - $ref: "#/components/parameters/supplierProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSupplierProductBody"
+      responses:
+        "200":
+          description: Updated pricing entry.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SupplierProduct"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Cross-supplier pricing lookup ────────────────────────────────────────────
+
+  /suppliers/products/{productId}/pricing:
+    get:
+      operationId: listProductPricing
+      tags: [Supplier Catalogue]
+      summary: List all supplier prices for a master catalog product
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Master catalog item ID.
+      responses:
+        "200":
+          description: Array of active pricing entries across all suppliers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SupplierProduct"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Catalogue Import ──────────────────────────────────────────────────────────
+
+  /suppliers/{supplierId}/catalogue/import/preview:
+    post:
+      operationId: importCataloguePreview
+      tags: [Supplier Catalogue]
+      summary: Parse and preview a catalogue file (dry-run)
+      description: >
+        Phase 1 of the two-phase catalogue import workflow.
+        Parses the uploaded CSV or Excel file and runs product matching for each row.
+        Returns a preview with match status — no database writes are performed.
+
+        **Required columns (case-insensitive):** `description` (or `name`), `unit_cost`
+
+        **Optional columns:** `supplier_sku`, `unit_of_measure`, `barcode`
+
+        **unit_cost** is interpreted as decimal dollars (e.g. `12.50` = $12.50 = 1250 cents).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV (.csv) or Excel (.xlsx) file. Max 5 MB.
+      responses:
+        "200":
+          description: Import preview with per-row match status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ImportPreviewResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /suppliers/{supplierId}/catalogue/import/confirm:
+    post:
+      operationId: importCatalogueConfirm
+      tags: [Supplier Catalogue]
+      summary: Confirm and persist a catalogue import
+      description: >
+        Phase 2 of the two-phase catalogue import workflow.
+        Parses the file again and upserts supplier catalogue entries for all
+        successfully matched rows.
+
+        Unmatched rows are skipped unless a `manualMappings` JSON object is
+        provided mapping `rowNumber` → `productId` (UUID).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/supplierId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Same file as submitted to preview.
+                manualMappings:
+                  type: string
+                  description: >
+                    JSON-encoded object mapping row numbers to productIds for
+                    rows that could not be automatically matched.
+                    Example: `{"5":"uuid-product-1","12":"uuid-product-2"}`
+      responses:
+        "200":
+          description: Import result with counts and per-row outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ImportConfirmResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 # ── Tags ──────────────────────────────────────────────────────────────────────
 
 tags:
@@ -4657,3 +5367,9 @@ tags:
     description: Invoicing, line items, and payment records.
   - name: Analytics
     description: KPI dashboards, revenue reports, and audit event trail.
+  - name: Suppliers
+    description: Global supplier management — create and maintain supplier records.
+  - name: Supplier Catalogue
+    description: >
+      Supplier catalogue pricing — link products to supplier prices,
+      import CSV/Excel catalogues, and query cross-supplier pricing.
