@@ -2,8 +2,8 @@
 
 **Service:** Verve Operational Suite — Full Stack  
 **Severity:** P1 — Critical (data recovery scenario)  
-**Last reviewed:** 2026-06-19  
-**Release:** v0.5.0-operational-readiness
+**Last reviewed:** 2026-06-20  
+**Release:** Post Sprint O.2
 
 ---
 
@@ -67,7 +67,9 @@ Redis on Render (or Upstash/Railway equivalent) stores **only refresh tokens** �
 
 ### 1.4 Migrations as schema backup
 
-The application schema is **fully reproducible** from source code. The `schema_migrations` table tracks which of the 15 embedded migrations (`003_users_schema` through `016_users_totp_secret`) have been applied. Running `npm run migrate` against a fresh empty database recreates the full schema deterministically.
+The application schema is **fully reproducible** from source code. The `schema_migrations` table tracks which of the 16 embedded migrations (`003_users_schema` through `018_supplier_catalogue_schema`) have been applied. Running `npm run migrate` against a fresh empty database recreates the full schema deterministically.
+
+> **Sprint O.2 note:** Migrations `017_suppliers_schema` and `018_supplier_catalogue_schema` were added in Sprint O. Any restore verification that checks for 15 migrations will give a false-pass result. Always verify for 16.
 
 This means **schema recovery does not require backup restoration** — only data recovery does.
 
@@ -163,34 +165,44 @@ export RESTORED_DATABASE_URL="postgresql://<restored-host>/<dbname>"
 
 # 1. Confirm schema migrations match expected state
 psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT name, applied_at FROM schema_migrations ORDER BY applied_at;"
-# Expected: All 15 migrations listed (003 through 016)
+  "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
+# Expected: All 16 migrations listed (003_users_schema through 018_supplier_catalogue_schema)
 
-# 2. Confirm clinic data is present
+# 2. Confirm migration count exactly
+psql "$RESTORED_DATABASE_URL" -c \
+  "SELECT COUNT(*) AS migration_count FROM schema_migrations;"
+# Expected: 16
+
+# 3. Confirm clinic data is present
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT id, name, created_at FROM clinics ORDER BY created_at LIMIT 10;"
 
-# 3. Confirm user accounts are present
+# 4. Confirm user accounts are present
 psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, email, role, clinic_id FROM users ORDER BY created_at LIMIT 10;"
+  "SELECT id, email, role, home_clinic_id FROM users ORDER BY created_at LIMIT 10;"
 
-# 4. Confirm row counts for key tables are plausible
+# 5. Confirm row counts for key tables are plausible
+#    NOTE: correct table names are clinic_inventory_items and roster_entries
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT
-     (SELECT COUNT(*) FROM clinics)        AS clinics,
-     (SELECT COUNT(*) FROM users)          AS users,
-     (SELECT COUNT(*) FROM inventory_items) AS inventory_items,
-     (SELECT COUNT(*) FROM roster_shifts)  AS roster_shifts,
-     (SELECT COUNT(*) FROM payroll_records) AS payroll_records;"
+     (SELECT COUNT(*) FROM clinics)                  AS clinics,
+     (SELECT COUNT(*) FROM users)                    AS users,
+     (SELECT COUNT(*) FROM clinic_inventory_items)   AS inventory_items,
+     (SELECT COUNT(*) FROM roster_entries)           AS roster_entries,
+     (SELECT COUNT(*) FROM timesheet_entries)        AS timesheet_entries,
+     (SELECT COUNT(*) FROM suppliers)                AS suppliers,
+     (SELECT COUNT(*) FROM supplier_catalogue)       AS supplier_catalogue,
+     (SELECT COUNT(*) FROM audit_events)             AS audit_events;"
 
-# 5. Confirm RLS policies are present
+# 6. Confirm RLS policies are present
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' ORDER BY tablename;"
-# Expected: tenant_isolation policies on all tenant-scoped tables
+# Expected: tenant_isolation policies on all 14 tenant-scoped tables
 
-# 6. Confirm the app_current_clinic_id() function exists
+# 7. Confirm the RLS helper functions exist
 psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT proname, prosrc FROM pg_proc WHERE proname = 'app_current_clinic_id';"
+  "SELECT proname FROM pg_proc WHERE proname IN ('app_current_clinic_id', 'app_is_owner_admin');"
+# Expected: 2 rows
 ```
 
 If all checks pass, proceed to cutover. If checks fail, **stop** — escalate before proceeding.
@@ -322,11 +334,12 @@ If restoring to a completely empty PostgreSQL database (e.g., after spinning up 
 # Ensure DATABASE_URL points to the new empty database
 export DATABASE_URL="postgresql://<user>:<pass>@<host>:5432/<dbname>?sslmode=require"
 
-# Apply all 15 bootstrap migrations
+# Apply all 16 bootstrap migrations (003_users_schema through 018_supplier_catalogue_schema)
 npm run migrate --workspace=@verve/backend
 
-# Confirm all migrations applied
-psql "$DATABASE_URL" -c "SELECT name, applied_at FROM schema_migrations ORDER BY applied_at;"
+# Confirm all 16 migrations applied
+psql "$DATABASE_URL" -c "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
+# Expected: 16 rows
 ```
 
 ---
@@ -395,9 +408,10 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 - [ ] Restore to a **new** database instance (do not overwrite live until verified)
 - [ ] Wait for new instance to reach "Available" state
 - [ ] Run Section 3.3 verification queries against restored instance
-- [ ] Confirm row counts match expectations
-- [ ] Confirm all 15 schema migrations are present in `schema_migrations`
-- [ ] Confirm RLS policies are present (`pg_policies`)
+- [ ] Confirm row counts match expectations (clinics, users, inventory, roster, suppliers, supplier_catalogue)
+- [ ] Confirm all **16** schema migrations are present in `schema_migrations` (003 through 018)
+- [ ] Confirm RLS policies are present (`pg_policies`) — at least 20 policies expected
+- [ ] Confirm `app_current_clinic_id` and `app_is_owner_admin` functions present
 - [ ] Update `DATABASE_URL` in Render backend service environment
 - [ ] Trigger backend redeploy
 - [ ] Confirm backend readiness: `GET /api/v1/ready` returns `200 ok`
@@ -432,6 +446,9 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 
 - [ ] Log in with a known admin account — confirm JWT is issued
 - [ ] Confirm clinic data is visible (inventory, roster, etc.)
+- [ ] Confirm supplier list is visible (`GET /api/v1/suppliers`)
+- [ ] Confirm forecast endpoints respond (`GET /api/v1/forecast/materials`)
+- [ ] Confirm MFA-enrolled users can complete TOTP challenge (requires original `MFA_ENCRYPTION_KEY`)
 - [ ] Confirm token refresh works (re-use session after 15 min)
 - [ ] Confirm logout works
 
@@ -519,9 +536,12 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 The current state is acceptable for an **internal team pilot** (≤20 users, non-patient-facing) with the following conditions:
 
 - [ ] Confirm the Render PostgreSQL plan is at minimum **Starter** (not free tier) to avoid auto-suspension.
-- [ ] Perform at least **one manual restore drill** before pilot launch to validate the Render snapshot process.
+- [ ] Perform at least **one manual restore drill** before pilot launch — see [restore-drill.md](./restore-drill.md) Part B.
 - [ ] Store `MFA_ENCRYPTION_KEY` and JWT secrets in a second location (password manager or encrypted note accessible to more than one person).
+- [ ] Add a second Render Owner/Admin to the account.
 - [ ] Brief the pilot team: in the event of data loss, up to 24 hours of data may be unrecoverable.
+
+See [restore-drill.md](./restore-drill.md) for the complete pilot go/no-go criteria (Part H) and restore drill procedure (Part B).
 
 ---
 
@@ -560,10 +580,11 @@ The following must be resolved before commercial launch with clinic customers:
 
 ## Related runbooks
 
+- [Restore Drill & Recovery Verification](./restore-drill.md) ← Sprint K.1 deliverable
 - [Database Unavailable](./database-down.md)
 - [Redis Unavailable](./redis-down.md)
 - [Deployment Failure](./deployment-failure.md)
 
 ---
 
-*This document was produced as part of Sprint K — Backup & Restore Validation under release v0.5.0-operational-readiness.*
+*This document was originally produced as part of Sprint K — Backup & Restore Validation. Updated in Sprint K.1 to reflect Sprint O.2 schema additions (16 migrations, suppliers tables) and correct verification query table names.*
