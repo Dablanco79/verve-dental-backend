@@ -1,18 +1,544 @@
 openapi: 3.0.3
 info:
   title: Verve Dental Operational Suite API
-  version: 0.5.0
-  description: OpenAPI contract for the Verve Backend (Module 03 — Inventory & Scanning).
+  version: 0.6.0
+  description: |
+    Full OpenAPI contract for the Verve Operational Suite backend (Modules 03–08).
+
+    ## Authentication
+
+    All clinic-scoped endpoints require a Bearer JWT access token obtained from
+    `POST /api/v1/auth/login` (direct) or `POST /api/v1/auth/mfa/verify` (MFA flow).
+
+    The refresh token is transmitted as an HttpOnly cookie (`refreshToken`) scoped to
+    `/api/v1/auth`. Use `POST /api/v1/auth/refresh` to rotate the access token without
+    re-entering credentials.
+
+    ### Standard Login Flow
+    1. `POST /auth/login` with `{ email, password }`
+    2. On success → `{ requiresMfa: false, accessToken, expiresIn, user }`
+    3. Use `accessToken` as `Authorization: Bearer <token>` on subsequent requests.
+
+    ### MFA Verification Flow (existing enrollment)
+    1. `POST /auth/login` → `{ requiresMfa: true, mfaToken, user }`
+    2. `POST /auth/mfa/verify` with `{ mfaToken, code }` → `{ accessToken, expiresIn, user }`
+
+    ### MFA Enrollment Flow (first login for privileged roles)
+    1. `POST /auth/login` → `{ requiresMfaEnrollment: true, enrollmentToken, user }`
+    2. `POST /auth/mfa/setup` (Bearer = enrollmentToken) → `{ otpUri, secret }`
+    3. User scans QR code in authenticator app.
+    4. `POST /auth/mfa/confirm` (Bearer = enrollmentToken) with `{ code }` → confirms enrollment.
+    5. Return to standard MFA verification flow.
+
+    ## Roles
+
+    | Role | Description |
+    |------|-------------|
+    | `owner_admin` | Full access; may query any clinic |
+    | `group_practice_manager` | Clinic-scoped management access |
+    | `clinical_staff` | Limited read/write access to own data |
+
+    ## Tenant Isolation
+
+    All `/clinics/:clinicId/*` routes enforce tenant isolation via:
+    1. **Route middleware** — `enforceTenantParam` rejects tokens whose `homeClinicId`
+       does not match the URL `:clinicId` (owner_admin is exempt).
+    2. **Service layer** — each service performs an independent `assertTenantAccess` check.
+
+    ## Pagination
+
+    Paginated list endpoints accept `limit` and `offset` query parameters and return
+    a `pagination` envelope alongside the `data` array.
+
+    **Defaults:** `limit = 50`, `offset = 0`. **Maximum:** `limit = 100` (200 for audit events).
+
+    ```json
+    {
+      "data": [...],
+      "pagination": {
+        "limit": 50,
+        "offset": 0,
+        "total": 123
+      }
+    }
+    ```
+
+    ## Error Contract
+
+    All errors use a consistent `error` envelope:
+
+    ```json
+    {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Request validation failed",
+        "requestId": "550e8400-e29b-41d4-a716-446655440000",
+        "details": [
+          { "field": "email", "message": "Invalid email address" }
+        ]
+      }
+    }
+    ```
+
+    | HTTP Status | Code | When |
+    |-------------|------|------|
+    | 400 | `VALIDATION_ERROR` | Malformed or out-of-range request input |
+    | 400 | `MISSING_REFRESH_TOKEN` | Refresh cookie absent on token refresh |
+    | 401 | `UNAUTHORIZED` | Missing or invalid Bearer token |
+    | 403 | `FORBIDDEN` | Authenticated but not permitted |
+    | 404 | `NOT_FOUND` | Resource does not exist |
+    | 409 | `CONFLICT` | State conflict (duplicate, already submitted, etc.) |
+    | 429 | `TOO_MANY_REQUESTS` | Auth rate limit exceeded (10 req / 15 min) |
+    | 500 | `INTERNAL_ERROR` | Unexpected server-side failure |
+
+    ## Monetary Values
+
+    All monetary fields (except Labor Forecast) are expressed as **integer AUD cents**
+    to eliminate floating-point drift. For example, $49.95 is stored and returned as `4995`.
+
+    The Labor Forecast endpoint is the sole exception: cost totals are returned as
+    **fractional AUD dollars** (e.g. `450.00`) after division by 100 in the route handler.
+
 servers:
   - url: http://localhost:3000
     description: Local development
+
+# ── Reusable components ───────────────────────────────────────────────────────
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: JWT access token obtained from POST /api/v1/auth/login or /auth/mfa/verify.
+
+  # ── Parameters ──────────────────────────────────────────────────────────────
+
+  parameters:
+    clinicId:
+      name: clinicId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Tenant UUID. Must match the authenticated user's `homeClinicId`, or the
+        caller must be `owner_admin`.
+
+    itemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Clinic inventory item UUID.
+
+    entryId:
+      name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Roster entry UUID.
+
+    timesheetId:
+      name: timesheetId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Timesheet entry UUID.
+
+    leaveId:
+      name: leaveId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Leave request UUID.
+
+    invoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Invoice UUID.
+
+    lineItemId:
+      name: lineItemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Invoice line item UUID.
+
+    poId:
+      name: poId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Draft purchase order UUID.
+
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: User UUID.
+
+    eventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Audit event UUID.
+
+    limitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+      description: Maximum number of items to return (1–100).
+
+    offsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+      description: Number of items to skip for pagination.
+
+    fromDateParam:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date
+      description: Filter start date (YYYY-MM-DD), inclusive.
+
+    toDateParam:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date
+      description: Filter end date (YYYY-MM-DD), inclusive.
+
+  # ── Reusable responses ───────────────────────────────────────────────────────
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+
+    Forbidden:
+      description: Authenticated but not authorised for this resource or clinic.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: FORBIDDEN
+              message: Insufficient permissions
+
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+
+    ValidationError:
+      description: Request body or query parameter validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationErrorResponse"
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details:
+                - field: email
+                  message: Invalid email address
+
+    Conflict:
+      description: State conflict — resource already exists or is in an incompatible state.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: CONFLICT
+              message: Resource already exists
+
+    InternalError:
+      description: Unexpected server-side failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: INTERNAL_ERROR
+              message: An unexpected error occurred
+
+    NoContent:
+      description: Success — no response body.
+
+  # ── Schemas ──────────────────────────────────────────────────────────────────
+
   schemas:
+
+    # ── Error shapes ────────────────────────────────────────────────────────────
+
+    ValidationDetail:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: >
+            Dot-separated field path (e.g. "email", "address.postcode"). "_" for
+            root-level issues.
+          example: email
+        message:
+          type: string
+          example: Invalid email address
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: NOT_FOUND
+            message:
+              type: string
+              example: Resource not found
+            requestId:
+              type: string
+              format: uuid
+              nullable: true
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationDetail"
+
+    ValidationErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum: [VALIDATION_ERROR]
+            message:
+              type: string
+              example: Request validation failed
+            requestId:
+              type: string
+              format: uuid
+              nullable: true
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationDetail"
+
+    # ── Pagination ──────────────────────────────────────────────────────────────
+
+    PaginationMeta:
+      type: object
+      required: [limit, offset, total]
+      properties:
+        limit:
+          type: integer
+          example: 50
+        offset:
+          type: integer
+          example: 0
+        total:
+          type: integer
+          example: 123
+
+    # ── Auth ────────────────────────────────────────────────────────────────────
+
+    AuthenticatedUser:
+      type: object
+      required: [id, email, role, homeClinicId, homeClinicName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [owner_admin, group_practice_manager, clinical_staff]
+        homeClinicId:
+          type: string
+          format: uuid
+        homeClinicName:
+          type: string
+
+    TokenResponse:
+      type: object
+      required: [accessToken, expiresIn, user]
+      properties:
+        accessToken:
+          type: string
+          description: "Short-lived JWT. Use as Authorization: Bearer <token>."
+        expiresIn:
+          type: integer
+          description: Access token TTL in seconds.
+        user:
+          $ref: "#/components/schemas/AuthenticatedUser"
+
+    # ── Clinic ──────────────────────────────────────────────────────────────────
+
+    Clinic:
+      type: object
+      required: [id, name, isActive, timezone, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        abn:
+          type: string
+          nullable: true
+          description: 11-digit Australian Business Number (no spaces).
+        addressLine1:
+          type: string
+          nullable: true
+        suburb:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          enum: [ACT, NSW, NT, QLD, SA, TAS, VIC, WA]
+        postcode:
+          type: string
+          nullable: true
+          description: 4-digit Australian postcode.
+        timezone:
+          type: string
+          description: IANA timezone (Australian allowlist only).
+          enum:
+            - Australia/Sydney
+            - Australia/Melbourne
+            - Australia/Brisbane
+            - Australia/Perth
+            - Australia/Adelaide
+            - Australia/Darwin
+            - Australia/Hobart
+            - Australia/Lord_Howe
+        subscriptionTier:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdateClinicRequest:
+      type: object
+      description: >
+        All fields are optional. At least one must be provided. Unknown keys are
+        rejected (strict mode). `subscriptionTier` is intentionally excluded —
+        tier changes require a billing workflow and cannot be self-served.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        abn:
+          type: string
+          nullable: true
+          description: >
+            11-digit ABN. Spaces and hyphens are automatically stripped. E.g.
+            "51 824 753 556" is accepted and stored as "51824753556".
+        addressLine1:
+          type: string
+          minLength: 1
+          maxLength: 255
+          nullable: true
+        suburb:
+          type: string
+          minLength: 1
+          maxLength: 128
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          enum: [ACT, NSW, NT, QLD, SA, TAS, VIC, WA]
+        postcode:
+          type: string
+          nullable: true
+          description: Exactly 4 digits.
+          pattern: "^\\d{4}$"
+        timezone:
+          type: string
+          enum:
+            - Australia/Sydney
+            - Australia/Melbourne
+            - Australia/Brisbane
+            - Australia/Perth
+            - Australia/Adelaide
+            - Australia/Darwin
+            - Australia/Hobart
+            - Australia/Lord_Howe
+        isActive:
+          type: boolean
+
+    # ── Inventory ───────────────────────────────────────────────────────────────
+
     InventoryItem:
       type: object
       required:
@@ -35,14 +561,17 @@ components:
         masterCatalogItemId:
           type: string
           format: uuid
+          nullable: true
         masterSku:
           type: string
         name:
           type: string
         category:
           type: string
+          nullable: true
         unitOfMeasure:
           type: string
+          nullable: true
         quantityOnHand:
           type: integer
           minimum: 0
@@ -51,9 +580,12 @@ components:
           minimum: 0
         unitCostCents:
           type: integer
+          nullable: true
+          description: Integer AUD cents.
         unitCostOverrideCents:
           type: integer
           nullable: true
+          description: Clinic-specific cost override. Integer AUD cents.
         supplierPreference:
           type: string
           nullable: true
@@ -65,6 +597,7 @@ components:
         updatedAt:
           type: string
           format: date-time
+
     InventoryAdjustment:
       type: object
       required:
@@ -91,6 +624,7 @@ components:
         masterCatalogItemId:
           type: string
           format: uuid
+          nullable: true
         adjustmentType:
           type: string
           enum: [scan_deduct, manual_adjust, receive, transfer_in, transfer_out]
@@ -114,14 +648,7 @@ components:
         createdAt:
           type: string
           format: date-time
-    InventoryAdjustResponse:
-      type: object
-      required: [item, adjustment]
-      properties:
-        item:
-          $ref: "#/components/schemas/InventoryItem"
-        adjustment:
-          $ref: "#/components/schemas/InventoryAdjustment"
+
     InventoryAdjustRequest:
       type: object
       required: [itemId, quantityDelta]
@@ -131,10 +658,71 @@ components:
           format: uuid
         quantityDelta:
           type: integer
-          description: Non-zero integer; negative values deduct stock
+          description: Non-zero integer. Negative values deduct stock; positive values add stock.
         reason:
           type: string
           maxLength: 255
+
+    InventoryAdjustResponse:
+      type: object
+      required: [item, adjustment]
+      properties:
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        adjustment:
+          $ref: "#/components/schemas/InventoryAdjustment"
+
+    # ── Scanning ────────────────────────────────────────────────────────────────
+
+    BarcodeMappingSummary:
+      type: object
+      required: [id, masterCatalogItemId, barcodeValue, barcodeFormat, isPrimary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        barcodeValue:
+          type: string
+        barcodeFormat:
+          type: string
+          enum: [gs1, ean13, code128, qr, data_matrix]
+        isPrimary:
+          type: boolean
+
+    DraftPoLine:
+      type: object
+      required:
+        - id
+        - draftPurchaseOrderId
+        - masterCatalogItemId
+        - clinicInventoryItemId
+        - quantity
+        - reason
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        draftPurchaseOrderId:
+          type: string
+          format: uuid
+        masterCatalogItemId:
+          type: string
+          format: uuid
+        clinicInventoryItemId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
     ScanRequest:
       type: object
       required: [barcodeValue]
@@ -142,27 +730,52 @@ components:
         barcodeValue:
           type: string
           maxLength: 255
-          description: >-
-            Scanned barcode (EAN-13, GS1, Code128, QR, Data Matrix) or primary
-            product SKU (e.g. VRV-GLV-001)
         barcodeFormat:
           type: string
           enum: [gs1, ean13, code128, qr, data_matrix]
-          description: Optional hint when the scanner reports symbology
         quantity:
           type: integer
           minimum: 1
           default: 1
-          description: Units to deduct or receive (default 1 per scan)
         mode:
           type: string
           enum: [deduct, receive]
           default: deduct
-          description: deduct removes stock; receive adds stock on delivery
         reason:
           type: string
           maxLength: 255
-          description: Optional delivery reference when mode is receive
+
+    ScanResponse:
+      type: object
+      required: [mode, item, adjustment, barcode, draftPoLineAdded, draftPoLine]
+      properties:
+        mode:
+          type: string
+          enum: [deduct, receive]
+        item:
+          $ref: "#/components/schemas/InventoryItem"
+        adjustment:
+          $ref: "#/components/schemas/InventoryAdjustment"
+        barcode:
+          type: object
+          required: [detectedFormat, lookupKey, mapping]
+          properties:
+            detectedFormat:
+              type: string
+              enum: [gs1, ean13, code128, qr, data_matrix]
+            lookupKey:
+              type: string
+            mapping:
+              $ref: "#/components/schemas/BarcodeMappingSummary"
+        draftPoLineAdded:
+          type: boolean
+          description: true when a draft PO line was automatically created because stock fell below reorder point.
+        draftPoLine:
+          $ref: "#/components/schemas/DraftPoLine"
+          nullable: true
+
+    # ── Products ────────────────────────────────────────────────────────────────
+
     CreateProductRequest:
       type: object
       required:
@@ -194,6 +807,7 @@ components:
         defaultUnitCostCents:
           type: integer
           minimum: 0
+          description: Integer AUD cents.
         barcodeValue:
           type: string
           maxLength: 255
@@ -209,109 +823,1165 @@ components:
         unitCostOverrideCents:
           type: integer
           minimum: 0
+          description: Clinic-specific cost override. Integer AUD cents.
         supplierPreference:
           type: string
           maxLength: 128
+
     CreateProductResponse:
       type: object
       required: [masterItem, barcodeMapping, clinicItem]
       properties:
         masterItem:
           type: object
+          description: Master catalog item record.
+          additionalProperties: true
         barcodeMapping:
           $ref: "#/components/schemas/BarcodeMappingSummary"
         clinicItem:
           $ref: "#/components/schemas/InventoryItem"
-    BarcodeMappingSummary:
+
+    # ── Users ────────────────────────────────────────────────────────────────────
+
+    User:
       type: object
-      required: [id, masterCatalogItemId, barcodeValue, barcodeFormat, isPrimary]
+      required: [id, email, role, homeClinicId, homeClinicName, mfaEnabled, isActive]
       properties:
         id:
           type: string
           format: uuid
-        masterCatalogItemId:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [owner_admin, group_practice_manager, clinical_staff]
+        homeClinicId:
           type: string
           format: uuid
-        barcodeValue:
+        homeClinicName:
           type: string
-        barcodeFormat:
+        payrollTrack:
           type: string
-          enum: [gs1, ean13, code128, qr, data_matrix]
-        isPrimary:
+          enum: [hourly, commission]
+        mfaEnabled:
           type: boolean
-    DraftPoLine:
+        isActive:
+          type: boolean
+
+    CreateUserRequest:
       type: object
-      required:
-        - id
-        - draftPurchaseOrderId
-        - masterCatalogItemId
-        - clinicInventoryItemId
-        - quantity
-        - reason
-        - createdAt
+      required: [email, password, role, clinicName]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        role:
+          type: string
+          enum: [owner_admin, group_practice_manager, clinical_staff]
+        clinicName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Denormalized home clinic name for display purposes.
+
+    # ── Purchase Orders ──────────────────────────────────────────────────────────
+
+    PurchaseOrder:
+      type: object
+      description: >
+        Draft purchase order auto-generated when a barcode scan causes stock to fall
+        below the item's reorder point.
       properties:
         id:
           type: string
           format: uuid
-        draftPurchaseOrderId:
+        clinicId:
           type: string
           format: uuid
-        masterCatalogItemId:
+        status:
           type: string
-          format: uuid
-        clinicInventoryItemId:
-          type: string
-          format: uuid
-        quantity:
-          type: integer
-        reason:
-          type: string
+          enum: [draft, submitted]
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/DraftPoLine"
         createdAt:
           type: string
           format: date-time
-    ScanResponse:
-      type: object
-      required: [mode, item, adjustment, barcode, draftPoLineAdded, draftPoLine]
-      properties:
-        mode:
+        updatedAt:
           type: string
-          enum: [deduct, receive]
-        item:
-          $ref: "#/components/schemas/InventoryItem"
-        adjustment:
-          $ref: "#/components/schemas/InventoryAdjustment"
-        barcode:
-          type: object
-          required: [detectedFormat, lookupKey, mapping]
-          properties:
-            detectedFormat:
-              type: string
-              enum: [gs1, ean13, code128, qr, data_matrix]
-            lookupKey:
-              type: string
-            mapping:
-              $ref: "#/components/schemas/BarcodeMappingSummary"
-        draftPoLineAdded:
-          type: boolean
-        draftPoLine:
-          $ref: "#/components/schemas/DraftPoLine"
+          format: date-time
+
+    # ── Roster ───────────────────────────────────────────────────────────────────
+
+    RosterEntry:
+      type: object
+      required:
+        - id
+        - staffUserId
+        - staffEmail
+        - rosteredClinicId
+        - rosteredClinicName
+        - shiftStartAt
+        - shiftEndAt
+        - shiftType
+        - status
+        - createdByUserId
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        staffUserId:
+          type: string
+          format: uuid
+        staffEmail:
+          type: string
+          format: email
+        rosteredClinicId:
+          type: string
+          format: uuid
+          description: The clinic where the shift physically occurs. May differ from homeClinicId for cross-location deployments.
+        rosteredClinicName:
+          type: string
+        shiftStartAt:
+          type: string
+          format: date-time
+        shiftEndAt:
+          type: string
+          format: date-time
+        shiftType:
+          type: string
+          enum: [standard, overtime, on_call, training]
+        status:
+          type: string
+          enum: [scheduled, confirmed, completed, cancelled]
+        notes:
+          type: string
           nullable: true
+        createdByUserId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateRosterEntryRequest:
+      type: object
+      required: [staffUserId, shiftStartAt, shiftEndAt]
+      properties:
+        staffUserId:
+          type: string
+          format: uuid
+        shiftStartAt:
+          type: string
+          format: date-time
+          description: ISO 8601 with timezone offset (e.g. "2026-07-01T08:00:00+10:00").
+        shiftEndAt:
+          type: string
+          format: date-time
+          description: Must be after shiftStartAt (enforced by service layer).
+        shiftType:
+          type: string
+          enum: [standard, overtime, on_call, training]
+          default: standard
+        notes:
+          type: string
+          maxLength: 1000
+          nullable: true
+
+    UpdateRosterEntryRequest:
+      type: object
+      description: >
+        All fields are optional; at least one must be present. Strict mode — unknown
+        keys produce a 400 VALIDATION_ERROR. An entirely empty body produces 400
+        NO_VALID_FIELDS.
+      properties:
+        shiftStartAt:
+          type: string
+          format: date-time
+        shiftEndAt:
+          type: string
+          format: date-time
+        shiftType:
+          type: string
+          enum: [standard, overtime, on_call, training]
+        status:
+          type: string
+          enum: [scheduled, confirmed, completed, cancelled]
+        notes:
+          type: string
+          maxLength: 1000
+          nullable: true
+
+    # ── Leave ────────────────────────────────────────────────────────────────────
+
+    LeaveRequest:
+      type: object
+      required:
+        - id
+        - staffUserId
+        - staffEmail
+        - clinicId
+        - leaveType
+        - startDate
+        - endDate
+        - totalDays
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        staffUserId:
+          type: string
+          format: uuid
+        staffEmail:
+          type: string
+          format: email
+        clinicId:
+          type: string
+          format: uuid
+        leaveType:
+          type: string
+          enum: [annual, sick, personal, compassionate, unpaid, other]
+        startDate:
+          type: string
+          format: date
+          description: Inclusive start date (YYYY-MM-DD).
+        endDate:
+          type: string
+          format: date
+          description: Inclusive end date (YYYY-MM-DD).
+        totalDays:
+          type: number
+          description: Decimal to support half-day requests (e.g. 0.5, 1.5).
+        reason:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, approved, rejected, withdrawn]
+        reviewedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        reviewNotes:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateLeaveRequestBody:
+      type: object
+      required: [leaveType, startDate, endDate, totalDays]
+      properties:
+        leaveType:
+          type: string
+          enum: [annual, sick, personal, compassionate, unpaid, other]
+        startDate:
+          type: string
+          format: date
+          description: Inclusive start date (YYYY-MM-DD).
+        endDate:
+          type: string
+          format: date
+          description: Inclusive end date (YYYY-MM-DD).
+        totalDays:
+          type: number
+          description: Must be > 0. Supports half-day values (e.g. 0.5).
+        reason:
+          type: string
+          maxLength: 2000
+          nullable: true
+
+    # ── Timesheets ───────────────────────────────────────────────────────────────
+
+    TimesheetEntry:
+      type: object
+      required:
+        - id
+        - payrollType
+        - staffUserId
+        - staffEmail
+        - clinicId
+        - rosteredClinicId
+        - rosteredClinicName
+        - shiftDate
+        - shiftStartAt
+        - shiftEndAt
+        - attendanceStatus
+        - generatedBy
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        payrollType:
+          type: string
+          enum: [hourly_auto, hourly_manual, commission_log]
+          description: >
+            hourly_auto: system-generated from completed roster shift.
+            hourly_manual: manager back-fill or correction.
+            commission_log: provider attendance record (no clock-in/out).
+        staffUserId:
+          type: string
+          format: uuid
+        staffEmail:
+          type: string
+          format: email
+        clinicId:
+          type: string
+          format: uuid
+          description: Home clinic — payroll grouping scope.
+        rosteredClinicId:
+          type: string
+          format: uuid
+          description: Where the work physically occurred.
+        rosteredClinicName:
+          type: string
+        rosterEntryId:
+          type: string
+          format: uuid
+          nullable: true
+        shiftDate:
+          type: string
+          format: date
+          description: YYYY-MM-DD calendar date of the shift.
+        shiftStartAt:
+          type: string
+          format: date-time
+        shiftEndAt:
+          type: string
+          format: date-time
+        attendanceStatus:
+          type: string
+          enum: [pending_verification, present, absent, sick, cancelled]
+          description: >
+            Forecasting safeguard: present = full usage counted; absent/sick = zero
+            usage; pending_verification = skipped by forecast engine; cancelled = zero usage.
+        clockInAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "null for commission_log entries."
+        clockOutAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "null for commission_log entries."
+        breakDurationMinutes:
+          type: integer
+          nullable: true
+        totalHoursWorked:
+          type: number
+          nullable: true
+        ordinaryHours:
+          type: number
+          nullable: true
+        overtime15xHours:
+          type: number
+          nullable: true
+          description: Hours at 1.5× rate (Australian Award overtime threshold 1).
+        overtime2xHours:
+          type: number
+          nullable: true
+          description: Hours at 2.0× rate (Australian Award overtime threshold 2).
+        overtimeCustomHours:
+          type: number
+          nullable: true
+          description: Enterprise-agreement or award-specific overtime hours.
+        timesheetStatus:
+          type: string
+          enum: [draft, submitted, approved, rejected, requires_amendment, processed]
+          nullable: true
+          description: "null for commission_log entries."
+        approvedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        approvalNotes:
+          type: string
+          nullable: true
+        commissionNote:
+          type: string
+          nullable: true
+          description: "null for hourly_auto / hourly_manual entries."
+        generatedBy:
+          type: string
+          description: "'system_auto', 'manager_manual', or the email of the creating user."
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClockInRequest:
+      type: object
+      required: [shiftDate, shiftStartAt, shiftEndAt]
+      properties:
+        rosterEntryId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional roster link. null = ad-hoc clock-in without a matching scheduled shift.
+        shiftDate:
+          type: string
+          format: date
+        shiftStartAt:
+          type: string
+          format: date-time
+        shiftEndAt:
+          type: string
+          format: date-time
+
+    ClockOutRequest:
+      type: object
+      required: [breakDurationMinutes]
+      properties:
+        breakDurationMinutes:
+          type: integer
+          minimum: 0
+          description: Total break time in whole minutes (0 = no break).
+
+    CreateManualTimesheetRequest:
+      type: object
+      required:
+        - staffUserId
+        - shiftDate
+        - shiftStartAt
+        - shiftEndAt
+        - clockInAt
+        - clockOutAt
+        - breakDurationMinutes
+      properties:
+        staffUserId:
+          type: string
+          format: uuid
+        rosterEntryId:
+          type: string
+          format: uuid
+          nullable: true
+        shiftDate:
+          type: string
+          format: date
+        shiftStartAt:
+          type: string
+          format: date-time
+        shiftEndAt:
+          type: string
+          format: date-time
+        clockInAt:
+          type: string
+          format: date-time
+        clockOutAt:
+          type: string
+          format: date-time
+        breakDurationMinutes:
+          type: integer
+          minimum: 0
+
+    # ── Billing ──────────────────────────────────────────────────────────────────
+
+    Invoice:
+      type: object
+      required:
+        - id
+        - clinicId
+        - patientName
+        - status
+        - subtotalCents
+        - taxCents
+        - discountCents
+        - totalCents
+        - paidCents
+        - outstandingCents
+        - taxRateBasisPoints
+        - createdByUserId
+        - createdByEmail
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        patientId:
+          type: string
+          format: uuid
+          nullable: true
+        patientName:
+          type: string
+        invoiceNumber:
+          type: string
+          nullable: true
+          description: "Human-readable sequential number (e.g. INV-2026-000001). Null for draft invoices."
+        status:
+          type: string
+          enum: [draft, issued, partially_paid, paid, overdue, void, cancelled]
+        issuedAt:
+          type: string
+          format: date-time
+          nullable: true
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        subtotalCents:
+          type: integer
+          description: Sum of all line-item subtotals (pre-tax). Integer AUD cents.
+        taxCents:
+          type: integer
+          description: Sum of all line-item tax amounts. Integer AUD cents.
+        discountCents:
+          type: integer
+          description: Aggregate discount. Integer AUD cents.
+        totalCents:
+          type: integer
+          description: subtotalCents + taxCents − discountCents. Integer AUD cents.
+        paidCents:
+          type: integer
+          description: Sum of all confirmed payment records. Integer AUD cents.
+        outstandingCents:
+          type: integer
+          description: totalCents − paidCents. May be negative if patient is in credit. Integer AUD cents.
+        taxRateBasisPoints:
+          type: integer
+          description: "GST rate snapshot at invoice creation time. Default: 1000 (10% GST)."
+        notes:
+          type: string
+          nullable: true
+        createdByUserId:
+          type: string
+          format: uuid
+        createdByEmail:
+          type: string
+        voidedByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        voidedAt:
+          type: string
+          format: date-time
+          nullable: true
+        voidReason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    InvoiceLineItem:
+      type: object
+      required:
+        - id
+        - clinicId
+        - invoiceId
+        - lineItemType
+        - description
+        - quantity
+        - unitPriceCents
+        - subtotalCents
+        - taxRateBasisPoints
+        - taxCents
+        - totalCents
+        - sortOrder
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        invoiceId:
+          type: string
+          format: uuid
+        lineItemType:
+          type: string
+          enum: [consultation_fee, procedure_fee, material_fee, catalogue_item, tax, adjustment, other]
+        description:
+          type: string
+        catalogueItemId:
+          type: string
+          format: uuid
+          nullable: true
+        catalogueSku:
+          type: string
+          nullable: true
+        quantity:
+          type: integer
+        unitPriceCents:
+          type: integer
+          description: Integer AUD cents.
+        subtotalCents:
+          type: integer
+          description: quantity × unitPriceCents. Integer AUD cents.
+        taxRateBasisPoints:
+          type: integer
+        taxCents:
+          type: integer
+          description: Integer AUD cents.
+        totalCents:
+          type: integer
+          description: subtotalCents + taxCents. Integer AUD cents.
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PaymentRecord:
+      type: object
+      required:
+        - id
+        - clinicId
+        - invoiceId
+        - paymentMethod
+        - status
+        - amountCents
+        - recordedByUserId
+        - recordedByEmail
+        - transactionAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        invoiceId:
+          type: string
+          format: uuid
+        paymentMethod:
+          type: string
+          enum: [cash, eftpos, credit_card, bank_transfer, insurance_claim, other]
+        status:
+          type: string
+          enum: [pending, confirmed, failed, refunded]
+        amountCents:
+          type: integer
+          description: Positive for payment; negative for refund. Integer AUD cents.
+        referenceNumber:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        recordedByUserId:
+          type: string
+          format: uuid
+        recordedByEmail:
+          type: string
+        transactionAt:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failedAt:
+          type: string
+          format: date-time
+          nullable: true
+        failureReason:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateInvoiceRequest:
+      type: object
+      required: [patientName]
+      properties:
+        patientId:
+          type: string
+          format: uuid
+          nullable: true
+        patientName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        dueAt:
+          type: string
+          format: date-time
+          nullable: true
+        taxRateBasisPoints:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: "GST rate in basis points. Default: 1000 (10% Australian GST)."
+        notes:
+          type: string
+          maxLength: 2000
+          nullable: true
+
+    AddLineItemRequest:
+      type: object
+      required: [lineItemType, description, quantity, unitPriceCents, taxable]
+      properties:
+        lineItemType:
+          type: string
+          enum: [consultation_fee, procedure_fee, material_fee, catalogue_item, tax, adjustment, other]
+        description:
+          type: string
+          minLength: 1
+          maxLength: 512
+        catalogueItemId:
+          type: string
+          format: uuid
+          nullable: true
+        catalogueSku:
+          type: string
+          maxLength: 64
+          nullable: true
+        quantity:
+          type: integer
+          minimum: 1
+        unitPriceCents:
+          type: integer
+          minimum: 0
+          description: Integer AUD cents.
+        taxable:
+          type: boolean
+          default: true
+        sortOrder:
+          type: integer
+          minimum: 0
+
+    RecordPaymentRequest:
+      type: object
+      required: [paymentMethod, amountCents, transactionAt]
+      properties:
+        paymentMethod:
+          type: string
+          enum: [cash, eftpos, credit_card, bank_transfer, insurance_claim, other]
+        amountCents:
+          type: integer
+          description: Non-zero. Positive for payment; negative for refund. Integer AUD cents.
+        referenceNumber:
+          type: string
+          maxLength: 128
+          nullable: true
+        notes:
+          type: string
+          maxLength: 2000
+          nullable: true
+        transactionAt:
+          type: string
+          format: date-time
+
+    # ── Analytics ────────────────────────────────────────────────────────────────
+
+    AuditEvent:
+      type: object
+      required: [id, clinicId, entityType, entityId, action, actorId, actorEmail, metadata, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        clinicId:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+          enum:
+            - auth
+            - invoice
+            - payment
+            - line_item
+            - inventory_adjustment
+            - roster_entry
+            - timesheet_entry
+            - leave_request
+            - purchase_order
+            - user
+            - clinic
+            - product
+            - scan
+        entityId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: "Free-form verb: created, updated, deleted, approved, issued, void, scan_deduct, password_reset, etc."
+        actorId:
+          type: string
+          format: uuid
+        actorEmail:
+          type: string
+        metadata:
+          type: object
+          description: Arbitrary structured metadata captured at event time.
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+
+    AuditEventsPage:
+      type: object
+      required: [events, total, limit, offset]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    DashboardKpis:
+      type: object
+      required: [clinicId, periodDays, periodFrom, periodTo, revenue, inventory, roster]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        periodDays:
+          type: integer
+        periodFrom:
+          type: string
+          format: date
+        periodTo:
+          type: string
+          format: date
+        revenue:
+          type: object
+          required: [totalRevenueCents, paidCents, outstandingCents, overdueCount, invoiceCount]
+          properties:
+            totalRevenueCents:
+              type: integer
+            paidCents:
+              type: integer
+            outstandingCents:
+              type: integer
+            overdueCount:
+              type: integer
+            invoiceCount:
+              type: integer
+        inventory:
+          type: object
+          required: [totalItems, lowStockCount, adjustmentsCount, topConsumedSkus]
+          properties:
+            totalItems:
+              type: integer
+            lowStockCount:
+              type: integer
+            adjustmentsCount:
+              type: integer
+            topConsumedSkus:
+              type: array
+              items:
+                type: object
+                required: [sku, name, unitsConsumed]
+                properties:
+                  sku:
+                    type: string
+                  name:
+                    type: string
+                  unitsConsumed:
+                    type: integer
+        roster:
+          type: object
+          required: [shiftsScheduled, shiftsCompleted, shiftsCancelled, uniqueStaffCount]
+          properties:
+            shiftsScheduled:
+              type: integer
+            shiftsCompleted:
+              type: integer
+            shiftsCancelled:
+              type: integer
+            uniqueStaffCount:
+              type: integer
+
+    RevenueReport:
+      type: object
+      required: [clinicId, months, rows, grandTotalRevenueCents, grandTotalPaidCents, grandTotalOutstandingCents]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        months:
+          type: integer
+        rows:
+          type: array
+          items:
+            type: object
+            required: [period, invoiceCount, paidCount, overdueCount, totalRevenueCents, paidCents, outstandingCents]
+            properties:
+              period:
+                type: string
+                description: Calendar month in clinic-local timezone (YYYY-MM).
+              invoiceCount:
+                type: integer
+              paidCount:
+                type: integer
+              overdueCount:
+                type: integer
+              totalRevenueCents:
+                type: integer
+              paidCents:
+                type: integer
+              outstandingCents:
+                type: integer
+        grandTotalRevenueCents:
+          type: integer
+        grandTotalPaidCents:
+          type: integer
+        grandTotalOutstandingCents:
+          type: integer
+
+    InventoryReport:
+      type: object
+      required: [clinicId, rows, totalItems, totalLowStockItems]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        rows:
+          type: array
+          items:
+            type: object
+            required: [masterItemId, sku, name, currentStock, reorderThreshold, isLowStock, totalConsumedPeriod]
+            properties:
+              masterItemId:
+                type: string
+                format: uuid
+              sku:
+                type: string
+              name:
+                type: string
+              currentStock:
+                type: integer
+              reorderThreshold:
+                type: integer
+              isLowStock:
+                type: boolean
+              totalConsumedPeriod:
+                type: integer
+                description: Total units consumed (scan_deduct adjustments) in the report period.
+        totalItems:
+          type: integer
+        totalLowStockItems:
+          type: integer
+
+    StaffReport:
+      type: object
+      required: [clinicId, periodDays, rows]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        periodDays:
+          type: integer
+        rows:
+          type: array
+          items:
+            type: object
+            required: [userId, email, role, totalShifts, completedShifts, cancelledShifts, scheduledShifts, attendanceRatePct]
+            properties:
+              userId:
+                type: string
+                format: uuid
+              email:
+                type: string
+              role:
+                type: string
+              totalShifts:
+                type: integer
+              completedShifts:
+                type: integer
+              cancelledShifts:
+                type: integer
+              scheduledShifts:
+                type: integer
+              attendanceRatePct:
+                type: number
+                description: completedShifts / eligibleShifts × 100. Excludes cancelled shifts from denominator.
+
+    # ── Forecast ─────────────────────────────────────────────────────────────────
+
+    MaterialForecastRow:
+      type: object
+      description: Projected stock demand for a single SKU over the forecast window.
+      properties:
+        masterItemId:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        currentStock:
+          type: integer
+        reorderPoint:
+          type: integer
+        projectedUsage:
+          type: integer
+          description: Estimated units to be consumed in the forecast window.
+        projectedRemaining:
+          type: integer
+          description: currentStock minus projectedUsage.
+        isShortfall:
+          type: boolean
+          description: true when projectedRemaining falls below reorderPoint.
+
+    LaborForecastSummary:
+      type: object
+      required:
+        - clinicId
+        - forecastWindowDays
+        - totalProjectedHours
+        - totalProjectedBaseCost
+        - totalProjectedOverheadCost
+        - grandTotalProjectedCost
+        - breakdownByRole
+      description: >
+        Labor cost projection. All monetary values are fractional AUD dollars
+        (NOT cents) — division by 100 is applied in the route handler before serialisation.
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        forecastWindowDays:
+          type: integer
+        totalProjectedHours:
+          type: number
+        totalProjectedBaseCost:
+          type: number
+          description: AUD dollars (e.g. 450.00).
+        totalProjectedOverheadCost:
+          type: number
+          description: AUD dollars.
+        grandTotalProjectedCost:
+          type: number
+          description: AUD dollars.
+        breakdownByRole:
+          type: array
+          items:
+            type: object
+            required: [role, totalScheduledHours, projectedBaseCost, projectedOverheadCost, totalProjectedCost]
+            properties:
+              role:
+                type: string
+              totalScheduledHours:
+                type: number
+              projectedBaseCost:
+                type: number
+                description: AUD dollars.
+              projectedOverheadCost:
+                type: number
+                description: AUD dollars.
+              totalProjectedCost:
+                type: number
+                description: AUD dollars.
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
 paths:
+
+  # ── System ──────────────────────────────────────────────────────────────────
+
   /api/v1/health:
     get:
       summary: Health check
       operationId: getHealth
-      tags:
-        - System
+      tags: [System]
+      security: []
       responses:
         "200":
-          description: Service is healthy
+          description: Service is running.
+          content:
+            application/json:
+              example:
+                status: ok
+
+  /api/v1/ready:
+    get:
+      summary: Readiness probe
+      operationId: getReadiness
+      tags: [System]
+      security: []
+      description: >
+        Verifies database and Redis connectivity. Returns 200 only when both
+        upstream dependencies are healthy. Suitable for Kubernetes readinessProbe.
+      responses:
+        "200":
+          description: All dependencies reachable.
+          content:
+            application/json:
+              example:
+                status: ready
+        "503":
+          description: One or more dependencies unreachable.
+          content:
+            application/json:
+              example:
+                status: not_ready
+                details:
+                  db: ok
+                  redis: unreachable
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+
   /api/v1/auth/login:
     post:
       summary: Authenticate with email and password
       operationId: login
-      tags:
-        - Auth
+      tags: [Auth]
+      security: []
+      description: >
+        Returns one of three outcomes depending on the user's MFA state:
+
+        - `requiresMfa: false` — fully authenticated; `accessToken` and `refreshToken`
+          cookie issued.
+        - `requiresMfa: true` — MFA challenge; use `mfaToken` with POST /auth/mfa/verify.
+        - `requiresMfaEnrollment: true` — privileged user must enroll MFA first; use
+          `enrollmentToken` with POST /auth/mfa/setup and /auth/mfa/confirm.
+
+        **Rate limited:** 10 requests per 15 minutes per IP.
       requestBody:
         required: true
         content:
@@ -326,150 +1996,533 @@ paths:
                 password:
                   type: string
                   minLength: 8
+            example:
+              email: admin@verveclinic.com.au
+              password: "securepassword"
       responses:
         "200":
-          description: Authenticated or MFA challenge issued
-        "401":
-          description: Invalid credentials
-  /api/v1/auth/mfa/verify:
-    post:
-      summary: Complete MFA challenge
-      operationId: verifyMfa
-      tags:
-        - Auth
-      responses:
-        "200":
-          description: Tokens issued
-  /api/v1/auth/refresh:
-    post:
-      summary: Refresh access token
-      operationId: refreshToken
-      tags:
-        - Auth
-      responses:
-        "200":
-          description: New tokens issued
-  /api/v1/auth/logout:
-    post:
-      summary: Revoke refresh token
-      operationId: logout
-      tags:
-        - Auth
-      responses:
-        "204":
-          description: Logged out
-  /api/v1/auth/me:
-    get:
-      summary: Current authenticated user
-      operationId: getCurrentUser
-      tags:
-        - Auth
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Current user profile
-        "401":
-          description: Unauthorized
-  /api/v1/clinics/{clinicId}/summary:
-    get:
-      summary: Tenant-scoped clinic summary (isolation test endpoint)
-      operationId: getClinicSummary
-      tags:
-        - Clinics
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Clinic summary
-        "403":
-          description: Tenant access denied
-  /api/v1/clinics/{clinicId}/inventory:
-    get:
-      summary: List clinic inventory
-      operationId: listClinicInventory
-      tags:
-        - Inventory
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: Inventory items for the clinic
+          description: Authenticated, MFA required, or MFA enrollment required.
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - description: Direct authentication (no MFA).
+                        type: object
+                        required: [requiresMfa, accessToken, expiresIn, user]
+                        properties:
+                          requiresMfa:
+                            type: boolean
+                            enum: [false]
+                          accessToken:
+                            type: string
+                          expiresIn:
+                            type: integer
+                          user:
+                            $ref: "#/components/schemas/AuthenticatedUser"
+                      - description: MFA challenge.
+                        type: object
+                        required: [requiresMfa, mfaToken, user]
+                        properties:
+                          requiresMfa:
+                            type: boolean
+                            enum: [true]
+                          mfaToken:
+                            type: string
+                          user:
+                            $ref: "#/components/schemas/AuthenticatedUser"
+                      - description: MFA enrollment required (privileged user, first login).
+                        type: object
+                        required: [requiresMfaEnrollment, enrollmentToken, user]
+                        properties:
+                          requiresMfaEnrollment:
+                            type: boolean
+                            enum: [true]
+                          enrollmentToken:
+                            type: string
+                          user:
+                            $ref: "#/components/schemas/AuthenticatedUser"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: Invalid email or password
+        "429":
+          description: Auth rate limit exceeded.
+          content:
+            application/json:
+              example:
+                error: TOO_MANY_REQUESTS
+                message: Too many attempts, please try again later.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: Complete MFA challenge and receive tokens
+      operationId: verifyMfa
+      tags: [Auth]
+      security: []
+      description: >
+        Completes the MFA challenge initiated by POST /auth/login. On success,
+        issues access token and sets the `refreshToken` HttpOnly cookie.
+
+        **Rate limited:** 10 requests per 15 minutes per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfaToken, code]
+              properties:
+                mfaToken:
+                  type: string
+                  description: Short-lived token returned by POST /auth/login when requiresMfa = true.
+                code:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                  description: 6-digit TOTP code from the authenticator app.
+      responses:
+        "200":
+          description: MFA verified. Access token issued; refreshToken cookie set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid or expired MFA token or incorrect TOTP code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/mfa/setup:
+    post:
+      summary: Initiate MFA enrollment (privileged users only)
+      operationId: setupMfa
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      description: >
+        Generates a TOTP secret for the authenticated user. The Bearer token
+        must be an `mfa_enrollment` token (received from POST /auth/login when
+        `requiresMfaEnrollment = true`).
+
+        Returns a TOTP URI and Base32 secret for the authenticator app.
+
+        **Rate limited:** 10 requests per 15 minutes per IP.
+      responses:
+        "200":
+          description: TOTP secret and QR URI returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    description: TOTP setup details (otpUri, secret).
+                    additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/mfa/confirm:
+    post:
+      summary: Confirm MFA enrollment with a TOTP code
+      operationId: confirmMfa
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      description: >
+        Activates MFA for the user by verifying a 6-digit TOTP code against the
+        newly generated secret. The Bearer token must be an `mfa_enrollment` token.
+
+        **Rate limited:** 10 requests per 15 minutes per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                  description: 6-digit TOTP code from the authenticator app.
+      responses:
+        "200":
+          description: MFA enrollment confirmed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: MFA enrollment complete
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/refresh:
+    post:
+      summary: Rotate access token using the refresh cookie
+      operationId: refreshToken
+      tags: [Auth]
+      security: []
+      description: >
+        Reads the `refreshToken` HttpOnly cookie set by POST /auth/login or
+        /auth/mfa/verify. Issues a new access token and rotates the refresh cookie.
+
+        No Authorization header is required. The refresh token is transmitted
+        automatically by the browser as a same-site cookie.
+
+        **Rate limited:** 10 requests per 15 minutes per IP.
+      responses:
+        "200":
+          description: New access token issued. Refresh cookie rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Refresh token cookie is missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: MISSING_REFRESH_TOKEN
+                  message: Refresh token required
+        "401":
+          description: Refresh token is expired, revoked, or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke refresh token and clear cookie
+      operationId: logout
+      tags: [Auth]
+      security: []
+      description: >
+        Revokes the `refreshToken` cookie and clears it. No Authorization header
+        is required. A missing or already-revoked cookie is silently ignored.
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+
+  /api/v1/auth/me:
+    get:
+      summary: Return the current authenticated user
+      operationId: getCurrentUser
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AuthenticatedUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/change-password:
+    post:
+      summary: Change the authenticated user's password
+      operationId: changePassword
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      description: >
+        Changes the password for the currently authenticated user. On success,
+        the user should log in again with the new password as existing sessions
+        are not automatically invalidated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                  minLength: 1
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Password changed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: Password changed successfully. Please log in again.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ── Admin ────────────────────────────────────────────────────────────────────
+
+  /api/v1/admin/ping:
+    get:
+      summary: Admin access probe
+      operationId: adminPing
+      tags: [Admin]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns 200 only for `owner_admin` role. Used to verify admin access
+        is working correctly. Not a health check — it verifies RBAC enforcement.
+      responses:
+        "200":
+          description: Admin access confirmed.
+          content:
+            application/json:
+              example:
+                data:
+                  message: Admin access granted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ── Clinics ──────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/summary:
+    get:
+      summary: Tenant-scoped clinic summary (isolation verification)
+      operationId: getClinicSummary
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns a lightweight summary confirming that the authenticated user has
+        tenant-scoped access to the clinic. Primarily used for integration testing
+        of RLS and tenant isolation.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Clinic summary with tenant access confirmation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      clinicId:
+                        type: string
+                        format: uuid
+                      homeClinicName:
+                        type: string
+                      accessedBy:
+                        type: string
+                      message:
+                        type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}:
+    get:
+      summary: Get clinic details
+      operationId: getClinic
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns the full clinic record. `owner_admin` may fetch any clinic;
+        all other roles are restricted to their home clinic.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Clinic record.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Clinic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      summary: Update clinic settings
+      operationId: updateClinic
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: >
+        Partial update — only supplied fields are written. Restricted to
+        `owner_admin`. `subscriptionTier` is rejected at the schema boundary;
+        tier changes require a billing workflow.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClinicRequest"
+      responses:
+        "200":
+          description: Updated clinic record.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Clinic"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Inventory ────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/inventory:
+    get:
+      summary: List clinic inventory items
+      operationId: listClinicInventory
+      tags: [Inventory]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated list of inventory items.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
                 properties:
                   data:
                     type: array
                     items:
                       $ref: "#/components/schemas/InventoryItem"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
         "401":
-          description: Unauthorized
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Tenant access denied or insufficient role
-  /api/v1/clinics/{clinicId}/inventory/{itemId}:
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/inventory/adjustments:
     get:
-      summary: Get inventory item detail
-      operationId: getInventoryItem
-      tags:
-        - Inventory
+      summary: List inventory adjustment history
+      operationId: listInventoryAdjustments
+      tags: [Inventory]
       security:
         - bearerAuth: []
+      description: Returns the audit trail of all stock adjustments (scans, manual adjustments, receives) for the clinic.
       parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: path
-          name: itemId
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
       responses:
         "200":
-          description: Inventory item
+          description: Paginated list of inventory adjustments.
           content:
             application/json:
               schema:
                 type: object
+                required: [data, pagination]
                 properties:
                   data:
-                    $ref: "#/components/schemas/InventoryItem"
-        "404":
-          description: Item not found
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InventoryAdjustment"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/clinics/{clinicId}/inventory/adjust:
     post:
-      summary: Manually adjust clinic inventory
+      summary: Manually adjust clinic inventory stock level
       operationId: adjustClinicInventory
-      tags:
-        - Inventory
+      tags: [Inventory]
       security:
         - bearerAuth: []
       parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: "#/components/parameters/clinicId"
       requestBody:
         required: true
         content:
@@ -478,103 +2531,69 @@ paths:
               $ref: "#/components/schemas/InventoryAdjustRequest"
       responses:
         "200":
-          description: Updated item and audit record
+          description: Updated inventory item and adjustment record.
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
                 properties:
                   data:
                     $ref: "#/components/schemas/InventoryAdjustResponse"
         "400":
-          description: Validation error or insufficient stock
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Insufficient permissions (manager/admin only)
-  /api/v1/clinics/{clinicId}/inventory/adjustments:
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/inventory/{itemId}:
     get:
-      summary: List inventory adjustment audit history
-      operationId: listInventoryAdjustments
-      tags:
-        - Inventory
+      summary: Get a single inventory item
+      operationId: getInventoryItem
+      tags: [Inventory]
       security:
         - bearerAuth: []
       parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: limit
-          required: false
-          schema:
-            type: integer
-            maximum: 100
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/itemId"
       responses:
         "200":
-          description: Adjustment audit entries
+          description: Inventory item detail.
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/InventoryAdjustment"
+                    $ref: "#/components/schemas/InventoryItem"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Insufficient permissions (manager/admin only)
-  /api/v1/clinics/{clinicId}/products:
-    post:
-      summary: Add a new product to the master catalog and clinic inventory
-      operationId: createClinicProduct
-      tags:
-        - Products
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateProductRequest"
-      responses:
-        "201":
-          description: Product created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: "#/components/schemas/CreateProductResponse"
-        "403":
-          description: Insufficient permissions (manager/admin only)
-        "409":
-          description: Duplicate SKU or barcode
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Scanning ─────────────────────────────────────────────────────────────────
+
   /api/v1/clinics/{clinicId}/scans:
     post:
       summary: Process a barcode scan to deduct or receive stock
       operationId: handleScan
-      tags:
-        - Scanning
+      tags: [Scanning]
       security:
         - bearerAuth: []
+      description: >
+        Parses a barcode, resolves the master catalog item, and deducts (default)
+        or receives stock. Automatically appends a draft PO line if the post-scan
+        quantity falls below the reorder point.
       parameters:
-        - in: path
-          name: clinicId
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: "#/components/parameters/clinicId"
       requestBody:
         required: true
         content:
@@ -583,19 +2602,2058 @@ paths:
               $ref: "#/components/schemas/ScanRequest"
       responses:
         "200":
-          description: Stock deducted; audit record created
+          description: Scan processed successfully.
           content:
             application/json:
               schema:
                 type: object
+                required: [data]
                 properties:
                   data:
                     $ref: "#/components/schemas/ScanResponse"
         "400":
-          description: Validation error or insufficient stock
+          $ref: "#/components/responses/ValidationError"
         "401":
-          description: Unauthorized
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Tenant access denied
+          $ref: "#/components/responses/Forbidden"
         "404":
-          description: Barcode or clinic inventory item not found
+          description: Barcode not found in master catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Products ─────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/products:
+    post:
+      summary: Add a new product to the master catalog and clinic inventory
+      operationId: createClinicProduct
+      tags: [Products]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates a master catalog item, registers the barcode mapping, and creates
+        the corresponding clinic inventory item with initial quantity. Restricted
+        to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Product created in master catalog and clinic inventory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CreateProductResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ── Users ────────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/users:
+    get:
+      summary: List clinic users
+      operationId: listClinicUsers
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns all users belonging to the clinic. Restricted to `owner_admin`
+        and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: List of clinic users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Create a new clinic user
+      operationId: createClinicUser
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates a new user account assigned to the clinic. Restricted to
+        `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/clinics/{clinicId}/users/{userId}/reset-password:
+    post:
+      summary: Reset a user's password
+      operationId: resetUserPassword
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      description: >
+        Resets the password for a specific user. Restricted to `owner_admin`
+        and `group_practice_manager`. The affected user's existing sessions are
+        not automatically invalidated.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/userId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+      responses:
+        "200":
+          description: Password reset successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        example: Password reset successfully.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Purchase Orders ──────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/purchase-orders:
+    get:
+      summary: List draft purchase orders
+      operationId: listPurchaseOrders
+      tags: [Purchase Orders]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns draft purchase orders for the clinic. Draft POs are automatically
+        created when a scan causes stock to fall below the reorder point.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: List of draft purchase orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PurchaseOrder"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/purchase-orders/export.csv:
+    get:
+      summary: Export purchase orders as CSV
+      operationId: exportPurchaseOrdersCsv
+      tags: [Purchase Orders]
+      security:
+        - bearerAuth: []
+      description: Returns draft purchase order lines as a downloadable CSV file.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: CSV file download.
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/purchase-orders/{poId}/submit:
+    patch:
+      summary: Submit a draft purchase order
+      operationId: submitPurchaseOrder
+      tags: [Purchase Orders]
+      security:
+        - bearerAuth: []
+      description: >
+        Advances the purchase order status from `draft` to `submitted`.
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/poId"
+      responses:
+        "200":
+          description: Purchase order submitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PurchaseOrder"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Purchase order is not in draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Roster ───────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/roster:
+    get:
+      summary: List roster entries
+      operationId: listRosterEntries
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns paginated roster entries for the clinic. Accessible to
+        `owner_admin`, `group_practice_manager`, and `clinical_staff`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter shifts starting at or after this datetime (ISO 8601 with offset).
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter shifts starting before this datetime. Must be after `from`.
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [scheduled, confirmed, completed, cancelled]
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated list of roster entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RosterEntry"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Create a roster entry
+      operationId: createRosterEntry
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Schedules a shift for a staff member. Restricted to `owner_admin` and
+        `group_practice_manager`. Shift time ordering (end > start) is validated
+        at the service layer (returns `INVALID_SHIFT_TIMES` if violated).
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRosterEntryRequest"
+      responses:
+        "201":
+          description: Roster entry created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RosterEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/roster/me:
+    get:
+      summary: List the authenticated user's own shifts
+      operationId: getMyShifts
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns shifts for the currently authenticated user. Accessible to all
+        roles. Supports the same `from` / `to` filters as the full roster list.
+        Does NOT return a pagination envelope — returns the array directly.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: List of the authenticated user's roster entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RosterEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/roster/{entryId}:
+    get:
+      summary: Get a single roster entry
+      operationId: getRosterEntry
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/entryId"
+      responses:
+        "200":
+          description: Roster entry detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RosterEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      summary: Update a roster entry
+      operationId: updateRosterEntry
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Partial update — only supplied fields are written. Restricted to
+        `owner_admin` and `group_practice_manager`. Unknown keys produce 400
+        VALIDATION_ERROR (strict mode). An empty body produces 400 NO_VALID_FIELDS.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/entryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRosterEntryRequest"
+      responses:
+        "200":
+          description: Updated roster entry.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RosterEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      summary: Cancel a roster entry
+      operationId: cancelRosterEntry
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Sets the roster entry status to `cancelled`. Does not hard-delete the
+        record. Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/entryId"
+      responses:
+        "200":
+          description: Cancelled roster entry.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RosterEntry"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Forecast ─────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/forecast/materials:
+    get:
+      summary: Get SKU-level materials demand forecast
+      operationId: getMaterialsForecast
+      tags: [Forecast]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns the full SKU demand projection table for the clinic. Forecast
+        and lookback windows are anchored to clinic-local calendar-day boundaries
+        (timezone fetched from the clinic record). Accessible to all roles.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: forecastDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 14
+          description: Forward-looking forecast window in calendar days.
+        - name: lookbackDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Historical sampling window in calendar days.
+      responses:
+        "200":
+          description: Material forecast rows (all SKUs).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MaterialForecastRow"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Clinic not found (cannot resolve timezone).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: CLINIC_NOT_FOUND
+                  message: The requested clinic resource does not exist.
+
+  /api/v1/clinics/{clinicId}/forecast/alerts:
+    get:
+      summary: Get actionable materials shortage alerts
+      operationId: getMaterialsAlerts
+      tags: [Forecast]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns only SKUs where projected stock remaining falls below the reorder
+        point during the forecast window. Sorted: critical shortfalls first, then
+        by shortfall units descending. Accepts the same query parameters as
+        /forecast/materials.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: forecastDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 14
+        - name: lookbackDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Shortage alert rows (filtered to isShortfall = true, sorted by severity).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MaterialForecastRow"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/forecast/labor:
+    get:
+      summary: Get labor cost projection
+      operationId: getLaborForecast
+      tags: [Forecast]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns the labor cost projection summary for the clinic including per-role
+        breakdowns, base costs, overhead costs, and grand totals.
+
+        **Cost values are fractional AUD dollars** (NOT cents) — division by 100
+        is applied in the route handler. E.g. 45000 cents → 450.00 dollars.
+
+        Restricted to `owner_admin` and `group_practice_manager` (financial data).
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: forecastDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 14
+          description: Forward-looking forecast window in calendar days.
+      responses:
+        "200":
+          description: Labor cost forecast summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LaborForecastSummary"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Timesheets ───────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/timesheets/clock-in:
+    post:
+      summary: Clock in to start a shift
+      operationId: clockIn
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates an `hourly_auto` timesheet entry in `draft` status. Intended for
+        `clinical_staff`. The service rejects clock-ins from `owner_admin` and
+        `group_practice_manager` with FORBIDDEN — managers use POST /timesheets
+        (manual entry) instead.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClockInRequest"
+      responses:
+        "201":
+          description: Timesheet entry created (draft status).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: An open timesheet entry already exists for this staff member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/timesheets/forecast:
+    get:
+      summary: Get commission attendance logs for the forecasting engine
+      operationId: getTimesheetForecastLogs
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns verified `commission_log` timesheet entries for a specific date,
+        used by the materials forecasting engine to determine actual provider
+        attendance. Only `present`, `absent`, and `sick` statuses are returned;
+        `pending_verification` and `cancelled` are excluded.
+
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Shift date (YYYY-MM-DD).
+      responses:
+        "200":
+          description: Commission log entries for the date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/timesheets:
+    get:
+      summary: List clinic timesheet entries
+      operationId: listTimesheets
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns paginated timesheet entries for the clinic. Supports rich filtering
+        by date range, payroll type, attendance status, timesheet status, and a
+        `pendingApprovalOnly` shortcut for the approval queue.
+
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: shiftDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter to a single date. Cannot be combined with `from`/`to`.
+        - $ref: "#/components/parameters/fromDateParam"
+        - $ref: "#/components/parameters/toDateParam"
+        - name: payrollType
+          in: query
+          schema:
+            type: string
+            enum: [hourly_auto, hourly_manual, commission_log]
+        - name: attendanceStatus
+          in: query
+          schema:
+            type: string
+            enum: [pending_verification, present, absent, sick, cancelled]
+        - name: timesheetStatus
+          in: query
+          schema:
+            type: string
+            enum: [draft, submitted, approved, rejected, requires_amendment, processed]
+        - name: pendingApprovalOnly
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+          description: When "true", returns only entries where timesheetStatus = "submitted".
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated list of timesheet entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TimesheetEntry"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Create a manual timesheet entry
+      operationId: createManualTimesheetEntry
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates an `hourly_manual` entry for a staff member — used for missed
+        clock-ins, retrospective back-fills, or corrections. The entry is
+        immediately set to `submitted` status for manager approval.
+
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateManualTimesheetRequest"
+      responses:
+        "201":
+          description: Manual timesheet entry created (submitted status).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/clock-out:
+    post:
+      summary: Clock out of an open shift
+      operationId: clockOut
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Closes an open timesheet entry, calculates hour buckets (ordinary,
+        overtime 1.5×, overtime 2×), and advances status to `submitted`.
+        The service enforces that the caller owns the entry.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/timesheetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClockOutRequest"
+      responses:
+        "200":
+          description: Timesheet entry updated (submitted status).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/approve:
+    post:
+      summary: Approve a submitted timesheet entry
+      operationId: approveTimesheet
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Approves a `submitted` timesheet. Hour buckets are recalculated from
+        stored clock times at approval time (authoritative values). Restricted
+        to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/timesheetId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approvalNotes:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        "200":
+          description: Timesheet approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Timesheet is not in submitted status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/reject:
+    post:
+      summary: Reject a submitted timesheet entry
+      operationId: rejectTimesheet
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Rejects a `submitted` timesheet. `approvalNotes` is mandatory so staff
+        understand the reason for rejection. Restricted to `owner_admin` and
+        `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/timesheetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approvalNotes]
+              properties:
+                approvalNotes:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: Mandatory rejection reason for the staff member.
+      responses:
+        "200":
+          description: Timesheet rejected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/verify-attendance:
+    post:
+      summary: Verify provider attendance on a commission log entry
+      operationId: verifyCommissionAttendance
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Sets the `attendanceStatus` on a `commission_log` timesheet entry. This
+        directly controls the materials forecasting engine:
+
+        - `present` → full expected material usage counted.
+        - `absent` / `sick` → zero material usage.
+        - `cancelled` → shift removed from forecast entirely.
+
+        `pending_verification` cannot be set by managers — it is the system default.
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/timesheetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attendanceStatus]
+              properties:
+                attendanceStatus:
+                  type: string
+                  enum: [present, absent, sick, cancelled]
+                  description: Decisive status only. pending_verification is excluded.
+                commissionNote:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        "200":
+          description: Attendance verified.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Leave ────────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/leave/me:
+    get:
+      summary: List the authenticated user's own leave requests
+      operationId: listMyLeave
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns leave requests for the currently authenticated user. Accessible
+        to all roles. Supports the same filters as GET /leave. Does NOT return
+        a pagination envelope — returns the array directly.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/fromDateParam"
+        - $ref: "#/components/parameters/toDateParam"
+        - name: leaveType
+          in: query
+          schema:
+            type: string
+            enum: [annual, sick, personal, compassionate, unpaid, other]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected, withdrawn]
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: List of the authenticated user's leave requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/leave:
+    get:
+      summary: List all clinic leave requests (manager view)
+      operationId: listClinicLeave
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns paginated leave requests for all staff in the clinic. Restricted
+        to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/fromDateParam"
+        - $ref: "#/components/parameters/toDateParam"
+        - name: leaveType
+          in: query
+          schema:
+            type: string
+            enum: [annual, sick, personal, compassionate, unpaid, other]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected, withdrawn]
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: Paginated list of clinic leave requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeaveRequest"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Submit a leave request
+      operationId: createLeaveRequest
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Submits a new leave request for the authenticated user. Accessible to
+        all roles. Managers may also submit on behalf of staff (e.g. retrospective
+        sick leave). The service enforces clinic-match for `clinical_staff`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeaveRequestBody"
+      responses:
+        "201":
+          description: Leave request created (pending status).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/approve:
+    post:
+      summary: Approve a leave request
+      operationId: approveLeaveRequest
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Approves a pending leave request. Automatically cancels any overlapping
+        scheduled/confirmed roster shifts for the staff member (roster guardrail).
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reviewNotes:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        "200":
+          description: Leave request approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Leave request is not in pending status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/reject:
+    post:
+      summary: Reject a leave request
+      operationId: rejectLeaveRequest
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Rejects a pending leave request. `reviewNotes` is mandatory so staff
+        understand the reason. Restricted to `owner_admin` and
+        `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewNotes]
+              properties:
+                reviewNotes:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                  description: Mandatory rejection reason.
+      responses:
+        "200":
+          description: Leave request rejected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/withdraw:
+    post:
+      summary: Withdraw a leave request
+      operationId: withdrawLeaveRequest
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Staff member withdraws their own pending leave request. No request body
+        required. The service enforces ownership — the caller must be the request
+        owner or `owner_admin`. Accessible to all roles.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      responses:
+        "200":
+          description: Leave request withdrawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeaveRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Leave request is not in a withdrawable state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Billing ───────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/billing/invoices:
+    get:
+      summary: List invoices
+      operationId: listInvoices
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns invoices for the clinic. Read access for all authenticated roles.
+        Supports filtering by status, date range, and patient ID.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, issued, partially_paid, paid, overdue, void, cancelled]
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter invoices created on or after this date (YYYY-MM-DD).
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Filter invoices created on or before this date (YYYY-MM-DD).
+        - name: patientId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - $ref: "#/components/parameters/offsetParam"
+      responses:
+        "200":
+          description: List of invoices.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      summary: Create a draft invoice
+      operationId: createInvoice
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates a new invoice in `draft` status. Line items can be added while
+        in draft. Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInvoiceRequest"
+      responses:
+        "201":
+          description: Draft invoice created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}:
+    get:
+      summary: Get invoice detail
+      operationId: getInvoice
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      responses:
+        "200":
+          description: Invoice detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}/issue:
+    patch:
+      summary: Issue a draft invoice
+      operationId: issueInvoice
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Transitions the invoice from `draft` to `issued`. Assigns a sequential
+        invoice number (e.g. INV-2026-000001). No further line item changes are
+        permitted after issuing. Restricted to `owner_admin` and
+        `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      responses:
+        "200":
+          description: Invoice issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invoice is not in draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}/void:
+    patch:
+      summary: Void an invoice
+      operationId: voidInvoice
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Voids the invoice with a mandatory reason. Terminal state — cannot be
+        undone. Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+      responses:
+        "200":
+          description: Invoice voided.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invoice is already voided or cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}/line-items:
+    get:
+      summary: List invoice line items
+      operationId: listInvoiceLineItems
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      responses:
+        "200":
+          description: List of line items for the invoice.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InvoiceLineItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      summary: Add a line item to an invoice
+      operationId: addInvoiceLineItem
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Adds a line item to a `draft` invoice and recalculates the invoice totals.
+        Returns both the created line item and the updated invoice. Restricted to
+        `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddLineItemRequest"
+      responses:
+        "201":
+          description: Line item added. Invoice totals recalculated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [lineItem, invoice]
+                    properties:
+                      lineItem:
+                        $ref: "#/components/schemas/InvoiceLineItem"
+                      invoice:
+                        $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invoice is not in draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}/line-items/{lineItemId}:
+    delete:
+      summary: Remove a line item from an invoice
+      operationId: removeInvoiceLineItem
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Removes a line item from a `draft` invoice and recalculates invoice totals.
+        Returns the updated invoice. Restricted to `owner_admin` and
+        `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+        - $ref: "#/components/parameters/lineItemId"
+      responses:
+        "200":
+          description: Line item removed. Invoice totals recalculated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [invoice]
+                    properties:
+                      invoice:
+                        $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invoice is not in draft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/billing/invoices/{invoiceId}/payments:
+    get:
+      summary: List payments for an invoice
+      operationId: listInvoicePayments
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      responses:
+        "200":
+          description: List of payment records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PaymentRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    post:
+      summary: Record a payment against an invoice
+      operationId: recordInvoicePayment
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+      description: >
+        Records a payment (or refund) against an issued invoice. Updates invoice
+        totals and status. Returns both the created payment record and the updated
+        invoice. Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/invoiceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordPaymentRequest"
+      responses:
+        "201":
+          description: Payment recorded. Invoice status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [payment, invoice]
+                    properties:
+                      payment:
+                        $ref: "#/components/schemas/PaymentRecord"
+                      invoice:
+                        $ref: "#/components/schemas/Invoice"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invoice is void or cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ── Analytics ─────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/analytics/dashboard:
+    get:
+      summary: 30-day KPI dashboard summary
+      operationId: getAnalyticsDashboard
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns a combined KPI summary covering revenue, inventory, and roster
+        metrics for the specified period. Restricted to `owner_admin` and
+        `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: periodDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Lookback period in days.
+      responses:
+        "200":
+          description: Dashboard KPI summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DashboardKpis"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/analytics/revenue:
+    get:
+      summary: Monthly revenue breakdown
+      operationId: getRevenueReport
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns a monthly revenue breakdown with per-month rows. Restricted to
+        `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: months
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 24
+            default: 12
+          description: Number of calendar months to include (most recent N months).
+      responses:
+        "200":
+          description: Revenue report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RevenueReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/analytics/inventory:
+    get:
+      summary: Inventory consumption report
+      operationId: getInventoryReport
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns per-SKU inventory consumption data for the specified period.
+        Restricted to `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: periodDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Lookback period in days.
+      responses:
+        "200":
+          description: Inventory consumption report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InventoryReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/analytics/staff:
+    get:
+      summary: Staff attendance summary
+      operationId: getStaffReport
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns per-staff attendance and shift completion metrics. Restricted to
+        `owner_admin` and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: periodDays
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Lookback period in days.
+      responses:
+        "200":
+          description: Staff attendance report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StaffReport"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/analytics/audit-events:
+    get:
+      summary: Paginated audit event trail
+      operationId: listAuditEvents
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns a paginated audit trail of all significant events in the clinic.
+        Supports filtering by entity type, actor, entity ID, and datetime range.
+        Restricted to `owner_admin` and `group_practice_manager`.
+
+        **Defaults:** `limit = 50`, `offset = 0`.
+        **Maximum:** `limit = 200`, `offset = 100000`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100000
+            default: 0
+        - name: entityType
+          in: query
+          schema:
+            type: string
+            enum:
+              - auth
+              - invoice
+              - payment
+              - line_item
+              - inventory_adjustment
+              - roster_entry
+              - timesheet_entry
+              - leave_request
+              - purchase_order
+              - user
+              - clinic
+              - product
+              - scan
+        - name: actorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter events performed by a specific user.
+        - name: entityId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter events related to a specific entity.
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter events at or after this datetime (ISO 8601 with offset).
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Filter events at or before this datetime.
+      responses:
+        "200":
+          description: Paginated audit event trail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AuditEventsPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/analytics/audit-events/{eventId}:
+    get:
+      summary: Get a single audit event
+      operationId: getAuditEvent
+      tags: [Analytics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns full detail for a single audit event. Restricted to `owner_admin`
+        and `group_practice_manager`.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/eventId"
+      responses:
+        "200":
+          description: Audit event detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AuditEvent"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+
+tags:
+  - name: System
+    description: Health and readiness probes.
+  - name: Auth
+    description: Authentication, MFA enrollment, token management.
+  - name: Admin
+    description: Administrative access probes (owner_admin only).
+  - name: Clinics
+    description: Clinic record management.
+  - name: Inventory
+    description: Clinic inventory items, stock levels, and adjustment history.
+  - name: Scanning
+    description: Barcode scan processing — deduct or receive stock.
+  - name: Products
+    description: Master catalog product creation and barcode registration.
+  - name: Users
+    description: Clinic user management.
+  - name: Purchase Orders
+    description: Draft purchase orders generated from low-stock scan events.
+  - name: Roster
+    description: Shift scheduling and roster management.
+  - name: Forecast
+    description: Materials demand forecasting and labor cost projection.
+  - name: Timesheets
+    description: Clock-in/out, timesheet approval workflow, and commission attendance.
+  - name: Leave
+    description: Leave request submission, approval, and withdrawal.
+  - name: Billing
+    description: Invoicing, line items, and payment records.
+  - name: Analytics
+    description: KPI dashboards, revenue reports, and audit event trail.

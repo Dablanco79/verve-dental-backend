@@ -16,7 +16,8 @@
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/runMigrate.ts",
     "test:db:setup": "node ./node_modules/tsx/dist/cli.mjs src/db/setupTestDb.ts",
-    "test:coverage": "npm run test -- --coverage"
+    "test:coverage": "npm run test -- --coverage",
+    "validate:openapi": "node ../node_modules/@redocly/cli/bin/cli.js lint src/api/openapi.yaml"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
+    "@redocly/cli": "^1.34.15",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.18",

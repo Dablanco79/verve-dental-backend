@@ -1,0 +1,32 @@
+# Redocly CLI configuration for OpenAPI contract validation.
+# Run: npm run validate:openapi
+# Docs: https://redocly.com/docs/cli/configuration/
+
+apis:
+  verve-backend@v0.6.0:
+    root: src/api/openapi.yaml
+
+rules:
+  # Enforce operationId on every path — required for SDK generation and
+  # changelog diffing.
+  operation-operationId: error
+
+  # Warn when a tag is used in a path but not declared in the top-level tags
+  # list — prevents undocumented tag drift.
+  operation-tag-defined: warn
+
+  # Require every endpoint to document at least one success (2xx) response.
+  operation-2xx-response: error
+
+  # Require $ref targets to resolve — catches broken schema references early.
+  no-unresolved-refs: error
+
+  # Warn on unused component schemas — helps keep the spec clean.
+  no-unused-components: warn
+
+  # Enforce consistent path parameter style.
+  path-params-defined: error
+
+  # Warn when security is missing from an operation (reminds author to add
+  # bearerAuth or mark intentionally public).
+  security-defined: warn
