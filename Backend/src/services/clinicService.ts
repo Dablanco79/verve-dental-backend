@@ -1,5 +1,5 @@
 import type { AuthenticatedUser } from "../types/auth.js";
-import type { Clinic, UpdateClinicInput } from "../types/clinic.js";
+import type { Clinic, CreateClinicInput, UpdateClinicInput } from "../types/clinic.js";
 import { AppError } from "../types/errors.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
@@ -70,6 +70,40 @@ export function createClinicService(
 
       const clinic = await clinicRepository.findById(caller.homeClinicId);
       return clinic ? [clinic] : [];
+    },
+
+    /**
+     * Creates a new clinic.
+     * Restricted to `owner_admin` — no other role may provision a new clinic.
+     * Throws 403 for any non-admin caller.
+     */
+    async createClinic(
+      caller: AuthenticatedUser,
+      input: CreateClinicInput,
+    ): Promise<Clinic> {
+      if (caller.role !== "owner_admin") {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "Only owner_admin may create clinics",
+        );
+      }
+
+      const clinic = await clinicRepository.create(input);
+
+      auditWriter?.recordEvent({
+        clinicId: clinic.id,
+        entityType: "clinic",
+        entityId: clinic.id,
+        action: "created",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: { name: clinic.name, timezone: clinic.timezone },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return clinic;
     },
 
     /**

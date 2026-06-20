@@ -5,6 +5,7 @@ import { Router } from "express";
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import type { EnvConfig } from "../config/index.js";
 import { createAuthHandlers } from "../controllers/authController.js";
+import { createClinicHandlers } from "../controllers/clinicController.js";
 import {
   createReadinessHandler,
   getHealth,
@@ -21,6 +22,7 @@ import {
   validateParams,
   clinicIdParamsSchema,
 } from "../middleware/validationMiddleware.js";
+import { createClinicService } from "../services/clinicService.js";
 import { createAnalyticsRouter } from "./analyticsRoutes.js";
 import { createBillingRouter } from "./billingRoutes.js";
 import { createClinicRouter } from "./clinicRoutes.js";
@@ -40,6 +42,11 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const router = Router();
   const authHandlers = createAuthHandlers(deps.authService, config);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+
+  // Clinic service instance for the global (non-tenant-scoped) clinic routes.
+  // The per-clinic routes (/clinics/:clinicId/*) create their own instance via createClinicRouter.
+  const clinicService = createClinicService(deps.clinicRepository, deps.analyticsRepository);
+  const clinicHandlers = createClinicHandlers(clinicService);
   const mfaSetupAuth = createMfaSetupMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage
   // context so installRlsPoolHook can inject app.current_clinic_id on every checkout.
@@ -95,6 +102,26 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     (_req, res) => {
       res.status(200).json({ data: { message: "Admin access granted" } });
     },
+  );
+
+  // ── Global clinic routes (no :clinicId — owner_admin scope) ─────────────────
+  //
+  // GET  /clinics  — list all active clinics (owner_admin) or home clinic only
+  //                  (group_practice_manager / clinical_staff).
+  // POST /clinics  — create a new clinic (owner_admin only).
+  //
+  // Registered before the /clinics/:clinicId block so exact-path matches
+  // are never shadowed by the parameterised sub-router prefix.
+  router.get(
+    "/clinics",
+    authenticate,
+    asyncHandler((req, res) => clinicHandlers.listClinics(req, res)),
+  );
+  router.post(
+    "/clinics",
+    authenticate,
+    requireRoles("owner_admin"),
+    asyncHandler((req, res) => clinicHandlers.createClinic(req, res)),
   );
 
   // rlsContext runs on all /clinics/:clinicId/* routes — sets the per-request

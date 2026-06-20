@@ -505,6 +505,39 @@ components:
           type: string
           format: date-time
 
+    CreateClinicRequest:
+      type: object
+      required: [name]
+      description: >
+        Creates a new clinic. `name` is required; all other fields are optional.
+        Unknown keys are rejected (strict mode).
+        `id` is intentionally excluded — IDs are always server-generated in production.
+        `subscriptionTier` defaults to `standard` when omitted.
+        `timezone` defaults to `Australia/Melbourne` when omitted.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Melbourne CBD
+        timezone:
+          type: string
+          description: IANA timezone (Australian allowlist only). Defaults to Australia/Melbourne.
+          default: Australia/Melbourne
+          enum:
+            - Australia/Sydney
+            - Australia/Melbourne
+            - Australia/Brisbane
+            - Australia/Perth
+            - Australia/Adelaide
+            - Australia/Darwin
+            - Australia/Hobart
+            - Australia/Lord_Howe
+        subscriptionTier:
+          type: string
+          enum: [standard, premium, enterprise]
+          description: Defaults to standard when omitted.
+
     UpdateClinicRequest:
       type: object
       description: >
@@ -2650,6 +2683,72 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   # ── Clinics ──────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics:
+    get:
+      summary: List clinics
+      operationId: listClinics
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: >
+        Returns clinics visible to the authenticated user.
+
+        - `owner_admin` — all active clinics, ordered by name.
+        - All other roles — single-element array containing their home clinic only.
+      responses:
+        "200":
+          description: List of clinics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Clinic"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      summary: Create clinic
+      operationId: createClinic
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: >
+        Creates a new clinic. Restricted to `owner_admin`.
+
+        `name` is required. `timezone` defaults to `Australia/Melbourne`.
+        `subscriptionTier` defaults to `standard`.
+
+        Address fields (`abn`, `addressLine1`, `suburb`, `state`, `postcode`) can
+        be set after creation via `PATCH /clinics/{clinicId}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClinicRequest"
+      responses:
+        "201":
+          description: Clinic created successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Clinic"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/clinics/{clinicId}/summary:
     get:
