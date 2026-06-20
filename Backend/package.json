@@ -15,6 +15,7 @@
     "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/runMigrate.ts",
+    "bootstrap:admin": "node ./node_modules/tsx/dist/cli.mjs src/db/runBootstrapAdmin.ts",
     "test:db:setup": "node ./node_modules/tsx/dist/cli.mjs src/db/setupTestDb.ts",
     "test:coverage": "npm run test -- --coverage",
     "validate:openapi": "node ../node_modules/@redocly/cli/bin/cli.js lint src/api/openapi.yaml"
