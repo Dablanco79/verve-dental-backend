@@ -15,16 +15,18 @@ export type AuthContextValue = {
     password: string,
   ) => Promise<
     | { requiresMfa: true; mfaToken: string }
-    | { requiresMfaEnrollment: true }
+    | { requiresMfaEnrollment: true; enrollmentToken: string }
     | { requiresMfa: false }
   >;
   verifyMfa: (mfaToken: string, code: string) => Promise<void>;
   /**
-   * Initiates MFA enrollment. Uses the stored enrollmentToken when present
-   * (forced enrollment at login); otherwise uses the current access token
-   * (voluntary enrollment from Settings > Security).
+   * Initiates MFA enrollment. Pass the enrollmentToken returned by login()
+   * for forced enrollment (avoids React state timing issues — the token from
+   * login() is passed directly rather than waiting for state to flush).
+   * When omitted, falls back to the stored enrollmentToken state (same-render
+   * voluntary enrollment from Settings > Security).
    */
-  setupMfa: () => Promise<MfaSetupData>;
+  setupMfa: (enrollmentToken?: string) => Promise<MfaSetupData>;
   /**
    * Confirms enrollment with the TOTP code. Clears the stored enrollmentToken
    * on success so subsequent API calls revert to the access token path.

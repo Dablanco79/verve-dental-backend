@@ -43,9 +43,11 @@ export function LoginPage() {
 
       if ("requiresMfaEnrollment" in result) {
         // Backend requires this user to enroll MFA before proceeding.
-        // The enrollment token is now stored in AuthContext memory.
+        // Pass the enrollmentToken directly — do not rely on AuthContext state
+        // having flushed yet, which would cause setupMfa() to see null and fall
+        // through to requireAccessToken(), throwing "Authentication required".
         setLoginStep({ step: "enrollment_loading" });
-        const setupData = await setupMfa();
+        const setupData = await setupMfa(result.enrollmentToken);
         setLoginStep({ step: "enrollment", setupData });
       } else if (result.requiresMfa) {
         // result is now narrowed to { requiresMfa: true; mfaToken: string }

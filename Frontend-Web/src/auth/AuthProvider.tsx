@@ -75,8 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // control-flow analysis and leave the union unsatisfied below.
     if ("requiresMfaEnrollment" in result) {
       // Store enrollment token in memory only — never in localStorage or cookies.
+      // Also return it directly so callers can pass it straight to setupMfa()
+      // without waiting for the React state update to flush.
       setEnrollmentToken(result.enrollmentToken);
-      return { requiresMfaEnrollment: true as const };
+      return { requiresMfaEnrollment: true as const, enrollmentToken: result.enrollmentToken };
     }
 
     // result is now { requiresMfa: false; ... } | { requiresMfa: true; ... }
@@ -93,10 +95,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistSession(session.accessToken, session.user, setUser);
   }, []);
 
-  const setupMfa = useCallback(async (): Promise<MfaSetupData> => {
-    // Use the enrollmentToken when forced enrollment is in progress,
-    // otherwise fall back to the stored access token for voluntary enrollment.
-    return apiClient.setupMfa(enrollmentToken ?? undefined);
+  const setupMfa = useCallback(async (token?: string): Promise<MfaSetupData> => {
+    // Prefer a directly-passed token (avoids React state timing issues when
+    // called immediately after login()). Fall back to the stored enrollmentToken
+    // state, then the access token for voluntary enrollment from Settings.
+    return apiClient.setupMfa(token ?? enrollmentToken ?? undefined);
   }, [enrollmentToken]);
 
   const confirmMfaEnrollment = useCallback(async (code: string): Promise<void> => {
