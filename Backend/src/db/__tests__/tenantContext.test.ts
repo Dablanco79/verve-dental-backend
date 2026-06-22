@@ -322,6 +322,205 @@ describe("installRlsPoolHook — client.release() behaviour", () => {
   });
 });
 
+// ─── Regression: sequential pool.query() calls in one request ─────────────────
+//
+// PATCH /clinics/:clinicId (updateClinic) makes TWO sequential pool.query()
+// calls — one for findById (SELECT) and one for update (UPDATE).  Before the
+// WeakSet fix, each checkout wrapped client.release() again, building a chain
+// of N async reset queries that grew with every reuse.  After N checkouts the
+// chain held the connection "in use" for N round-trips, and while it was busy
+// the pool had to create a new connection for the second query.  If that new
+// connection stalled (e.g. PostgreSQL max_connections reached), the second
+// pool.query() waited indefinitely — causing the 30-second hang.
+//
+// These tests prove that both sequential pool.query() calls resolve, that the
+// wrapper chain never grows beyond one level, and that tenant context cannot
+// leak across requests on the same physical connection.
+
+describe("installRlsPoolHook — regression: sequential checkouts in one request", () => {
+  it("two sequential pool.query() calls in one request context both resolve", async () => {
+    const bundle1 = makeMockClient();
+    const bundle2 = makeMockClient();
+    let connectCallCount = 0;
+
+    // Simulate a pool that issues C1 on the first checkout and C2 on the
+    // second (mirroring real pg behaviour: C1 is still in the async-reset
+    // "in use" window when the second checkout fires, so the pool creates C2).
+    const pool = {
+      connect: jest.fn().mockImplementation(() => {
+        connectCallCount++;
+        return Promise.resolve(connectCallCount === 1 ? bundle1.client : bundle2.client);
+      }),
+    } as unknown as DatabasePool;
+    installRlsPoolHook(pool);
+
+    const resolved: string[] = [];
+
+    await withRlsContext(async () => {
+      // First pool.query() — mirrors clinicRepository.findById
+      const r1 = await new Promise<string>((resolve, reject) => {
+        void (pool as unknown as PoolWithCb).connect((err, c, done) => {
+          if (err !== null || c === null) {
+            reject(err ?? new Error("no client"));
+            return;
+          }
+          void c
+            .query("SELECT id FROM clinics WHERE id = $1", ["clinic-1"])
+            .then(() => { done(); resolve("select"); })
+            .catch((e: unknown) => {
+              reject(e instanceof Error ? e : new Error(String(e)));
+            });
+        });
+      });
+      resolved.push(r1);
+
+      // Second pool.query() — mirrors clinicRepository.update
+      const r2 = await new Promise<string>((resolve, reject) => {
+        void (pool as unknown as PoolWithCb).connect((err, c, done) => {
+          if (err !== null || c === null) {
+            reject(err ?? new Error("no client"));
+            return;
+          }
+          void c
+            .query("UPDATE clinics SET name = $1 WHERE id = $2", ["Verve", "clinic-1"])
+            .then(() => { done(); resolve("update"); })
+            .catch((e: unknown) => {
+              reject(e instanceof Error ? e : new Error(String(e)));
+            });
+        });
+      });
+      resolved.push(r2);
+    }, { clinicId: "clinic-1" });
+
+    // Both calls must have resolved — no hang
+    expect(resolved).toEqual(["select", "update"]);
+    // Each call checked out its own connection
+    expect(connectCallCount).toBe(2);
+
+    // Allow both async resets to drain
+    await new Promise<void>((r) => { setTimeout(r, 50); });
+
+    // C1 must have had exactly one reset query (not a growing chain)
+    const c1Resets = bundle1.client.queries.filter(
+      (q) => q.sql.includes("set_config") && q.params.length === 0,
+    );
+    expect(c1Resets).toHaveLength(1);
+
+    // C2 must also have exactly one reset query
+    const c2Resets = bundle2.client.queries.filter(
+      (q) => q.sql.includes("set_config") && q.params.length === 0,
+    );
+    expect(c2Resets).toHaveLength(1);
+  });
+});
+
+// ─── Regression: no nested release wrappers on repeated reuse ─────────────────
+
+describe("installRlsPoolHook — regression: no nested release wrappers", () => {
+  it("does not nest release wrappers across repeated checkout-release cycles", async () => {
+    const CYCLES = 5;
+    const bundle = makeMockClient();
+    const pool = makeMockPool(bundle.client);
+    installRlsPoolHook(pool);
+
+    // Execute CYCLES sequential checkout-query-release cycles on the SAME
+    // physical connection (the mock always returns bundle.client).
+    for (let i = 0; i < CYCLES; i++) {
+      await withRlsContext(
+        async () => {
+          const client = await pool.connect();
+          await client.query("SELECT " + String(i));
+          // Call the (possibly wrapped) release
+          client.release();
+          // Let the async reset microtask complete before the next iteration
+          await new Promise<void>((r) => { setTimeout(r, 20); });
+        },
+        { clinicId: "clinic-cycle-" + String(i) },
+      );
+    }
+
+    // Count reset queries — queries that clear the session variables.
+    // Injection queries carry positional params ($1, $2); reset queries use
+    // inline empty-string literals and are called with no params array.
+    const resetQueries = bundle.client.queries.filter(
+      (q) => q.sql.includes("set_config") && q.params.length === 0,
+    );
+
+    // With the fix:  CYCLES resets (one per checkout, chain depth = 1).
+    // Without the fix: 1+2+3+…+CYCLES = CYCLES*(CYCLES+1)/2 resets because
+    // each re-wrap adds another async reset to the chain.
+    expect(resetQueries).toHaveLength(CYCLES);
+
+    // originalRelease must have been called exactly once per checkout
+    expect(bundle.releaseMock).toHaveBeenCalledTimes(CYCLES);
+    // … and never with an error argument (healthy release path)
+    expect(bundle.releaseMock).not.toHaveBeenCalledWith(expect.any(Error));
+  });
+});
+
+// ─── Regression: tenant context isolation between requests ────────────────────
+
+describe("installRlsPoolHook — regression: context isolation between requests", () => {
+  it("tenant context from request A does not leak into request B on the same connection", async () => {
+    const bundle = makeMockClient();
+    const pool = makeMockPool(bundle.client);
+    installRlsPoolHook(pool);
+
+    // Request A — uses clinic-AAAA
+    await withRlsContext(
+      async () => {
+        const client = await pool.connect();
+        await client.query("SELECT 'request A'");
+        client.release();
+        // Wait for the async reset to finish recording before request B starts
+        await new Promise<void>((r) => { setTimeout(r, 20); });
+      },
+      { clinicId: "clinic-AAAA" },
+    );
+
+    // Request B — uses clinic-BBBB (same physical connection reused by mock)
+    await withRlsContext(
+      async () => {
+        const client = await pool.connect();
+        await client.query("SELECT 'request B'");
+        client.release();
+        await new Promise<void>((r) => { setTimeout(r, 20); });
+      },
+      { clinicId: "clinic-BBBB" },
+    );
+
+    // Segregate the set_config calls recorded by the mock
+    const allSetConfig = bundle.client.queries.filter((q) =>
+      q.sql.includes("set_config"),
+    );
+    // Injection queries supply the clinic ID as a bound parameter
+    const injections = allSetConfig.filter((q) => q.params.length > 0);
+    // Reset queries use inline empty literals — no bound params
+    const resets = allSetConfig.filter((q) => q.params.length === 0);
+
+    // Exactly one injection and one reset per request
+    expect(injections).toHaveLength(2);
+    expect(resets).toHaveLength(2);
+
+    // Each injection targets the correct clinic
+    expect(injections[0]?.params[0]).toBe("clinic-AAAA");
+    expect(injections[1]?.params[0]).toBe("clinic-BBBB");
+
+    // CRITICAL: reset-A must appear in the query log BEFORE inject-B.
+    // This proves that the connection was fully cleared of clinic-AAAA's
+    // context before it was assigned clinic-BBBB's context — no leakage.
+    const queryLog = bundle.client.queries;
+    // Length assertions above guarantee these elements exist; use type casts
+    // instead of non-null assertions to satisfy the no-non-null-assertion rule.
+    const resetA = resets[0] as QueryArgs;
+    const injectB = injections[1] as QueryArgs;
+    const idxOfResetA = queryLog.indexOf(resetA);
+    const idxOfInjectB = queryLog.indexOf(injectB);
+    expect(idxOfResetA).toBeGreaterThanOrEqual(0);
+    expect(idxOfInjectB).toBeGreaterThan(idxOfResetA);
+  });
+});
+
 // ─── Fail-closed: injection failure ───────────────────────────────────────────
 
 describe("installRlsPoolHook — injection failure is fail-closed", () => {

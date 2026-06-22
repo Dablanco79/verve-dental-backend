@@ -177,10 +177,35 @@ export function getCurrentTenantCtx(): TenantCtx | null {
 export function installRlsPoolHook(pool: DatabasePool): void {
   const originalConnect = pool.connect.bind(pool);
 
+  // Tracks which PoolClient objects already have the release wrapper installed.
+  //
+  // WHY: pg reuses the same PoolClient object (same JS reference) when a
+  // connection is checked back into the pool and then checked out again.
+  // Without this guard, connectAndInjectRls() would wrap client.release() on
+  // every checkout, creating a growing chain of nested async reset callbacks:
+  //
+  //   checkout 1: release = wrapper1(→ originalPgRelease)
+  //   checkout 2: release = wrapper2(→ wrapper1(→ originalPgRelease))
+  //   checkout N: release = wrapperN(→ … → originalPgRelease)
+  //
+  // Each wrapper fires an async reset query before calling its predecessor.
+  // After N checkouts the chain triggers N sequential round-trips to
+  // PostgreSQL on every release, holding the connection "in use" from the
+  // pool's perspective throughout that chain.  When every connection in the
+  // pool is simultaneously burning through a long chain, new checkouts must
+  // wait indefinitely — causing the hang in PATCH /clinics/:clinicId which
+  // makes two sequential pool.query() calls (findById then update).
+  //
+  // WeakSet is used so that when pg destroys a connection and the underlying
+  // PoolClient object is garbage-collected, the entry here is automatically
+  // removed — no manual cleanup required.
+  const wrappedClients = new WeakSet();
+
   /**
    * Core helper: checks out a client via the original connect, injects RLS
-   * session variables when a TenantCtx is active, and wraps client.release()
-   * to reset those variables before the connection is returned to the pool.
+   * session variables when a TenantCtx is active, and installs the release
+   * wrapper (at most once per physical connection) that resets those
+   * variables before the connection is returned to the pool.
    *
    * Shared by both the promise and callback code-paths below.
    */
@@ -192,6 +217,9 @@ export function installRlsPoolHook(pool: DatabasePool): void {
       return client;
     }
 
+    // Inject the current request's RLS context.  This ALWAYS runs on every
+    // checkout (even for a reused connection) so the context reflects the
+    // current request, not the one that last used this connection.
     try {
       await client.query(
         `SELECT
@@ -213,34 +241,43 @@ export function installRlsPoolHook(pool: DatabasePool): void {
       );
     }
 
-    // Wrap release to reset the session variables before the connection
-    // is returned to the pool, preventing context leakage to the next request.
-    const originalRelease = client.release.bind(client);
-    (client as unknown as { release: (err?: Error) => void }).release = (err?: Error) => {
-      if (err) {
-        // Error path: destroy the connection immediately.  There is no point
-        // running the reset query on a connection that is being torn down.
-        originalRelease(err);
-        return;
-      }
-      // Success path: reset RLS context before returning to pool.
-      void client
-        .query(
-          `SELECT
-             set_config('app.current_clinic_id', '', false),
-             set_config('app.owner_admin_mode',  '', false)`,
-        )
-        .then(() => { originalRelease(); })
-        .catch((resetErr: unknown) => {
-          // Fail-closed on reset: destroy the connection rather than
-          // returning it to the pool with stale RLS context.
-          originalRelease(
-            resetErr instanceof Error
-              ? resetErr
-              : new Error(String(resetErr)),
-          );
-        });
-    };
+    // Install the release wrapper EXACTLY ONCE per physical PoolClient object.
+    // Subsequent checkouts of the same connection skip this block — the
+    // wrapper is already in place and captures the correct originalRelease.
+    if (!wrappedClients.has(client)) {
+      wrappedClients.add(client);
+
+      const originalRelease = client.release.bind(client);
+      (client as unknown as { release: (err?: Error) => void }).release = (err?: Error) => {
+        if (err) {
+          // Error path: destroy the connection immediately.  There is no point
+          // running the reset query on a connection that is being torn down.
+          originalRelease(err);
+          return;
+        }
+        // Success path: reset RLS context before returning to pool.
+        // The connection is intentionally held "in use" (from the pool's
+        // perspective) until the reset query completes and originalRelease()
+        // is called.  This ensures no other request can be assigned this
+        // connection while it still carries the previous tenant's context.
+        void client
+          .query(
+            `SELECT
+               set_config('app.current_clinic_id', '', false),
+               set_config('app.owner_admin_mode',  '', false)`,
+          )
+          .then(() => { originalRelease(); })
+          .catch((resetErr: unknown) => {
+            // Fail-closed on reset: destroy the connection rather than
+            // returning it to the pool with stale RLS context.
+            originalRelease(
+              resetErr instanceof Error
+                ? resetErr
+                : new Error(String(resetErr)),
+            );
+          });
+      };
+    }
 
     return client;
   }
