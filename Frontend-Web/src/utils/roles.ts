@@ -34,6 +34,15 @@ export function canViewClinicSettings(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
 }
 
+/**
+ * Clinics list and create-clinic page — owner_admin only.
+ * group_practice_manager is excluded because POST /clinics is owner_admin only
+ * at the backend, making the create action unavailable to them.
+ */
+export function canManageClinics(role: UserRole): boolean {
+  return role === "owner_admin";
+}
+
 /** Internal billing ledger — write actions (settlement) restricted to admin roles. */
 export function canManageBilling(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";

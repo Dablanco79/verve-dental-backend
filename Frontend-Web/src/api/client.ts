@@ -34,7 +34,7 @@ import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
 } from "../types/materialsForecast.js";
-import type { ClinicData, UpdateClinicData } from "../types/clinic.js";
+import type { ClinicData, CreateClinicData, UpdateClinicData } from "../types/clinic.js";
 import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
 import type {
   AuditEvent,
@@ -474,6 +474,35 @@ export function createApiClient(config: AppConfig) {
       config,
       `/api/v1/clinics/${clinicId}/roster/${entryId}`,
       { method: "DELETE" },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /clinics
+   * owner_admin: returns all active clinics ordered by name.
+   * All other roles: returns a single-element array containing their home clinic.
+   */
+  async function listClinics(): Promise<ClinicData[]> {
+    return request<ClinicData[]>(
+      config,
+      "/api/v1/clinics",
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * POST /clinics (owner_admin only)
+   * Creates a new clinic with the given name and timezone.
+   * Additional fields (ABN, address, etc.) are applied via updateClinicSettings
+   * in a subsequent PATCH once the clinic ID is known.
+   */
+  async function createClinic(data: CreateClinicData): Promise<ClinicData> {
+    return request<ClinicData>(
+      config,
+      "/api/v1/clinics",
+      { method: "POST", body: JSON.stringify(data) },
       requireAccessToken(),
     );
   }
@@ -920,6 +949,8 @@ export function createApiClient(config: AppConfig) {
     getLaborForecast,
     getMaterialsForecast,
     getMaterialsAlerts,
+    listClinics,
+    createClinic,
     getClinic,
     updateClinicSettings,
     listInvoices,

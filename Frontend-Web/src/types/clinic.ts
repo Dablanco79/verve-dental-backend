@@ -43,3 +43,14 @@ export type UpdateClinicData = {
   postcode?: string | null;
   timezone?: string;
 };
+
+/**
+ * Creation payload for POST /clinics.
+ * The backend schema is intentionally minimal on creation — name and timezone
+ * are required at the perimeter; all other fields (ABN, address, etc.) are set
+ * via a subsequent PATCH once the clinic record exists.
+ */
+export type CreateClinicData = {
+  name: string;
+  timezone: string;
+};

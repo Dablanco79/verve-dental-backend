@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import {
   canManageBilling,
+  canManageClinics,
   canManageInventory,
   canManageUsers,
   canViewAnalytics,
@@ -70,6 +71,9 @@ export function AppShell({ children }: AppShellProps) {
           ) : null}
           {user && canViewClinicSettings(user.role) ? (
             <NavLink to="/settings/clinic">Clinic Settings</NavLink>
+          ) : null}
+          {user && canManageClinics(user.role) ? (
+            <NavLink to="/settings/clinics">Clinics</NavLink>
           ) : null}
         </nav>
 

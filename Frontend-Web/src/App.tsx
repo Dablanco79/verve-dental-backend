@@ -16,6 +16,8 @@ import { RosterCalendarPage } from "./pages/RosterCalendarPage.js";
 import { LaborForecastPage } from "./pages/LaborForecastPage.js";
 import { MaterialsForecastPage } from "./pages/MaterialsForecastPage.js";
 import { ClinicSettingsPage } from "./pages/ClinicSettingsPage.js";
+import { ClinicsListPage } from "./pages/ClinicsListPage.js";
+import { CreateClinicPage } from "./pages/CreateClinicPage.js";
 import { SecurityPage } from "./pages/SecurityPage.js";
 import { BillingLedgerPage } from "./pages/BillingLedgerPage.js";
 import { AnalyticsDashboardPage } from "./pages/AnalyticsDashboardPage.js";
@@ -43,6 +45,8 @@ export function App() {
             <Route path="/forecast/labor" element={<LaborForecastPage />} />
             <Route path="/forecast/materials" element={<MaterialsForecastPage />} />
             <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
+            <Route path="/settings/clinics" element={<ClinicsListPage />} />
+            <Route path="/settings/clinics/new" element={<CreateClinicPage />} />
             <Route path="/settings/security" element={<SecurityPage />} />
             <Route path="/timesheets" element={<TimesheetsPage />} />
             <Route path="/leave" element={<LeavePage />} />
