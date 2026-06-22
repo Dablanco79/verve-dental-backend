@@ -66,6 +66,9 @@ import type {
 
 type ApiEnvelope<T> = { data: T };
 
+/** Default request timeout in milliseconds (30 s). */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function parseJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
@@ -87,11 +90,28 @@ async function request<T>(
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers,
-    credentials: "include",
-  });
+  // Abort the request if it does not complete within the timeout window.
+  // This prevents the UI from showing an infinite "Loading…" state when the
+  // server hangs (e.g. due to a pool exhaustion or connection leak).
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => { controller.abort(); }, REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers,
+      credentials: "include",
+      signal: controller.signal,
+    });
+  } catch (fetchErr) {
+    clearTimeout(timeoutId);
+    if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
+    throw fetchErr;
+  }
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     const errorBody = await parseJson<ApiErrorBody>(response).catch(() => null);

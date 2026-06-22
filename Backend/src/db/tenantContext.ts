@@ -164,8 +164,12 @@ export function getCurrentTenantCtx(): TenantCtx | null {
  * rather than returned to the pool in an unknown state.
  *
  * NOTE: This hook affects ALL pool.query() calls because pg.Pool.query()
- * internally calls pool.connect() → client.query() → client.release().
- * Existing repositories require NO code changes.
+ * internally calls pool.connect(callback) → client.query() → client.release().
+ * The override therefore supports BOTH call forms:
+ *   • Promise form:   await pool.connect()
+ *   • Callback form:  pool.connect((err, client, done) => ...)
+ * Without callback support, pool.query() never invokes its internal callback,
+ * so every pool.query() call hangs indefinitely and leaks a connection.
  *
  * Call once at application startup (in createAppDependencies) after the pool
  * is created and confirmed reachable.
@@ -173,60 +177,113 @@ export function getCurrentTenantCtx(): TenantCtx | null {
 export function installRlsPoolHook(pool: DatabasePool): void {
   const originalConnect = pool.connect.bind(pool);
 
-  // Cast required because pg.Pool.connect() overloads don't expose a simple
-  // override surface; we return the same PoolClient type.
-  (pool as unknown as { connect: () => Promise<import("pg").PoolClient> }).connect =
-    async (): Promise<import("pg").PoolClient> => {
-      const client = await originalConnect();
-      const ctx = tenantStorage.getStore();
+  /**
+   * Core helper: checks out a client via the original connect, injects RLS
+   * session variables when a TenantCtx is active, and wraps client.release()
+   * to reset those variables before the connection is returned to the pool.
+   *
+   * Shared by both the promise and callback code-paths below.
+   */
+  async function connectAndInjectRls(): Promise<import("pg").PoolClient> {
+    const client = await originalConnect();
+    const ctx = tenantStorage.getStore();
 
-      if (ctx) {
-        try {
-          await client.query(
-            `SELECT
-               set_config('app.current_clinic_id', $1, false),
-               set_config('app.owner_admin_mode',  $2, false)`,
-            [ctx.clinicId, ctx.ownerAdmin ? "true" : "false"],
-          );
-        } catch (injectionErr) {
-          // Fail-closed: destroy this connection rather than returning it with
-          // unknown RLS state.  The caller receives the error and the request
-          // fails with 500 — never with a dirty or no-context connection.
-          client.release(
-            injectionErr instanceof Error
-              ? injectionErr
-              : new Error(String(injectionErr)),
-          );
-          throw new Error(
-            `RLS context injection failed — connection destroyed: ${String(injectionErr)}`,
-          );
-        }
-
-        // Wrap release to reset the session variables before the connection
-        // is returned to the pool, preventing context leakage to the next request.
-        const originalRelease = client.release.bind(client);
-        (client as unknown as { release: () => void }).release = () => {
-          void client
-            .query(
-              `SELECT
-                 set_config('app.current_clinic_id', '', false),
-                 set_config('app.owner_admin_mode',  '', false)`,
-            )
-            .then(() => { originalRelease(); })
-            .catch((resetErr: unknown) => {
-              // Fail-closed on reset: destroy the connection rather than
-              // returning it to the pool with stale RLS context.
-              originalRelease(
-                resetErr instanceof Error
-                  ? resetErr
-                  : new Error(String(resetErr)),
-              );
-            });
-        };
-      }
-
+    if (!ctx) {
       return client;
+    }
+
+    try {
+      await client.query(
+        `SELECT
+           set_config('app.current_clinic_id', $1, false),
+           set_config('app.owner_admin_mode',  $2, false)`,
+        [ctx.clinicId, ctx.ownerAdmin ? "true" : "false"],
+      );
+    } catch (injectionErr) {
+      // Fail-closed: destroy this connection rather than returning it with
+      // unknown RLS state.  The caller receives the error and the request
+      // fails with 500 — never with a dirty or no-context connection.
+      client.release(
+        injectionErr instanceof Error
+          ? injectionErr
+          : new Error(String(injectionErr)),
+      );
+      throw new Error(
+        `RLS context injection failed — connection destroyed: ${String(injectionErr)}`,
+      );
+    }
+
+    // Wrap release to reset the session variables before the connection
+    // is returned to the pool, preventing context leakage to the next request.
+    const originalRelease = client.release.bind(client);
+    (client as unknown as { release: (err?: Error) => void }).release = (err?: Error) => {
+      if (err) {
+        // Error path: destroy the connection immediately.  There is no point
+        // running the reset query on a connection that is being torn down.
+        originalRelease(err);
+        return;
+      }
+      // Success path: reset RLS context before returning to pool.
+      void client
+        .query(
+          `SELECT
+             set_config('app.current_clinic_id', '', false),
+             set_config('app.owner_admin_mode',  '', false)`,
+        )
+        .then(() => { originalRelease(); })
+        .catch((resetErr: unknown) => {
+          // Fail-closed on reset: destroy the connection rather than
+          // returning it to the pool with stale RLS context.
+          originalRelease(
+            resetErr instanceof Error
+              ? resetErr
+              : new Error(String(resetErr)),
+          );
+        });
     };
+
+    return client;
+  }
+
+  // pg.Pool.connect() has two call signatures that we must support:
+  //   1. Promise form: const client = await pool.connect()
+  //   2. Callback form: pool.connect((err, client, done) => ...)
+  //
+  // pg.Pool.query() uses the callback form internally.  If the override only
+  // handles the promise form (no callback argument), pool.query() silently
+  // drops its internal callback, which means the query never resolves and the
+  // connection is leaked — the production bug this fix addresses.
+  type ConnectCallback = (
+    err: Error | null,
+    client: import("pg").PoolClient | null,
+    release: (err?: Error) => void,
+  ) => void;
+
+  (pool as unknown as {
+    connect: (cb?: ConnectCallback) => Promise<import("pg").PoolClient> | undefined;
+  }).connect = (cb?: ConnectCallback): Promise<import("pg").PoolClient> | undefined => {
+    if (!cb) {
+      // Promise form — used by withTenantContext and direct awaits.
+      return connectAndInjectRls();
+    }
+
+    // Callback form — used internally by pool.query().
+    // We must invoke cb after RLS injection so that pool.query()'s internal
+    // callback fires and the query resolves normally.
+    connectAndInjectRls().then(
+      (client) => {
+        cb(null, client, (releaseErr?: Error) => { client.release(releaseErr); });
+      },
+      (connectErr: unknown) => {
+        cb(
+          connectErr instanceof Error ? connectErr : new Error(String(connectErr)),
+          null,
+          () => { /* no client to release */ },
+        );
+      },
+    );
+    return undefined;
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
