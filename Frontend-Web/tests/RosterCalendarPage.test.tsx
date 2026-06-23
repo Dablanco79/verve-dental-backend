@@ -187,7 +187,8 @@ describe("RosterCalendarPage — staff dropdown (manager view)", () => {
       expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
     });
     const addBtns = await screen.findAllByRole("button", { name: /Add shift/i });
-    await user.click(addBtns[0]!);
+    expect(addBtns.length).toBeGreaterThan(0);
+    await user.click(addBtns[0] as HTMLElement);
 
     const select = screen.getByLabelText(/Staff member/i);
     const option = within(select).getByRole("option", {
@@ -203,7 +204,8 @@ describe("RosterCalendarPage — staff dropdown (manager view)", () => {
       expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
     });
     const addBtns = await screen.findAllByRole("button", { name: /Add shift/i });
-    await user.click(addBtns[0]!);
+    expect(addBtns.length).toBeGreaterThan(0);
+    await user.click(addBtns[0] as HTMLElement);
 
     const select = screen.getByLabelText(/Staff member/i);
     const option = within(select).getByRole("option", {
