@@ -109,7 +109,7 @@ const MOCK_OCR_RESULT: OcrInvoiceResult = {
 
 function makeMockOcrProvider(result: OcrInvoiceResult = MOCK_OCR_RESULT): OcrProvider {
   return {
-    extractInvoice: jest.fn().mockResolvedValue(result),
+    extractInvoice: jest.fn<OcrProvider["extractInvoice"]>().mockResolvedValue(result),
   };
 }
 
@@ -155,11 +155,12 @@ describe("SupplierInvoiceService", () => {
     expect(result.invoice.ocrConfidence).toBe(95);
     expect(result.invoice.fileSha256).toHaveLength(64);
     expect(result.lines).toHaveLength(1);
-    expect(result.lines[0]!.ocrDescription).toBe("Prophy Paste 200pk");
-    expect(result.lines[0]!.ocrConfidence).toBe(98);
-    expect(result.lines[0]!.subtotalCents).toBe(10_000);
-    expect(result.lines[0]!.taxCents).toBe(1_000);
-    expect(result.lines[0]!.totalCents).toBe(11_000);
+    const firstLine = result.lines[0];
+    expect(firstLine?.ocrDescription).toBe("Prophy Paste 200pk");
+    expect(firstLine?.ocrConfidence).toBe(98);
+    expect(firstLine?.subtotalCents).toBe(10_000);
+    expect(firstLine?.taxCents).toBe(1_000);
+    expect(firstLine?.totalCents).toBe(11_000);
     expect(result.duplicateFileWarning).toBeNull();
     expect(result.duplicateInvoiceNumberWarning).toBeNull();
   });
@@ -176,7 +177,7 @@ describe("SupplierInvoiceService", () => {
     const result = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
 
     expect(result.duplicateFileWarning).not.toBeNull();
-    expect(result.duplicateFileWarning!.existingInvoiceId).toBeDefined();
+    expect(result.duplicateFileWarning?.existingInvoiceId).toBeDefined();
   });
 
   // ── 3. uploadAndExtract — no dup warning for different clinic ──────────────
@@ -307,7 +308,7 @@ describe("SupplierInvoiceService", () => {
     const caller = makeManager();
 
     const { invoice, lines } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
-    const lineId = lines[0]!.id;
+    const lineId = lines[0]?.id ?? "";
 
     // Change quantity to 3, unit price to $6000, GST 10% (1000bp)
     const updated = await service.updateLine(
@@ -337,7 +338,7 @@ describe("SupplierInvoiceService", () => {
     await service.voidInvoice(caller, CLINIC_A, invoice.id);
 
     await expect(
-      service.updateLine(caller, CLINIC_A, invoice.id, lines[0]!.id, {
+      service.updateLine(caller, CLINIC_A, invoice.id, lines[0]?.id ?? "", {
         quantity: 5,
       }),
     ).rejects.toMatchObject({
@@ -364,7 +365,6 @@ describe("SupplierInvoiceService", () => {
 
   // ── 14. confirmImport — missing invoice_number (Amendment 3) ──────────────
   it("confirmImport rejects when invoice_number is null", async () => {
-    const { service } = makeService();
     const caller = makeManager();
 
     const ocrNoNumber: OcrInvoiceResult = {

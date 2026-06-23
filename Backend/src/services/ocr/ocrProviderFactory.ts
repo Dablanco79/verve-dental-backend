@@ -29,12 +29,12 @@ import type { OcrInvoiceResult } from "../../types/supplierInvoice.js";
  * upload → review → confirm workflow can be exercised without a real API call.
  */
 class StubOcrProvider implements OcrProvider {
-  async extractInvoice(
+  extractInvoice(
     _buffer: Buffer,
     _mimeType: string,
     filename: string,
   ): Promise<OcrInvoiceResult> {
-    return {
+    return Promise.resolve({
       provider: "stub",
       supplierName: "Test Supplier Pty Ltd",
       invoiceNumber: "TEST-INV-0001",
@@ -58,7 +58,7 @@ class StubOcrProvider implements OcrProvider {
         },
       ],
       rawResponse: { stub: true, filename },
-    };
+    });
   }
 }
 
@@ -66,20 +66,15 @@ export function createOcrProvider(config: EnvConfig): OcrProvider {
   const isDeployedEnv =
     config.NODE_ENV === "staging" || config.NODE_ENV === "production";
 
-  if (config.OCR_PROVIDER === "anthropic") {
-    if (!config.ANTHROPIC_API_KEY) {
-      if (isDeployedEnv) {
-        throw new Error(
-          `ANTHROPIC_API_KEY is required when OCR_PROVIDER=anthropic in ${config.NODE_ENV}. ` +
-            "Set the environment variable before deploying.",
-        );
-      }
-      // Development / test: fall back to stub so the server starts without a key.
-      return new StubOcrProvider();
+  if (!config.ANTHROPIC_API_KEY) {
+    if (isDeployedEnv) {
+      throw new Error(
+        `ANTHROPIC_API_KEY is required when OCR_PROVIDER=${config.OCR_PROVIDER} in ${config.NODE_ENV}. ` +
+          "Set the environment variable before deploying.",
+      );
     }
-    return new ClaudeOcrProvider(config.ANTHROPIC_API_KEY, config.OCR_CLAUDE_MODEL);
+    // Development / test: fall back to stub so the server starts without a key.
+    return new StubOcrProvider();
   }
-
-  // Future providers (e.g. 'openai') would be added here.
-  throw new Error(`Unknown OCR_PROVIDER: ${config.OCR_PROVIDER}`);
+  return new ClaudeOcrProvider(config.ANTHROPIC_API_KEY, config.OCR_CLAUDE_MODEL);
 }

@@ -125,7 +125,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
   return {
     // ── Invoice header CRUD ────────────────────────────────────────────────
 
-    async createSupplierInvoice(
+    createSupplierInvoice(
       input: CreateSupplierInvoiceInput,
     ): Promise<SupplierInvoice> {
       const now = new Date();
@@ -160,20 +160,20 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         updatedAt: now,
       };
       invoices.push(invoice);
-      return { ...invoice };
+      return Promise.resolve({ ...invoice });
     },
 
-    async findById(
+    findById(
       clinicId: string,
       id: string,
     ): Promise<SupplierInvoice | null> {
       const found = invoices.find(
         (inv) => inv.id === id && inv.clinicId === clinicId,
       );
-      return found ? { ...found } : null;
+      return Promise.resolve(found ? { ...found } : null);
     },
 
-    async listSupplierInvoices(
+    listSupplierInvoices(
       clinicId: string,
       options: ListSupplierInvoicesOptions = {},
     ): Promise<SupplierInvoice[]> {
@@ -186,13 +186,15 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         result = result.filter((inv) => inv.supplierId === options.supplierId);
       }
       if (options.from) {
+        const from = options.from;
         result = result.filter(
-          (inv) => inv.createdAt.toISOString().slice(0, 10) >= options.from!,
+          (inv) => inv.createdAt.toISOString().slice(0, 10) >= from,
         );
       }
       if (options.to) {
+        const to = options.to;
         result = result.filter(
-          (inv) => inv.createdAt.toISOString().slice(0, 10) <= options.to!,
+          (inv) => inv.createdAt.toISOString().slice(0, 10) <= to,
         );
       }
 
@@ -200,10 +202,12 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
 
       const offset = options.offset ?? 0;
       const limit = options.limit ?? 50;
-      return result.slice(offset, offset + limit).map((inv) => ({ ...inv }));
+      return Promise.resolve(
+        result.slice(offset, offset + limit).map((inv) => ({ ...inv })),
+      );
     },
 
-    async updateSupplierInvoice(
+    updateSupplierInvoice(
       clinicId: string,
       id: string,
       patch: UpdateSupplierInvoiceInput,
@@ -211,9 +215,11 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       const idx = invoices.findIndex(
         (inv) => inv.id === id && inv.clinicId === clinicId,
       );
-      if (idx === -1) return null;
+      if (idx === -1) return Promise.resolve(null);
 
-      const existing = invoices[idx]!;
+      const existing = invoices[idx];
+      if (!existing) return Promise.resolve(null);
+
       const updated: SupplierInvoice = {
         ...existing,
         ...(patch.supplierId !== undefined && { supplierId: patch.supplierId }),
@@ -231,10 +237,10 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         updatedAt: new Date(),
       };
       invoices[idx] = updated;
-      return { ...updated };
+      return Promise.resolve({ ...updated });
     },
 
-    async setStatus(
+    setStatus(
       clinicId: string,
       id: string,
       status: SupplierInvoiceStatus,
@@ -248,9 +254,11 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       const idx = invoices.findIndex(
         (inv) => inv.id === id && inv.clinicId === clinicId,
       );
-      if (idx === -1) return null;
+      if (idx === -1) return Promise.resolve(null);
 
-      const existing = invoices[idx]!;
+      const existing = invoices[idx];
+      if (!existing) return Promise.resolve(null);
+
       const updated: SupplierInvoice = {
         ...existing,
         status,
@@ -267,12 +275,12 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         updatedAt: new Date(),
       };
       invoices[idx] = updated;
-      return { ...updated };
+      return Promise.resolve({ ...updated });
     },
 
     // ── Duplicate detection ──────────────────────────────────────────────────
 
-    async findDuplicateFile(
+    findDuplicateFile(
       clinicId: string,
       sha256: string,
       excludeId?: string,
@@ -283,11 +291,11 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
           inv.fileSha256 === sha256 &&
           inv.id !== excludeId,
       );
-      if (!found) return null;
-      return { existingInvoiceId: found.id, importedAt: found.createdAt };
+      if (!found) return Promise.resolve(null);
+      return Promise.resolve({ existingInvoiceId: found.id, importedAt: found.createdAt });
     },
 
-    async findDuplicateInvoiceNumber(
+    findDuplicateInvoiceNumber(
       clinicId: string,
       supplierId: string,
       invoiceNumber: string,
@@ -301,16 +309,16 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
           inv.status !== "voided" &&
           inv.id !== excludeId,
       );
-      if (!found) return null;
-      return {
+      if (!found) return Promise.resolve(null);
+      return Promise.resolve({
         existingInvoiceId: found.id,
         existingStatus: found.status,
-      };
+      });
     },
 
     // ── Line items ────────────────────────────────────────────────────────────
 
-    async addLine(
+    addLine(
       input: AddSupplierInvoiceLineInput,
     ): Promise<SupplierInvoiceLine> {
       const now = new Date();
@@ -342,33 +350,35 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         updatedAt: now,
       };
       lines.push(line);
-      return { ...line };
+      return Promise.resolve({ ...line });
     },
 
-    async findLineById(
+    findLineById(
       clinicId: string,
       lineId: string,
     ): Promise<SupplierInvoiceLine | null> {
       const found = lines.find(
         (l) => l.id === lineId && l.clinicId === clinicId,
       );
-      return found ? { ...found } : null;
+      return Promise.resolve(found ? { ...found } : null);
     },
 
-    async listLines(
+    listLines(
       clinicId: string,
       invoiceId: string,
     ): Promise<SupplierInvoiceLine[]> {
-      return lines
-        .filter(
-          (l) =>
-            l.clinicId === clinicId && l.supplierInvoiceId === invoiceId,
-        )
-        .sort((a, b) => a.sortOrder - b.sortOrder)
-        .map((l) => ({ ...l }));
+      return Promise.resolve(
+        lines
+          .filter(
+            (l) =>
+              l.clinicId === clinicId && l.supplierInvoiceId === invoiceId,
+          )
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((l) => ({ ...l })),
+      );
     },
 
-    async updateLine(
+    updateLine(
       clinicId: string,
       lineId: string,
       patch: UpdateSupplierInvoiceLineInput,
@@ -376,9 +386,11 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       const idx = lines.findIndex(
         (l) => l.id === lineId && l.clinicId === clinicId,
       );
-      if (idx === -1) return null;
+      if (idx === -1) return Promise.resolve(null);
 
-      const existing = lines[idx]!;
+      const existing = lines[idx];
+      if (!existing) return Promise.resolve(null);
+
       const quantity =
         patch.quantity !== undefined ? patch.quantity : existing.quantity;
       const unitPriceCents =
@@ -421,39 +433,41 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         updatedAt: new Date(),
       };
       lines[idx] = updated;
-      return { ...updated };
+      return Promise.resolve({ ...updated });
     },
 
-    async removeLine(clinicId: string, lineId: string): Promise<void> {
+    removeLine(clinicId: string, lineId: string): Promise<void> {
       const idx = lines.findIndex(
         (l) => l.id === lineId && l.clinicId === clinicId,
       );
       if (idx !== -1) lines.splice(idx, 1);
+      return Promise.resolve();
     },
 
     // ── Supplier catalogue pricing ────────────────────────────────────────────
 
-    async upsertSupplierCataloguePrice(
+    upsertSupplierCataloguePrice(
       supplierId: string,
       masterCatalogItemId: string,
       newUnitCostCents: number,
-      _supplierSku: string | null,
+      supplierSku: string | null,
     ): Promise<{ catalogueId: string; oldUnitCostCents: number | null }> {
+      void supplierSku;
       const key = `${supplierId}:${masterCatalogItemId}`;
       const existing = cataloguePrices.get(key);
       const catalogueId = existing?.id ?? randomUUID();
 
       cataloguePrices.set(key, { id: catalogueId, unitCostCents: newUnitCostCents });
 
-      return {
+      return Promise.resolve({
         catalogueId,
         oldUnitCostCents: existing?.unitCostCents ?? null,
-      };
+      });
     },
 
     // ── Price history ─────────────────────────────────────────────────────────
 
-    async insertPriceHistory(
+    insertPriceHistory(
       record: Omit<SupplierPriceHistory, "id" | "createdAt">,
     ): Promise<SupplierPriceHistory> {
       const entry: SupplierPriceHistory = {
@@ -462,7 +476,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         createdAt: new Date(),
       };
       priceHistory.push(entry);
-      return { ...entry };
+      return Promise.resolve({ ...entry });
     },
   };
 }

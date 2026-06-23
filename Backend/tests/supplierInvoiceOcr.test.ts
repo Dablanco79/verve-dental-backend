@@ -31,7 +31,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 // ── Mock Anthropic client helpers ─────────────────────────────────────────────
 
-type MockMessagesCreate = ReturnType<typeof jest.fn>;
+type ClaudeMessageResponse = { content: { type: string; text: string }[] };
+type MockMessagesCreate = jest.MockedFunction<() => Promise<ClaudeMessageResponse>>;
 
 function makeMockClient(createFn: MockMessagesCreate): Anthropic {
   return {
@@ -39,7 +40,7 @@ function makeMockClient(createFn: MockMessagesCreate): Anthropic {
   } as unknown as Anthropic;
 }
 
-function makeClaudeResponse(jsonText: string) {
+function makeClaudeResponse(jsonText: string): ClaudeMessageResponse {
   return {
     content: [{ type: "text", text: jsonText }],
   };
@@ -80,7 +81,7 @@ const JPEG_BUFFER = Buffer.from("\xff\xd8\xff fake jpeg");
 describe("ClaudeOcrProvider", () => {
   // ── 1. PDF sends document source block ────────────────────────────────────
   it("sends document source block for PDF files", async () => {
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     await provider.extractInvoice(PDF_BUFFER, "application/pdf", "invoice.pdf");
@@ -89,14 +90,14 @@ describe("ClaudeOcrProvider", () => {
     const callArg = (createFn.mock.calls[0] as unknown[])[0] as {
       messages: { role: string; content: { type: string }[] }[];
     };
-    const content = callArg.messages[0]!.content;
+    const content = callArg.messages[0]?.content ?? [];
     const docBlock = content.find((b) => b.type === "document");
     expect(docBlock).toBeDefined();
   });
 
   // ── 2. PNG sends image source block ───────────────────────────────────────
   it("sends image source block for PNG files", async () => {
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     await provider.extractInvoice(PNG_BUFFER, "image/png", "invoice.png");
@@ -104,13 +105,13 @@ describe("ClaudeOcrProvider", () => {
     const callArg = (createFn.mock.calls[0] as unknown[])[0] as {
       messages: { role: string; content: { type: string }[] }[];
     };
-    const imgBlock = callArg.messages[0]!.content.find((b) => b.type === "image");
+    const imgBlock = (callArg.messages[0]?.content ?? []).find((b) => b.type === "image");
     expect(imgBlock).toBeDefined();
   });
 
   // ── 3. JPEG sends image source block ──────────────────────────────────────
   it("sends image source block for JPEG files", async () => {
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     await provider.extractInvoice(JPEG_BUFFER, "image/jpeg", "invoice.jpg");
@@ -118,13 +119,13 @@ describe("ClaudeOcrProvider", () => {
     const callArg = (createFn.mock.calls[0] as unknown[])[0] as {
       messages: { role: string; content: { type: string }[] }[];
     };
-    const imgBlock = callArg.messages[0]!.content.find((b) => b.type === "image");
+    const imgBlock = (callArg.messages[0]?.content ?? []).find((b) => b.type === "image");
     expect(imgBlock).toBeDefined();
   });
 
   // ── 4. Unsupported MIME throws 415 ────────────────────────────────────────
   it("throws 415 UNSUPPORTED_MEDIA_TYPE for TIFF files", async () => {
-    const createFn = jest.fn();
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>();
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     await expect(
@@ -139,7 +140,7 @@ describe("ClaudeOcrProvider", () => {
 
   // ── 5. Parses structured JSON into OcrInvoiceResult ──────────────────────
   it("parses Claude JSON response into a correct OcrInvoiceResult", async () => {
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(VALID_JSON_RESPONSE));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     const result = await provider.extractInvoice(PDF_BUFFER, "application/pdf", "invoice.pdf");
@@ -153,8 +154,9 @@ describe("ClaudeOcrProvider", () => {
     expect(result.totalCents).toBe(11_000);
     expect(result.overallConfidence).toBe(94.5);
     expect(result.lines).toHaveLength(1);
-    expect(result.lines[0]!.description).toBe("Prophy Paste");
-    expect(result.lines[0]!.confidence).toBe(97);
+    const firstLine = result.lines[0];
+    expect(firstLine?.description).toBe("Prophy Paste");
+    expect(firstLine?.confidence).toBe(97);
   });
 
   // ── 6. Confidence clamped 0–100 ────────────────────────────────────────────
@@ -169,18 +171,18 @@ describe("ClaudeOcrProvider", () => {
         },
       ],
     });
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(overRange));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(overRange));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     const result = await provider.extractInvoice(PDF_BUFFER, "application/pdf", "test.pdf");
 
     expect(result.overallConfidence).toBe(100);
-    expect(result.lines[0]!.confidence).toBe(0);
+    expect(result.lines[0]?.confidence).toBe(0);
   });
 
   // ── 7. Claude API error wrapped as 502 ────────────────────────────────────
   it("wraps Claude API errors as 502 OCR_PROVIDER_ERROR", async () => {
-    const createFn = jest.fn().mockRejectedValue(new Error("Connection timeout"));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockRejectedValue(new Error("Connection timeout"));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     await expect(
@@ -194,7 +196,7 @@ describe("ClaudeOcrProvider", () => {
   // ── 8. Non-JSON response wrapped as 502 ───────────────────────────────────
   it("wraps non-JSON Claude response as 502 OCR_PARSE_ERROR", async () => {
     const createFn = jest
-      .fn()
+      .fn<() => Promise<ClaudeMessageResponse>>()
       .mockResolvedValue(makeClaudeResponse("I cannot process this document."));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
@@ -226,16 +228,17 @@ describe("ClaudeOcrProvider", () => {
         },
       ],
     });
-    const createFn = jest.fn().mockResolvedValue(makeClaudeResponse(sparseLines));
+    const createFn = jest.fn<() => Promise<ClaudeMessageResponse>>().mockResolvedValue(makeClaudeResponse(sparseLines));
     const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
 
     const result = await provider.extractInvoice(PDF_BUFFER, "application/pdf", "sparse.pdf");
 
     expect(result.lines).toHaveLength(1);
     // subtotal = 1 × 500 = 500; tax at default 1000bp = 50; total = 550
-    expect(result.lines[0]!.subtotalCents).toBe(500);
-    expect(result.lines[0]!.taxCents).toBe(50);
-    expect(result.lines[0]!.confidence).toBeNull();
+    const sparseLine = result.lines[0];
+    expect(sparseLine?.subtotalCents).toBe(500);
+    expect(sparseLine?.taxCents).toBe(50);
+    expect(sparseLine?.confidence).toBeNull();
   });
 });
 
@@ -261,7 +264,7 @@ describe("createOcrProvider", () => {
       OCR_CLAUDE_MODEL: "claude-opus-4-5",
       OCR_MAX_FILE_SIZE_BYTES: 20_971_520,
       ...overrides,
-    } as EnvConfig;
+    } satisfies EnvConfig;
   }
 
   // ── 10. Falls back to stub when no API key in dev ─────────────────────────

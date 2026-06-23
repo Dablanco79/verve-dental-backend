@@ -69,7 +69,7 @@ const listQuerySchema = z.object({
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getCaller(req: Request): AuthenticatedUser {
-  const caller = req.user as AuthenticatedUser | undefined;
+  const caller = req.user;
   if (!caller) throw new AppError(401, "UNAUTHORISED", "Authentication required");
   return caller;
 }

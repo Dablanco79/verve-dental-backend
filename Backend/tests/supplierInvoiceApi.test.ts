@@ -93,7 +93,7 @@ describe("Supplier Invoice API", () => {
     expect(body.data.invoice.status).toBe("pending_review");
     expect(body.data.invoice.ocrConfidence).toBe(99);
     expect(body.data.lines).toHaveLength(1);
-    expect(body.data.lines[0]!.ocrDescription).toContain("Stub item");
+    expect(body.data.lines[0]?.ocrDescription).toContain("Stub item");
   });
 
   // ── 5. SHA256 populated on upload (Amendment 1B) ───────────────────────────
@@ -239,7 +239,7 @@ describe("Supplier Invoice API", () => {
     }>).data;
 
     const lineRes = await request(app)
-      .patch(`${BASE}/${invoice.id}/lines/${lines[0]!.id}`)
+      .patch(`${BASE}/${invoice.id}/lines/${lines[0]?.id ?? ""}`)
       .set("Authorization", `Bearer ${token}`)
       .send({ quantity: 4, unitPriceCents: 3_000, taxRateBasisPoints: 1_000 });
 

@@ -116,12 +116,13 @@ export function createSupplierInvoiceService(
         let matchMethod: "exact_sku" | "name_match" | "manual" | null = null;
 
         if (ocrLine.sku) {
+          const sku = ocrLine.sku;
           const catalogueEntries = await supplierCatalogueRepo.listSupplierProducts({
             active: true,
           });
           const exactMatch = catalogueEntries.find(
             (e) =>
-              e.supplierSku?.toLowerCase() === ocrLine.sku!.toLowerCase(),
+              e.supplierSku?.toLowerCase() === sku.toLowerCase(),
           );
           if (exactMatch) {
             masterCatalogItemId = exactMatch.productId;
@@ -205,7 +206,7 @@ export function createSupplierInvoiceService(
       if (dup) {
         duplicateInvoiceNumberWarning = {
           existingInvoiceId: dup.id,
-          existingStatus: dup.status as SupplierInvoiceStatus,
+          existingStatus: dup.status,
         };
       }
     }
@@ -366,31 +367,38 @@ export function createSupplierInvoiceService(
       );
     }
 
+    // These three fields were validated non-null above; capture as consts so TypeScript narrows.
+    const confirmedSupplierId = invoice.supplierId;
+    const confirmedInvoiceDate = invoice.invoiceDate;
+
     const lines = await repo.listLines(clinicId, invoiceId);
-    const matchedLines = lines.filter((l) => l.isMatched && l.masterCatalogItemId);
+    const matchedLines = lines.filter(
+      (l): l is SupplierInvoiceLine & { masterCatalogItemId: string } =>
+        l.isMatched && l.masterCatalogItemId !== null,
+    );
 
     // Upsert supplier_catalogue pricing for each matched line.
     const priceHistoryRecords = await Promise.all(
       matchedLines.map(async (line) => {
         const { catalogueId, oldUnitCostCents } =
           await repo.upsertSupplierCataloguePrice(
-            invoice.supplierId!,
-            line.masterCatalogItemId!,
+            confirmedSupplierId,
+            line.masterCatalogItemId,
             line.unitPriceCents,
             line.ocrSku,
           );
 
         return repo.insertPriceHistory({
           supplierCatalogueId: catalogueId,
-          supplierId: invoice.supplierId!,
-          masterCatalogItemId: line.masterCatalogItemId!,
+          supplierId: confirmedSupplierId,
+          masterCatalogItemId: line.masterCatalogItemId,
           oldUnitCostCents,
           newUnitCostCents: line.unitPriceCents,
           source: "supplier_invoice_ocr",
           sourceReferenceId: invoiceId,
           changedByUserId: caller.id,
           changedByEmail: caller.email,
-          effectiveDate: invoice.invoiceDate!,
+          effectiveDate: confirmedInvoiceDate,
         });
       }),
     );
