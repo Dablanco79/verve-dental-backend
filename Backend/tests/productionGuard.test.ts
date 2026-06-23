@@ -40,6 +40,9 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     REDIS_TLS: "auto",
     MFA_ENCRYPTION_KEY: "0".repeat(64),
     MIGRATE_ON_STARTUP: false,
+    OCR_PROVIDER: "anthropic",
+    OCR_CLAUDE_MODEL: "claude-opus-4-5",
+    OCR_MAX_FILE_SIZE_BYTES: 20_971_520,
     ...overrides,
   };
 }

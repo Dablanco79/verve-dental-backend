@@ -21,6 +21,7 @@
     "validate:openapi": "node ../node_modules/@redocly/cli/bin/cli.js lint src/api/openapi.yaml"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

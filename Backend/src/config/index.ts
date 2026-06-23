@@ -50,6 +50,35 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((v) => v === "true"),
+
+  // ── Supplier Invoice OCR (Sprint OCR-1) ──────────────────────────────────
+
+  /**
+   * Active OCR provider.  Only 'anthropic' is supported in this release.
+   * Adding 'openai' in the future requires only a new OcrProvider implementation
+   * and updating the factory — no schema or service changes needed.
+   */
+  OCR_PROVIDER: z.enum(["anthropic"]).default("anthropic"),
+
+  /**
+   * Anthropic Claude API key.  Optional so the server starts without it in
+   * development/test (a stub provider is used instead).  Required in
+   * staging/production when OCR_PROVIDER=anthropic.
+   */
+  ANTHROPIC_API_KEY: z.string().optional(),
+
+  /**
+   * Claude model identifier used for invoice extraction.
+   * Configurable so a model upgrade does not require a code change.
+   */
+  OCR_CLAUDE_MODEL: z.string().default("claude-opus-4-5"),
+
+  /**
+   * Maximum file size (bytes) accepted by the invoice upload endpoint.
+   * Defaults to 20 MB.  multer enforces this limit before the buffer reaches
+   * the OCR pipeline.
+   */
+  OCR_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(20_971_520),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

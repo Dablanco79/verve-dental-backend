@@ -46,6 +46,12 @@ import {
   createInMemorySupplierCatalogueRepository,
 } from "../repositories/supplierCatalogueRepository.js";
 import { createPostgresSupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.postgres.js";
+import {
+  createInMemorySupplierInvoiceRepository,
+} from "../repositories/supplierInvoiceRepository.js";
+import { createPostgresSupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.postgres.js";
+import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
+import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { installRlsPoolHook } from "../db/tenantContext.js";
 import { createRedisClient } from "../redis/client.js";
 import { createAnalyticsService } from "../services/analyticsService.js";
@@ -76,7 +82,9 @@ import type { UserRepository } from "../repositories/userRepository.js";
 import type { PermissionRepository } from "../repositories/permissionRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
+import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
+import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import type { BillingService } from "../services/billingService.js";
 import type { HealthService } from "../services/healthService.js";
 import type { LeaveService } from "../services/leaveService.js";
@@ -97,6 +105,7 @@ export type AppDependencies = {
   supplierService: SupplierService;
   supplierCatalogueService: SupplierCatalogueService;
   catalogueImportService: CatalogueImportService;
+  supplierInvoiceService: SupplierInvoiceService;
   healthService: HealthService;
   userRepository: UserRepository;
   permissionRepository: PermissionRepository;
@@ -110,6 +119,7 @@ export type AppDependencies = {
   analyticsRepository: AnalyticsRepository;
   supplierRepository: SupplierRepository;
   supplierCatalogueRepository: SupplierCatalogueRepository;
+  supplierInvoiceRepository: SupplierInvoiceRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -168,6 +178,7 @@ export async function createAppDependencies(
   let analyticsRepository: AnalyticsRepository;
   let supplierRepository: SupplierRepository;
   let supplierCatalogueRepository: SupplierCatalogueRepository;
+  let supplierInvoiceRepository: SupplierInvoiceRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -254,6 +265,7 @@ export async function createAppDependencies(
     analyticsRepository = createPostgresAnalyticsRepository(connectedPool);
     supplierRepository = createPostgresSupplierRepository(connectedPool);
     supplierCatalogueRepository = createPostgresSupplierCatalogueRepository(connectedPool);
+    supplierInvoiceRepository = createPostgresSupplierInvoiceRepository(connectedPool);
 
     logger.info(
       "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers)",
@@ -271,6 +283,7 @@ export async function createAppDependencies(
     analyticsRepository = createInMemoryAnalyticsRepository();
     supplierRepository = createInMemorySupplierRepository();
     supplierCatalogueRepository = createInMemorySupplierCatalogueRepository();
+    supplierInvoiceRepository = createInMemorySupplierInvoiceRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -333,6 +346,17 @@ export async function createAppDependencies(
     supplierRepository,
     productMatchingService,
   );
+
+  // Supplier Invoice OCR — Sprint OCR-1.
+  // createOcrProvider reads OCR_PROVIDER + ANTHROPIC_API_KEY from config.
+  // Falls back to StubOcrProvider in development/test when API key is absent.
+  const ocrProvider = createOcrProvider(config);
+  const supplierInvoiceService = createSupplierInvoiceService(
+    supplierInvoiceRepository,
+    ocrProvider,
+    supplierCatalogueRepository,
+    auditService,
+  );
   const timesheetService = createTimesheetService(
     timesheetRepository,
     userRepository,
@@ -367,6 +391,7 @@ export async function createAppDependencies(
     supplierService,
     supplierCatalogueService,
     catalogueImportService,
+    supplierInvoiceService,
     healthService,
     userRepository,
     permissionRepository,
@@ -380,6 +405,7 @@ export async function createAppDependencies(
     analyticsRepository,
     supplierRepository,
     supplierCatalogueRepository,
+    supplierInvoiceRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

@@ -36,7 +36,16 @@ export type SupplierAuditEvent =
   | "supplier_product.updated"
   | "catalogue.imported";
 
-export type AuditEvent = AuthAuditEvent | PurchaseOrderAuditEvent | SupplierAuditEvent;
+export type SupplierInvoiceAuditEvent =
+  | "supplier_invoice.uploaded"
+  | "supplier_invoice.confirmed"
+  | "supplier_invoice.voided";
+
+export type AuditEvent =
+  | AuthAuditEvent
+  | PurchaseOrderAuditEvent
+  | SupplierAuditEvent
+  | SupplierInvoiceAuditEvent;
 
 export type AuditContext = {
   userId?: string;

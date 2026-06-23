@@ -1369,6 +1369,251 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE revoked_at IS NULL;
     `,
   },
+  {
+    /**
+     * Sprint OCR-1 — Supplier Invoice OCR (Accounts Payable).
+     *
+     * OVERVIEW
+     * ────────
+     * These tables are entirely separate from the patient-facing billing tables
+     * (invoices, invoice_line_items, payment_records).  They represent supplier
+     * invoices received by the clinic (AP), not invoices issued to patients (AR).
+     *
+     * THREE NEW TABLES
+     * ────────────────
+     * supplier_invoices        — header record per uploaded supplier document.
+     * supplier_invoice_lines   — OCR-extracted line items, editable pre-confirm.
+     * supplier_price_history   — append-only audit trail of price changes.
+     *
+     * KEY DESIGN DECISIONS
+     * ─────────────────────
+     * • file_sha256 (Amendment 1B): SHA-256 hex of the raw upload buffer.
+     *   Enables duplicate-file detection at upload time (informational warning,
+     *   no hard block in MVP).  A future UNIQUE constraint can be added without
+     *   a data migration once the warning UX is validated.
+     *
+     * • storage_key (Amendment 1): Nullable placeholder for a future S3/GCS
+     *   object key.  Schema is future-proof; MVP stores NULL.
+     *
+     * • ocr_confidence NUMERIC(5,2) (Amendment 2): Per-invoice and per-line
+     *   confidence scores (0–100) extracted from the Claude response.  The
+     *   review UI uses these to highlight low-confidence extractions.
+     *
+     * • supplier_id / invoice_number / invoice_date are nullable until review
+     *   (Amendment 3): confirmImport() enforces all three are non-null before
+     *   transitioning to 'confirmed'.
+     *
+     * • invoice_number duplicate warning (Amendment 4): A non-unique index on
+     *   (clinic_id, supplier_id, invoice_number) supports fast duplicate lookup;
+     *   the service layer issues a warning — no hard block.
+     *
+     * • supplier_price_history is global (no clinic_id); access gated at service
+     *   layer.  Mirrors the master_catalog_items / suppliers pattern.
+     *
+     * MONETARY CONVENTION
+     * ────────────────────
+     * All monetary values are integer CENTS (AUD), consistent with the billing
+     * module.  GST is expressed in basis points (1000 = 10%).
+     *
+     * RLS
+     * ───
+     * supplier_invoices and supplier_invoice_lines are clinic-scoped (RLS).
+     * supplier_price_history is global (no RLS — no clinic_id column).
+     */
+    id: "021_supplier_invoice_ocr",
+    sql: `
+      -- ── ENUM: supplier_invoice_status ──────────────────────────────────────
+      DO $$ BEGIN
+        CREATE TYPE supplier_invoice_status AS ENUM (
+          'pending_review', 'confirmed', 'voided'
+        );
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      -- ── supplier_invoices ───────────────────────────────────────────────────
+      -- Header record per uploaded supplier document.
+      -- status starts as 'pending_review'; transitions via review → confirmed.
+      -- supplier_id, invoice_number, invoice_date are nullable until review;
+      -- confirmImport() enforces all three are non-null (Amendment 3).
+      -- file_sha256 enables duplicate-file detection (Amendment 1B).
+      -- storage_key is a future S3/GCS placeholder — NULL in MVP (Amendment 1).
+      -- ocr_confidence 0-100 for review UI highlighting (Amendment 2).
+      CREATE TABLE IF NOT EXISTS supplier_invoices (
+        id                      uuid                    PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Tenant anchor — RLS is enforced on this column.
+        clinic_id               uuid                    NOT NULL REFERENCES clinics (id),
+
+        -- Set during review; required before confirmImport() (Amendment 3).
+        supplier_id             uuid                    REFERENCES suppliers (id),
+        supplier_name_raw       text,
+        invoice_number          text,
+        invoice_date            date,
+        due_date                date,
+
+        status                  supplier_invoice_status NOT NULL DEFAULT 'pending_review',
+
+        -- Monetary totals (integer cents, AUD).  Recalculated from lines.
+        subtotal_cents          integer,
+        tax_cents               integer,
+        total_cents             integer,
+        currency                text                    NOT NULL DEFAULT 'AUD',
+
+        -- OCR provenance
+        ocr_provider            text                    NOT NULL,
+        ocr_confidence          numeric(5,2),
+        ocr_raw_response        jsonb                   NOT NULL DEFAULT '{}',
+
+        -- Document identity and traceability (Amendments 1 + 1B)
+        original_filename       text                    NOT NULL,
+        file_mime_type          text                    NOT NULL,
+        file_sha256             text,
+        storage_key             text,
+
+        -- Import actor
+        imported_by_user_id     uuid                    NOT NULL REFERENCES users (id),
+        imported_by_email       text                    NOT NULL,
+
+        -- Confirmation (set by confirmImport)
+        confirmed_by_user_id    uuid                    REFERENCES users (id),
+        confirmed_at            timestamptz,
+
+        -- Void (terminal state)
+        voided_by_user_id       uuid                    REFERENCES users (id),
+        voided_at               timestamptz,
+
+        notes                   text,
+        created_at              timestamptz             NOT NULL DEFAULT now(),
+        updated_at              timestamptz             NOT NULL DEFAULT now()
+      );
+
+      -- Paginated list by clinic, with status filter.
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoices_clinic_status
+        ON supplier_invoices (clinic_id, status, created_at DESC);
+
+      -- Supplier-scoped lookup (filter invoices from a specific supplier).
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoices_clinic_supplier
+        ON supplier_invoices (clinic_id, supplier_id)
+        WHERE supplier_id IS NOT NULL;
+
+      -- Duplicate-file detection (Amendment 1B).
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoices_sha256
+        ON supplier_invoices (file_sha256)
+        WHERE file_sha256 IS NOT NULL;
+
+      -- Duplicate invoice-number detection (Amendment 4).
+      -- Non-unique: the service issues a warning, not a hard block.
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoices_inv_number
+        ON supplier_invoices (clinic_id, supplier_id, invoice_number)
+        WHERE invoice_number IS NOT NULL AND supplier_id IS NOT NULL;
+
+      -- ── supplier_invoice_lines ──────────────────────────────────────────────
+      -- OCR-extracted line items.  Editable during 'pending_review'.
+      -- clinic_id is redundant (mirrors parent) for defence-in-depth RLS.
+      -- master_catalog_item_id and supplier_catalogue_id set during review.
+      CREATE TABLE IF NOT EXISTS supplier_invoice_lines (
+        id                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Redundant clinic_id — defence-in-depth tenant anchor (mirrors parent).
+        clinic_id               uuid        NOT NULL REFERENCES clinics (id),
+
+        supplier_invoice_id     uuid        NOT NULL REFERENCES supplier_invoices (id)
+                                              ON DELETE CASCADE,
+
+        -- Links set during the review step; NULL until matched.
+        master_catalog_item_id  uuid        REFERENCES master_catalog_items (id),
+        supplier_catalogue_id   uuid        REFERENCES supplier_catalogue (id),
+
+        -- Raw OCR output (always preserved for audit)
+        ocr_description         text        NOT NULL,
+        ocr_sku                 text,
+        ocr_confidence          numeric(5,2),
+
+        -- Editable fields (may be corrected during review)
+        quantity                numeric(12,4) NOT NULL,
+        unit_price_cents        integer     NOT NULL,
+        subtotal_cents          integer     NOT NULL,
+        tax_rate_basis_points   integer     NOT NULL DEFAULT 1000,
+        tax_cents               integer     NOT NULL,
+        total_cents             integer     NOT NULL,
+
+        sort_order              integer     NOT NULL DEFAULT 0,
+        is_matched              boolean     NOT NULL DEFAULT false,
+        match_method            text
+          CONSTRAINT supplier_invoice_lines_match_method_check
+            CHECK (match_method IS NULL OR match_method IN ('exact_sku', 'name_match', 'manual')),
+
+        created_at              timestamptz NOT NULL DEFAULT now(),
+        updated_at              timestamptz NOT NULL DEFAULT now()
+      );
+
+      -- All lines for a supplier invoice ordered for display.
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoice_lines_invoice
+        ON supplier_invoice_lines (supplier_invoice_id, sort_order);
+
+      -- Defence-in-depth: tenant-scoped line lookup without joining header.
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoice_lines_clinic
+        ON supplier_invoice_lines (clinic_id, supplier_invoice_id);
+
+      -- Lookup by catalog item (for "all invoices that mentioned this product").
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoice_lines_catalog_item
+        ON supplier_invoice_lines (master_catalog_item_id)
+        WHERE master_catalog_item_id IS NOT NULL;
+
+      -- ── supplier_price_history ──────────────────────────────────────────────
+      -- Append-only audit trail of every supplier price change.
+      -- No clinic_id — global, like suppliers and master_catalog_items.
+      -- source = 'supplier_invoice_ocr' when written by confirmImport().
+      CREATE TABLE IF NOT EXISTS supplier_price_history (
+        id                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        supplier_catalogue_id   uuid        NOT NULL REFERENCES supplier_catalogue (id),
+        supplier_id             uuid        NOT NULL REFERENCES suppliers (id),
+        master_catalog_item_id  uuid        NOT NULL REFERENCES master_catalog_items (id),
+
+        old_unit_cost_cents     integer,
+        new_unit_cost_cents     integer     NOT NULL,
+
+        source                  text        NOT NULL
+          CONSTRAINT supplier_price_history_source_check
+            CHECK (source IN ('supplier_invoice_ocr', 'manual', 'catalogue_import')),
+
+        -- References the supplier_invoice_id that triggered the change.
+        source_reference_id     uuid,
+
+        changed_by_user_id      uuid        NOT NULL REFERENCES users (id),
+        changed_by_email        text        NOT NULL,
+        effective_date          date        NOT NULL,
+
+        created_at              timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_supplier_price_history_catalogue
+        ON supplier_price_history (supplier_catalogue_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_supplier_price_history_item
+        ON supplier_price_history (master_catalog_item_id, created_at DESC);
+
+      -- ── RLS policies ───────────────────────────────────────────────────────
+      -- supplier_invoices: full CRUD scoped to clinic (FORCE RLS on owner too).
+      ALTER TABLE supplier_invoices ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE supplier_invoices FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS rls_supplier_invoices_tenant ON supplier_invoices;
+      CREATE POLICY rls_supplier_invoices_tenant ON supplier_invoices FOR ALL
+        USING (app_is_owner_admin() OR clinic_id = app_current_clinic_id())
+        WITH CHECK (app_is_owner_admin() OR clinic_id = app_current_clinic_id());
+
+      -- supplier_invoice_lines: same pattern as invoice_line_items.
+      ALTER TABLE supplier_invoice_lines ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE supplier_invoice_lines FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS rls_supplier_invoice_lines_tenant ON supplier_invoice_lines;
+      CREATE POLICY rls_supplier_invoice_lines_tenant ON supplier_invoice_lines FOR ALL
+        USING (app_is_owner_admin() OR clinic_id = app_current_clinic_id())
+        WITH CHECK (app_is_owner_admin() OR clinic_id = app_current_clinic_id());
+
+      -- supplier_price_history: no RLS (global table, no clinic_id).
+      -- Access gated at service layer, matching master_catalog_items pattern.
+    `,
+  },
 ];
 
 /**
