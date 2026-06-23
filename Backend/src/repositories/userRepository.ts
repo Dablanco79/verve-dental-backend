@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { UserRecord, UserRole } from "../types/auth.js";
 import type { StaffPayrollTrack } from "../types/payroll.js";
+import { AppError } from "../types/errors.js";
 import { encryptTotpSecret } from "../utils/mfaCrypto.js";
 
 export type CreateUserInput = {
@@ -19,6 +20,21 @@ export type CreateUserInput = {
   payrollTrack?: StaffPayrollTrack;
 };
 
+/**
+ * Fields that may be mutated by PATCH /clinics/:clinicId/users/:userId.
+ * All fields are optional — only supplied keys are written.
+ * homeClinicId and homeClinicName must always be provided together.
+ */
+export type UpdateUserFields = {
+  firstName?: string;
+  lastName?: string;
+  displayName?: string | null;
+  payrollTrack?: StaffPayrollTrack;
+  role?: UserRole;
+  homeClinicId?: string;
+  homeClinicName?: string;
+};
+
 export interface UserRepository {
   findByEmail(email: string): Promise<UserRecord | null>;
   findById(id: string): Promise<UserRecord | null>;
@@ -31,6 +47,11 @@ export interface UserRepository {
    */
   getClinicName(clinicId: string): Promise<string | null>;
   updatePassword(userId: string, hashedPassword: string): Promise<void>;
+  /**
+   * Partial-update a user's profile fields.  Only supplied keys are written.
+   * Throws 404 when the user does not exist.
+   */
+  updateUser(userId: string, fields: UpdateUserFields): Promise<UserRecord>;
   /**
    * Persists a confirmed TOTP secret and sets mfa_enabled = true atomically.
    * Called only after the user submits a valid first code during enrollment.
@@ -209,6 +230,21 @@ export async function createInMemoryUserRepository(
         user.passwordHash = hashedPassword;
       }
       return Promise.resolve();
+    },
+
+    updateUser(userId: string, fields: UpdateUserFields): Promise<UserRecord> {
+      const user = users.find((u) => u.id === userId);
+      if (!user) {
+        return Promise.reject(new AppError(404, "NOT_FOUND", "User not found"));
+      }
+      if (fields.firstName !== undefined) user.firstName = fields.firstName;
+      if (fields.lastName !== undefined) user.lastName = fields.lastName;
+      if (fields.displayName !== undefined) user.displayName = fields.displayName;
+      if (fields.payrollTrack !== undefined) user.payrollTrack = fields.payrollTrack;
+      if (fields.role !== undefined) user.role = fields.role;
+      if (fields.homeClinicId !== undefined) user.homeClinicId = fields.homeClinicId;
+      if (fields.homeClinicName !== undefined) user.homeClinicName = fields.homeClinicName;
+      return Promise.resolve({ ...user });
     },
 
     setUserMfaEnrollment(userId: string, totpSecret: string): Promise<void> {

@@ -11,6 +11,7 @@ import type {
   MfaSetupData,
   ResetPasswordRequest,
   StaffUser,
+  UpdateUserRequest,
 } from "../types/index.js";
 import type {
   AdjustInventoryRequest,
@@ -301,6 +302,22 @@ export function createApiClient(config: AppConfig) {
       `/api/v1/clinics/${clinicId}/users`,
       {
         method: "POST",
+        body: JSON.stringify(body),
+      },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateUser(
+    clinicId: string,
+    userId: string,
+    body: UpdateUserRequest,
+  ): Promise<StaffUser> {
+    return request<StaffUser>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}`,
+      {
+        method: "PATCH",
         body: JSON.stringify(body),
       },
       requireAccessToken(),
@@ -936,6 +953,7 @@ export function createApiClient(config: AppConfig) {
     createProduct,
     listUsers,
     createUser,
+    updateUser,
     changePassword,
     resetUserPassword,
     listPurchaseOrders,

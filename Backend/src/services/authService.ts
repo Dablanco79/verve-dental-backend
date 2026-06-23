@@ -157,6 +157,7 @@ export function createAuthService(
       firstName: user.firstName,
       lastName: user.lastName,
       displayName: user.displayName,
+      payrollTrack: user.payrollTrack,
     };
   }
 

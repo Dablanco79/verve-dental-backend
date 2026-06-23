@@ -19,6 +19,7 @@ export type AuthAuditEvent =
   | "auth.unauthorized"
   | "auth.forbidden"
   | "user.created"
+  | "user.updated"
   | "auth.password.changed"
   | "auth.password.reset";
 

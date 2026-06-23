@@ -35,6 +35,12 @@ export function createUserRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.createUser(req, res)),
   );
 
+  router.patch(
+    "/:userId",
+    validateParams(clinicUserParamsSchema),
+    asyncHandler((req, res) => handlers.updateUser(req, res)),
+  );
+
   router.post(
     "/:userId/reset-password",
     validateParams(clinicUserParamsSchema),

@@ -65,6 +65,14 @@ export type ApiErrorBody = {
   };
 };
 
+export const STAFF_PAYROLL_TRACKS = ["hourly", "commission"] as const;
+export type StaffPayrollTrack = (typeof STAFF_PAYROLL_TRACKS)[number];
+
+export const PAYROLL_TRACK_LABELS: Record<StaffPayrollTrack, string> = {
+  hourly: "Hourly",
+  commission: "Commission",
+};
+
 export type StaffUser = {
   id: string;
   email: string;
@@ -74,6 +82,7 @@ export type StaffUser = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  payrollTrack: StaffPayrollTrack;
 };
 
 export type CreateUserRequest = {
@@ -84,6 +93,16 @@ export type CreateUserRequest = {
   firstName: string;
   lastName: string;
   displayName?: string | null;
+};
+
+export type UpdateUserRequest = {
+  firstName?: string;
+  lastName?: string;
+  displayName?: string | null;
+  payrollTrack?: StaffPayrollTrack;
+  role?: UserRole;
+  homeClinicId?: string;
+  homeClinicName?: string;
 };
 
 export type ChangePasswordRequest = {

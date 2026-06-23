@@ -84,6 +84,7 @@ const namedUser: StaffUser = {
   firstName: "Alice",
   lastName: "Jones",
   displayName: "Alice Jones",
+  payrollTrack: "hourly",
 };
 
 const unnamedUser: StaffUser = {
@@ -95,6 +96,7 @@ const unnamedUser: StaffUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  payrollTrack: "hourly",
 };
 
 const sampleUsers: StaffUser[] = [namedUser, unnamedUser];

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 import { USER_ROLES } from "../types/auth.js";
+import { STAFF_PAYROLL_TRACKS } from "../types/payroll.js";
 import type { UserService } from "../services/userService.js";
 import { parseBody } from "../utils/validation.js";
 import { AppError } from "../types/errors.js";
@@ -31,6 +32,28 @@ const resetPasswordSchema = z.object({
     .min(8, "Password must be at least 8 characters")
     .max(128, "Password must be at most 128 characters"),
 });
+
+const updateUserSchema = z
+  .object({
+    firstName: z.string().min(1, "First name cannot be empty").max(100).optional(),
+    lastName: z.string().min(1, "Last name cannot be empty").max(100).optional(),
+    displayName: z.string().min(1).max(200).nullable().optional(),
+    payrollTrack: z.enum(STAFF_PAYROLL_TRACKS).optional(),
+    role: z.enum(USER_ROLES).optional(),
+    homeClinicId: z.string().uuid("homeClinicId must be a valid UUID").optional(),
+    homeClinicName: z.string().min(1).max(120).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: "At least one field must be provided",
+  })
+  .refine(
+    (data) => {
+      const hasId = data.homeClinicId !== undefined;
+      const hasName = data.homeClinicName !== undefined;
+      return hasId === hasName;
+    },
+    { message: "homeClinicId and homeClinicName must be provided together" },
+  );
 
 export function createUserHandlers(userService: UserService) {
   return {
@@ -68,6 +91,22 @@ export function createUserHandlers(userService: UserService) {
       });
 
       res.status(201).json({ data: user });
+    },
+
+    async updateUser(req: Request, res: Response): Promise<void> {
+      const caller = req.user;
+
+      if (!caller) {
+        throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      }
+
+      const clinicId = routeParam(req.params.clinicId);
+      const targetUserId = routeParam(req.params.userId);
+      const body = parseBody(updateUserSchema, req.body);
+
+      const updated = await userService.updateUser(caller, clinicId, targetUserId, body);
+
+      res.status(200).json({ data: updated });
     },
 
     async resetPassword(req: Request, res: Response): Promise<void> {

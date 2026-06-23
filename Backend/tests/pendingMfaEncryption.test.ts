@@ -65,6 +65,7 @@ function makeMockUserRepo(initial: UserRecord = makeMockUser()): UserRepository 
     listByClinic: () => Promise.resolve([]),
     getClinicName: () => Promise.resolve(null),
     updatePassword: () => Promise.resolve(),
+    updateUser: () => Promise.resolve(record),
     setUserMfaEnrollment: (_id, totpSecret) => {
       record = { ...record, totpSecret, mfaEnabled: true };
       return Promise.resolve();

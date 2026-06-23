@@ -105,7 +105,15 @@ export type AuthTokens = {
   expiresIn: number;
 };
 
-export type PublicUser = AuthenticatedUser;
+/**
+ * API-facing user shape returned by /users endpoints.
+ * Extends AuthenticatedUser with payrollTrack so that user-management UIs
+ * can display and edit the payroll contract arrangement without a separate
+ * endpoint.
+ */
+export type PublicUser = AuthenticatedUser & {
+  payrollTrack: import("./payroll.js").StaffPayrollTrack;
+};
 
 export type LoginResult =
   | {

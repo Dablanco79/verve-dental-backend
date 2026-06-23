@@ -32,7 +32,7 @@ import type { UserRecord, UserRole } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "../db/tenantContext.js";
 import type { DatabasePool } from "../db/pool.js";
-import type { CreateUserInput, UserRepository } from "./userRepository.js";
+import type { CreateUserInput, UpdateUserFields, UserRepository } from "./userRepository.js";
 
 type UserRow = {
   id: string;
@@ -177,6 +177,62 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
           }
         },
         true, // ownerAdmin
+      );
+    },
+
+    async updateUser(userId: string, fields: UpdateUserFields): Promise<UserRecord> {
+      // Build a dynamic SET clause from the provided fields only.
+      const sets: string[] = [];
+      const values: unknown[] = [];
+
+      if (fields.firstName !== undefined) {
+        sets.push(`first_name = $${String(values.length + 1)}`);
+        values.push(fields.firstName);
+      }
+      if (fields.lastName !== undefined) {
+        sets.push(`last_name = $${String(values.length + 1)}`);
+        values.push(fields.lastName);
+      }
+      if (fields.displayName !== undefined) {
+        sets.push(`display_name = $${String(values.length + 1)}`);
+        values.push(fields.displayName);
+      }
+      if (fields.payrollTrack !== undefined) {
+        sets.push(`payroll_track = $${String(values.length + 1)}`);
+        values.push(fields.payrollTrack);
+      }
+      if (fields.role !== undefined) {
+        sets.push(`role = $${String(values.length + 1)}`);
+        values.push(fields.role);
+      }
+      if (fields.homeClinicId !== undefined) {
+        sets.push(`home_clinic_id = $${String(values.length + 1)}`);
+        values.push(fields.homeClinicId);
+      }
+      if (fields.homeClinicName !== undefined) {
+        sets.push(`home_clinic_name = $${String(values.length + 1)}`);
+        values.push(fields.homeClinicName);
+      }
+
+      if (sets.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "At least one field must be provided");
+      }
+
+      values.push(userId);
+      const query = `UPDATE users SET ${sets.join(", ")} WHERE id = $${String(values.length)} RETURNING *`;
+
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const { rows } = await client.query<UserRow>(query, values);
+          const row = rows[0];
+          if (!row) {
+            throw new AppError(404, "NOT_FOUND", "User not found");
+          }
+          return rowToUserRecord(row);
+        },
+        true, // ownerAdmin — application layer already validated RBAC
       );
     },
 
