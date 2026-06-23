@@ -55,6 +55,9 @@ function makeAdmin(clinicId = CLINIC_A): AuthenticatedUser {
     role: "owner_admin",
     homeClinicId: clinicId,
     homeClinicName: "Clinic A",
+    firstName: null,
+    lastName: null,
+    displayName: null,
   };
 }
 
@@ -65,6 +68,9 @@ function makeManager(clinicId = CLINIC_A): AuthenticatedUser {
     role: "group_practice_manager",
     homeClinicId: clinicId,
     homeClinicName: "Clinic A",
+    firstName: null,
+    lastName: null,
+    displayName: null,
   };
 }
 
@@ -75,6 +81,9 @@ function makeStaff(clinicId = CLINIC_A): AuthenticatedUser {
     role: "clinical_staff",
     homeClinicId: clinicId,
     homeClinicName: "Clinic A",
+    firstName: null,
+    lastName: null,
+    displayName: null,
   };
 }
 

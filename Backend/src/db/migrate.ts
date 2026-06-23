@@ -1314,6 +1314,21 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE active = true;
     `,
   },
+  {
+    /**
+     * Sprint 1: User Identity — adds nullable first_name, last_name, and
+     * display_name columns to the users table.  Nullable so existing rows
+     * are not invalidated; the application layer derives display_name as
+     * "First Last" on creation when not explicitly provided.
+     */
+    id: "019_user_name_fields",
+    sql: `
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS first_name   text,
+        ADD COLUMN IF NOT EXISTS last_name    text,
+        ADD COLUMN IF NOT EXISTS display_name text;
+    `,
+  },
 ];
 
 /**

@@ -5,22 +5,33 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
+import type { ClinicData } from "../types/clinic.js";
 import type { StaffUser, UserRole } from "../types/index.js";
 import { canManageUsers, ROLE_LABELS } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
-const ALL_ROLES: UserRole[] = ["owner_admin", "group_practice_manager", "clinical_staff"];
+// Roles an owner_admin may assign.
+const ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
+  "owner_admin",
+  "group_practice_manager",
+  "clinical_staff",
+];
+
+// Roles a group_practice_manager may assign (clinical_staff only).
+const MANAGER_ASSIGNABLE_ROLES: UserRole[] = ["clinical_staff"];
 
 type FormState = {
   email: string;
   password: string;
   role: UserRole;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  /** clinicId to POST to — only used when the caller is owner_admin. */
+  selectedClinicId: string;
+  selectedClinicName: string;
 };
-
-function initialForm(): FormState {
-  return { email: "", password: "", role: "clinical_staff" };
-}
 
 type ResetPasswordState = {
   userId: string;
@@ -30,19 +41,48 @@ type ResetPasswordState = {
   success: boolean;
 };
 
+/** Derive a display label for a user row: "First Last" > displayName > email. */
+function nameLabel(u: StaffUser): string {
+  if (u.firstName && u.lastName) return `${u.firstName} ${u.lastName}`;
+  if (u.displayName) return u.displayName;
+  return "—";
+}
+
 export function ManageUsersPage() {
   const { user } = useAuth();
+
+  // ── Users list ──────────────────────────────────────────────────────────────
   const [users, setUsers] = useState<StaffUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // ── Clinic list (owner_admin only) ─────────────────────────────────────────
+  const [clinics, setClinics] = useState<ClinicData[]>([]);
+  const [clinicsLoading, setClinicsLoading] = useState(false);
+
+  // ── Create user form ───────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // ── Reset password ─────────────────────────────────────────────────────────
   const [resetState, setResetState] = useState<ResetPasswordState | null>(null);
+
+  // ── Init form when user is known ───────────────────────────────────────────
+  function buildInitialForm(targetClinicId: string, targetClinicName: string): FormState {
+    return {
+      email: "",
+      password: "",
+      role: "clinical_staff",
+      firstName: "",
+      lastName: "",
+      displayName: "",
+      selectedClinicId: targetClinicId,
+      selectedClinicName: targetClinicName,
+    };
+  }
 
   const loadUsers = useCallback(async () => {
     if (!user) return;
@@ -58,43 +98,72 @@ export function ManageUsersPage() {
     }
   }, [user]);
 
+  // Load clinic list for owner_admin so they can pick the target clinic.
+  const loadClinics = useCallback(async () => {
+    if (!user || user.role !== "owner_admin") return;
+    setClinicsLoading(true);
+    try {
+      const result = await apiClient.listClinics();
+      setClinics(result);
+    } catch {
+      // Non-critical — falls back to home clinic only
+    } finally {
+      setClinicsLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     void loadUsers();
-  }, [loadUsers]);
+    void loadClinics();
+  }, [loadUsers, loadClinics]);
 
   if (!user) return null;
 
   if (!canManageUsers(user.role)) {
-    // TODO: Replace this silent redirect with an explicit Access Denied panel
-    // (h2 + explanation + back-link inside AppShell) to match the UX pattern
-    // introduced in AddProductPage. Confirm with product before changing.
     return <Navigate to="/" replace />;
   }
 
-  // Managers can only create clinical_staff; admins can select any role.
-  const availableRoles =
-    user.role === "owner_admin" ? ALL_ROLES : (["clinical_staff"] as UserRole[]);
+  const isAdmin = user.role === "owner_admin";
+  const availableRoles = isAdmin ? ADMIN_ASSIGNABLE_ROLES : MANAGER_ASSIGNABLE_ROLES;
+
+  function openForm(): void {
+    if (!user) return;
+    setShowForm(true);
+    setFormError(null);
+    setSuccessMessage(null);
+    setForm(buildInitialForm(user.homeClinicId, user.homeClinicName));
+  }
+
+  function closeForm(): void {
+    setShowForm(false);
+    setForm(null);
+    setFormError(null);
+  }
 
   async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!user) return;
+    if (!user || !form) return;
 
     setFormError(null);
     setSuccessMessage(null);
     setIsSubmitting(true);
 
     try {
-      const created = await apiClient.createUser(user.homeClinicId, {
+      const created = await apiClient.createUser(form.selectedClinicId, {
         email: form.email.trim(),
         password: form.password,
         role: form.role,
-        clinicName: user.homeClinicName,
+        clinicName: form.selectedClinicName,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        displayName: form.displayName.trim() || null,
       });
 
       setUsers((prev) => [...prev, created]);
-      setSuccessMessage(`Account created for ${created.email}`);
-      setForm(initialForm);
-      setShowForm(false);
+      const fullName = `${created.firstName ?? ""} ${created.lastName ?? ""}`.trim();
+      const name = created.displayName ?? (fullName || created.email);
+      setSuccessMessage(`Account created for ${name}`);
+      closeForm();
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Failed to create user");
     } finally {
@@ -125,8 +194,18 @@ export function ManageUsersPage() {
     }
   }
 
+  // When the admin picks a different clinic in the selector, update form state.
+  function handleClinicChange(clinicId: string): void {
+    const picked = clinics.find((c) => c.id === clinicId);
+    if (!picked || !form) return;
+    setForm((f) =>
+      f ? { ...f, selectedClinicId: picked.id, selectedClinicName: picked.name } : f,
+    );
+  }
+
   return (
     <AppShell>
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <section className="status-card">
         <div className="status-card__header">
           <div>
@@ -137,27 +216,11 @@ export function ManageUsersPage() {
           </div>
           <div className="inventory-page__actions">
             {!showForm ? (
-              <button
-                type="button"
-                className="button-link"
-                onClick={() => {
-                  setShowForm(true);
-                  setFormError(null);
-                  setSuccessMessage(null);
-                }}
-              >
+              <button type="button" className="button-link" onClick={openForm}>
                 + Add user
               </button>
             ) : (
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => {
-                  setShowForm(false);
-                  setForm(initialForm);
-                  setFormError(null);
-                }}
-              >
+              <button type="button" className="link-button" onClick={closeForm}>
                 Cancel
               </button>
             )}
@@ -170,7 +233,8 @@ export function ManageUsersPage() {
           </p>
         ) : null}
 
-        {showForm ? (
+        {/* ── Create user form ──────────────────────────────────────────────── */}
+        {showForm && form ? (
           <form
             className="product-form"
             onSubmit={(event) => { void handleSubmit(event); }}
@@ -179,13 +243,81 @@ export function ManageUsersPage() {
             <fieldset className="product-form__section">
               <legend>New staff account</legend>
               <div className="product-form__grid">
+
+                {/* ── Clinic selector — owner_admin only ── */}
+                {isAdmin ? (
+                  <label>
+                    Home clinic
+                    <select
+                      value={form.selectedClinicId}
+                      onChange={(e) => { handleClinicChange(e.target.value); }}
+                      disabled={clinicsLoading}
+                      aria-label="Home clinic"
+                    >
+                      {clinicsLoading ? (
+                        <option value="">Loading clinics…</option>
+                      ) : (
+                        clinics.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                ) : null}
+
+                <label>
+                  First name
+                  <input
+                    type="text"
+                    value={form.firstName}
+                    onChange={(e) => {
+                      setForm((f) => f && { ...f, firstName: e.target.value });
+                    }}
+                    placeholder="Jane"
+                    required
+                    maxLength={100}
+                    autoComplete="off"
+                  />
+                </label>
+
+                <label>
+                  Last name
+                  <input
+                    type="text"
+                    value={form.lastName}
+                    onChange={(e) => {
+                      setForm((f) => f && { ...f, lastName: e.target.value });
+                    }}
+                    placeholder="Smith"
+                    required
+                    maxLength={100}
+                    autoComplete="off"
+                  />
+                </label>
+
+                <label>
+                  Display name
+                  <input
+                    type="text"
+                    value={form.displayName}
+                    onChange={(e) => {
+                      setForm((f) => f && { ...f, displayName: e.target.value });
+                    }}
+                    placeholder="Defaults to First Last"
+                    maxLength={200}
+                    autoComplete="off"
+                  />
+                </label>
+
                 <label>
                   Email address
                   <input
                     type="email"
                     value={form.email}
                     onChange={(e) => {
-                      setForm((f) => ({ ...f, email: e.target.value }));
+                      setForm((f) => f && { ...f, email: e.target.value });
                     }}
                     placeholder="jane.smith@yourclinic.au"
                     required
@@ -199,7 +331,7 @@ export function ManageUsersPage() {
                     type="password"
                     value={form.password}
                     onChange={(e) => {
-                      setForm((f) => ({ ...f, password: e.target.value }));
+                      setForm((f) => f && { ...f, password: e.target.value });
                     }}
                     placeholder="Min 8 characters"
                     minLength={8}
@@ -213,7 +345,7 @@ export function ManageUsersPage() {
                   <select
                     value={form.role}
                     onChange={(e) => {
-                      setForm((f) => ({ ...f, role: e.target.value as UserRole }));
+                      setForm((f) => f && { ...f, role: e.target.value as UserRole });
                     }}
                   >
                     {availableRoles.map((r) => (
@@ -237,6 +369,7 @@ export function ManageUsersPage() {
         ) : null}
       </section>
 
+      {/* ── Staff accounts table ──────────────────────────────────────────────── */}
       <section className="status-card">
         <h2>Staff accounts</h2>
 
@@ -251,16 +384,18 @@ export function ManageUsersPage() {
             <table className="inventory-table">
               <thead>
                 <tr>
+                  <th>Name</th>
                   <th>Email</th>
                   <th>Role</th>
-                  <th>Clinic</th>
+                  <th>Home clinic</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <>
-                    <tr key={u.id}>
+                  <React.Fragment key={u.id}>
+                    <tr>
+                      <td>{nameLabel(u)}</td>
                       <td>{u.email}</td>
                       <td>
                         <span className="inventory-badge">{ROLE_LABELS[u.role]}</span>
@@ -294,7 +429,7 @@ export function ManageUsersPage() {
                     </tr>
                     {resetState?.userId === u.id && !resetState.success ? (
                       <tr key={`${u.id}-reset`}>
-                        <td colSpan={4}>
+                        <td colSpan={5}>
                           <form
                             className="reset-password-form"
                             onSubmit={(event) => { void handleResetPassword(event); }}
@@ -326,7 +461,7 @@ export function ManageUsersPage() {
                         </td>
                       </tr>
                     ) : null}
-                  </>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

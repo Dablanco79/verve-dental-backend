@@ -51,6 +51,9 @@ const callerAdmin: AuthenticatedUser = {
   role: "owner_admin",
   homeClinicId: CLINIC_A_ID,
   homeClinicName: "Clinic A",
+  firstName: null,
+  lastName: null,
+  displayName: null,
 };
 
 const callerManager: AuthenticatedUser = {
@@ -59,6 +62,9 @@ const callerManager: AuthenticatedUser = {
   role: "group_practice_manager",
   homeClinicId: CLINIC_A_ID,
   homeClinicName: "Clinic A",
+  firstName: null,
+  lastName: null,
+  displayName: null,
 };
 
 const callerStaffB: AuthenticatedUser = {
@@ -67,6 +73,9 @@ const callerStaffB: AuthenticatedUser = {
   role: "clinical_staff",
   homeClinicId: CLINIC_B_ID,
   homeClinicName: "Clinic B",
+  firstName: null,
+  lastName: null,
+  displayName: null,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

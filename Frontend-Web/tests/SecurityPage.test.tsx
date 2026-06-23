@@ -40,6 +40,9 @@ const MOCK_USER: AuthUser = {
   role: "clinical_staff",
   homeClinicId: "clinic-1",
   homeClinicName: "Verve Dental Clinic A",
+  firstName: null,
+  lastName: null,
+  displayName: null,
 };
 
 const MOCK_SETUP_DATA: MfaSetupData = {

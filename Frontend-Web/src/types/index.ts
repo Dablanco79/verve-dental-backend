@@ -16,6 +16,16 @@ export type AuthUser = {
   /** Payroll / contract location — not the clinic currently being accessed via URL. */
   homeClinicId: string;
   homeClinicName: string;
+  /** Nullable for users created before Sprint 1. */
+  firstName: string | null;
+  /** Nullable for users created before Sprint 1. */
+  lastName: string | null;
+  /**
+   * Preferred display name, e.g. "Jane Smith".
+   * Defaults to "firstName lastName" on creation.
+   * Nullable for users created before Sprint 1.
+   */
+  displayName: string | null;
 };
 
 export type AuthSession = {
@@ -61,6 +71,9 @@ export type StaffUser = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
 };
 
 export type CreateUserRequest = {
@@ -68,6 +81,9 @@ export type CreateUserRequest = {
   password: string;
   role: UserRole;
   clinicName: string;
+  firstName: string;
+  lastName: string;
+  displayName?: string | null;
 };
 
 export type ChangePasswordRequest = {

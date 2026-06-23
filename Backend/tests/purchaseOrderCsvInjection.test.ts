@@ -134,6 +134,9 @@ function buildInjectionApp(sku: string, itemName: string, reason: string) {
       role: "owner_admin",
       homeClinicId: CLINIC_ID,
       homeClinicName: "Test Clinic",
+      firstName: null,
+      lastName: null,
+      displayName: null,
     };
     next();
   });

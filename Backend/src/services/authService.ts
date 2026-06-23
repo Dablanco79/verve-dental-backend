@@ -154,6 +154,9 @@ export function createAuthService(
       role: user.role,
       homeClinicId: user.homeClinicId,
       homeClinicName: user.homeClinicName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      displayName: user.displayName,
     };
   }
 
@@ -164,6 +167,9 @@ export function createAuthService(
       role: user.role,
       homeClinicId: user.homeClinicId,
       homeClinicName: user.homeClinicName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      displayName: user.displayName,
       type: "access",
     };
 
@@ -234,6 +240,9 @@ export function createAuthService(
       role: user.role,
       homeClinicId: user.homeClinicId,
       homeClinicName: user.homeClinicName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      displayName: user.displayName,
       type: "mfa_enrollment",
     };
 
@@ -259,6 +268,9 @@ export function createAuthService(
         role: payload.role as UserRole,
         homeClinicId: payload.homeClinicId as string,
         homeClinicName: payload.homeClinicName as string,
+        firstName: (payload.firstName as string | null | undefined) ?? null,
+        lastName: (payload.lastName as string | null | undefined) ?? null,
+        displayName: (payload.displayName as string | null | undefined) ?? null,
       };
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -517,6 +529,10 @@ export function createAuthService(
       role: payload.role,
       homeClinicId: payload.homeClinicId,
       homeClinicName: payload.homeClinicName,
+      // Name fields were added in Sprint 1; older JWTs may not carry them.
+      firstName: payload.firstName ?? null,
+      lastName: payload.lastName ?? null,
+      displayName: payload.displayName ?? null,
     };
   }
 

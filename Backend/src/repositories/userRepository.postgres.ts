@@ -41,6 +41,9 @@ type UserRow = {
   role: string;
   home_clinic_id: string;
   home_clinic_name: string;
+  first_name: string | null;
+  last_name: string | null;
+  display_name: string | null;
   payroll_track: string;
   totp_secret: string | null;
   mfa_enabled: boolean;
@@ -55,6 +58,9 @@ function rowToUserRecord(row: UserRow): UserRecord {
     role: row.role as UserRole,
     homeClinicId: row.home_clinic_id,
     homeClinicName: row.home_clinic_name,
+    firstName: row.first_name ?? null,
+    lastName: row.last_name ?? null,
+    displayName: row.display_name ?? null,
     payrollTrack: row.payroll_track as UserRecord["payrollTrack"],
     totpSecret: row.totp_secret,
     mfaEnabled: row.mfa_enabled,
@@ -103,9 +109,16 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
 
     async createUser(input: CreateUserInput): Promise<UserRecord> {
       const id = randomUUID();
+      const derivedDisplayName =
+        input.displayName ?? `${input.firstName} ${input.lastName}`;
       const { rows } = await pool.query<UserRow>(
-        `INSERT INTO users (id, email, password_hash, role, home_clinic_id, home_clinic_name, payroll_track, mfa_enabled, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, false, true)
+        `INSERT INTO users (
+           id, email, password_hash, role,
+           home_clinic_id, home_clinic_name,
+           first_name, last_name, display_name,
+           payroll_track, mfa_enabled, is_active
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, true)
          RETURNING *`,
         [
           id,
@@ -114,6 +127,9 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
           input.role,
           input.homeClinicId,
           input.homeClinicName,
+          input.firstName,
+          input.lastName,
+          derivedDisplayName,
           input.payrollTrack ?? "hourly",
         ],
       );

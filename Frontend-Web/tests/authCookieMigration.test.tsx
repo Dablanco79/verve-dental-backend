@@ -69,6 +69,9 @@ const ADMIN_USER: AuthUser = {
   role: "owner_admin",
   homeClinicId: "11111111-1111-4111-8111-111111111111",
   homeClinicName: "Verve Dental Clinic A",
+  firstName: null,
+  lastName: null,
+  displayName: null,
 };
 
 const SESSION: AuthSession = {

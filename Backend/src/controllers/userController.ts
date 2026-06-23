@@ -20,6 +20,9 @@ const createUserSchema = z.object({
     .max(128, "Password must be at most 128 characters"),
   role: z.enum(USER_ROLES),
   clinicName: z.string().min(1, "Clinic name is required").max(120),
+  firstName: z.string().min(1, "First name is required").max(100),
+  lastName: z.string().min(1, "Last name is required").max(100),
+  displayName: z.string().min(1).max(200).optional().nullable(),
 });
 
 const resetPasswordSchema = z.object({
@@ -59,6 +62,9 @@ export function createUserHandlers(userService: UserService) {
         role: body.role,
         homeClinicId: clinicId,
         homeClinicName: body.clinicName,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        displayName: body.displayName,
       });
 
       res.status(201).json({ data: user });

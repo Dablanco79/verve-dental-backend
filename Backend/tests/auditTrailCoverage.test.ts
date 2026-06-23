@@ -175,6 +175,8 @@ describe("Audit trail — user creation", () => {
         password: "Str0ngP@ssword!",
         role: "clinical_staff",
         clinicName: "Verve Dental Clinic A",
+        firstName: "New",
+        lastName: "Staff",
       });
 
     expect(createRes.status).toBe(201);

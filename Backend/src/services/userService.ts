@@ -23,6 +23,10 @@ export type CreateUserParams = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string;
+  lastName: string;
+  /** Defaults to "First Last" when not supplied. */
+  displayName?: string | null;
 };
 
 function toPublicUser(user: UserRecord): PublicUser {
@@ -32,6 +36,9 @@ function toPublicUser(user: UserRecord): PublicUser {
     role: user.role,
     homeClinicId: user.homeClinicId,
     homeClinicName: user.homeClinicName,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    displayName: user.displayName,
   };
 }
 
@@ -91,6 +98,9 @@ export function createUserService(
       role: params.role,
       homeClinicId: params.homeClinicId,
       homeClinicName: params.homeClinicName,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      displayName: params.displayName,
     });
 
     audit.logAuthEvent("user.created", {

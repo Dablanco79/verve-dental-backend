@@ -11,6 +11,10 @@ export type CreateUserInput = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string;
+  lastName: string;
+  /** Defaults to "First Last" when not supplied. */
+  displayName?: string | null;
   /** Defaults to 'hourly' when not supplied (backward-compat with pre-009 callers). */
   payrollTrack?: StaffPayrollTrack;
 };
@@ -71,6 +75,9 @@ export async function createInMemoryUserRepository(
       role: "owner_admin",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "commission",
       totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
       mfaEnabled: true,
@@ -83,6 +90,9 @@ export async function createInMemoryUserRepository(
       role: "clinical_staff",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
@@ -95,6 +105,9 @@ export async function createInMemoryUserRepository(
       role: "group_practice_manager",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "hourly",
       // MFA enrolled — loginAndGetTokens uses SEED_ADMIN_TOTP_SECRET to complete
       // the MFA challenge, keeping all existing integration tests passing.
@@ -109,6 +122,9 @@ export async function createInMemoryUserRepository(
       role: "owner_admin",
       homeClinicId: SEED_CLINIC_B_ID,
       homeClinicName: "Verve Dental Clinic B",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "commission",
       // MFA enrolled — loginAndGetTokens uses SEED_ADMIN_TOTP_SECRET for MFA.
       totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
@@ -123,6 +139,9 @@ export async function createInMemoryUserRepository(
       role: "owner_admin",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "commission",
       totpSecret: null,
       mfaEnabled: false,
@@ -135,6 +154,9 @@ export async function createInMemoryUserRepository(
       role: "group_practice_manager",
       homeClinicId: SEED_CLINIC_A_ID,
       homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
       payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
@@ -160,6 +182,9 @@ export async function createInMemoryUserRepository(
         role: input.role,
         homeClinicId: input.homeClinicId,
         homeClinicName: input.homeClinicName,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        displayName: input.displayName ?? `${input.firstName} ${input.lastName}`,
         payrollTrack: input.payrollTrack ?? "hourly",
         totpSecret: null,
         mfaEnabled: false,

@@ -18,6 +18,16 @@ export type UserRecord = {
    */
   homeClinicId: string;
   homeClinicName: string;
+  /** Legal given name. Nullable for rows that pre-date Sprint 1. */
+  firstName: string | null;
+  /** Legal family name. Nullable for rows that pre-date Sprint 1. */
+  lastName: string | null;
+  /**
+   * Preferred display name, e.g. "Jane Smith".
+   * Defaults to "firstName lastName" when not explicitly provided at creation.
+   * Nullable for rows that pre-date Sprint 1.
+   */
+  displayName: string | null;
   /**
    * How this staff member is compensated.
    * 'hourly'     → clock-in/out timesheet; ordinary + overtime hour buckets.
@@ -43,6 +53,9 @@ export type AuthenticatedUser = {
   /** Payroll / contract location — not the clinic currently being accessed via URL. */
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
 };
 
 export type AccessTokenPayload = {
@@ -51,6 +64,9 @@ export type AccessTokenPayload = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
   type: "access";
 };
 
@@ -77,6 +93,9 @@ export type MfaEnrollmentPayload = {
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
   type: "mfa_enrollment";
 };
 
