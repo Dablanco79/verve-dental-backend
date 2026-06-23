@@ -121,13 +121,12 @@ export function ClinicsListPage() {
                     </span>
                   </td>
                   <td>
-                    {clinic.id === user.homeClinicId ? (
-                      <Link to="/settings/clinic" className="button-link">
-                        Manage
-                      </Link>
-                    ) : (
-                      <span className="cs-field-hint">Home clinic only</span>
-                    )}
+                    <Link
+                      to={`/settings/clinics/${clinic.id}/edit`}
+                      className="button-link"
+                    >
+                      Manage
+                    </Link>
                   </td>
                 </tr>
               ))}

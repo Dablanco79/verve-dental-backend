@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -126,6 +126,11 @@ function formatUpdatedAt(iso: string): string {
 
 export function ClinicSettingsPage() {
   const { user } = useAuth();
+  const { clinicId: urlClinicId } = useParams<{ clinicId?: string }>();
+
+  // When accessed via /settings/clinics/:clinicId/edit the URL param takes
+  // precedence; /settings/clinic falls back to the user's home clinic.
+  const targetClinicId = urlClinicId ?? user?.homeClinicId ?? "";
 
   const [clinic,       setClinic]       = useState<ClinicData | null>(null);
   const [form,         setForm]         = useState<FormValues | null>(null);
@@ -139,12 +144,12 @@ export function ClinicSettingsPage() {
   const isReadOnly = user?.role !== "owner_admin";
 
   const loadClinic = useCallback(async () => {
-    if (!user) return;
+    if (!user || !targetClinicId) return;
     setIsFetching(true);
     setFetchError(null);
     setSubmitSuccess(false);
     try {
-      const data = await apiClient.getClinic(user.homeClinicId);
+      const data = await apiClient.getClinic(targetClinicId);
       setClinic(data);
       setForm(clinicToForm(data));
     } catch (err: unknown) {
@@ -152,14 +157,20 @@ export function ClinicSettingsPage() {
     } finally {
       setIsFetching(false);
     }
-  }, [user]);
+  }, [user, targetClinicId]);
 
   useEffect(() => {
     void loadClinic();
   }, [loadClinic]);
 
-  // clinical_staff must not access this page — redirect immediately.
-  if (user && !canViewClinicSettings(user.role)) {
+  // When accessed via /settings/clinics/:clinicId/edit, only owner_admin may
+  // proceed — redirect anyone else before rendering.
+  if (user && urlClinicId && user.role !== "owner_admin") {
+    return <Navigate to="/" replace />;
+  }
+
+  // /settings/clinic is accessible to owner_admin and group_practice_manager.
+  if (user && !urlClinicId && !canViewClinicSettings(user.role)) {
     return <Navigate to="/" replace />;
   }
 
@@ -229,7 +240,7 @@ export function ClinicSettingsPage() {
           <div>
             <h2>Clinic settings</h2>
             <p className="inventory-page__subtitle">
-              {clinic?.name ?? user.homeClinicName}
+              {clinic?.name ?? (urlClinicId ? "Loading…" : user.homeClinicName)}
               {clinic ? ` — last updated ${formatUpdatedAt(clinic.updatedAt)}` : ""}
             </p>
           </div>

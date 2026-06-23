@@ -47,6 +47,7 @@ export function App() {
             <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
             <Route path="/settings/clinics" element={<ClinicsListPage />} />
             <Route path="/settings/clinics/new" element={<CreateClinicPage />} />
+            <Route path="/settings/clinics/:clinicId/edit" element={<ClinicSettingsPage />} />
             <Route path="/settings/security" element={<SecurityPage />} />
             <Route path="/timesheets" element={<TimesheetsPage />} />
             <Route path="/leave" element={<LeavePage />} />

@@ -4,7 +4,9 @@
  * Coverage:
  *   - Loading state shows the loading message while listClinics() is in flight
  *   - Renders clinic rows (name, timezone label, active / inactive status)
- *   - Shows "Manage" link for the user's home clinic; "Home clinic only" for others
+ *   - owner_admin sees a Manage link for EVERY clinic (not just home clinic)
+ *   - Manage links point to /settings/clinics/:clinicId/edit
+ *   - No "Home clinic only" label appears for owner_admin
  *   - Shows "Add clinic" button linking to /settings/clinics/new
  *   - Shows "No clinics found" when the list is empty
  *   - Shows an error message when listClinics() rejects
@@ -165,19 +167,36 @@ describe("ClinicsListPage — successful load", () => {
     expect(screen.getByText("Inactive")).toBeInTheDocument();
   });
 
-  it("shows a Manage link for the user's home clinic", async () => {
+  it("shows a Manage link for every clinic (owner_admin can edit all)", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: /manage/i })).toBeInTheDocument();
+      const manageLinks = screen.getAllByRole("link", { name: /manage/i });
+      expect(manageLinks).toHaveLength(2);
     });
   });
 
-  it("shows 'Home clinic only' label for clinics that are not the home clinic", async () => {
+  it("Manage links point to /settings/clinics/:clinicId/edit", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText(/home clinic only/i)).toBeInTheDocument();
+      const manageLinks = screen.getAllByRole("link", { name: /manage/i });
+      expect(manageLinks[0]).toHaveAttribute(
+        "href",
+        `/settings/clinics/${TEST_CLINIC_ID}/edit`,
+      );
+      expect(manageLinks[1]).toHaveAttribute(
+        "href",
+        `/settings/clinics/${SECOND_CLINIC_ID}/edit`,
+      );
+    });
+  });
+
+  it("does not show 'Home clinic only' for owner_admin", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText(/home clinic only/i)).not.toBeInTheDocument();
     });
   });
 
