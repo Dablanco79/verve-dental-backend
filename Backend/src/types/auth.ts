@@ -56,6 +56,12 @@ export type AuthenticatedUser = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  /**
+   * Effective permission set for this token.
+   * Derived at issuance as: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
+   * Use requirePermission() middleware to gate on a specific permission.
+   */
+  permissions: string[];
 };
 
 export type AccessTokenPayload = {
@@ -67,6 +73,8 @@ export type AccessTokenPayload = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  /** Effective permissions baked in at token issuance. */
+  permissions: string[];
   type: "access";
 };
 

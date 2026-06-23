@@ -58,6 +58,7 @@ function makeAdmin(clinicId = CLINIC_A): AuthenticatedUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: [],
   };
 }
 
@@ -71,6 +72,7 @@ function makeManager(clinicId = CLINIC_A): AuthenticatedUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: [],
   };
 }
 
@@ -84,6 +86,7 @@ function makeStaff(clinicId = CLINIC_A): AuthenticatedUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: [],
   };
 }
 

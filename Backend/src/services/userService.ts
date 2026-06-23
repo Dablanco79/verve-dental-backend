@@ -61,6 +61,7 @@ function toPublicUser(user: UserRecord): PublicUser {
     lastName: user.lastName,
     displayName: user.displayName,
     payrollTrack: user.payrollTrack,
+    permissions: [],
   };
 }
 

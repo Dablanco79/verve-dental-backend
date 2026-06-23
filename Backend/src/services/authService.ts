@@ -7,6 +7,7 @@ import type { EnvConfig } from "../config/index.js";
 import { decryptTotpSecret, encryptTotpSecret } from "../utils/mfaCrypto.js";
 import type { RedisClient } from "../redis/client.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { PermissionRepository } from "../repositories/permissionRepository.js";
 import type { AuditService } from "./auditService.js";
 import type {
   AccessTokenPayload,
@@ -20,6 +21,7 @@ import type {
   UserRecord,
   UserRole,
 } from "../types/auth.js";
+import { DEFAULT_PERMISSIONS } from "../types/permissions.js";
 import { AppError } from "../types/errors.js";
 
 const MFA_REQUIRED_ROLES: UserRole[] = ["owner_admin", "group_practice_manager"];
@@ -42,6 +44,7 @@ export function createAuthService(
   userRepository: UserRepository,
   audit: AuditService,
   redisClient: RedisClient | null = null,
+  permissionRepository: PermissionRepository | null = null,
 ) {
   // In-memory fallback store — used when Redis is unavailable (local dev / tests).
   const refreshTokens = new Map<string, RefreshTokenRecord>();
@@ -158,10 +161,13 @@ export function createAuthService(
       lastName: user.lastName,
       displayName: user.displayName,
       payrollTrack: user.payrollTrack,
+      // Role-based defaults only — explicit grants are embedded in the token
+      // via issueTokens() and may include more permissions than shown here.
+      permissions: DEFAULT_PERMISSIONS[user.role],
     };
   }
 
-  function signAccessToken(user: UserRecord): string {
+  function signAccessToken(user: UserRecord, permissions: string[]): string {
     const payload: AccessTokenPayload = {
       sub: user.id,
       email: user.email,
@@ -171,6 +177,7 @@ export function createAuthService(
       firstName: user.firstName,
       lastName: user.lastName,
       displayName: user.displayName,
+      permissions,
       type: "access",
     };
 
@@ -207,7 +214,14 @@ export function createAuthService(
   }
 
   async function issueTokens(user: UserRecord): Promise<AuthTokens> {
-    const accessToken = signAccessToken(user);
+    // Build effective permissions: role defaults ∪ active explicit grants.
+    const roleDefaults: string[] = DEFAULT_PERMISSIONS[user.role];
+    const explicitGrants: string[] = permissionRepository
+      ? await permissionRepository.listActiveByUser(user.id)
+      : [];
+    const permissions = Array.from(new Set([...roleDefaults, ...explicitGrants]));
+
+    const accessToken = signAccessToken(user, permissions);
     const refreshToken = await signRefreshToken(user.id);
     const decoded = jwt.decode(accessToken) as { exp?: number; iat?: number } | null;
     const expiresIn =
@@ -263,15 +277,18 @@ export function createAuthService(
         throw new AppError(401, "UNAUTHORIZED", "Invalid enrollment token");
       }
 
+      const role = payload.role as UserRole;
       return {
         id: payload.sub as string,
         email: payload.email as string,
-        role: payload.role as UserRole,
+        role,
         homeClinicId: payload.homeClinicId as string,
         homeClinicName: payload.homeClinicName as string,
         firstName: (payload.firstName as string | null | undefined) ?? null,
         lastName: (payload.lastName as string | null | undefined) ?? null,
         displayName: (payload.displayName as string | null | undefined) ?? null,
+        // Enrollment tokens don't carry grants — use role defaults.
+        permissions: DEFAULT_PERMISSIONS[role],
       };
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -534,6 +551,12 @@ export function createAuthService(
       firstName: payload.firstName ?? null,
       lastName: payload.lastName ?? null,
       displayName: payload.displayName ?? null,
+      // Backward-compat: tokens issued before RBAC v2 have no permissions claim
+      // at runtime even though the type says string[].  Cast to optional to allow
+      // the nullish-coalescing fallback without a stale type assertion.
+      permissions:
+        (payload as unknown as { permissions?: string[] }).permissions ??
+        DEFAULT_PERMISSIONS[payload.role],
     };
   }
 

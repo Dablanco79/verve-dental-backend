@@ -31,6 +31,10 @@ import {
 } from "../repositories/userRepository.js";
 import { createPostgresUserRepository } from "../repositories/userRepository.postgres.js";
 import {
+  createInMemoryPermissionRepository,
+} from "../repositories/permissionRepository.js";
+import { createPostgresPermissionRepository } from "../repositories/permissionRepository.postgres.js";
+import {
   createInMemoryBillingRepository,
 } from "../repositories/billingRepository.js";
 import { createPostgresBillingRepository } from "../repositories/billingRepository.postgres.js";
@@ -69,6 +73,7 @@ import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { PermissionRepository } from "../repositories/permissionRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
@@ -94,6 +99,7 @@ export type AppDependencies = {
   catalogueImportService: CatalogueImportService;
   healthService: HealthService;
   userRepository: UserRepository;
+  permissionRepository: PermissionRepository;
   catalogRepository: CatalogRepository;
   clinicRepository: ClinicRepository;
   inventoryRepository: InventoryRepository;
@@ -151,6 +157,7 @@ export async function createAppDependencies(
   }
 
   let userRepository: UserRepository;
+  let permissionRepository: PermissionRepository;
   let catalogRepository: CatalogRepository;
   let clinicRepository: ClinicRepository;
   let inventoryRepository: InventoryRepository;
@@ -236,6 +243,7 @@ export async function createAppDependencies(
     logger.info("RLS pool hook installed — per-request tenant context active");
 
     userRepository = createPostgresUserRepository(connectedPool);
+    permissionRepository = createPostgresPermissionRepository(connectedPool);
     catalogRepository = createPostgresCatalogRepository(connectedPool);
     clinicRepository = createPostgresClinicRepository(connectedPool);
     inventoryRepository = createPostgresInventoryRepository(connectedPool);
@@ -252,6 +260,7 @@ export async function createAppDependencies(
     );
   } else {
     userRepository = await createInMemoryUserRepository(config.MFA_ENCRYPTION_KEY);
+    permissionRepository = createInMemoryPermissionRepository();
     catalogRepository = createInMemoryCatalogRepository();
     clinicRepository = createInMemoryClinicRepository();
     inventoryRepository = createInMemoryInventoryRepository(catalogRepository);
@@ -297,7 +306,7 @@ export async function createAppDependencies(
 
   const healthService = createHealthService(connectedPool, connectedRedis);
   const auditService = createAuditService(logger, analyticsRepository);
-  const authService = createAuthService(config, userRepository, auditService, connectedRedis);
+  const authService = createAuthService(config, userRepository, auditService, connectedRedis, permissionRepository);
   const userService = createUserService(userRepository, auditService, authService);
   const purchaseOrderService = createPurchaseOrderService(
     inventoryRepository,
@@ -360,6 +369,7 @@ export async function createAppDependencies(
     catalogueImportService,
     healthService,
     userRepository,
+    permissionRepository,
     catalogRepository,
     clinicRepository,
     inventoryRepository,

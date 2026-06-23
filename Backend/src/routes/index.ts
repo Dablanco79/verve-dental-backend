@@ -35,6 +35,7 @@ import { createPurchaseOrderRouter } from "./purchaseOrderRoutes.js";
 import { createRosterRouter } from "./rosterRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
+import { createPermissionRouter } from "./permissionRoutes.js";
 import { createSupplierRouter } from "./supplierRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -132,6 +133,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId/scans", createScanRouter(deps));
   router.use("/clinics/:clinicId/products", createProductRouter(deps));
   router.use("/clinics/:clinicId/users", createUserRouter(deps));
+  router.use("/clinics/:clinicId/users", createPermissionRouter(deps));
   router.use("/clinics/:clinicId/purchase-orders", createPurchaseOrderRouter(deps));
   router.use("/clinics/:clinicId/roster", createRosterRouter(deps));
   router.use("/clinics/:clinicId/forecast", createForecastRouter(deps));

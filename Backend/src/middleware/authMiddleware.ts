@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { AuthService } from "../services/authService.js";
 import type { AuditService } from "../services/auditService.js";
 import type { UserRole } from "../types/auth.js";
+import type { Permission } from "../types/permissions.js";
 import { AppError } from "../types/errors.js";
 
 function getBearerToken(req: Request): string | null {
@@ -118,6 +119,39 @@ export function requireRoles(...roles: UserRole[]) {
 
     if (!roles.includes(req.user.role)) {
       next(new AppError(403, "FORBIDDEN", "Insufficient permissions"));
+      return;
+    }
+
+    next();
+  };
+}
+
+/**
+ * Guards a route by checking that the authenticated user's token contains
+ * the specified permission string.
+ *
+ * Effective permissions are baked into the JWT at issuance time as the union
+ * of DEFAULT_PERMISSIONS[role] and any active user_permission_grants rows.
+ * This middleware does NOT make a DB round-trip on each request.
+ *
+ * This is additive infrastructure — existing requireRoles guards are not
+ * replaced until RBAC v2 is fully rolled out.
+ */
+export function requirePermission(permission: Permission) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      next(new AppError(401, "UNAUTHORIZED", "Authentication required"));
+      return;
+    }
+
+    if (!req.user.permissions.includes(permission)) {
+      next(
+        new AppError(
+          403,
+          "FORBIDDEN",
+          `Permission "${permission}" is required for this action`,
+        ),
+      );
       return;
     }
 

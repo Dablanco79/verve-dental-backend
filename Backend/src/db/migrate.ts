@@ -1329,6 +1329,46 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ADD COLUMN IF NOT EXISTS display_name text;
     `,
   },
+  {
+    /**
+     * RBAC v2 foundation — explicit per-user permission grants.
+     *
+     * Stores additional or cross-role permissions layered on top of the
+     * role-based defaults baked into DEFAULT_PERMISSIONS.  These rows are
+     * loaded at JWT issuance time and embedded in the access token so
+     * downstream requirePermission() checks need no extra DB round-trip.
+     *
+     * Soft-delete semantics: revoked_at IS NULL means the grant is active.
+     * The partial unique index prevents duplicate active grants; after
+     * revocation a new row may be inserted to re-grant.
+     *
+     * Foreign keys reference clinics and users but are not CASCADE-deleted —
+     * historical grant records are preserved for the audit trail even after
+     * a user or clinic is deactivated.
+     */
+    id: "020_user_permission_grants",
+    sql: `
+      CREATE TABLE IF NOT EXISTS user_permission_grants (
+        id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        clinic_id   uuid        NOT NULL REFERENCES clinics(id),
+        user_id     uuid        NOT NULL REFERENCES users(id),
+        permission  text        NOT NULL,
+        granted_by  uuid        NOT NULL REFERENCES users(id),
+        granted_at  timestamptz NOT NULL DEFAULT now(),
+        revoked_at  timestamptz
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_upg_user_id
+        ON user_permission_grants (user_id);
+
+      CREATE INDEX IF NOT EXISTS idx_upg_clinic_user
+        ON user_permission_grants (clinic_id, user_id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_upg_active_unique
+        ON user_permission_grants (clinic_id, user_id, permission)
+        WHERE revoked_at IS NULL;
+    `,
+  },
 ];
 
 /**

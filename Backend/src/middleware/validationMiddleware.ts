@@ -143,3 +143,13 @@ export const clinicInventoryItemParamsSchema = z.object({
   clinicId: z.string().uuid("clinicId must be a valid UUID"),
   itemId: z.string().uuid("itemId must be a valid UUID"),
 });
+
+/**
+ * Validates :clinicId + :userId + :permission (e.g. DELETE /clinics/:clinicId/users/:userId/permissions/:permission).
+ * The permission segment is a free-form string (e.g. "inventory:read").
+ */
+export const clinicUserPermissionParamsSchema = z.object({
+  clinicId:   z.string().uuid("clinicId must be a valid UUID"),
+  userId:     z.string().uuid("userId must be a valid UUID"),
+  permission: z.string().min(1, "permission must not be empty"),
+});

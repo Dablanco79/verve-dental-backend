@@ -54,6 +54,7 @@ const callerAdmin: AuthenticatedUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  permissions: [],
 };
 
 const callerManager: AuthenticatedUser = {
@@ -65,6 +66,7 @@ const callerManager: AuthenticatedUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  permissions: [],
 };
 
 const callerStaffB: AuthenticatedUser = {
@@ -76,6 +78,7 @@ const callerStaffB: AuthenticatedUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  permissions: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

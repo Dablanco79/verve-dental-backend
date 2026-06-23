@@ -137,6 +137,7 @@ function buildInjectionApp(sku: string, itemName: string, reason: string) {
       firstName: null,
       lastName: null,
       displayName: null,
+      permissions: [],
     };
     next();
   });
