@@ -1005,6 +1005,13 @@ body {
   color: #102a43;
 }
 
+.roster-form__static-secondary {
+  display: block;
+  font-size: 0.75rem;
+  color: #627d98;
+  margin-top: 0.1rem;
+}
+
 .roster-form__control {
   padding: 0.6rem 0.75rem;
   border: 1px solid #bcccdc;

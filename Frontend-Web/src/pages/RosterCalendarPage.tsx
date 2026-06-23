@@ -14,6 +14,7 @@ import {
   SHIFT_TYPE_LABELS,
 } from "../types/roster.js";
 import { canManageRoster } from "../utils/roles.js";
+import { staffDisplayName, staffLabelFromEmail } from "../utils/staffName.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -93,14 +94,6 @@ function buildIso(date: string, time: string): string {
   return new Date(`${date}T${time}`).toISOString();
 }
 
-/** "jane.smith@clinic.au" → "Jane Smith" */
-function staffLabel(email: string): string {
-  const local = email.split("@")[0] ?? email;
-  return local
-    .replace(/[._-]+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 // ── Local state types ────────────────────────────────────────────────────────
 
 type ShiftFormState = {
@@ -152,6 +145,12 @@ export function RosterCalendarPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const canWrite = user ? canManageRoster(user.role) : false;
+
+  /** Resolve the best display name for a roster entry's staff member. */
+  function resolveStaffName(userId: string, email: string): string {
+    const found = staffList.find((s) => s.id === userId);
+    return found ? staffDisplayName(found) : staffLabelFromEmail(email);
+  }
 
   const loadWeek = useCallback(async () => {
     if (!user) return;
@@ -355,10 +354,10 @@ export function RosterCalendarPage() {
                           onClick={() => {
                             if (canWrite) openEdit(entry);
                           }}
-                          aria-label={`Shift: ${entry.staffEmail}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
+                          aria-label={`Shift: ${resolveStaffName(entry.staffUserId, entry.staffEmail)}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
                         >
                           <span className="roster-shift__name">
-                            {staffLabel(entry.staffEmail)}
+                            {resolveStaffName(entry.staffUserId, entry.staffEmail)}
                           </span>
                           <span className="roster-shift__time">
                             {formatTime(entry.shiftStartAt)}–{formatTime(entry.shiftEndAt)}
@@ -427,7 +426,10 @@ export function RosterCalendarPage() {
                 <div className="roster-form__field-static">
                   <span className="roster-form__static-label">Staff member</span>
                   <span className="roster-form__static-value">
-                    {editingEntry.staffEmail}
+                    {resolveStaffName(editingEntry.staffUserId, editingEntry.staffEmail)}
+                    <span className="roster-form__static-secondary">
+                      {editingEntry.staffEmail}
+                    </span>
                   </span>
                 </div>
               ) : (
@@ -444,7 +446,10 @@ export function RosterCalendarPage() {
                     <option value="">— Select staff member —</option>
                     {staffList.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.email}
+                        {staffDisplayName(s)}
+                        {s.firstName || s.lastName || s.displayName
+                          ? ` (${s.email})`
+                          : ""}
                       </option>
                     ))}
                   </select>
