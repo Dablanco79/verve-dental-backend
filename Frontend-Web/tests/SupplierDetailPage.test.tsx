@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SupplierDetailPage } from "../src/pages/SupplierDetailPage.js";
 import type { Supplier, SupplierInvoice, SupplierProduct } from "../src/types/supplier.js";
-import { createManagerUser, TEST_CLINIC_ID } from "./helpers/auth.js";
+import { createManagerUser, createStaffUser, TEST_CLINIC_ID } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
   setAuthenticatedUser,
@@ -18,6 +19,7 @@ const {
   mockGetSupplier,
   mockGetSupplierCatalogue,
   mockListClinicSupplierInvoices,
+  mockUpdateSupplier,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
@@ -25,6 +27,7 @@ const {
     mockGetSupplier: vi.fn(),
     mockGetSupplierCatalogue: vi.fn(),
     mockListClinicSupplierInvoices: vi.fn(),
+    mockUpdateSupplier: vi.fn(),
   };
 });
 
@@ -43,6 +46,7 @@ vi.mock("../src/api/client.js", () => ({
     getSupplier: mockGetSupplier,
     getSupplierCatalogue: mockGetSupplierCatalogue,
     listClinicSupplierInvoices: mockListClinicSupplierInvoices,
+    updateSupplier: mockUpdateSupplier,
     listSuppliers: vi.fn(),
     createSupplier: vi.fn(),
     getHealth: vi.fn(),
@@ -129,12 +133,15 @@ describe("SupplierDetailPage", () => {
     mockGetSupplier.mockReset();
     mockGetSupplierCatalogue.mockReset();
     mockListClinicSupplierInvoices.mockReset();
+    mockUpdateSupplier.mockReset();
 
     setAuthenticatedUser(authTestState, createManagerUser());
     mockGetSupplier.mockResolvedValue(sampleSupplier);
     mockGetSupplierCatalogue.mockResolvedValue(sampleCatalogue);
     mockListClinicSupplierInvoices.mockResolvedValue(sampleInvoices);
   });
+
+  // ── Core rendering ───────────────────────────────────────────────────────────
 
   it("shows loading state then renders supplier name in heading", async () => {
     renderDetailPage();
@@ -163,7 +170,6 @@ describe("SupplierDetailPage", () => {
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    // At least one Active badge should be present (heading + overview)
     const activeBadges = screen.getAllByText("Active");
     expect(activeBadges.length).toBeGreaterThanOrEqual(1);
   });
@@ -267,5 +273,159 @@ describe("SupplierDetailPage", () => {
     });
 
     expect(mockGetSupplier).not.toHaveBeenCalled();
+  });
+
+  // ── Edit supplier ────────────────────────────────────────────────────────────
+
+  it("shows Edit Supplier button for manager role", async () => {
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.getByRole("button", { name: "Edit Supplier" })).toBeInTheDocument();
+  });
+
+  it("hides Edit Supplier button for clinical_staff", async () => {
+    clearAuthenticatedUser(authTestState);
+    setAuthenticatedUser(authTestState, createStaffUser());
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.queryByRole("button", { name: "Edit Supplier" })).not.toBeInTheDocument();
+  });
+
+  it("opens the edit modal when Edit Supplier is clicked", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // Check for the modal heading (h2), not the action button with same label
+    expect(screen.getByRole("heading", { name: "Edit Supplier" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("DentalCo Australia")).toBeInTheDocument();
+  });
+
+  it("updates the page heading after a successful edit", async () => {
+    const user = userEvent.setup();
+    const updated: Supplier = { ...sampleSupplier, supplierName: "DentalCo Pty Ltd" };
+    mockUpdateSupplier.mockResolvedValue(updated);
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    const nameInput = screen.getByDisplayValue("DentalCo Australia");
+    await user.clear(nameInput);
+    await user.type(nameInput, "DentalCo Pty Ltd");
+
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplier).toHaveBeenCalledWith(
+        SUPPLIER_ID,
+        expect.objectContaining({ supplierName: "DentalCo Pty Ltd" }),
+      );
+    });
+
+    expect(await screen.findByRole("heading", { name: "DentalCo Pty Ltd" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // ── Deactivate / reactivate ──────────────────────────────────────────────────
+
+  it("shows Deactivate Supplier button for active supplier (manager)", async () => {
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.getByRole("button", { name: "Deactivate Supplier" })).toBeInTheDocument();
+  });
+
+  it("shows Reactivate Supplier button for inactive supplier (manager)", async () => {
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, active: false });
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.getByRole("button", { name: "Reactivate Supplier" })).toBeInTheDocument();
+  });
+
+  it("hides deactivate/reactivate buttons for clinical_staff", async () => {
+    clearAuthenticatedUser(authTestState);
+    setAuthenticatedUser(authTestState, createStaffUser());
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.queryByRole("button", { name: "Deactivate Supplier" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reactivate Supplier" })).not.toBeInTheDocument();
+  });
+
+  it("opens confirmation dialog when Deactivate Supplier is clicked", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Deactivate Supplier" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // Check for the modal heading (h2), not the action button with the same label
+    expect(screen.getByRole("heading", { name: "Deactivate Supplier" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Yes, Deactivate" })).toBeInTheDocument();
+  });
+
+  it("calls updateSupplier with active=false and the action button changes to Reactivate on confirm", async () => {
+    const user = userEvent.setup();
+    const deactivated: Supplier = { ...sampleSupplier, active: false };
+    mockUpdateSupplier.mockResolvedValue(deactivated);
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Deactivate Supplier" }));
+    await user.click(screen.getByRole("button", { name: "Yes, Deactivate" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplier).toHaveBeenCalledWith(SUPPLIER_ID, { active: false });
+    });
+
+    // After deactivation, the status toggle button switches to "Reactivate Supplier"
+    // confirming that supplier state updated to active=false.
+    await screen.findByRole("button", { name: "Reactivate Supplier" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("dismisses confirm dialog without API call when Cancel is clicked", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Deactivate Supplier" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockUpdateSupplier).not.toHaveBeenCalled();
+  });
+
+  // ── Delete ───────────────────────────────────────────────────────────────────
+
+  it("never shows a Delete button — hard delete is not supported by the backend", async () => {
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 });

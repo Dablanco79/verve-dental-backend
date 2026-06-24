@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
+import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
 import { loadConfig } from "../config/index.js";
 import type { CreateSupplierRequest, Supplier, SupplierInvoice } from "../types/supplier.js";
 import { canManageSuppliers } from "../utils/roles.js";
@@ -239,9 +241,18 @@ function CreateSupplierModal({ onClose, onCreated }: CreateModalProps) {
 type SuppliersTableProps = {
   suppliers: Supplier[];
   recentInvoices: SupplierInvoice[];
+  canManage: boolean;
+  onEdit: (supplier: Supplier) => void;
+  onToggleStatus: (supplier: Supplier) => void;
 };
 
-function SuppliersTable({ suppliers, recentInvoices }: SuppliersTableProps) {
+function SuppliersTable({
+  suppliers,
+  recentInvoices,
+  canManage,
+  onEdit,
+  onToggleStatus,
+}: SuppliersTableProps) {
   if (suppliers.length === 0) {
     return (
       <div className="supplier-empty">
@@ -257,7 +268,9 @@ function SuppliersTable({ suppliers, recentInvoices }: SuppliersTableProps) {
     const invoicesForSupplier = recentInvoices
       .filter((inv) => inv.supplierId === supplierId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    return invoicesForSupplier[0] ? formatDate(invoicesForSupplier[0].invoiceDate ?? invoicesForSupplier[0].createdAt) : "—";
+    return invoicesForSupplier[0]
+      ? formatDate(invoicesForSupplier[0].invoiceDate ?? invoicesForSupplier[0].createdAt)
+      : "—";
   }
 
   return (
@@ -299,16 +312,35 @@ function SuppliersTable({ suppliers, recentInvoices }: SuppliersTableProps) {
               <td className="supplier-table__td">
                 <ActiveBadge active={supplier.active} />
               </td>
-              <td className="supplier-table__td">
-                {getLastInvoiceDate(supplier.id)}
-              </td>
+              <td className="supplier-table__td">{getLastInvoiceDate(supplier.id)}</td>
               <td className="supplier-table__td supplier-table__td--action">
-                <Link
-                  to={`/suppliers/${supplier.id}`}
-                  className="supplier-view-btn"
-                >
-                  View
-                </Link>
+                <div className="supplier-table__row-actions">
+                  <Link to={`/suppliers/${supplier.id}`} className="supplier-view-btn">
+                    View
+                  </Link>
+                  {canManage ? (
+                    <>
+                      <button
+                        type="button"
+                        className="supplier-edit-btn"
+                        onClick={() => {
+                          onEdit(supplier);
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={`supplier-toggle-btn supplier-toggle-btn--${supplier.active ? "deactivate" : "activate"}`}
+                        onClick={() => {
+                          onToggleStatus(supplier);
+                        }}
+                      >
+                        {supplier.active ? "Deactivate" : "Reactivate"}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </td>
             </tr>
           ))}
@@ -334,6 +366,8 @@ export function SuppliersPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [confirmToggleSupplier, setConfirmToggleSupplier] = useState<Supplier | null>(null);
 
   const loadData = useCallback(async () => {
     if (!user) {
@@ -395,6 +429,22 @@ export function SuppliersPage() {
     setSuppliers((prev) => [created, ...prev]);
     setShowCreateModal(false);
   }
+
+  function handleSupplierUpdated(updated: Supplier): void {
+    setSuppliers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    setEditingSupplier(null);
+  }
+
+  async function handleToggleStatus(): Promise<void> {
+    if (!confirmToggleSupplier) return;
+    const updated = await apiClient.updateSupplier(confirmToggleSupplier.id, {
+      active: !confirmToggleSupplier.active,
+    });
+    setSuppliers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    setConfirmToggleSupplier(null);
+  }
+
+  const toggleTarget = confirmToggleSupplier;
 
   return (
     <AppShell>
@@ -470,7 +520,7 @@ export function SuppliersPage() {
                 </select>
               </label>
 
-              {(searchTerm !== "" || activeFilter !== "all") ? (
+              {searchTerm !== "" || activeFilter !== "all" ? (
                 <button
                   type="button"
                   className="supplier-search-bar__clear"
@@ -484,7 +534,13 @@ export function SuppliersPage() {
               ) : null}
             </div>
 
-            <SuppliersTable suppliers={filteredSuppliers} recentInvoices={recentInvoices} />
+            <SuppliersTable
+              suppliers={filteredSuppliers}
+              recentInvoices={recentInvoices}
+              canManage={canManage}
+              onEdit={setEditingSupplier}
+              onToggleStatus={setConfirmToggleSupplier}
+            />
           </>
         )}
       </section>
@@ -495,6 +551,34 @@ export function SuppliersPage() {
             setShowCreateModal(false);
           }}
           onCreated={handleSupplierCreated}
+        />
+      ) : null}
+
+      {editingSupplier ? (
+        <EditSupplierModal
+          key={editingSupplier.id}
+          supplier={editingSupplier}
+          onClose={() => {
+            setEditingSupplier(null);
+          }}
+          onSaved={handleSupplierUpdated}
+        />
+      ) : null}
+
+      {toggleTarget ? (
+        <ConfirmModal
+          title={toggleTarget.active ? "Deactivate Supplier" : "Reactivate Supplier"}
+          message={
+            toggleTarget.active
+              ? `Deactivate "${toggleTarget.supplierName}"? It will be hidden from active supplier lists but all historical data will be retained.`
+              : `Reactivate "${toggleTarget.supplierName}"? It will become visible in active supplier lists again.`
+          }
+          confirmLabel={toggleTarget.active ? "Yes, Deactivate" : "Yes, Reactivate"}
+          confirmVariant={toggleTarget.active ? "warning" : "danger"}
+          onClose={() => {
+            setConfirmToggleSupplier(null);
+          }}
+          onConfirm={handleToggleStatus}
         />
       ) : null}
     </AppShell>

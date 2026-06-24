@@ -4,8 +4,11 @@ import { Link, useParams } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
+import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
 import { loadConfig } from "../config/index.js";
 import type { Supplier, SupplierInvoice, SupplierInvoiceStatus, SupplierProduct } from "../types/supplier.js";
+import { canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -303,6 +306,8 @@ export function SupplierDetailPage() {
   const [isLoadingInvoices, setIsLoadingInvoices] = useState(true);
 
   const [supplierError, setSupplierError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isConfirmingStatusChange, setIsConfirmingStatusChange] = useState(false);
 
   const loadAll = useCallback(async () => {
     if (!supplierId || !user) {
@@ -358,6 +363,22 @@ export function SupplierDetailPage() {
 
   if (!user) return null;
 
+  const canManage = canManageSuppliers(user.role);
+
+  function handleSupplierUpdated(updated: Supplier): void {
+    setSupplier(updated);
+    setIsEditing(false);
+  }
+
+  async function handleToggleStatus(): Promise<void> {
+    if (!supplier) return;
+    const updated = await apiClient.updateSupplier(supplier.id, {
+      active: !supplier.active,
+    });
+    setSupplier(updated);
+    setIsConfirmingStatusChange(false);
+  }
+
   return (
     <AppShell>
       <div className="supplier-detail">
@@ -375,6 +396,29 @@ export function SupplierDetailPage() {
           </h2>
           {supplier ? <ActiveBadge active={supplier.active} /> : null}
         </div>
+
+        {supplier && canManage ? (
+          <div className="supplier-detail__actions">
+            <button
+              type="button"
+              className="supplier-edit-btn"
+              onClick={() => {
+                setIsEditing(true);
+              }}
+            >
+              Edit Supplier
+            </button>
+            <button
+              type="button"
+              className={`supplier-toggle-btn supplier-toggle-btn--${supplier.active ? "deactivate" : "activate"}`}
+              onClick={() => {
+                setIsConfirmingStatusChange(true);
+              }}
+            >
+              {supplier.active ? "Deactivate Supplier" : "Reactivate Supplier"}
+            </button>
+          </div>
+        ) : null}
 
         {supplierError ? (
           <p className="status-card__error" role="alert">
@@ -394,6 +438,34 @@ export function SupplierDetailPage() {
           </>
         ) : null}
       </div>
+
+      {isEditing && supplier ? (
+        <EditSupplierModal
+          key={supplier.id}
+          supplier={supplier}
+          onClose={() => {
+            setIsEditing(false);
+          }}
+          onSaved={handleSupplierUpdated}
+        />
+      ) : null}
+
+      {isConfirmingStatusChange && supplier ? (
+        <ConfirmModal
+          title={supplier.active ? "Deactivate Supplier" : "Reactivate Supplier"}
+          message={
+            supplier.active
+              ? `Deactivate "${supplier.supplierName}"? It will be hidden from active supplier lists but all historical data will be retained.`
+              : `Reactivate "${supplier.supplierName}"? It will become visible in active supplier lists again.`
+          }
+          confirmLabel={supplier.active ? "Yes, Deactivate" : "Yes, Reactivate"}
+          confirmVariant={supplier.active ? "warning" : "danger"}
+          onClose={() => {
+            setIsConfirmingStatusChange(false);
+          }}
+          onConfirm={handleToggleStatus}
+        />
+      ) : null}
     </AppShell>
   );
 }

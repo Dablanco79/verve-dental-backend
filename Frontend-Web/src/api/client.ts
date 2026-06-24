@@ -71,6 +71,7 @@ import type {
   Supplier,
   SupplierInvoice,
   SupplierProduct,
+  UpdateSupplierRequest,
 } from "../types/supplier.js";
 
 type ApiEnvelope<T> = { data: T };
@@ -971,6 +972,18 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function updateSupplier(
+    supplierId: string,
+    body: UpdateSupplierRequest,
+  ): Promise<Supplier> {
+    return request<Supplier>(
+      config,
+      `/api/v1/suppliers/${encodeURIComponent(supplierId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function getSupplierCatalogue(supplierId: string): Promise<SupplierProduct[]> {
     return request<SupplierProduct[]>(
       config,
@@ -1061,6 +1074,7 @@ export function createApiClient(config: AppConfig) {
     listSuppliers,
     getSupplier,
     createSupplier,
+    updateSupplier,
     getSupplierCatalogue,
     listClinicSupplierInvoices,
   };

@@ -22,6 +22,17 @@ export type CreateSupplierRequest = {
   notes?: string | null;
 };
 
+export type UpdateSupplierRequest = {
+  supplierName?: string;
+  supplierCode?: string | null;
+  contactName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  notes?: string | null;
+  active?: boolean;
+};
+
 export type SupplierProduct = {
   id: string;
   supplierId: string;
