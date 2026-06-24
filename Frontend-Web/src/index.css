@@ -4074,3 +4074,526 @@ body {
   font-weight: 500;
   color: #102a43;
 }
+
+/* ── Upload Invoice Modal ──────────────────────────────────────────────────── */
+
+.supplier-modal--upload {
+  max-width: 520px;
+}
+
+/* Readonly supplier name display */
+.upload-supplier-readonly {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.upload-supplier-readonly__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #102a43;
+  padding: 0.55rem 0.75rem;
+  background: #f0f4f8;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+}
+
+/* File drop zone */
+.upload-dropzone {
+  border: 2px dashed #bcccdc;
+  border-radius: 10px;
+  padding: 1.75rem 1.25rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: #fafbfc;
+  outline: none;
+}
+
+.upload-dropzone:hover,
+.upload-dropzone:focus {
+  border-color: #2d6a9f;
+  background: #f0f6ff;
+}
+
+.upload-dropzone--dragging {
+  border-color: #2d6a9f;
+  background: #e8f0fa;
+}
+
+.upload-dropzone--has-file {
+  border-color: #059669;
+  background: #f0fdf4;
+}
+
+.upload-dropzone__input {
+  display: none;
+}
+
+.upload-dropzone__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.upload-dropzone__icon {
+  font-size: 2rem;
+  color: #9ab5cc;
+  line-height: 1;
+}
+
+.upload-dropzone__primary {
+  font-size: 0.9rem;
+  color: #486581;
+}
+
+.upload-dropzone__browse {
+  color: #2d6a9f;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.upload-dropzone__hint {
+  font-size: 0.78rem;
+  color: #9ab5cc;
+}
+
+.upload-dropzone__file-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.upload-dropzone__file-icon {
+  font-size: 1.5rem;
+}
+
+.upload-dropzone__file-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #102a43;
+  word-break: break-all;
+  max-width: 280px;
+}
+
+.upload-dropzone__file-size {
+  font-size: 0.8rem;
+  color: #627d98;
+  white-space: nowrap;
+}
+
+/* Upload error banner */
+.upload-error-banner {
+  padding: 0.7rem 1rem;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* Upload progress card */
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1rem 0 0.5rem;
+}
+
+.upload-progress__spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid #e2ecf4;
+  border-top-color: #2d6a9f;
+  border-radius: 50%;
+  animation: upload-spin 0.85s linear infinite;
+}
+
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+.upload-progress__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+}
+
+.upload-progress__step {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  color: #9ab5cc;
+  padding: 0.35rem 0;
+  transition: color 0.3s;
+}
+
+.upload-progress__step--active {
+  color: #2d6a9f;
+  font-weight: 600;
+}
+
+.upload-progress__step--done {
+  color: #059669;
+}
+
+.upload-progress__step-icon {
+  font-size: 0.85rem;
+  width: 1.2em;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.upload-progress__hint {
+  font-size: 0.78rem;
+  color: #9ab5cc;
+  margin: 0;
+  text-align: center;
+}
+
+/* ── Supplier Invoice Review Page ─────────────────────────────────────────── */
+
+.invoice-review {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* Warnings */
+.invoice-review__warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.invoice-review__warning {
+  padding: 0.65rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.invoice-review__warning--file {
+  background: #fffbeb;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+}
+
+.invoice-review__warning--number {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+/* Summary card */
+.invoice-review__summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.invoice-review__summary-header .supplier-detail__section-title {
+  margin-bottom: 0;
+}
+
+.invoice-review__summary-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.ocr-confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.invoice-review__summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.9rem 1.5rem;
+  margin: 0;
+}
+
+.invoice-review__summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.invoice-review__summary-item dt {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #627d98;
+}
+
+.invoice-review__summary-item dd {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #102a43;
+}
+
+.invoice-review__filename {
+  font-size: 0.82rem !important;
+  color: #486581 !important;
+  word-break: break-all;
+}
+
+/* Line items */
+.invoice-review__lines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.invoice-review__table {
+  font-size: 0.88rem;
+}
+
+.invoice-review__row--ignored {
+  opacity: 0.4;
+}
+
+.invoice-review__sku {
+  display: block;
+  font-size: 0.75rem;
+  color: #627d98;
+  font-family: "Consolas", "Fira Code", monospace;
+  margin-top: 0.15rem;
+}
+
+/* Match badge */
+.match-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.match-badge--matched {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.match-badge--unmatched {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+/* Create product button (placeholder) */
+.invoice-review__create-product-btn {
+  display: block;
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px dashed #bcccdc;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #9ab5cc;
+  cursor: not-allowed;
+}
+
+/* Inline edit inputs */
+.invoice-review__edit-input {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #2d6a9f;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: #102a43;
+  width: 100%;
+  min-width: 120px;
+}
+
+.invoice-review__edit-input--numeric {
+  min-width: 80px;
+  text-align: right;
+}
+
+.invoice-review__edit-input:focus {
+  outline: 2px solid #2d6a9f;
+  outline-offset: 1px;
+}
+
+.invoice-review__preview-total {
+  color: #2d6a9f;
+  font-weight: 600;
+}
+
+/* Save / Cancel buttons (compact in-row) */
+.invoice-review__save-btn {
+  padding: 0.3rem 0.7rem !important;
+  font-size: 0.8rem !important;
+}
+
+.invoice-review__cancel-btn {
+  padding: 0.3rem 0.7rem !important;
+  font-size: 0.8rem !important;
+}
+
+/* Ignore button */
+.invoice-review__ignore-btn {
+  border-color: #cbd5e1;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.invoice-review__ignore-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+/* Subtotal row */
+.invoice-review__subtotal-row td {
+  border-top: 2px solid #e2ecf4;
+  font-weight: 600;
+}
+
+.invoice-review__subtotal-label {
+  text-align: right;
+  color: #486581;
+  font-size: 0.85rem;
+}
+
+.invoice-review__subtotal-value {
+  color: #102a43;
+}
+
+/* Approval section */
+.invoice-review__approval {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.invoice-review__approval-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #486581;
+  line-height: 1.6;
+}
+
+.invoice-review__approval-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.invoice-review__approve-btn {
+  padding: 0.6rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  background: #059669;
+  color: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.invoice-review__approve-btn:hover  { background: #047857; }
+.invoice-review__approve-btn:disabled { opacity: 0.6; cursor: default; }
+
+.invoice-review__void-btn {
+  padding: 0.6rem 1.25rem;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: transparent;
+  color: #991b1b;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.invoice-review__void-btn:hover  { background: #fef2f2; }
+.invoice-review__void-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Confirmed / Voided banner */
+.invoice-review__confirmed-banner,
+.invoice-review__voided-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.invoice-review__confirmed-icon {
+  font-size: 1.75rem;
+  color: #059669;
+  line-height: 1;
+}
+
+.invoice-review__voided-icon {
+  font-size: 1.75rem;
+  color: #dc2626;
+  line-height: 1;
+}
+
+.invoice-review__confirmed-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.875rem;
+  color: #486581;
+}
+
+/* ── Invoice status badges (supplier invoice) ─────────────────────────────── */
+
+.supplier-invoice-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.supplier-invoice-badge--pending_review {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.supplier-invoice-badge--confirmed {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.supplier-invoice-badge--voided {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}

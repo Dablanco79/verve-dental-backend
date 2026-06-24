@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
+import { UploadInvoiceModal } from "../components/supplier/UploadInvoiceModal.js";
 import { loadConfig } from "../config/index.js";
-import type { CreateSupplierRequest, Supplier, SupplierInvoice } from "../types/supplier.js";
+import type {
+  CreateSupplierRequest,
+  Supplier,
+  SupplierInvoice,
+  UploadAndExtractResult,
+} from "../types/supplier.js";
 import { canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -356,6 +362,7 @@ type ActiveFilter = "all" | "active" | "inactive";
 
 export function SuppliersPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recentInvoices, setRecentInvoices] = useState<SupplierInvoice[]>([]);
@@ -366,6 +373,7 @@ export function SuppliersPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [confirmToggleSupplier, setConfirmToggleSupplier] = useState<Supplier | null>(null);
 
@@ -430,6 +438,12 @@ export function SuppliersPage() {
     setShowCreateModal(false);
   }
 
+  function handleUploadSuccess(result: UploadAndExtractResult): void {
+    void navigate(`/invoice-review/${result.invoice.id}`, {
+      state: { uploadResult: result, backPath: "/suppliers" },
+    });
+  }
+
   function handleSupplierUpdated(updated: Supplier): void {
     setSuppliers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     setEditingSupplier(null);
@@ -458,15 +472,26 @@ export function SuppliersPage() {
           </div>
           <div className="inventory-page__actions">
             {canManage ? (
-              <button
-                type="button"
-                className="button-link"
-                onClick={() => {
-                  setShowCreateModal(true);
-                }}
-              >
-                + New Supplier
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="button-link"
+                  onClick={() => {
+                    setShowUploadModal(true);
+                  }}
+                >
+                  Upload Invoice
+                </button>
+                <button
+                  type="button"
+                  className="button-link"
+                  onClick={() => {
+                    setShowCreateModal(true);
+                  }}
+                >
+                  + New Supplier
+                </button>
+              </>
             ) : null}
             <button
               type="button"
@@ -579,6 +604,17 @@ export function SuppliersPage() {
             setConfirmToggleSupplier(null);
           }}
           onConfirm={handleToggleStatus}
+        />
+      ) : null}
+
+      {showUploadModal ? (
+        <UploadInvoiceModal
+          clinicId={user.homeClinicId}
+          suppliers={suppliers.filter((s) => s.active)}
+          onClose={() => {
+            setShowUploadModal(false);
+          }}
+          onUploadSuccess={handleUploadSuccess}
         />
       ) : null}
     </AppShell>

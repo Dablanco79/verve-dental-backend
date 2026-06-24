@@ -88,3 +88,61 @@ export type ListSupplierInvoicesParams = {
   page?: number;
   limit?: number;
 };
+
+export type SupplierInvoiceLine = {
+  id: string;
+  invoiceId: string;
+  lineNumber: number;
+  ocrDescription: string | null;
+  ocrSku: string | null;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  taxRateBasisPoints: number;
+  taxCents: number;
+  masterCatalogItemId: string | null;
+  supplierCatalogueId: string | null;
+  isMatched: boolean;
+  matchMethod: "exact_sku" | "name_match" | "manual" | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UploadAndExtractResult = {
+  invoice: SupplierInvoice;
+  lines: SupplierInvoiceLine[];
+  duplicateFileWarning: {
+    existingInvoiceId: string;
+    importedAt: string;
+  } | null;
+  duplicateInvoiceNumberWarning: {
+    existingInvoiceId: string;
+    existingStatus: SupplierInvoiceStatus;
+  } | null;
+};
+
+export type ConfirmImportResult = {
+  invoice: SupplierInvoice;
+  priceUpdates: number;
+};
+
+export type UpdateSupplierInvoiceRequest = {
+  supplierId?: string | null;
+  supplierNameRaw?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  dueDate?: string | null;
+  notes?: string | null;
+};
+
+export type UpdateSupplierInvoiceLineRequest = {
+  ocrDescription?: string;
+  ocrSku?: string | null;
+  quantity?: number;
+  unitPriceCents?: number;
+  taxRateBasisPoints?: number;
+  masterCatalogItemId?: string | null;
+  supplierCatalogueId?: string | null;
+  isMatched?: boolean;
+  matchMethod?: "exact_sku" | "name_match" | "manual" | null;
+};

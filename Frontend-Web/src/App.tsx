@@ -26,6 +26,7 @@ import { TimesheetsPage } from "./pages/TimesheetsPage.js";
 import { LeavePage } from "./pages/LeavePage.js";
 import { SuppliersPage } from "./pages/SuppliersPage.js";
 import { SupplierDetailPage } from "./pages/SupplierDetailPage.js";
+import { SupplierInvoiceReviewPage } from "./pages/SupplierInvoiceReviewPage.js";
 
 export function App() {
   return (
@@ -58,6 +59,7 @@ export function App() {
             <Route path="/analytics/audit" element={<AuditTrailPage />} />
             <Route path="/suppliers" element={<SuppliersPage />} />
             <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
+            <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

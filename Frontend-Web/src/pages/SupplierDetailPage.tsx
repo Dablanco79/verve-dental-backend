@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
+import { UploadInvoiceModal } from "../components/supplier/UploadInvoiceModal.js";
 import { loadConfig } from "../config/index.js";
-import type { Supplier, SupplierInvoice, SupplierInvoiceStatus, SupplierProduct } from "../types/supplier.js";
+import type {
+  Supplier,
+  SupplierInvoice,
+  SupplierInvoiceStatus,
+  SupplierProduct,
+  UploadAndExtractResult,
+} from "../types/supplier.js";
 import { canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -296,6 +303,7 @@ function PriceRecordsSection() {
 export function SupplierDetailPage() {
   const { supplierId } = useParams<{ supplierId: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [catalogue, setCatalogue] = useState<SupplierProduct[]>([]);
@@ -308,6 +316,7 @@ export function SupplierDetailPage() {
   const [supplierError, setSupplierError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isConfirmingStatusChange, setIsConfirmingStatusChange] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     if (!supplierId || !user) {
@@ -370,6 +379,15 @@ export function SupplierDetailPage() {
     setIsEditing(false);
   }
 
+  function handleUploadSuccess(result: UploadAndExtractResult): void {
+    void navigate(`/invoice-review/${result.invoice.id}`, {
+      state: {
+        uploadResult: result,
+        backPath: supplierId ? `/suppliers/${supplierId}` : "/suppliers",
+      },
+    });
+  }
+
   async function handleToggleStatus(): Promise<void> {
     if (!supplier) return;
     const updated = await apiClient.updateSupplier(supplier.id, {
@@ -407,6 +425,15 @@ export function SupplierDetailPage() {
               }}
             >
               Edit Supplier
+            </button>
+            <button
+              type="button"
+              className="supplier-toggle-btn supplier-toggle-btn--activate"
+              onClick={() => {
+                setShowUploadModal(true);
+              }}
+            >
+              Upload Invoice
             </button>
             <button
               type="button"
@@ -464,6 +491,18 @@ export function SupplierDetailPage() {
             setIsConfirmingStatusChange(false);
           }}
           onConfirm={handleToggleStatus}
+        />
+      ) : null}
+
+      {showUploadModal ? (
+        <UploadInvoiceModal
+          clinicId={user.homeClinicId}
+          suppliers={[supplier]}
+          defaultSupplierId={supplier.id}
+          onClose={() => {
+            setShowUploadModal(false);
+          }}
+          onUploadSuccess={handleUploadSuccess}
         />
       ) : null}
     </AppShell>

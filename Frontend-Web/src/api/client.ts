@@ -65,13 +65,19 @@ import type {
   VerifyAttendanceRequest,
 } from "../types/payroll.js";
 import type {
+  ConfirmImportResult,
   CreateSupplierRequest,
   ListSupplierInvoicesParams,
   ListSuppliersParams,
   Supplier,
   SupplierInvoice,
+  SupplierInvoiceLine,
+  SupplierInvoiceStatus,
   SupplierProduct,
+  UpdateSupplierInvoiceLineRequest,
+  UpdateSupplierInvoiceRequest,
   UpdateSupplierRequest,
+  UploadAndExtractResult,
 } from "../types/supplier.js";
 
 type ApiEnvelope<T> = { data: T };
@@ -1013,6 +1019,134 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * Uploads a supplier invoice file (PDF/PNG/JPEG) via multipart/form-data.
+   * Triggers OCR extraction server-side and returns the created draft invoice
+   * with extracted line items.  Uses a 2-minute timeout as OCR can be slow.
+   */
+  async function uploadSupplierInvoice(
+    clinicId: string,
+    file: File,
+  ): Promise<UploadAndExtractResult> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => { controller.abort(); }, 120_000);
+
+    let response: Response;
+    try {
+      response = await fetch(
+        `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/upload`,
+        {
+          method: "POST",
+          body: formData,
+          headers: { Authorization: `Bearer ${accessToken}` },
+          credentials: "include",
+          signal: controller.signal,
+        },
+      );
+    } catch (fetchErr) {
+      clearTimeout(timeoutId);
+      if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
+        throw new Error(
+          "Upload timed out. The file may be large or the connection is slow. Please try again.",
+        );
+      }
+      throw fetchErr;
+    }
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorBody = await response
+        .json()
+        .catch(() => null) as { error?: { message?: string } } | null;
+      const message =
+        errorBody?.error?.message ?? `Upload failed (${String(response.status)})`;
+      throw new Error(message);
+    }
+
+    const envelope = await response.json() as { data: UploadAndExtractResult };
+    return envelope.data;
+  }
+
+  async function getSupplierInvoice(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<{ invoice: SupplierInvoice; lines: SupplierInvoiceLine[] }> {
+    return request<{ invoice: SupplierInvoice; lines: SupplierInvoiceLine[] }>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function updateSupplierInvoice(
+    clinicId: string,
+    invoiceId: string,
+    body: UpdateSupplierInvoiceRequest,
+  ): Promise<{
+    invoice: SupplierInvoice;
+    duplicateInvoiceNumberWarning: {
+      existingInvoiceId: string;
+      existingStatus: SupplierInvoiceStatus;
+    } | null;
+  }> {
+    return request<{
+      invoice: SupplierInvoice;
+      duplicateInvoiceNumberWarning: {
+        existingInvoiceId: string;
+        existingStatus: SupplierInvoiceStatus;
+      } | null;
+    }>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateSupplierInvoiceLine(
+    clinicId: string,
+    invoiceId: string,
+    lineId: string,
+    body: UpdateSupplierInvoiceLineRequest,
+  ): Promise<SupplierInvoiceLine> {
+    return request<SupplierInvoiceLine>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/lines/${encodeURIComponent(lineId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function confirmSupplierInvoice(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<ConfirmImportResult> {
+    return request<ConfirmImportResult>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/confirm`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
+  async function voidSupplierInvoice(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<SupplierInvoice> {
+    return request<SupplierInvoice>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/void`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1077,6 +1211,12 @@ export function createApiClient(config: AppConfig) {
     updateSupplier,
     getSupplierCatalogue,
     listClinicSupplierInvoices,
+    uploadSupplierInvoice,
+    getSupplierInvoice,
+    updateSupplierInvoice,
+    updateSupplierInvoiceLine,
+    confirmSupplierInvoice,
+    voidSupplierInvoice,
   };
 }
 
