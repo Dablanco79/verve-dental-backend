@@ -28,7 +28,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U verve -d verve_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -66,5 +66,12 @@ jobs:
       - name: Apply migrations and seed demo data
         run: npm run test:db:setup --workspace=@verve/backend
 
+      - name: Verify postgres connectivity before tests
+        run: |
+          until pg_isready -h localhost -p 5432 -U verve -d verve_test; do
+            echo "Waiting for postgres to accept connections as verve@verve_test…"
+            sleep 2
+          done
+
       - name: Run full test suite with real infrastructure
-        run: npm run test --workspace=@verve/backend
+        run: npm run test --workspace=@verve/backend -- --forceExit

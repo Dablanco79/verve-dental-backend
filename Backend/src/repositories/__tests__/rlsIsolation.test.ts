@@ -137,7 +137,14 @@ async function withRlsCtx<T>(
 beforeAll(async () => {
   if (SKIP) return;
 
-  pool = new pg.Pool({ connectionString: DB_URL });
+  pool = new pg.Pool({
+    connectionString: DB_URL,
+    // Explicit timeout prevents an indefinite hang when the postgres service
+    // container has a transient connectivity blip right after the health-check
+    // passes.  Matches the setting used by createDatabasePool() in pool.ts.
+    connectionTimeoutMillis: 10_000,
+    max: 5,
+  });
 
   // Ensure clinics table has our seed clinics (idempotent upsert)
   await asOwnerAdmin(async (client) => {
