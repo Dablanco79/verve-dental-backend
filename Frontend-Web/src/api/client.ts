@@ -64,6 +64,14 @@ import type {
   TimesheetFilters,
   VerifyAttendanceRequest,
 } from "../types/payroll.js";
+import type {
+  CreateSupplierRequest,
+  ListSupplierInvoicesParams,
+  ListSuppliersParams,
+  Supplier,
+  SupplierInvoice,
+  SupplierProduct,
+} from "../types/supplier.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -936,6 +944,62 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Suppliers ────────────────────────────────────────────────────────────────
+
+  async function listSuppliers(params?: ListSuppliersParams): Promise<Supplier[]> {
+    const query = new URLSearchParams();
+    if (params?.active !== undefined) query.set("active", String(params.active));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<Supplier[]>(config, `/api/v1/suppliers${qs}`, {}, requireAccessToken());
+  }
+
+  async function getSupplier(supplierId: string): Promise<Supplier> {
+    return request<Supplier>(
+      config,
+      `/api/v1/suppliers/${encodeURIComponent(supplierId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createSupplier(body: CreateSupplierRequest): Promise<Supplier> {
+    return request<Supplier>(
+      config,
+      "/api/v1/suppliers",
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function getSupplierCatalogue(supplierId: string): Promise<SupplierProduct[]> {
+    return request<SupplierProduct[]>(
+      config,
+      `/api/v1/suppliers/${encodeURIComponent(supplierId)}/catalogue`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listClinicSupplierInvoices(
+    clinicId: string,
+    params?: ListSupplierInvoicesParams,
+  ): Promise<SupplierInvoice[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.supplierId) query.set("supplierId", params.supplierId);
+    if (params?.from) query.set("from", params.from);
+    if (params?.to) query.set("to", params.to);
+    if (params?.page !== undefined) query.set("page", String(params.page));
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<SupplierInvoice[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -994,6 +1058,11 @@ export function createApiClient(config: AppConfig) {
     approveLeave,
     rejectLeave,
     withdrawLeave,
+    listSuppliers,
+    getSupplier,
+    createSupplier,
+    getSupplierCatalogue,
+    listClinicSupplierInvoices,
   };
 }
 

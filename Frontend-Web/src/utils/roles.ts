@@ -90,6 +90,14 @@ export function canViewAdjustmentHistory(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
 }
 
+/**
+ * Supplier catalogue management — create/update suppliers, manage catalogue.
+ * clinical_staff can read suppliers but must not write.
+ */
+export function canManageSuppliers(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
+}
+
 export const ROLE_LABELS: Record<UserRole, string> = {
   owner_admin: "Owner / Admin",
   group_practice_manager: "Practice Manager",

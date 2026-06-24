@@ -41,6 +41,7 @@ export function AppShell({ children }: AppShellProps) {
             Dashboard
           </NavLink>
           <NavLink to="/inventory">Inventory</NavLink>
+          <NavLink to="/suppliers">Suppliers</NavLink>
           {user && canManageInventory(user.role) ? (
             <NavLink to="/inventory/adjust">Adjust Stock</NavLink>
           ) : null}

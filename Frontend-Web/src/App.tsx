@@ -24,6 +24,8 @@ import { AnalyticsDashboardPage } from "./pages/AnalyticsDashboardPage.js";
 import { AuditTrailPage } from "./pages/AuditTrailPage.js";
 import { TimesheetsPage } from "./pages/TimesheetsPage.js";
 import { LeavePage } from "./pages/LeavePage.js";
+import { SuppliersPage } from "./pages/SuppliersPage.js";
+import { SupplierDetailPage } from "./pages/SupplierDetailPage.js";
 
 export function App() {
   return (
@@ -54,6 +56,8 @@ export function App() {
             <Route path="/billing" element={<BillingLedgerPage />} />
             <Route path="/analytics" element={<AnalyticsDashboardPage />} />
             <Route path="/analytics/audit" element={<AuditTrailPage />} />
+            <Route path="/suppliers" element={<SuppliersPage />} />
+            <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
