@@ -494,7 +494,7 @@ export function SupplierDetailPage() {
         />
       ) : null}
 
-      {showUploadModal ? (
+      {showUploadModal && supplier ? (
         <UploadInvoiceModal
           clinicId={user.homeClinicId}
           suppliers={[supplier]}
