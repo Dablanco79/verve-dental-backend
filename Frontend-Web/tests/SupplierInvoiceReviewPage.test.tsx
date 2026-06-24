@@ -186,6 +186,9 @@ describe("SupplierInvoiceReviewPage", () => {
       lines: [sampleLine],
       duplicateFileWarning: null,
       duplicateInvoiceNumberWarning: null,
+      detectedSupplier: null,
+      matchedSupplier: null,
+      supplierMatchStatus: "not_detected",
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });
@@ -266,6 +269,9 @@ describe("SupplierInvoiceReviewPage", () => {
         importedAt: "2026-05-01T00:00:00.000Z",
       },
       duplicateInvoiceNumberWarning: null,
+      detectedSupplier: null,
+      matchedSupplier: null,
+      supplierMatchStatus: "not_detected",
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });
@@ -282,6 +288,9 @@ describe("SupplierInvoiceReviewPage", () => {
         existingInvoiceId: "inv-old",
         existingStatus: "confirmed",
       },
+      detectedSupplier: null,
+      matchedSupplier: null,
+      supplierMatchStatus: "not_detected",
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });

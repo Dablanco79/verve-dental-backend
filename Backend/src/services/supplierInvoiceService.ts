@@ -22,24 +22,30 @@ import type { AuditService } from "./auditService.js";
 import type { OcrProvider } from "./ocr/OcrProvider.js";
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
+import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import { AppError } from "../types/errors.js";
 import type { AuthenticatedUser } from "../types/auth.js";
+import type { Supplier } from "../types/supplier.js";
 import type {
   ConfirmImportResult,
+  DetectedSupplierInfo,
   ListSupplierInvoicesOptions,
   SupplierInvoice,
   SupplierInvoiceLine,
   SupplierInvoiceStatus,
+  SupplierMatchStatus,
   UpdateSupplierInvoiceInput,
   UpdateSupplierInvoiceLineInput,
   UploadAndExtractResult,
 } from "../types/supplierInvoice.js";
+import type { OcrInvoiceResult } from "../types/supplierInvoice.js";
 
 export function createSupplierInvoiceService(
   repo: SupplierInvoiceRepository,
   ocrProvider: OcrProvider,
   supplierCatalogueRepo: SupplierCatalogueRepository,
   auditService: AuditService,
+  supplierRepo: SupplierRepository,
 ) {
   // ── Tenant + role guards ─────────────────────────────────────────────────
 
@@ -76,6 +82,59 @@ export function createSupplierInvoiceService(
     }
   }
 
+  // ── Supplier matching ──────────────────────────────────────────────────────
+
+  /**
+   * Deterministic supplier matching — no fuzzy logic.
+   * Priority: ABN match → exact name match.
+   * Returns { detectedSupplier, matchedSupplier, supplierMatchStatus }.
+   */
+  async function matchSupplierFromOcr(ocrResult: OcrInvoiceResult): Promise<{
+    detectedSupplier: DetectedSupplierInfo | null;
+    matchedSupplier: Supplier | null;
+    supplierMatchStatus: SupplierMatchStatus;
+  }> {
+    const rawName = ocrResult.supplierName?.trim() ?? null;
+
+    if (!rawName) {
+      return {
+        detectedSupplier: null,
+        matchedSupplier: null,
+        supplierMatchStatus: "not_detected",
+      };
+    }
+
+    const detectedSupplier: DetectedSupplierInfo = {
+      supplierName: rawName,
+      abn: ocrResult.supplierAbn ?? null,
+      email: ocrResult.supplierEmail ?? null,
+      phone: ocrResult.supplierPhone ?? null,
+      address: ocrResult.supplierAddress ?? null,
+      website: ocrResult.supplierWebsite ?? null,
+    };
+
+    // 1. Try ABN match first (most reliable).
+    if (ocrResult.supplierAbn) {
+      const byAbn = await supplierRepo.findSupplierByAbn(ocrResult.supplierAbn);
+      if (byAbn) {
+        return { detectedSupplier, matchedSupplier: byAbn, supplierMatchStatus: "matched" };
+      }
+    }
+
+    // 2. Exact case-insensitive name match.
+    const byName = await supplierRepo.findSupplierByName(rawName);
+    if (byName) {
+      return { detectedSupplier, matchedSupplier: byName, supplierMatchStatus: "matched" };
+    }
+
+    // 3. Name detected but no existing supplier found — needs user confirmation.
+    return {
+      detectedSupplier,
+      matchedSupplier: null,
+      supplierMatchStatus: "needs_confirmation",
+    };
+  }
+
   // ── 1. Upload & Extract ───────────────────────────────────────────────────
 
   async function uploadAndExtract(
@@ -105,6 +164,13 @@ export function createSupplierInvoiceService(
       file.mimetype,
       file.originalname,
     );
+
+    // Smart Supplier Detection — match OCR supplier name/ABN to existing records.
+    const { detectedSupplier, matchedSupplier, supplierMatchStatus } =
+      await matchSupplierFromOcr(ocrResult);
+
+    // If a confident match was found, attach the invoice to that supplier.
+    const resolvedSupplierId = matchedSupplier?.id ?? null;
 
     // Auto-match lines against supplier_catalogue by supplier_sku.
     // The first pass attempts exact SKU matching; unmatched lines remain unmatched.
@@ -146,7 +212,7 @@ export function createSupplierInvoiceService(
     // Persist the invoice header.
     const invoice = await repo.createSupplierInvoice({
       clinicId,
-      supplierId: null,
+      supplierId: resolvedSupplierId,
       supplierNameRaw: ocrResult.supplierName,
       invoiceNumber: ocrResult.invoiceNumber,
       invoiceDate: ocrResult.invoiceDate,
@@ -221,6 +287,9 @@ export function createSupplierInvoiceService(
       lines,
       duplicateFileWarning,
       duplicateInvoiceNumberWarning,
+      detectedSupplier,
+      matchedSupplier,
+      supplierMatchStatus,
     };
   }
 

@@ -380,6 +380,7 @@ export async function createAppDependencies(
     ocrProvider,
     supplierCatalogueRepository,
     auditService,
+    supplierRepository,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,

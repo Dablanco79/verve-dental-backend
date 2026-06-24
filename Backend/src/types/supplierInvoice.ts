@@ -124,10 +124,18 @@ export type SupplierPriceHistory = {
 /**
  * Structured result returned by any OcrProvider implementation.
  * All monetary values in integer CENTS (AUD).
+ * Supplier header fields (abn, supplierEmail, etc.) are extracted for Smart
+ * Supplier Detection and used only in matching — they are never persisted
+ * directly; the matched/created Supplier record is the source of truth.
  */
 export type OcrInvoiceResult = {
   provider: string;
   supplierName: string | null;
+  supplierAbn: string | null;
+  supplierEmail: string | null;
+  supplierPhone: string | null;
+  supplierAddress: string | null;
+  supplierWebsite: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -231,11 +239,43 @@ export type DuplicateInvoiceNumberWarning = {
   existingStatus: SupplierInvoiceStatus;
 };
 
+/**
+ * Supplier header fields detected by OCR but not yet matched/confirmed.
+ * Passed to the frontend so the user can review before a supplier is created.
+ */
+export type DetectedSupplierInfo = {
+  supplierName: string;
+  abn: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  website: string | null;
+};
+
+/**
+ * Result of deterministic supplier matching after OCR extraction.
+ *
+ * "matched"           — OCR name/ABN matched an existing supplier; invoice
+ *                       supplierId has been set automatically.
+ * "needs_confirmation" — OCR detected a supplier name but no match found;
+ *                        user must confirm before a supplier is created.
+ * "not_detected"      — OCR could not extract any supplier name.
+ */
+export type SupplierMatchStatus =
+  | "matched"
+  | "needs_confirmation"
+  | "not_detected";
+
 export type UploadAndExtractResult = {
   invoice: SupplierInvoice;
   lines: SupplierInvoiceLine[];
   duplicateFileWarning: DuplicateFileWarning | null;
   duplicateInvoiceNumberWarning: DuplicateInvoiceNumberWarning | null;
+  /** Fields extracted from the invoice header by OCR (null when not detected). */
+  detectedSupplier: DetectedSupplierInfo | null;
+  /** Existing supplier record that was matched (null when status is not "matched"). */
+  matchedSupplier: import("./supplier.js").Supplier | null;
+  supplierMatchStatus: SupplierMatchStatus;
 };
 
 // ── Confirm result ────────────────────────────────────────────────────────────

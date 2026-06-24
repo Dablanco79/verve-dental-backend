@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { createApiClient } from "../../api/client.js";
 import { loadConfig } from "../../config/index.js";
-import type { Supplier, UploadAndExtractResult } from "../../types/supplier.js";
+import type {
+  DetectedSupplierInfo,
+  Supplier,
+  SupplierMatchStatus,
+  UploadAndExtractResult,
+} from "../../types/supplier.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -10,14 +15,26 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_MIME_TYPES = new Set(["application/pdf", "image/png", "image/jpeg"]);
 const ACCEPTED_EXTENSIONS = ".pdf,.png,.jpg,.jpeg";
 
-type UploadPhase = "select" | "uploading";
+// ── Phase types ──────────────────────────────────────────────────────────────
 
-// Progress steps shown during upload/OCR processing
+type UploadPhase =
+  | "select"          // Initial: choose mode + file
+  | "uploading"       // OCR processing in progress
+  | "detection"       // Show supplier detection result
+  | "choose_existing" // User picks existing supplier from dropdown
+  | "attaching";      // PATCH invoice supplier_id in progress
+
+type SupplierMode = "manual" | "auto_detect";
+
+// ── Progress steps ────────────────────────────────────────────────────────────
+
 const PROGRESS_STEPS = [
   "Uploading Invoice",
   "Processing OCR",
   "Extracting Line Items",
 ] as const;
+
+// ── Utility ───────────────────────────────────────────────────────────────────
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
@@ -35,13 +52,9 @@ function validateFile(file: File): string | null {
   return null;
 }
 
-// ── Progress display during upload ────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-type ProgressCardProps = {
-  activeStep: number;
-};
-
-function ProgressCard({ activeStep }: ProgressCardProps) {
+function ProgressCard({ activeStep }: { activeStep: number }) {
   return (
     <div className="upload-progress">
       <div className="upload-progress__spinner" aria-hidden="true" />
@@ -71,6 +84,166 @@ function ProgressCard({ activeStep }: ProgressCardProps) {
   );
 }
 
+function AttachingSpinner() {
+  return (
+    <div className="upload-progress">
+      <div className="upload-progress__spinner" aria-hidden="true" />
+      <p className="upload-progress__hint">Attaching supplier to invoice…</p>
+    </div>
+  );
+}
+
+// ── Detection result panels ────────────────────────────────────────────────────
+
+type DetectionPanelProps = {
+  status: SupplierMatchStatus;
+  detected: DetectedSupplierInfo | null;
+  matched: Supplier | null;
+  onContinue: () => void;
+  onCreateSupplier: () => void;
+  onChooseExisting: () => void;
+  onCancel: () => void;
+  actionError: string | null;
+};
+
+function DetectionPanel({
+  status,
+  detected,
+  matched,
+  onContinue,
+  onCreateSupplier,
+  onChooseExisting,
+  onCancel,
+  actionError,
+}: DetectionPanelProps) {
+  if (status === "matched" && matched) {
+    return (
+      <div className="supplier-detection">
+        <div className="supplier-detection__badge supplier-detection__badge--matched">
+          Supplier matched
+        </div>
+        <p className="supplier-detection__label">
+          Matched supplier: <strong>{matched.supplierName}</strong>
+        </p>
+        {matched.abn ? (
+          <p className="supplier-detection__meta">ABN: {matched.abn}</p>
+        ) : null}
+        {actionError ? (
+          <div className="upload-error-banner" role="alert">
+            <strong>Error:</strong> {actionError}
+          </div>
+        ) : null}
+        <div className="supplier-form__actions">
+          <button type="button" className="supplier-form__cancel" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="supplier-form__submit" onClick={onContinue}>
+            Continue to Review
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "needs_confirmation" && detected) {
+    return (
+      <div className="supplier-detection">
+        <div className="supplier-detection__badge supplier-detection__badge--new">
+          New supplier detected
+        </div>
+        <p className="supplier-detection__hint">
+          We could not match this to an existing supplier. Please review the detected
+          information and choose how to proceed.
+        </p>
+        <dl className="supplier-detection__fields">
+          <div className="supplier-detection__field">
+            <dt>Supplier Name</dt>
+            <dd>{detected.supplierName}</dd>
+          </div>
+          {detected.abn ? (
+            <div className="supplier-detection__field">
+              <dt>ABN</dt>
+              <dd>{detected.abn}</dd>
+            </div>
+          ) : null}
+          {detected.email ? (
+            <div className="supplier-detection__field">
+              <dt>Email</dt>
+              <dd>{detected.email}</dd>
+            </div>
+          ) : null}
+          {detected.phone ? (
+            <div className="supplier-detection__field">
+              <dt>Phone</dt>
+              <dd>{detected.phone}</dd>
+            </div>
+          ) : null}
+          {detected.address ? (
+            <div className="supplier-detection__field">
+              <dt>Address</dt>
+              <dd>{detected.address}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {actionError ? (
+          <div className="upload-error-banner" role="alert">
+            <strong>Error:</strong> {actionError}
+          </div>
+        ) : null}
+        <div className="supplier-form__actions supplier-form__actions--column">
+          <button
+            type="button"
+            className="supplier-form__submit"
+            onClick={onCreateSupplier}
+          >
+            Create Supplier &amp; Continue
+          </button>
+          <button
+            type="button"
+            className="supplier-form__secondary"
+            onClick={onChooseExisting}
+          >
+            Choose Existing Supplier
+          </button>
+          <button type="button" className="supplier-form__cancel" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // not_detected
+  return (
+    <div className="supplier-detection">
+      <div className="supplier-detection__badge supplier-detection__badge--none">
+        Supplier not detected
+      </div>
+      <p className="supplier-detection__hint">
+        We could not detect a supplier from this invoice. Please choose an existing
+        supplier to continue.
+      </p>
+      {actionError ? (
+        <div className="upload-error-banner" role="alert">
+          <strong>Error:</strong> {actionError}
+        </div>
+      ) : null}
+      <div className="supplier-form__actions">
+        <button type="button" className="supplier-form__cancel" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="supplier-form__submit"
+          onClick={onChooseExisting}
+        >
+          Choose Existing Supplier
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main modal ─────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -89,25 +262,30 @@ export function UploadInvoiceModal({
   onUploadSuccess,
 }: Props) {
   const [phase, setPhase] = useState<UploadPhase>("select");
+  const [mode, setMode] = useState<SupplierMode>(
+    defaultSupplierId ? "manual" : "auto_detect",
+  );
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>(
     defaultSupplierId ?? suppliers[0]?.id ?? "",
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const stepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Upload result held during the detection/choose steps.
+  const [uploadResult, setUploadResult] = useState<UploadAndExtractResult | null>(null);
 
-  // Advance progress steps during upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Advance progress steps during upload.
   useEffect(() => {
     if (phase !== "uploading") return;
     setActiveStep(0);
     const t1 = setTimeout(() => { setActiveStep(1); }, 1200);
     const t2 = setTimeout(() => { setActiveStep(2); }, 4000);
-    stepTimerRef.current = t2;
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
@@ -155,9 +333,32 @@ export function UploadInvoiceModal({
   }
 
   function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>): void {
-    if (phase === "uploading") return;
+    if (phase === "uploading" || phase === "attaching") return;
     if (e.target === e.currentTarget) onClose();
   }
+
+  // ── Attach supplier to invoice ────────────────────────────────────────────
+
+  async function attachSupplierAndContinue(
+    result: UploadAndExtractResult,
+    supplierId: string,
+  ): Promise<void> {
+    setPhase("attaching");
+    setActionError(null);
+    try {
+      const patched = await apiClient.updateSupplierInvoice(
+        clinicId,
+        result.invoice.id,
+        { supplierId },
+      );
+      onUploadSuccess({ ...result, invoice: patched.invoice });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to attach supplier.");
+      setPhase("detection");
+    }
+  }
+
+  // ── Submit upload ──────────────────────────────────────────────────────────
 
   async function handleSubmit(): Promise<void> {
     if (!selectedFile) {
@@ -169,21 +370,89 @@ export function UploadInvoiceModal({
       setFileError(err);
       return;
     }
+    if (mode === "manual" && !selectedSupplierId) {
+      return;
+    }
 
     setPhase("uploading");
     setUploadError(null);
 
     try {
       const result = await apiClient.uploadSupplierInvoice(clinicId, selectedFile);
-      onUploadSuccess(result);
+
+      if (mode === "manual") {
+        // Manual mode: attach the explicitly selected supplier, then navigate.
+        await attachSupplierAndContinue(result, selectedSupplierId);
+        return;
+      }
+
+      // Auto-detect mode: show detection result.
+      setUploadResult(result);
+      setPhase("detection");
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed. Please try again.");
       setPhase("select");
     }
   }
 
+  // ── Detection actions ──────────────────────────────────────────────────────
+
+  function handleDetectionContinue(): void {
+    if (!uploadResult) return;
+    // Supplier was auto-matched by the backend — navigate directly.
+    onUploadSuccess(uploadResult);
+  }
+
+  async function handleCreateSupplier(): Promise<void> {
+    if (!uploadResult?.detectedSupplier) return;
+    const detected = uploadResult.detectedSupplier;
+    setPhase("attaching");
+    setActionError(null);
+    try {
+      const newSupplier = await apiClient.createSupplier({
+        supplierName: detected.supplierName,
+        abn: detected.abn ?? undefined,
+        email: detected.email ?? undefined,
+        phone: detected.phone ?? undefined,
+        address: detected.address ?? undefined,
+        website: detected.website ?? undefined,
+      });
+      await attachSupplierAndContinue(uploadResult, newSupplier.id);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to create supplier.",
+      );
+      setPhase("detection");
+    }
+  }
+
+  function handleChooseExisting(): void {
+    if (!uploadResult) return;
+    setActionError(null);
+    setPhase("choose_existing");
+  }
+
+  async function handleChooseExistingConfirm(): Promise<void> {
+    if (!uploadResult || !selectedSupplierId) return;
+    await attachSupplierAndContinue(uploadResult, selectedSupplierId);
+  }
+
+  function handleBackToDetection(): void {
+    setPhase("detection");
+    setActionError(null);
+  }
+
+  // ── Derived state ──────────────────────────────────────────────────────────
+
   const activeSupplier = suppliers.find((s) => s.id === selectedSupplierId);
   const hasMultipleSuppliers = suppliers.length > 1;
+
+  const submitDisabled =
+    !selectedFile ||
+    !!fileError ||
+    (mode === "manual" && !selectedSupplierId);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -198,7 +467,7 @@ export function UploadInvoiceModal({
           <h2 className="supplier-modal__title" id="upload-invoice-modal-title">
             Upload Invoice
           </h2>
-          {phase !== "uploading" ? (
+          {phase !== "uploading" && phase !== "attaching" ? (
             <button
               type="button"
               className="supplier-modal__close"
@@ -210,42 +479,140 @@ export function UploadInvoiceModal({
           ) : null}
         </div>
 
-        {/* ── Upload & processing phase ── */}
+        {/* ── Processing phases ── */}
         {phase === "uploading" ? (
           <ProgressCard activeStep={activeStep} />
-        ) : (
+        ) : phase === "attaching" ? (
+          <AttachingSpinner />
+        ) : phase === "detection" && uploadResult ? (
+          <DetectionPanel
+            status={uploadResult.supplierMatchStatus}
+            detected={uploadResult.detectedSupplier}
+            matched={uploadResult.matchedSupplier}
+            onContinue={handleDetectionContinue}
+            onCreateSupplier={() => { void handleCreateSupplier(); }}
+            onChooseExisting={handleChooseExisting}
+            onCancel={onClose}
+            actionError={actionError}
+          />
+        ) : phase === "choose_existing" ? (
+          /* ── Choose existing supplier after detection ── */
           <div className="supplier-form">
-            {/* Supplier selector */}
-            {hasMultipleSuppliers ? (
-              <label className="supplier-form__field">
-                <span className="supplier-form__label">
-                  Supplier <span className="supplier-form__required">*</span>
-                </span>
-                <select
-                  className="supplier-form__control"
-                  value={selectedSupplierId}
-                  onChange={(e) => {
-                    setSelectedSupplierId(e.target.value);
-                  }}
-                >
-                  <option value="">— Select supplier —</option>
-                  {suppliers
-                    .filter((s) => s.active)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.supplierName}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            ) : activeSupplier ? (
-              <div className="upload-supplier-readonly">
-                <span className="supplier-form__label">Supplier</span>
-                <span className="upload-supplier-readonly__name">
-                  {activeSupplier.supplierName}
-                </span>
+            <p className="supplier-detection__hint">
+              Select an existing supplier to attach to this invoice.
+            </p>
+            <label className="supplier-form__field">
+              <span className="supplier-form__label">
+                Supplier <span className="supplier-form__required">*</span>
+              </span>
+              <select
+                className="supplier-form__control"
+                value={selectedSupplierId}
+                onChange={(e) => { setSelectedSupplierId(e.target.value); }}
+              >
+                <option value="">— Select supplier —</option>
+                {suppliers
+                  .filter((s) => s.active)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.supplierName}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {actionError ? (
+              <div className="upload-error-banner" role="alert">
+                <strong>Error:</strong> {actionError}
               </div>
             ) : null}
+            <div className="supplier-form__actions">
+              <button
+                type="button"
+                className="supplier-form__cancel"
+                onClick={handleBackToDetection}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="supplier-form__submit"
+                disabled={!selectedSupplierId}
+                onClick={() => { void handleChooseExistingConfirm(); }}
+              >
+                Confirm Supplier
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ── Select phase ── */
+          <div className="supplier-form">
+            {/* Supplier mode toggle */}
+            <div className="supplier-form__field">
+              <span className="supplier-form__label">Supplier</span>
+              <div className="upload-mode-toggle" role="group" aria-label="Supplier selection method">
+                <button
+                  type="button"
+                  className={[
+                    "upload-mode-toggle__btn",
+                    mode === "auto_detect" ? "upload-mode-toggle__btn--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onClick={() => { setMode("auto_detect"); }}
+                >
+                  Auto-detect from invoice
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "upload-mode-toggle__btn",
+                    mode === "manual" ? "upload-mode-toggle__btn--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onClick={() => { setMode("manual"); }}
+                >
+                  Select existing supplier
+                </button>
+              </div>
+            </div>
+
+            {/* Manual supplier selector */}
+            {mode === "manual" ? (
+              hasMultipleSuppliers ? (
+                <label className="supplier-form__field">
+                  <span className="supplier-form__label">
+                    Supplier <span className="supplier-form__required">*</span>
+                  </span>
+                  <select
+                    className="supplier-form__control"
+                    value={selectedSupplierId}
+                    onChange={(e) => { setSelectedSupplierId(e.target.value); }}
+                  >
+                    <option value="">— Select supplier —</option>
+                    {suppliers
+                      .filter((s) => s.active)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.supplierName}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : activeSupplier ? (
+                <div className="upload-supplier-readonly">
+                  <span className="supplier-form__label">Supplier</span>
+                  <span className="upload-supplier-readonly__name">
+                    {activeSupplier.supplierName}
+                  </span>
+                </div>
+              ) : null
+            ) : (
+              <p className="upload-mode-toggle__hint">
+                The supplier will be automatically detected from the invoice content.
+                You can confirm or override after upload.
+              </p>
+            )}
 
             {/* File drop zone */}
             <div className="supplier-form__field">
@@ -294,7 +661,7 @@ export function UploadInvoiceModal({
                       ⬆
                     </span>
                     <span className="upload-dropzone__primary">
-                      Drag & drop or{" "}
+                      Drag &amp; drop or{" "}
                       <span className="upload-dropzone__browse">browse files</span>
                     </span>
                     <span className="upload-dropzone__hint">
@@ -311,7 +678,7 @@ export function UploadInvoiceModal({
               ) : null}
             </div>
 
-            {/* Upload error (from failed attempt) */}
+            {/* Upload error from failed attempt */}
             {uploadError ? (
               <div className="upload-error-banner" role="alert">
                 <strong>Upload failed:</strong> {uploadError}
@@ -329,10 +696,8 @@ export function UploadInvoiceModal({
               <button
                 type="button"
                 className="supplier-form__submit"
-                onClick={() => {
-                  void handleSubmit();
-                }}
-                disabled={!selectedFile || !!fileError || !selectedSupplierId}
+                onClick={() => { void handleSubmit(); }}
+                disabled={submitDisabled}
               >
                 {uploadError ? "Retry Upload" : "Upload & Process"}
               </button>

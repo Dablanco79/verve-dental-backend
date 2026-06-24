@@ -28,6 +28,7 @@
 import { jest } from "@jest/globals";
 import { createInMemorySupplierInvoiceRepository } from "../src/repositories/supplierInvoiceRepository.js";
 import { createInMemorySupplierCatalogueRepository } from "../src/repositories/supplierCatalogueRepository.js";
+import { createInMemorySupplierRepository } from "../src/repositories/supplierRepository.js";
 import { createSupplierInvoiceService } from "../src/services/supplierInvoiceService.js";
 import { AppError } from "../src/types/errors.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
@@ -84,6 +85,11 @@ function makeStaff(): AuthenticatedUser {
 const MOCK_OCR_RESULT: OcrInvoiceResult = {
   provider: "stub",
   supplierName: "Acme Dental Supplies",
+  supplierAbn: null,
+  supplierEmail: null,
+  supplierPhone: null,
+  supplierAddress: null,
+  supplierWebsite: null,
   invoiceNumber: "INV-2026-001",
   invoiceDate: "2026-06-01",
   dueDate: "2026-07-01",
@@ -127,14 +133,16 @@ const FAKE_AUDIT = {
 function makeService(ocrProvider?: OcrProvider) {
   const repo = createInMemorySupplierInvoiceRepository();
   const catalogueRepo = createInMemorySupplierCatalogueRepository();
+  const supplierRepo = createInMemorySupplierRepository();
   const provider = ocrProvider ?? makeMockOcrProvider();
   const service = createSupplierInvoiceService(
     repo,
     provider,
     catalogueRepo,
     FAKE_AUDIT as never,
+    supplierRepo,
   );
-  return { repo, catalogueRepo, service, provider };
+  return { repo, catalogueRepo, supplierRepo, service, provider };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

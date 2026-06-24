@@ -16,6 +16,8 @@ export type Supplier = {
   email: string | null;
   phone: string | null;
   website: string | null;
+  abn: string | null;
+  address: string | null;
   notes: string | null;
   active: boolean;
   createdAt: Date;
@@ -29,6 +31,8 @@ export type CreateSupplierInput = {
   email?: string | null;
   phone?: string | null;
   website?: string | null;
+  abn?: string | null;
+  address?: string | null;
   notes?: string | null;
 };
 
@@ -39,6 +43,8 @@ export type UpdateSupplierInput = {
   email?: string | null;
   phone?: string | null;
   website?: string | null;
+  abn?: string | null;
+  address?: string | null;
   notes?: string | null;
   active?: boolean;
 };

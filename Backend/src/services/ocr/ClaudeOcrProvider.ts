@@ -59,6 +59,11 @@ Return ONLY valid JSON — no markdown fences, no explanation, no commentary. Us
 
 {
   "supplierName": "string or null",
+  "supplierAbn": "string or null",
+  "supplierEmail": "string or null",
+  "supplierPhone": "string or null",
+  "supplierAddress": "string or null",
+  "supplierWebsite": "string or null",
   "invoiceNumber": "string or null",
   "invoiceDate": "YYYY-MM-DD or null",
   "dueDate": "YYYY-MM-DD or null",
@@ -88,6 +93,11 @@ Rules:
 - confidence per line: your confidence that each individual line was extracted correctly (0–100)
 - Use null for any field you cannot determine with reasonable confidence
 - Dates must be in YYYY-MM-DD format
+- supplierAbn: extract the supplier's ABN (Australian Business Number) if present, as printed (e.g. "12 345 678 901")
+- supplierEmail: extract the supplier's contact email address if visible on the invoice
+- supplierPhone: extract the supplier's phone number if visible on the invoice
+- supplierAddress: extract the supplier's full postal/street address if visible on the invoice
+- supplierWebsite: extract the supplier's website URL if visible on the invoice
 - Extract ALL line items visible on the invoice
 - If the document is not an invoice, return all null fields and overallConfidence: 0`;
 
@@ -206,6 +216,11 @@ export class ClaudeOcrProvider implements OcrProvider {
     return {
       provider: "anthropic",
       supplierName: typeof parsed.supplierName === "string" ? parsed.supplierName : null,
+      supplierAbn: typeof parsed.supplierAbn === "string" ? parsed.supplierAbn : null,
+      supplierEmail: typeof parsed.supplierEmail === "string" ? parsed.supplierEmail : null,
+      supplierPhone: typeof parsed.supplierPhone === "string" ? parsed.supplierPhone : null,
+      supplierAddress: typeof parsed.supplierAddress === "string" ? parsed.supplierAddress : null,
+      supplierWebsite: typeof parsed.supplierWebsite === "string" ? parsed.supplierWebsite : null,
       invoiceNumber: typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : null,
       invoiceDate: typeof parsed.invoiceDate === "string" ? parsed.invoiceDate : null,
       dueDate: typeof parsed.dueDate === "string" ? parsed.dueDate : null,

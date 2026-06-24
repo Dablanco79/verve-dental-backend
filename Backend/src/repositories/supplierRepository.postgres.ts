@@ -16,6 +16,8 @@ type SupplierRow = {
   email: string | null;
   phone: string | null;
   website: string | null;
+  abn: string | null;
+  address: string | null;
   notes: string | null;
   active: boolean;
   created_at: Date;
@@ -33,6 +35,8 @@ function mapSupplier(row: SupplierRow): Supplier {
     email: row.email,
     phone: row.phone,
     website: row.website,
+    abn: row.abn,
+    address: row.address,
     notes: row.notes,
     active: row.active,
     createdAt: row.created_at,
@@ -79,11 +83,28 @@ export function createPostgresSupplierRepository(
       return rows[0] ? mapSupplier(rows[0]) : null;
     },
 
+    async findSupplierByName(name: string): Promise<Supplier | null> {
+      const { rows } = await pool.query<SupplierRow>(
+        `SELECT * FROM suppliers WHERE LOWER(supplier_name) = LOWER($1) LIMIT 1`,
+        [name.trim()],
+      );
+      return rows[0] ? mapSupplier(rows[0]) : null;
+    },
+
+    async findSupplierByAbn(abn: string): Promise<Supplier | null> {
+      const normalized = abn.replace(/[\s-]/g, "");
+      const { rows } = await pool.query<SupplierRow>(
+        `SELECT * FROM suppliers WHERE REPLACE(REPLACE(abn, ' ', ''), '-', '') = $1 LIMIT 1`,
+        [normalized],
+      );
+      return rows[0] ? mapSupplier(rows[0]) : null;
+    },
+
     async createSupplier(input: CreateSupplierInput): Promise<Supplier> {
       const { rows } = await pool.query<SupplierRow>(
         `INSERT INTO suppliers
-           (supplier_name, supplier_code, contact_name, email, phone, website, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (supplier_name, supplier_code, contact_name, email, phone, website, abn, address, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
           input.supplierName,
@@ -92,6 +113,8 @@ export function createPostgresSupplierRepository(
           input.email ?? null,
           input.phone ?? null,
           input.website ?? null,
+          input.abn ?? null,
+          input.address ?? null,
           input.notes ?? null,
         ],
       );
@@ -118,6 +141,8 @@ export function createPostgresSupplierRepository(
       if (input.email !== undefined) addField("email", input.email);
       if (input.phone !== undefined) addField("phone", input.phone);
       if (input.website !== undefined) addField("website", input.website);
+      if (input.abn !== undefined) addField("abn", input.abn);
+      if (input.address !== undefined) addField("address", input.address);
       if (input.notes !== undefined) addField("notes", input.notes);
       if (input.active !== undefined) addField("active", input.active);
 

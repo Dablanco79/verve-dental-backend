@@ -1614,6 +1614,15 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       -- Access gated at service layer, matching master_catalog_items pattern.
     `,
   },
+  {
+    id: "022_supplier_abn_address",
+    sql: `
+      -- Add ABN and address fields to suppliers for Smart Supplier Detection.
+      -- Both columns are optional (text, nullable) so existing rows are unaffected.
+      ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS abn     text;
+      ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address text;
+    `,
+  },
 ];
 
 /**

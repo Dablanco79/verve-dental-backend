@@ -16,6 +16,8 @@ const createSupplierBodySchema = z.object({
   email: z.string().email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
   website: z.string().url("Invalid URL").nullable().optional(),
+  abn: z.string().max(20).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
 
@@ -26,6 +28,8 @@ const updateSupplierBodySchema = z.object({
   email: z.string().email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
   website: z.string().url("Invalid URL").nullable().optional(),
+  abn: z.string().max(20).nullable().optional(),
+  address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   active: z.boolean().optional(),
 }).strict();
@@ -147,6 +151,8 @@ function serializeSupplier(s: {
   email: string | null;
   phone: string | null;
   website: string | null;
+  abn: string | null;
+  address: string | null;
   notes: string | null;
   active: boolean;
   createdAt: Date;
@@ -160,6 +166,8 @@ function serializeSupplier(s: {
     email: s.email,
     phone: s.phone,
     website: s.website,
+    abn: s.abn,
+    address: s.address,
     notes: s.notes,
     active: s.active,
     createdAt: s.createdAt.toISOString(),

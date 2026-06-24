@@ -66,6 +66,8 @@ const sampleSupplier: Supplier = {
   email: "orders@dentalco.com.au",
   phone: "1800 123 456",
   website: "https://dentalco.com.au",
+  abn: null,
+  address: null,
   notes: "Preferred supplier for rotary instruments.",
   active: true,
   createdAt: "2026-01-15T00:00:00.000Z",

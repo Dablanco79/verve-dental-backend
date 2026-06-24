@@ -6,6 +6,8 @@ export type Supplier = {
   email: string | null;
   phone: string | null;
   website: string | null;
+  abn: string | null;
+  address: string | null;
   notes: string | null;
   active: boolean;
   createdAt: string;
@@ -19,6 +21,8 @@ export type CreateSupplierRequest = {
   email?: string | null;
   phone?: string | null;
   website?: string | null;
+  abn?: string | null;
+  address?: string | null;
   notes?: string | null;
 };
 
@@ -29,6 +33,8 @@ export type UpdateSupplierRequest = {
   email?: string | null;
   phone?: string | null;
   website?: string | null;
+  abn?: string | null;
+  address?: string | null;
   notes?: string | null;
   active?: boolean;
 };
@@ -108,6 +114,20 @@ export type SupplierInvoiceLine = {
   updatedAt: string;
 };
 
+export type DetectedSupplierInfo = {
+  supplierName: string;
+  abn: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  website: string | null;
+};
+
+export type SupplierMatchStatus =
+  | "matched"
+  | "needs_confirmation"
+  | "not_detected";
+
 export type UploadAndExtractResult = {
   invoice: SupplierInvoice;
   lines: SupplierInvoiceLine[];
@@ -119,6 +139,9 @@ export type UploadAndExtractResult = {
     existingInvoiceId: string;
     existingStatus: SupplierInvoiceStatus;
   } | null;
+  detectedSupplier: DetectedSupplierInfo | null;
+  matchedSupplier: Supplier | null;
+  supplierMatchStatus: SupplierMatchStatus;
 };
 
 export type ConfirmImportResult = {

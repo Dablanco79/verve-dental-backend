@@ -12,6 +12,10 @@ export interface SupplierRepository {
   listSuppliers(options?: { active?: boolean }): Promise<Supplier[]>;
   findSupplierById(supplierId: string): Promise<Supplier | null>;
   findSupplierByCode(supplierCode: string): Promise<Supplier | null>;
+  /** Exact case-insensitive match on supplier_name. */
+  findSupplierByName(name: string): Promise<Supplier | null>;
+  /** Exact match on ABN after stripping whitespace/dashes. */
+  findSupplierByAbn(abn: string): Promise<Supplier | null>;
   createSupplier(input: CreateSupplierInput): Promise<Supplier>;
   updateSupplier(
     supplierId: string,
@@ -49,6 +53,22 @@ export function createInMemorySupplierRepository(): SupplierRepository {
       return Promise.resolve(found ? { ...found } : null);
     },
 
+    findSupplierByName(name: string): Promise<Supplier | null> {
+      const normalized = name.trim().toLowerCase();
+      const found = suppliers.find(
+        (s) => s.supplierName.toLowerCase() === normalized,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierByAbn(abn: string): Promise<Supplier | null> {
+      const normalized = abn.replace(/[\s-]/g, "");
+      const found = suppliers.find(
+        (s) => s.abn !== null && s.abn.replace(/[\s-]/g, "") === normalized,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
     createSupplier(input: CreateSupplierInput): Promise<Supplier> {
       const now = new Date();
       const record: Supplier = {
@@ -59,6 +79,8 @@ export function createInMemorySupplierRepository(): SupplierRepository {
         email: input.email ?? null,
         phone: input.phone ?? null,
         website: input.website ?? null,
+        abn: input.abn ?? null,
+        address: input.address ?? null,
         notes: input.notes ?? null,
         active: true,
         createdAt: now,
@@ -86,6 +108,8 @@ export function createInMemorySupplierRepository(): SupplierRepository {
         ...(input.email !== undefined && { email: input.email }),
         ...(input.phone !== undefined && { phone: input.phone }),
         ...(input.website !== undefined && { website: input.website }),
+        ...(input.abn !== undefined && { abn: input.abn }),
+        ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),
         ...(input.active !== undefined && { active: input.active }),
         updatedAt: new Date(),

@@ -37,6 +37,11 @@ class StubOcrProvider implements OcrProvider {
     return Promise.resolve({
       provider: "stub",
       supplierName: "Test Supplier Pty Ltd",
+      supplierAbn: "12 345 678 901",
+      supplierEmail: "accounts@testsupplier.com.au",
+      supplierPhone: "02 9000 0000",
+      supplierAddress: "1 Test Street, Sydney NSW 2000",
+      supplierWebsite: "https://testsupplier.com.au",
       invoiceNumber: "TEST-INV-0001",
       invoiceDate: "2026-06-01",
       dueDate: "2026-07-01",
