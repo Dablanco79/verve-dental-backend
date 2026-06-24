@@ -12,6 +12,7 @@ import {
   canViewClinicSettings,
   canViewLaborForecast,
   canViewMaterialsForecast,
+  canManageSuppliers,
 } from "../../utils/roles.js";
 
 
@@ -42,6 +43,9 @@ export function AppShell({ children }: AppShellProps) {
           </NavLink>
           <NavLink to="/inventory">Inventory</NavLink>
           <NavLink to="/suppliers">Suppliers</NavLink>
+          {user && canManageSuppliers(user.role) ? (
+            <NavLink to="/supplier-intelligence">Supplier Intelligence</NavLink>
+          ) : null}
           {user && canManageInventory(user.role) ? (
             <NavLink to="/inventory/adjust">Adjust Stock</NavLink>
           ) : null}

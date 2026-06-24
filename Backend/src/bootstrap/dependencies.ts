@@ -52,6 +52,7 @@ import {
 import { createPostgresSupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.postgres.js";
 import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
 import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
+import { createSupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
 import { installRlsPoolHook } from "../db/tenantContext.js";
 import { createRedisClient } from "../redis/client.js";
 import { createAnalyticsService } from "../services/analyticsService.js";
@@ -85,6 +86,7 @@ import type { SupplierCatalogueRepository } from "../repositories/supplierCatalo
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
+import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
 import type { BillingService } from "../services/billingService.js";
 import type { HealthService } from "../services/healthService.js";
 import type { LeaveService } from "../services/leaveService.js";
@@ -106,6 +108,7 @@ export type AppDependencies = {
   supplierCatalogueService: SupplierCatalogueService;
   catalogueImportService: CatalogueImportService;
   supplierInvoiceService: SupplierInvoiceService;
+  supplierIntelligenceService: SupplierIntelligenceService;
   healthService: HealthService;
   userRepository: UserRepository;
   permissionRepository: PermissionRepository;
@@ -330,6 +333,27 @@ export async function createAppDependencies(
     supplierRepository,
   );
 
+  // Supplier Intelligence — Sprint 3.
+  // Requires a real database pool (uses raw SQL with CTEs).
+  // Falls back to a no-op stub that returns empty results in in-memory mode.
+  const supplierIntelligenceService = connectedPool
+    ? createSupplierIntelligenceService(connectedPool)
+    : {
+        getIntelligence: (clinicId: string) =>
+          Promise.resolve({
+            clinicId,
+            generatedAt: new Date().toISOString(),
+            summary: {
+              totalPotentialAnnualSavingCents: 0,
+              productsWithSaving: 0,
+              averagePriceVariancePct: null as number | null,
+              productsNeedingAttention: 0,
+            },
+            opportunities: [] as import("../types/supplierIntelligence.js").SupplierIntelligenceRow[],
+            needsAttention: [] as import("../types/supplierIntelligence.js").SupplierIntelligenceRow[],
+          }),
+      };
+
   const supplierService = createSupplierService(supplierRepository, auditService);
 
   const productMatchingService = createProductMatchingService(catalogRepository);
@@ -392,6 +416,7 @@ export async function createAppDependencies(
     supplierCatalogueService,
     catalogueImportService,
     supplierInvoiceService,
+    supplierIntelligenceService,
     healthService,
     userRepository,
     permissionRepository,

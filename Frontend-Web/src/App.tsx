@@ -27,6 +27,7 @@ import { LeavePage } from "./pages/LeavePage.js";
 import { SuppliersPage } from "./pages/SuppliersPage.js";
 import { SupplierDetailPage } from "./pages/SupplierDetailPage.js";
 import { SupplierInvoiceReviewPage } from "./pages/SupplierInvoiceReviewPage.js";
+import { SupplierIntelligencePage } from "./pages/SupplierIntelligencePage.js";
 
 export function App() {
   return (
@@ -60,6 +61,7 @@ export function App() {
             <Route path="/suppliers" element={<SuppliersPage />} />
             <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
             <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
+            <Route path="/supplier-intelligence" element={<SupplierIntelligencePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

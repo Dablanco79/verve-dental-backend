@@ -38,6 +38,7 @@ import { createUserRouter } from "./userRoutes.js";
 import { createPermissionRouter } from "./permissionRoutes.js";
 import { createSupplierRouter } from "./supplierRoutes.js";
 import { createSupplierInvoiceRouter } from "./supplierInvoiceRoutes.js";
+import { createSupplierIntelligenceRouter } from "./supplierIntelligenceRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -166,6 +167,13 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/clinics/:clinicId/supplier-invoices",
     createSupplierInvoiceRouter(deps, config),
+  );
+
+  // Supplier Intelligence — read-only pricing intelligence report (Sprint 3).
+  // Clinic-scoped: derives per-product saving opportunities from real invoice + catalogue data.
+  router.use(
+    "/clinics/:clinicId/supplier-intelligence",
+    createSupplierIntelligenceRouter(deps),
   );
 
   return router;

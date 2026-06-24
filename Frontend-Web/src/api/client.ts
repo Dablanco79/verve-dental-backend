@@ -70,6 +70,7 @@ import type {
   ListSupplierInvoicesParams,
   ListSuppliersParams,
   Supplier,
+  SupplierIntelligenceResult,
   SupplierInvoice,
   SupplierInvoiceLine,
   SupplierInvoiceStatus,
@@ -1147,6 +1148,19 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Supplier Intelligence ──────────────────────────────────────────────────
+
+  async function getSupplierIntelligence(
+    clinicId: string,
+  ): Promise<SupplierIntelligenceResult> {
+    return request<SupplierIntelligenceResult>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-intelligence`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1217,6 +1231,7 @@ export function createApiClient(config: AppConfig) {
     updateSupplierInvoiceLine,
     confirmSupplierInvoice,
     voidSupplierInvoice,
+    getSupplierIntelligence,
   };
 }
 

@@ -126,6 +126,47 @@ export type ConfirmImportResult = {
   priceUpdates: number;
 };
 
+// ── Supplier Intelligence (Sprint 3) ─────────────────────────────────────────
+
+export type IntelligenceConfidence =
+  | "high"
+  | "medium"
+  | "catalogue_only"
+  | "insufficient_data";
+
+export type SupplierIntelligenceRow = {
+  productId: string;
+  productName: string;
+  productSku: string;
+  currentSupplierId: string | null;
+  currentSupplierName: string | null;
+  currentUnitPriceCents: number | null;
+  bestSupplierId: string | null;
+  bestSupplierName: string | null;
+  bestUnitPriceCents: number | null;
+  savingPerUnit: number | null;
+  estimatedAnnualUsage: number | null;
+  estimatedAnnualSaving: number | null;
+  confidence: IntelligenceConfidence;
+  reason: string;
+  supplierCatalogueCount: number;
+};
+
+export type SupplierIntelligenceSummary = {
+  totalPotentialAnnualSavingCents: number;
+  productsWithSaving: number;
+  averagePriceVariancePct: number | null;
+  productsNeedingAttention: number;
+};
+
+export type SupplierIntelligenceResult = {
+  clinicId: string;
+  generatedAt: string;
+  summary: SupplierIntelligenceSummary;
+  opportunities: SupplierIntelligenceRow[];
+  needsAttention: SupplierIntelligenceRow[];
+};
+
 export type UpdateSupplierInvoiceRequest = {
   supplierId?: string | null;
   supplierNameRaw?: string | null;
