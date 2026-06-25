@@ -29,10 +29,12 @@ import {
   SEED_RELATIONSHIP_B1_ID,
   SEED_RELATIONSHIP_A2_ID,
 } from "../repositories/supplierRelationshipRepository.js";
+import { SEED_POLICY_IDS } from "../repositories/procurementPolicyRepository.js";
 import {
   buildBarcodeMappingSeed,
   buildClinicInventorySeed,
   buildMasterCatalogSeed,
+  SEED_MASTER_CATALOG_IDS,
 } from "../repositories/seed/inventorySeed.js";
 import type { UserRole } from "../types/auth.js";
 import type { Logger } from "../utils/logger.js";
@@ -564,6 +566,136 @@ export async function seedSupplierRelationships(
   } else {
     logger.info(
       "Demo supplier relationships already present — skipping relationship seed",
+    );
+  }
+}
+
+// ─── Procurement Policy seed ───────────────────────────────────────────────────
+
+type DemoPolicy = {
+  id: string;
+  clinicId: string;
+  supplierRelationshipId: string;
+  masterCatalogItemId: string | null;
+  policyName: string;
+  priority: number;
+  preferredSupplier: boolean;
+  allowFallback: boolean;
+  fallbackPriority: number | null;
+  minimumOrderQuantity: number | null;
+  preferredOrderDay: string | null;
+  priceDifferenceThresholdPercent: number | null;
+  approvalRequired: boolean;
+  reorderStrategy: string;
+  notes: string | null;
+};
+
+const DEMO_POLICIES: DemoPolicy[] = [
+  {
+    id: SEED_POLICY_IDS.clinicAGlovesPreferred,
+    clinicId: SEED_CLINIC_A_ID,
+    supplierRelationshipId: SEED_RELATIONSHIP_A1_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.nitrileGloves,
+    policyName: "Nitrile Gloves — Preferred Supplier",
+    priority: 1,
+    preferredSupplier: true,
+    allowFallback: true,
+    fallbackPriority: 2,
+    minimumOrderQuantity: 5,
+    preferredOrderDay: "monday",
+    priceDifferenceThresholdPercent: 5,
+    approvalRequired: false,
+    reorderStrategy: "standard",
+    notes: "Primary glove supplier — 30 day net terms",
+  },
+  {
+    id: SEED_POLICY_IDS.clinicAGlovesFallback,
+    clinicId: SEED_CLINIC_A_ID,
+    supplierRelationshipId: SEED_RELATIONSHIP_B1_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.nitrileGloves,
+    policyName: "Nitrile Gloves — Fallback Supplier",
+    priority: 2,
+    preferredSupplier: false,
+    allowFallback: false,
+    fallbackPriority: null,
+    minimumOrderQuantity: null,
+    preferredOrderDay: null,
+    priceDifferenceThresholdPercent: null,
+    approvalRequired: true,
+    reorderStrategy: "standard",
+    notes: "Use only when primary supplier is unable to supply",
+  },
+  {
+    id: SEED_POLICY_IDS.clinicAGeneralPreferred,
+    clinicId: SEED_CLINIC_A_ID,
+    supplierRelationshipId: SEED_RELATIONSHIP_A1_ID,
+    masterCatalogItemId: null,
+    policyName: "General Consumables — Preferred Supplier",
+    priority: 1,
+    preferredSupplier: true,
+    allowFallback: false,
+    fallbackPriority: null,
+    minimumOrderQuantity: null,
+    preferredOrderDay: "monday",
+    priceDifferenceThresholdPercent: null,
+    approvalRequired: false,
+    reorderStrategy: "standard",
+    notes: null,
+  },
+];
+
+/**
+ * Seed demo procurement policy records on first boot.
+ *
+ * Development/test only — restricted by the isDemoSeedEnv guard in dependencies.ts.
+ * Idempotent: ON CONFLICT (id) DO NOTHING.
+ * procurement_policies has no RLS currently — safe to use pool.query directly.
+ */
+export async function seedProcurementPolicies(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  let seeded = 0;
+  for (const policy of DEMO_POLICIES) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO procurement_policies
+         (id, clinic_id, supplier_relationship_id, master_catalog_item_id,
+          policy_name, policy_status, priority, preferred_supplier,
+          allow_fallback, fallback_priority, minimum_order_quantity,
+          preferred_order_day, price_difference_threshold_percent,
+          approval_required, reorder_strategy, notes)
+       VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $9, $10,
+               $11, $12, $13, $14, $15)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        policy.id,
+        policy.clinicId,
+        policy.supplierRelationshipId,
+        policy.masterCatalogItemId,
+        policy.policyName,
+        policy.priority,
+        policy.preferredSupplier,
+        policy.allowFallback,
+        policy.fallbackPriority,
+        policy.minimumOrderQuantity,
+        policy.preferredOrderDay,
+        policy.priceDifferenceThresholdPercent,
+        policy.approvalRequired,
+        policy.reorderStrategy,
+        policy.notes,
+      ],
+    );
+    seeded += rowCount ?? 0;
+  }
+
+  if (seeded > 0) {
+    logger.info(
+      { count: seeded },
+      "Demo procurement policies seeded into PostgreSQL",
+    );
+  } else {
+    logger.info(
+      "Demo procurement policies already present — skipping policy seed",
     );
   }
 }

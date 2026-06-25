@@ -1805,6 +1805,161 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
   },
   {
     /**
+     * Sprint 4E — Procurement Decision Engine Foundation.
+     *
+     * Creates the `procurement_policies` table — the data model that future
+     * purchasing intelligence will use to evaluate preferred suppliers, fallback
+     * suppliers, price thresholds, and reorder strategies.
+     *
+     * DESIGN NOTES
+     * ────────────
+     * • Policies may be general (master_catalog_item_id IS NULL — applies to all
+     *   products sourced from this supplier relationship) or product-specific.
+     * • priority >= 1; lower number = higher priority (1 = preferred).
+     * • Only ONE preferred supplier per (clinic_id, master_catalog_item_id).
+     *   Two partial unique indexes enforce this for the NULL and NOT NULL cases
+     *   separately (PostgreSQL treats NULL values as distinct in unique indexes,
+     *   so a single index on (clinic_id, master_catalog_item_id) cannot cover
+     *   the general-policy case).
+     * • fallback_priority: when set, must be > priority at the service layer
+     *   (enforced in ProcurementPolicyService, not as a DB constraint, because
+     *   the comparison requires knowing the preferred policy's priority value).
+     * • price_difference_threshold_percent: stored as NUMERIC(5,2) so precision
+     *   is preserved for future AI comparisons; range [0, 100] validated in service.
+     * • reorder_strategy uses a text CHECK constraint instead of an ENUM so new
+     *   strategies can be added without a separate ALTER TYPE migration.
+     * • No RLS currently: mirrors the supplier_relationships pattern.  clinic_id
+     *   is present so RLS can be added in a future hardening sprint without schema
+     *   changes.
+     *
+     * FUTURE AI COMPATIBILITY
+     * ───────────────────────
+     * preferred_supplier, allow_fallback, fallback_priority,
+     * price_difference_threshold_percent, and reorder_strategy are all stored
+     * now so future recommendation engines can evaluate them without a schema
+     * redesign.
+     */
+    id: "029_procurement_policies",
+    sql: `
+      CREATE TABLE IF NOT EXISTS procurement_policies (
+        id                               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Tenant anchor.
+        clinic_id                        uuid        NOT NULL
+          REFERENCES clinics (id) ON DELETE RESTRICT,
+
+        -- Operational connection — the clinic-supplier relationship this policy governs.
+        supplier_relationship_id         uuid        NOT NULL
+          REFERENCES supplier_relationships (id) ON DELETE RESTRICT,
+
+        -- NULL = general policy for all products from this supplier relationship.
+        -- NOT NULL = product-specific policy for a single master catalog item.
+        master_catalog_item_id           uuid
+          REFERENCES master_catalog_items (id),
+
+        policy_name                      text        NOT NULL,
+
+        -- 'active' = in effect; 'inactive' = soft-deactivated, preserved for audit.
+        policy_status                    text        NOT NULL DEFAULT 'active'
+          CONSTRAINT procurement_policies_status_check
+            CHECK (policy_status IN ('active', 'inactive')),
+
+        -- Priority ordering: 1 = highest (preferred); higher number = lower priority.
+        -- Enforced >= 1 at the DB layer; uniqueness per clinic/product enforced
+        -- at the service layer and via partial unique indexes below.
+        priority                         integer     NOT NULL
+          CONSTRAINT procurement_policies_priority_min
+            CHECK (priority >= 1),
+
+        -- Marks this policy's supplier as the preferred choice for clinic/product.
+        -- Only ONE preferred supplier per active (clinic_id, master_catalog_item_id)
+        -- pair is allowed — enforced via partial unique indexes below.
+        preferred_supplier               boolean     NOT NULL DEFAULT false,
+
+        -- When true, the decision engine may fall back to a lower-priority supplier.
+        allow_fallback                   boolean     NOT NULL DEFAULT false,
+
+        -- The fallback position in the priority order.
+        -- When set, the service layer enforces fallback_priority > priority
+        -- (fallback must have lower priority number-wise than the preferred).
+        fallback_priority                integer
+          CONSTRAINT procurement_policies_fallback_priority_min
+            CHECK (fallback_priority IS NULL OR fallback_priority >= 1),
+
+        -- Minimum order quantity for this policy.
+        minimum_order_quantity           integer
+          CONSTRAINT procurement_policies_moq_check
+            CHECK (minimum_order_quantity IS NULL OR minimum_order_quantity > 0),
+
+        -- Preferred day of week for placing orders (e.g. 'monday').
+        preferred_order_day              text,
+
+        -- Preferred day of week to receive deliveries (e.g. 'thursday').
+        preferred_delivery_day           text,
+
+        -- Maximum acceptable price difference vs preferred supplier before
+        -- flagging for approval.  Range [0, 100] validated at the service layer.
+        price_difference_threshold_percent numeric(5,2)
+          CONSTRAINT procurement_policies_threshold_check
+            CHECK (
+              price_difference_threshold_percent IS NULL
+              OR (price_difference_threshold_percent >= 0
+                  AND price_difference_threshold_percent <= 100)
+            ),
+
+        -- When true, a manager must approve orders generated by this policy.
+        approval_required                boolean     NOT NULL DEFAULT false,
+
+        -- Reorder strategy hint for the future purchasing engine.
+        -- 'standard'               — replenish to reorder point.
+        -- 'economic_order_quantity' — EOQ calculation.
+        -- 'just_in_time'           — minimal inventory, order on demand.
+        -- 'custom'                 — rule defined in notes / future extension.
+        reorder_strategy                 text        NOT NULL DEFAULT 'standard'
+          CONSTRAINT procurement_policies_reorder_strategy_check
+            CHECK (reorder_strategy IN (
+              'standard', 'economic_order_quantity', 'just_in_time', 'custom'
+            )),
+
+        notes                            text,
+
+        created_at                       timestamptz NOT NULL DEFAULT now(),
+        updated_at                       timestamptz NOT NULL DEFAULT now()
+      );
+
+      -- Primary access pattern: all policies for a clinic ordered by priority.
+      CREATE INDEX IF NOT EXISTS idx_procurement_policies_clinic_status
+        ON procurement_policies (clinic_id, policy_status, priority);
+
+      -- Supplier relationship lookup (all policies for a given relationship).
+      CREATE INDEX IF NOT EXISTS idx_procurement_policies_relationship
+        ON procurement_policies (supplier_relationship_id);
+
+      -- Product-specific policy lookup.
+      CREATE INDEX IF NOT EXISTS idx_procurement_policies_catalog_item
+        ON procurement_policies (master_catalog_item_id)
+        WHERE master_catalog_item_id IS NOT NULL;
+
+      -- Preferred supplier uniqueness — PRODUCT-SPECIFIC policies:
+      -- Only one active preferred supplier per (clinic, product) combination.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_procurement_policies_preferred_specific
+        ON procurement_policies (clinic_id, master_catalog_item_id)
+        WHERE policy_status = 'active'
+          AND preferred_supplier = true
+          AND master_catalog_item_id IS NOT NULL;
+
+      -- Preferred supplier uniqueness — GENERAL policies (master_catalog_item_id IS NULL):
+      -- Only one active preferred general policy per clinic per supplier relationship.
+      -- The partial filter on master_catalog_item_id IS NULL scopes this to general-only.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_procurement_policies_preferred_general
+        ON procurement_policies (clinic_id, supplier_relationship_id)
+        WHERE policy_status = 'active'
+          AND preferred_supplier = true
+          AND master_catalog_item_id IS NULL;
+    `,
+  },
+  {
+    /**
      * Sprint 4D — Supplier Relationship Foundation.
      *
      * Introduces the `supplier_relationships` junction table that links a

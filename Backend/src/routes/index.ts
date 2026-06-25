@@ -48,6 +48,10 @@ import {
   createClinicSupplierRelationshipRouter,
   createSupplierRelationshipRouter,
 } from "./supplierRelationshipRoutes.js";
+import {
+  createClinicProcurementPolicyRouter,
+  createProcurementPolicyRouter,
+} from "./procurementPolicyRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -196,6 +200,18 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/supplier-relationships",
     createSupplierRelationshipRouter(deps),
+  );
+
+  // Procurement Policies — Sprint 4E. Clinic-scoped procurement decision rules.
+  router.use(
+    "/clinics/:clinicId/procurement-policies",
+    createClinicProcurementPolicyRouter(deps),
+  );
+
+  // Procurement Policy standalone routes — GET/PATCH/deactivate by ID.
+  router.use(
+    "/procurement-policies",
+    createProcurementPolicyRouter(deps),
   );
 
   // Organisations — Sprint 4A. Global scope, owner_admin only.

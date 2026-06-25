@@ -96,6 +96,12 @@ import type {
   SupplierRelationship,
   UpdateSupplierRelationshipRequest,
 } from "../types/supplierRelationship.js";
+import type {
+  CreateProcurementPolicyRequest,
+  ListProcurementPoliciesParams,
+  ProcurementPolicy,
+  UpdateProcurementPolicyRequest,
+} from "../types/procurementPolicy.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1371,6 +1377,67 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Procurement Policies — Sprint 4E ────────────────────────────────────────
+
+  async function listProcurementPolicies(
+    clinicId: string,
+    params?: ListProcurementPoliciesParams,
+  ): Promise<ProcurementPolicy[]> {
+    const qs = params?.status
+      ? `?status=${encodeURIComponent(params.status)}`
+      : "";
+    return request<ProcurementPolicy[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/procurement-policies${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getProcurementPolicy(policyId: string): Promise<ProcurementPolicy> {
+    return request<ProcurementPolicy>(
+      config,
+      `/api/v1/procurement-policies/${encodeURIComponent(policyId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createProcurementPolicy(
+    clinicId: string,
+    data: CreateProcurementPolicyRequest,
+  ): Promise<ProcurementPolicy> {
+    return request<ProcurementPolicy>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/procurement-policies`,
+      { method: "POST", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateProcurementPolicy(
+    policyId: string,
+    data: UpdateProcurementPolicyRequest,
+  ): Promise<ProcurementPolicy> {
+    return request<ProcurementPolicy>(
+      config,
+      `/api/v1/procurement-policies/${encodeURIComponent(policyId)}`,
+      { method: "PATCH", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
+  async function deactivateProcurementPolicy(
+    policyId: string,
+  ): Promise<ProcurementPolicy> {
+    return request<ProcurementPolicy>(
+      config,
+      `/api/v1/procurement-policies/${encodeURIComponent(policyId)}/deactivate`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1455,6 +1522,11 @@ export function createApiClient(config: AppConfig) {
     createSupplierRelationship,
     updateSupplierRelationship,
     deactivateSupplierRelationship,
+    listProcurementPolicies,
+    getProcurementPolicy,
+    createProcurementPolicy,
+    updateProcurementPolicy,
+    deactivateProcurementPolicy,
   };
 }
 
