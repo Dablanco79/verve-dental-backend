@@ -36,6 +36,11 @@ import type {
   SkuDemandProjection,
 } from "../types/materialsForecast.js";
 import type { ClinicData, CreateClinicData, UpdateClinicData } from "../types/clinic.js";
+import type {
+  CreateOrganisationData,
+  OrganisationData,
+  UpdateOrganisationData,
+} from "../types/organisation.js";
 import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
 import type {
   AuditEvent,
@@ -1161,6 +1166,71 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Organisations (Sprint 4A — owner_admin only) ───────────────────────────
+
+  /**
+   * GET /organisations
+   * Returns all organisations ordered by name.
+   * owner_admin only — throws 403 for other roles.
+   */
+  async function listOrganisations(): Promise<OrganisationData[]> {
+    return request<OrganisationData[]>(
+      config,
+      "/api/v1/organisations",
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /organisations/:organisationId
+   * Returns a single organisation by UUID.
+   * owner_admin only.
+   */
+  async function getOrganisation(
+    organisationId: string,
+  ): Promise<OrganisationData> {
+    return request<OrganisationData>(
+      config,
+      `/api/v1/organisations/${encodeURIComponent(organisationId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * POST /organisations
+   * Creates a new organisation.
+   * owner_admin only.
+   */
+  async function createOrganisation(
+    data: CreateOrganisationData,
+  ): Promise<OrganisationData> {
+    return request<OrganisationData>(
+      config,
+      "/api/v1/organisations",
+      { method: "POST", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * PATCH /organisations/:organisationId
+   * Partial update — only supplied fields are written.
+   * owner_admin only.
+   */
+  async function updateOrganisation(
+    organisationId: string,
+    data: UpdateOrganisationData,
+  ): Promise<OrganisationData> {
+    return request<OrganisationData>(
+      config,
+      `/api/v1/organisations/${encodeURIComponent(organisationId)}`,
+      { method: "PATCH", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1232,6 +1302,10 @@ export function createApiClient(config: AppConfig) {
     confirmSupplierInvoice,
     voidSupplierInvoice,
     getSupplierIntelligence,
+    listOrganisations,
+    getOrganisation,
+    createOrganisation,
+    updateOrganisation,
   };
 }
 

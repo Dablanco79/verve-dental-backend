@@ -1,7 +1,12 @@
 import type { EnvConfig } from "../config/index.js";
 import { runBootstrapMigrations } from "../db/migrate.js";
 import { createDatabasePool } from "../db/pool.js";
-import { seedClinics, seedDemoUsers, seedInventory } from "../db/seed.js";
+import {
+  seedClinics,
+  seedDemoUsers,
+  seedInventory,
+  seedOrganisation,
+} from "../db/seed.js";
 import {
   createInMemoryAnalyticsRepository,
 } from "../repositories/analyticsRepository.js";
@@ -50,6 +55,10 @@ import {
   createInMemorySupplierInvoiceRepository,
 } from "../repositories/supplierInvoiceRepository.js";
 import { createPostgresSupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.postgres.js";
+import {
+  createInMemoryOrganisationRepository,
+} from "../repositories/organisationRepository.js";
+import { createPostgresOrganisationRepository } from "../repositories/organisationRepository.postgres.js";
 import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
 import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { createSupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -84,6 +93,7 @@ import type { PermissionRepository } from "../repositories/permissionRepository.
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
+import type { OrganisationRepository } from "../repositories/organisationRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -123,6 +133,7 @@ export type AppDependencies = {
   supplierRepository: SupplierRepository;
   supplierCatalogueRepository: SupplierCatalogueRepository;
   supplierInvoiceRepository: SupplierInvoiceRepository;
+  organisationRepository: OrganisationRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -182,6 +193,7 @@ export async function createAppDependencies(
   let supplierRepository: SupplierRepository;
   let supplierCatalogueRepository: SupplierCatalogueRepository;
   let supplierInvoiceRepository: SupplierInvoiceRepository;
+  let organisationRepository: OrganisationRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -230,6 +242,7 @@ export async function createAppDependencies(
       config.NODE_ENV === "development" || config.NODE_ENV === "test";
 
     if (isDemoSeedEnv) {
+      await seedOrganisation(connectedPool, logger);
       await seedClinics(connectedPool, logger);
       await seedDemoUsers(connectedPool, logger, config.NODE_ENV);
       await seedInventory(connectedPool, logger);
@@ -269,9 +282,10 @@ export async function createAppDependencies(
     supplierRepository = createPostgresSupplierRepository(connectedPool);
     supplierCatalogueRepository = createPostgresSupplierCatalogueRepository(connectedPool);
     supplierInvoiceRepository = createPostgresSupplierInvoiceRepository(connectedPool);
+    organisationRepository = createPostgresOrganisationRepository(connectedPool);
 
     logger.info(
-      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers)",
+      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations)",
     );
   } else {
     userRepository = await createInMemoryUserRepository(config.MFA_ENCRYPTION_KEY);
@@ -287,6 +301,7 @@ export async function createAppDependencies(
     supplierRepository = createInMemorySupplierRepository();
     supplierCatalogueRepository = createInMemorySupplierCatalogueRepository();
     supplierInvoiceRepository = createInMemorySupplierInvoiceRepository();
+    organisationRepository = createInMemoryOrganisationRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -432,6 +447,7 @@ export async function createAppDependencies(
     supplierRepository,
     supplierCatalogueRepository,
     supplierInvoiceRepository,
+    organisationRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

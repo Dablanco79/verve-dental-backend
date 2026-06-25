@@ -20,6 +20,7 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../repositories/userRepository.js";
+import { SEED_ORGANISATION_ID } from "../repositories/organisationRepository.js";
 import {
   buildBarcodeMappingSeed,
   buildClinicInventorySeed,
@@ -29,6 +30,52 @@ import type { UserRole } from "../types/auth.js";
 import type { Logger } from "../utils/logger.js";
 import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "./tenantContext.js";
 import type { DatabasePool } from "./pool.js";
+
+// ─── Organisation seed ────────────────────────────────────────────────────────
+
+/**
+ * Seed the default "Verve Demo Organisation" on first boot.
+ *
+ * Uses ON CONFLICT (id) DO NOTHING so the function is safe to call on every
+ * cold start.  Must run before seedClinics so the organisation row exists
+ * when the clinic backfill references it.
+ *
+ * Backfill: all existing clinics that have organisation_id IS NULL are
+ * assigned to the default organisation.  This is idempotent — clinics
+ * already linked are untouched.
+ */
+export async function seedOrganisation(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO organisations (id, name, status)
+     VALUES ($1, $2, 'active')
+     ON CONFLICT (id) DO NOTHING`,
+    [SEED_ORGANISATION_ID, "Verve Demo Organisation"],
+  );
+
+  // Backfill: assign all clinics without an organisation to the seed org.
+  const { rowCount } = await pool.query(
+    `UPDATE clinics
+     SET organisation_id = $1
+     WHERE organisation_id IS NULL`,
+    [SEED_ORGANISATION_ID],
+  );
+
+  const updated = rowCount ?? 0;
+  if (updated > 0) {
+    logger.info(
+      { organisationId: SEED_ORGANISATION_ID, clinicsUpdated: updated },
+      "Backfilled existing clinics to default organisation",
+    );
+  } else {
+    logger.info(
+      { organisationId: SEED_ORGANISATION_ID },
+      "Default organisation seeded — no clinic backfill needed",
+    );
+  }
+}
 
 // ─── Clinic seed ──────────────────────────────────────────────────────────────
 

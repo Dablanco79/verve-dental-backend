@@ -39,6 +39,7 @@ import { createPermissionRouter } from "./permissionRoutes.js";
 import { createSupplierRouter } from "./supplierRoutes.js";
 import { createSupplierInvoiceRouter } from "./supplierInvoiceRoutes.js";
 import { createSupplierIntelligenceRouter } from "./supplierIntelligenceRoutes.js";
+import { createOrganisationRouter } from "./organisationRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -174,6 +175,15 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/clinics/:clinicId/supplier-intelligence",
     createSupplierIntelligenceRouter(deps),
+  );
+
+  // Organisations — Sprint 4A. Global scope, owner_admin only.
+  // Registered after all clinic-scoped routes so sub-path conflicts are avoided.
+  router.use(
+    "/organisations",
+    authenticate,
+    requireRoles("owner_admin"),
+    createOrganisationRouter(deps),
   );
 
   return router;

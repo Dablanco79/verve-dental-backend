@@ -1623,6 +1623,69 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address text;
     `,
   },
+  {
+    /**
+     * Sprint 4A — Organisation Foundation.
+     *
+     * Creates the `organisations` table — the top-level business object in the
+     * enterprise hierarchy.  Minimal schema for this sprint; ABN and legal-entity
+     * columns are deferred to the Legal Entity sprint.
+     *
+     * No RLS: organisations is a global registry (mirrors the `clinics` and
+     * `suppliers` pattern).  Access is gated at the service layer (owner_admin only).
+     *
+     * `status` uses a text CHECK constraint rather than a PostgreSQL ENUM so
+     * future states ('suspended', 'archived') can be added as a simple CHECK
+     * extension without a separate ALTER TYPE migration.
+     */
+    id: "023_organisations_schema",
+    sql: `
+      CREATE TABLE IF NOT EXISTS organisations (
+        id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        name       text        NOT NULL,
+        status     text        NOT NULL DEFAULT 'active'
+          CONSTRAINT organisations_status_check
+            CHECK (status IN ('active', 'inactive')),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_organisations_status
+        ON organisations (status)
+        WHERE status = 'active';
+
+      CREATE INDEX IF NOT EXISTS idx_organisations_name
+        ON organisations (name);
+    `,
+  },
+  {
+    /**
+     * Sprint 4A — Link clinics to organisations.
+     *
+     * Adds a nullable `organisation_id` FK to the `clinics` table.
+     * Nullable so all existing clinics continue working without any
+     * data migration.  The FK constraint is deferred — existing clinic rows
+     * with NULL organisation_id are fully valid.
+     *
+     * Backfill (associating existing clinics with a default organisation)
+     * is handled in the application-layer seed / bootstrap, not here,
+     * so this DDL migration is always safe to roll back independently.
+     *
+     * ON DELETE SET NULL: if an organisation is ever removed from the
+     * database (administrative action only), its clinics are decoupled
+     * rather than cascade-deleted.
+     */
+    id: "024_clinics_organisation_id",
+    sql: `
+      ALTER TABLE clinics
+        ADD COLUMN IF NOT EXISTS organisation_id uuid
+          REFERENCES organisations (id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_clinics_organisation_id
+        ON clinics (organisation_id)
+        WHERE organisation_id IS NOT NULL;
+    `,
+  },
 ];
 
 /**
