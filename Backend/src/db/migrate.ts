@@ -2073,6 +2073,111 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
           AND master_catalog_item_id IS NULL;
     `,
   },
+  {
+    /**
+     * Supplier Contracts — Sprint 4F.
+     *
+     * Records commercial agreements between clinics (via their Supplier
+     * Relationships) and suppliers.  Contracts are informational only in this
+     * sprint — no purchasing behaviour changes.
+     *
+     * Design notes (future commercial intelligence):
+     *   • minimumOrderValueCents, estimatedAnnualCommitmentCents, and
+     *     annualSpendTargetCents are stored now so spend tracking, rebate
+     *     analysis, and AI contract recommendations can be introduced later
+     *     without a schema redesign.
+     *   • contractDocumentStorageKey anchors the current contract document.
+     *     Future document versioning may evolve from this field.
+     *   • The partial unique index on (supplier_relationship_id) WHERE
+     *     status = 'active' enforces the one-active-contract-per-relationship
+     *     business rule at the database layer.
+     *   • No DELETE — contracts move to 'expired' or 'terminated' only.
+     *
+     * DEPENDENCY: requires 028_supplier_relationships (supplier_relationships table).
+     */
+    id: "030_supplier_contracts",
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_contracts (
+        id                                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Commercial anchor — the clinic-supplier relationship this contract governs.
+        supplier_relationship_id            uuid        NOT NULL
+          REFERENCES supplier_relationships (id) ON DELETE RESTRICT,
+
+        -- Human-readable contract name, e.g. "2026 Supply Agreement".
+        contract_name                       text        NOT NULL,
+
+        -- Supplier-assigned contract reference number.
+        -- NULL is valid; numbers may repeat across different supplier relationships.
+        contract_number                     text,
+
+        -- Lifecycle status.
+        -- 'draft'      = not yet in effect.
+        -- 'active'     = currently governing purchases (only one per relationship).
+        -- 'expired'    = past end date, preserved for audit.
+        -- 'terminated' = ended early, preserved for audit.
+        status                              text        NOT NULL DEFAULT 'draft'
+          CONSTRAINT supplier_contracts_status_check
+            CHECK (status IN ('active', 'expired', 'draft', 'terminated')),
+
+        -- Contract term — end_date must be after start_date (enforced at service layer).
+        start_date                          date        NOT NULL,
+        end_date                            date        NOT NULL,
+
+        -- Days before end_date to trigger a renewal reminder (>= 0).
+        renewal_notice_days                 integer     NOT NULL DEFAULT 0
+          CONSTRAINT supplier_contracts_renewal_notice_check
+            CHECK (renewal_notice_days >= 0),
+
+        -- Commercial terms.
+        payment_terms                       text        NOT NULL,
+        freight_terms                       text,
+
+        -- Minimum order value in integer cents (AUD).  NULL = no minimum.
+        minimum_order_value_cents           integer
+          CONSTRAINT supplier_contracts_mov_check
+            CHECK (minimum_order_value_cents IS NULL OR minimum_order_value_cents >= 0),
+
+        -- Volume rebate narrative.
+        -- Future: a dedicated rebate_tiers table may replace this free-text field.
+        rebate_description                  text,
+
+        -- Annual financial targets in integer cents (AUD).
+        -- Future: these power spend tracking and AI negotiation recommendations.
+        estimated_annual_commitment_cents   integer
+          CONSTRAINT supplier_contracts_eac_check
+            CHECK (estimated_annual_commitment_cents IS NULL OR estimated_annual_commitment_cents >= 0),
+
+        annual_spend_target_cents           integer
+          CONSTRAINT supplier_contracts_ast_check
+            CHECK (annual_spend_target_cents IS NULL OR annual_spend_target_cents >= 0),
+
+        -- Storage key (e.g. S3 object key) for the current contract document PDF.
+        -- Future: a contract_documents table may version-control documents without
+        -- requiring a change to this column.
+        contract_document_storage_key       text,
+
+        notes                               text,
+
+        created_at                          timestamptz NOT NULL DEFAULT now(),
+        updated_at                          timestamptz NOT NULL DEFAULT now()
+      );
+
+      -- Primary access pattern: all contracts for a relationship ordered by start date.
+      CREATE INDEX IF NOT EXISTS idx_supplier_contracts_relationship
+        ON supplier_contracts (supplier_relationship_id, start_date DESC);
+
+      -- Status filter — used for expired/terminated archive queries.
+      CREATE INDEX IF NOT EXISTS idx_supplier_contracts_status
+        ON supplier_contracts (status);
+
+      -- Business rule: only one ACTIVE contract per supplier relationship.
+      -- Enforced at the service layer and here as a safety net.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_contracts_one_active
+        ON supplier_contracts (supplier_relationship_id)
+        WHERE status = 'active';
+    `,
+  },
 ];
 
 /**

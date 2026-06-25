@@ -52,6 +52,10 @@ import {
   createClinicProcurementPolicyRouter,
   createProcurementPolicyRouter,
 } from "./procurementPolicyRoutes.js";
+import {
+  createRelationshipContractRouter,
+  createSupplierContractRouter,
+} from "./supplierContractRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -212,6 +216,20 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/procurement-policies",
     createProcurementPolicyRouter(deps),
+  );
+
+  // Supplier Contracts — Sprint 4F. Relationship-scoped list/create.
+  // Mounted at /supplier-relationships so the nested /:relationshipId/contracts
+  // path is handled here without modifying the existing supplier-relationship router.
+  router.use(
+    "/supplier-relationships",
+    createRelationshipContractRouter(deps),
+  );
+
+  // Supplier Contract standalone routes — GET/PATCH/expire/terminate by ID.
+  router.use(
+    "/supplier-contracts",
+    createSupplierContractRouter(deps),
   );
 
   // Organisations — Sprint 4A. Global scope, owner_admin only.

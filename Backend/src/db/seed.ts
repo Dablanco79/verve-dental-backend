@@ -29,6 +29,10 @@ import {
   SEED_RELATIONSHIP_B1_ID,
   SEED_RELATIONSHIP_A2_ID,
 } from "../repositories/supplierRelationshipRepository.js";
+import {
+  SEED_CONTRACT_DENTAL_DEPOT_ID,
+  SEED_CONTRACT_MEDIGATE_EXPIRED_ID,
+} from "../repositories/supplierContractRepository.js";
 import { SEED_POLICY_IDS } from "../repositories/procurementPolicyRepository.js";
 import {
   buildBarcodeMappingSeed,
@@ -696,6 +700,109 @@ export async function seedProcurementPolicies(
   } else {
     logger.info(
       "Demo procurement policies already present — skipping policy seed",
+    );
+  }
+}
+
+// ─── Supplier Contract seed ───────────────────────────────────────────────────
+
+type DemoContract = {
+  id: string;
+  supplierRelationshipId: string;
+  contractName: string;
+  contractNumber: string | null;
+  status: string;
+  startDate: string;
+  endDate: string;
+  renewalNoticeDays: number;
+  paymentTerms: string;
+  freightTerms: string | null;
+  minimumOrderValueCents: number | null;
+  estimatedAnnualCommitmentCents: number | null;
+  annualSpendTargetCents: number | null;
+};
+
+const DEMO_CONTRACTS: DemoContract[] = [
+  {
+    id: SEED_CONTRACT_DENTAL_DEPOT_ID,
+    supplierRelationshipId: SEED_RELATIONSHIP_A1_ID,
+    contractName: "2026 Supply Agreement",
+    contractNumber: "DD-2026-CLA-001",
+    status: "active",
+    startDate: "2026-01-01",
+    endDate: "2026-12-31",
+    renewalNoticeDays: 90,
+    paymentTerms: "30 days net",
+    freightTerms: "Free over $500",
+    minimumOrderValueCents: 25000,
+    estimatedAnnualCommitmentCents: 8000000,
+    annualSpendTargetCents: 7500000,
+  },
+  {
+    id: SEED_CONTRACT_MEDIGATE_EXPIRED_ID,
+    supplierRelationshipId: SEED_RELATIONSHIP_B1_ID,
+    contractName: "2025 Supply Agreement",
+    contractNumber: "MG-2025-CLA-001",
+    status: "expired",
+    startDate: "2025-01-01",
+    endDate: "2025-12-31",
+    renewalNoticeDays: 60,
+    paymentTerms: "COD",
+    freightTerms: null,
+    minimumOrderValueCents: null,
+    estimatedAnnualCommitmentCents: null,
+    annualSpendTargetCents: null,
+  },
+];
+
+/**
+ * Seed demo supplier contract records on first boot.
+ *
+ * Development/test only — restricted by the isDemoSeedEnv guard in dependencies.ts.
+ * Idempotent: ON CONFLICT (id) DO NOTHING.
+ * supplier_contracts has no RLS — safe to use pool.query directly.
+ */
+export async function seedSupplierContracts(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  let seeded = 0;
+  for (const contract of DEMO_CONTRACTS) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO supplier_contracts
+         (id, supplier_relationship_id, contract_name, contract_number,
+          status, start_date, end_date, renewal_notice_days,
+          payment_terms, freight_terms, minimum_order_value_cents,
+          estimated_annual_commitment_cents, annual_spend_target_cents)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        contract.id,
+        contract.supplierRelationshipId,
+        contract.contractName,
+        contract.contractNumber,
+        contract.status,
+        contract.startDate,
+        contract.endDate,
+        contract.renewalNoticeDays,
+        contract.paymentTerms,
+        contract.freightTerms,
+        contract.minimumOrderValueCents,
+        contract.estimatedAnnualCommitmentCents,
+        contract.annualSpendTargetCents,
+      ],
+    );
+    seeded += rowCount ?? 0;
+  }
+
+  if (seeded > 0) {
+    logger.info(
+      { count: seeded },
+      "Demo supplier contracts seeded into PostgreSQL",
+    );
+  } else {
+    logger.info(
+      "Demo supplier contracts already present — skipping contract seed",
     );
   }
 }

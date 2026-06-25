@@ -102,6 +102,12 @@ import type {
   ProcurementPolicy,
   UpdateProcurementPolicyRequest,
 } from "../types/procurementPolicy.js";
+import type {
+  CreateSupplierContractRequest,
+  ListSupplierContractsParams,
+  SupplierContract,
+  UpdateSupplierContractRequest,
+} from "../types/supplierContract.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1438,6 +1444,76 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Supplier Contracts (Sprint 4F) ───────────────────────────────────────────
+
+  async function listSupplierContracts(
+    relationshipId: string,
+    params?: ListSupplierContractsParams,
+  ): Promise<SupplierContract[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<SupplierContract[]>(
+      config,
+      `/api/v1/supplier-relationships/${encodeURIComponent(relationshipId)}/contracts${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getSupplierContract(contractId: string): Promise<SupplierContract> {
+    return request<SupplierContract>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createSupplierContract(
+    relationshipId: string,
+    body: CreateSupplierContractRequest,
+  ): Promise<SupplierContract> {
+    return request<SupplierContract>(
+      config,
+      `/api/v1/supplier-relationships/${encodeURIComponent(relationshipId)}/contracts`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateSupplierContract(
+    contractId: string,
+    body: UpdateSupplierContractRequest,
+  ): Promise<SupplierContract> {
+    return request<SupplierContract>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function expireSupplierContract(contractId: string): Promise<SupplierContract> {
+    return request<SupplierContract>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}/expire`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
+  async function terminateSupplierContract(
+    contractId: string,
+  ): Promise<SupplierContract> {
+    return request<SupplierContract>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}/terminate`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1527,6 +1603,12 @@ export function createApiClient(config: AppConfig) {
     createProcurementPolicy,
     updateProcurementPolicy,
     deactivateProcurementPolicy,
+    listSupplierContracts,
+    getSupplierContract,
+    createSupplierContract,
+    updateSupplierContract,
+    expireSupplierContract,
+    terminateSupplierContract,
   };
 }
 
