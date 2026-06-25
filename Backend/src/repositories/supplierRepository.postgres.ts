@@ -9,6 +9,7 @@ import type { SupplierRepository } from "./supplierRepository.js";
 // ─── Row type ─────────────────────────────────────────────────────────────────
 
 type SupplierRow = {
+  // ── Core ─────────────────────────────────────────────────────────────────────
   id: string;
   supplier_name: string;
   supplier_code: string | null;
@@ -22,6 +23,23 @@ type SupplierRow = {
   active: boolean;
   created_at: Date;
   updated_at: Date;
+  // ── Sprint 4C metadata ────────────────────────────────────────────────────
+  legal_name: string | null;
+  trading_name: string | null;
+  country_code: string;
+  currency_code: string;
+  industry_category: string | null;
+  healthcare_subcategory: string | null;
+  supplier_category: string | null;
+  verified: boolean;
+  api_available: boolean;
+  catalogue_available: boolean;
+  live_pricing: boolean;
+  online_ordering: boolean;
+  preferred_comm_method: string | null;
+  logo_storage_key: string | null;
+  created_by_clinic_id: string | null;
+  is_public: boolean;
 };
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
@@ -41,6 +59,23 @@ function mapSupplier(row: SupplierRow): Supplier {
     active: row.active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // ── Sprint 4C metadata ──────────────────────────────────────────────────
+    legalName: row.legal_name,
+    tradingName: row.trading_name,
+    countryCode: row.country_code,
+    currencyCode: row.currency_code,
+    industryCategory: row.industry_category,
+    healthcareSubcategory: row.healthcare_subcategory,
+    supplierCategory: row.supplier_category,
+    verified: row.verified,
+    apiAvailable: row.api_available,
+    catalogueAvailable: row.catalogue_available,
+    livePricing: row.live_pricing,
+    onlineOrdering: row.online_ordering,
+    preferredCommMethod: row.preferred_comm_method,
+    logoStorageKey: row.logo_storage_key,
+    createdByClinicId: row.created_by_clinic_id,
+    isPublic: row.is_public,
   };
 }
 
@@ -103,8 +138,17 @@ export function createPostgresSupplierRepository(
     async createSupplier(input: CreateSupplierInput): Promise<Supplier> {
       const { rows } = await pool.query<SupplierRow>(
         `INSERT INTO suppliers
-           (supplier_name, supplier_code, contact_name, email, phone, website, abn, address, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (supplier_name, supplier_code, contact_name, email, phone, website, abn, address, notes,
+            legal_name, trading_name, country_code, currency_code,
+            industry_category, healthcare_subcategory, supplier_category,
+            verified, api_available, catalogue_available, live_pricing, online_ordering,
+            preferred_comm_method, logo_storage_key, created_by_clinic_id, is_public)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13,
+            $14, $15, $16,
+            $17, $18, $19, $20, $21,
+            $22, $23, $24, $25)
          RETURNING *`,
         [
           input.supplierName,
@@ -116,6 +160,23 @@ export function createPostgresSupplierRepository(
           input.abn ?? null,
           input.address ?? null,
           input.notes ?? null,
+          // Sprint 4C
+          input.legalName ?? null,
+          input.tradingName ?? null,
+          input.countryCode ?? "AU",
+          input.currencyCode ?? "AUD",
+          input.industryCategory ?? null,
+          input.healthcareSubcategory ?? null,
+          input.supplierCategory ?? null,
+          input.verified ?? false,
+          input.apiAvailable ?? false,
+          input.catalogueAvailable ?? false,
+          input.livePricing ?? false,
+          input.onlineOrdering ?? false,
+          input.preferredCommMethod ?? null,
+          input.logoStorageKey ?? null,
+          input.createdByClinicId ?? null,
+          input.isPublic ?? true,
         ],
       );
       if (!rows[0]) throw new Error("INSERT supplier returned no rows");
@@ -135,6 +196,7 @@ export function createPostgresSupplierRepository(
         setClauses.push(`${col} = $${String(idx++)}`);
       };
 
+      // ── Core fields ────────────────────────────────────────────────────────
       if (input.supplierName !== undefined) addField("supplier_name", input.supplierName);
       if (input.supplierCode !== undefined) addField("supplier_code", input.supplierCode);
       if (input.contactName !== undefined) addField("contact_name", input.contactName);
@@ -145,6 +207,25 @@ export function createPostgresSupplierRepository(
       if (input.address !== undefined) addField("address", input.address);
       if (input.notes !== undefined) addField("notes", input.notes);
       if (input.active !== undefined) addField("active", input.active);
+      // ── Sprint 4C metadata ─────────────────────────────────────────────────
+      if (input.legalName !== undefined) addField("legal_name", input.legalName);
+      if (input.tradingName !== undefined) addField("trading_name", input.tradingName);
+      if (input.countryCode !== undefined) addField("country_code", input.countryCode);
+      if (input.currencyCode !== undefined) addField("currency_code", input.currencyCode);
+      if (input.industryCategory !== undefined) addField("industry_category", input.industryCategory);
+      if (input.healthcareSubcategory !== undefined)
+        addField("healthcare_subcategory", input.healthcareSubcategory);
+      if (input.supplierCategory !== undefined) addField("supplier_category", input.supplierCategory);
+      if (input.verified !== undefined) addField("verified", input.verified);
+      if (input.apiAvailable !== undefined) addField("api_available", input.apiAvailable);
+      if (input.catalogueAvailable !== undefined)
+        addField("catalogue_available", input.catalogueAvailable);
+      if (input.livePricing !== undefined) addField("live_pricing", input.livePricing);
+      if (input.onlineOrdering !== undefined) addField("online_ordering", input.onlineOrdering);
+      if (input.preferredCommMethod !== undefined)
+        addField("preferred_comm_method", input.preferredCommMethod);
+      if (input.logoStorageKey !== undefined) addField("logo_storage_key", input.logoStorageKey);
+      if (input.isPublic !== undefined) addField("is_public", input.isPublic);
 
       if (setClauses.length === 0) {
         return this.findSupplierById(supplierId);

@@ -74,6 +74,23 @@ function makeSupplier(overrides: Partial<Supplier> = {}): Supplier {
     active: true,
     createdAt: new Date("2026-01-01"),
     updatedAt: new Date("2026-01-01"),
+    // Sprint 4C metadata defaults
+    legalName: null,
+    tradingName: null,
+    countryCode: "AU",
+    currencyCode: "AUD",
+    industryCategory: null,
+    healthcareSubcategory: null,
+    supplierCategory: null,
+    verified: false,
+    apiAvailable: false,
+    catalogueAvailable: false,
+    livePricing: false,
+    onlineOrdering: false,
+    preferredCommMethod: null,
+    logoStorageKey: null,
+    createdByClinicId: null,
+    isPublic: true,
     ...overrides,
   };
 }

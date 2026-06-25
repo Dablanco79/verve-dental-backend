@@ -128,6 +128,62 @@ function SupplierOverview({ supplier }: { supplier: Supplier }) {
             <dd className="supplier-detail__notes">{supplier.notes}</dd>
           </div>
         ) : null}
+        {supplier.legalName ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Legal Name</dt>
+            <dd>{supplier.legalName}</dd>
+          </div>
+        ) : null}
+        {supplier.tradingName ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Trading Name</dt>
+            <dd>{supplier.tradingName}</dd>
+          </div>
+        ) : null}
+        {supplier.supplierCategory ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Category</dt>
+            <dd>{supplier.supplierCategory}</dd>
+          </div>
+        ) : null}
+        <div className="supplier-detail__overview-item">
+          <dt>Country</dt>
+          <dd>{supplier.countryCode}</dd>
+        </div>
+        <div className="supplier-detail__overview-item">
+          <dt>Currency</dt>
+          <dd>{supplier.currencyCode}</dd>
+        </div>
+        {supplier.verified ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Verified</dt>
+            <dd>
+              <span className="supplier-badge supplier-badge--active">Verified</span>
+            </dd>
+          </div>
+        ) : null}
+        {supplier.catalogueAvailable ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Catalogue</dt>
+            <dd>
+              <span className="supplier-badge supplier-badge--active">Available</span>
+            </dd>
+          </div>
+        ) : null}
+        {supplier.apiAvailable || supplier.livePricing || supplier.onlineOrdering ? (
+          <div className="supplier-detail__overview-item">
+            <dt>Capabilities</dt>
+            <dd>
+              {[
+                supplier.apiAvailable && "API",
+                supplier.livePricing && "Live Pricing",
+                supplier.onlineOrdering && "Online Orders",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </dd>
+          </div>
+        ) : null}
         <div className="supplier-detail__overview-item">
           <dt>Created</dt>
           <dd>{formatDate(supplier.createdAt)}</dd>

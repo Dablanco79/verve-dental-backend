@@ -1,4 +1,5 @@
 export type Supplier = {
+  // ── Core ───────────────────────────────────────────────────────────────────
   id: string;
   supplierName: string;
   supplierCode: string | null;
@@ -12,9 +13,27 @@ export type Supplier = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  legalName: string | null;
+  tradingName: string | null;
+  countryCode: string;
+  currencyCode: string;
+  industryCategory: string | null;
+  healthcareSubcategory: string | null;
+  supplierCategory: string | null;
+  verified: boolean;
+  apiAvailable: boolean;
+  catalogueAvailable: boolean;
+  livePricing: boolean;
+  onlineOrdering: boolean;
+  preferredCommMethod: string | null;
+  logoStorageKey: string | null;
+  createdByClinicId: string | null;
+  isPublic: boolean;
 };
 
 export type CreateSupplierRequest = {
+  // ── Core ───────────────────────────────────────────────────────────────────
   supplierName: string;
   supplierCode?: string | null;
   contactName?: string | null;
@@ -24,9 +43,27 @@ export type CreateSupplierRequest = {
   abn?: string | null;
   address?: string | null;
   notes?: string | null;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  legalName?: string | null;
+  tradingName?: string | null;
+  countryCode?: string;
+  currencyCode?: string;
+  industryCategory?: string | null;
+  healthcareSubcategory?: string | null;
+  supplierCategory?: string | null;
+  verified?: boolean;
+  apiAvailable?: boolean;
+  catalogueAvailable?: boolean;
+  livePricing?: boolean;
+  onlineOrdering?: boolean;
+  preferredCommMethod?: string | null;
+  logoStorageKey?: string | null;
+  createdByClinicId?: string | null;
+  isPublic?: boolean;
 };
 
 export type UpdateSupplierRequest = {
+  // ── Core ───────────────────────────────────────────────────────────────────
   supplierName?: string;
   supplierCode?: string | null;
   contactName?: string | null;
@@ -37,6 +74,22 @@ export type UpdateSupplierRequest = {
   address?: string | null;
   notes?: string | null;
   active?: boolean;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  legalName?: string | null;
+  tradingName?: string | null;
+  countryCode?: string;
+  currencyCode?: string;
+  industryCategory?: string | null;
+  healthcareSubcategory?: string | null;
+  supplierCategory?: string | null;
+  verified?: boolean;
+  apiAvailable?: boolean;
+  catalogueAvailable?: boolean;
+  livePricing?: boolean;
+  onlineOrdering?: boolean;
+  preferredCommMethod?: string | null;
+  logoStorageKey?: string | null;
+  isPublic?: boolean;
 };
 
 export type SupplierProduct = {

@@ -30,6 +30,23 @@ type Supplier = {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  // Sprint 4C metadata
+  legalName: string | null;
+  tradingName: string | null;
+  countryCode: string;
+  currencyCode: string;
+  industryCategory: string | null;
+  healthcareSubcategory: string | null;
+  supplierCategory: string | null;
+  verified: boolean;
+  apiAvailable: boolean;
+  catalogueAvailable: boolean;
+  livePricing: boolean;
+  onlineOrdering: boolean;
+  preferredCommMethod: string | null;
+  logoStorageKey: string | null;
+  createdByClinicId: string | null;
+  isPublic: boolean;
 };
 
 // ─── List ──────────────────────────────────────────────────────────────────────
@@ -331,5 +348,150 @@ describe("PATCH /api/v1/suppliers/:supplierId — update", () => {
       .send({ supplierName: "Should Fail" });
 
     expect(res.status).toBe(403);
+  });
+});
+
+// ─── Sprint 4C — Supplier Master metadata ────────────────────────────────────
+
+describe("POST /api/v1/suppliers — create with Sprint 4C metadata", () => {
+  it("creates supplier with full enterprise metadata", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        supplierName: "Metro Dental Supplies Pty Ltd",
+        legalName: "Metro Dental Holdings Pty Ltd",
+        tradingName: "Metro Dental",
+        countryCode: "AU",
+        currencyCode: "AUD",
+        supplierCategory: "Dental Consumables",
+        industryCategory: "Healthcare",
+        healthcareSubcategory: "Dental",
+        verified: true,
+        catalogueAvailable: true,
+        apiAvailable: false,
+        livePricing: false,
+        onlineOrdering: false,
+        isPublic: true,
+      });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.supplierName).toBe("Metro Dental Supplies Pty Ltd");
+    expect(body.data.legalName).toBe("Metro Dental Holdings Pty Ltd");
+    expect(body.data.tradingName).toBe("Metro Dental");
+    expect(body.data.countryCode).toBe("AU");
+    expect(body.data.currencyCode).toBe("AUD");
+    expect(body.data.supplierCategory).toBe("Dental Consumables");
+    expect(body.data.verified).toBe(true);
+    expect(body.data.catalogueAvailable).toBe(true);
+    expect(body.data.isPublic).toBe(true);
+  });
+
+  it("creates supplier without metadata — defaults are applied", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Minimal Metadata Supplier" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.legalName).toBeNull();
+    expect(body.data.tradingName).toBeNull();
+    expect(body.data.countryCode).toBe("AU");
+    expect(body.data.currencyCode).toBe("AUD");
+    expect(body.data.verified).toBe(false);
+    expect(body.data.apiAvailable).toBe(false);
+    expect(body.data.catalogueAvailable).toBe(false);
+    expect(body.data.livePricing).toBe(false);
+    expect(body.data.onlineOrdering).toBe(false);
+    expect(body.data.isPublic).toBe(true);
+    expect(body.data.supplierCategory).toBeNull();
+    expect(body.data.industryCategory).toBeNull();
+    expect(body.data.preferredCommMethod).toBeNull();
+  });
+});
+
+describe("PATCH /api/v1/suppliers/:supplierId — update Sprint 4C metadata", () => {
+  it("updates enterprise metadata fields", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Metadata Update Test" });
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        legalName: "Updated Legal Name Pty Ltd",
+        supplierCategory: "Lab Equipment",
+        verified: true,
+        catalogueAvailable: true,
+      });
+
+    expect(res.status).toBe(200);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.legalName).toBe("Updated Legal Name Pty Ltd");
+    expect(body.data.supplierCategory).toBe("Lab Equipment");
+    expect(body.data.verified).toBe(true);
+    expect(body.data.catalogueAvailable).toBe(true);
+  });
+
+  it("can set metadata fields back to null", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        supplierName: "Nullable Metadata Test",
+        legalName: "Temp Legal Name",
+      });
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ legalName: null });
+
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<Supplier>).data.legalName).toBeNull();
+  });
+
+  it("list and get responses include metadata fields", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        supplierName: "Include Metadata In List",
+        supplierCategory: "Orthodontics",
+        verified: true,
+      });
+
+    const listRes = await request(app)
+      .get("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(listRes.status).toBe(200);
+    const listBody = listRes.body as ApiData<Supplier[]>;
+    const found = listBody.data.find((s) => s.supplierName === "Include Metadata In List");
+    expect(found).toBeDefined();
+    expect(found?.supplierCategory).toBe("Orthodontics");
+    expect(found?.verified).toBe(true);
+    expect(found?.countryCode).toBe("AU");
   });
 });

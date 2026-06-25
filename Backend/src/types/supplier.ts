@@ -1,5 +1,9 @@
 /**
- * Supplier domain types for Sprint O — Procurement Foundations.
+ * Supplier domain types.
+ *
+ * Sprint O — Procurement Foundations: core CRUD (name, code, contact, ABN, …).
+ * Sprint 4C — Supplier Master Foundation: enterprise metadata for global
+ *   supplier directory, verification, API capability flags, and categorisation.
  *
  * Suppliers are global (system-wide, not clinic-scoped) — they mirror
  * master_catalog_items which are also global.  Supplier catalogue pricing
@@ -9,6 +13,7 @@
 // ─── Supplier ─────────────────────────────────────────────────────────────────
 
 export type Supplier = {
+  // ── Core (Sprint O) ────────────────────────────────────────────────────────
   id: string;
   supplierName: string;
   supplierCode: string | null;
@@ -22,9 +27,43 @@ export type Supplier = {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  /** Registered legal business name (may differ from trading name). */
+  legalName: string | null;
+  /** Public-facing trading name (if different from legalName). */
+  tradingName: string | null;
+  /** ISO 3166-1 alpha-2. Defaults to 'AU'. */
+  countryCode: string;
+  /** ISO 4217 currency code. Defaults to 'AUD'. */
+  currencyCode: string;
+  /** Broad industry (e.g. 'Healthcare', 'Dental Supplies'). */
+  industryCategory: string | null;
+  /** Healthcare sub-category (e.g. 'Dental', 'Surgical'). */
+  healthcareSubcategory: string | null;
+  /** Internal classification used for filtering/reporting. */
+  supplierCategory: string | null;
+  /** Whether this supplier has been verified by the platform team. */
+  verified: boolean;
+  /** Supplier offers a programmatic API for pricing/ordering. */
+  apiAvailable: boolean;
+  /** Supplier provides a digital product catalogue. */
+  catalogueAvailable: boolean;
+  /** Supplier supports live/real-time pricing queries. */
+  livePricing: boolean;
+  /** Supplier supports online ordering through the platform. */
+  onlineOrdering: boolean;
+  /** Preferred communication method (e.g. 'email', 'api', 'edi'). */
+  preferredCommMethod: string | null;
+  /** Storage key for supplier logo asset (e.g. S3 object key). */
+  logoStorageKey: string | null;
+  /** Clinic that originally created this supplier record (nullable). */
+  createdByClinicId: string | null;
+  /** When false, this supplier is private to the creating clinic. Defaults to true. */
+  isPublic: boolean;
 };
 
 export type CreateSupplierInput = {
+  // ── Core ───────────────────────────────────────────────────────────────────
   supplierName: string;
   supplierCode?: string | null;
   contactName?: string | null;
@@ -34,9 +73,29 @@ export type CreateSupplierInput = {
   abn?: string | null;
   address?: string | null;
   notes?: string | null;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  legalName?: string | null;
+  tradingName?: string | null;
+  /** ISO 3166-1 alpha-2. Defaults to 'AU' when omitted. */
+  countryCode?: string;
+  /** ISO 4217 currency code. Defaults to 'AUD' when omitted. */
+  currencyCode?: string;
+  industryCategory?: string | null;
+  healthcareSubcategory?: string | null;
+  supplierCategory?: string | null;
+  verified?: boolean;
+  apiAvailable?: boolean;
+  catalogueAvailable?: boolean;
+  livePricing?: boolean;
+  onlineOrdering?: boolean;
+  preferredCommMethod?: string | null;
+  logoStorageKey?: string | null;
+  createdByClinicId?: string | null;
+  isPublic?: boolean;
 };
 
 export type UpdateSupplierInput = {
+  // ── Core ───────────────────────────────────────────────────────────────────
   supplierName?: string;
   supplierCode?: string | null;
   contactName?: string | null;
@@ -47,6 +106,22 @@ export type UpdateSupplierInput = {
   address?: string | null;
   notes?: string | null;
   active?: boolean;
+  // ── Enterprise metadata (Sprint 4C) ────────────────────────────────────────
+  legalName?: string | null;
+  tradingName?: string | null;
+  countryCode?: string;
+  currencyCode?: string;
+  industryCategory?: string | null;
+  healthcareSubcategory?: string | null;
+  supplierCategory?: string | null;
+  verified?: boolean;
+  apiAvailable?: boolean;
+  catalogueAvailable?: boolean;
+  livePricing?: boolean;
+  onlineOrdering?: boolean;
+  preferredCommMethod?: string | null;
+  logoStorageKey?: string | null;
+  isPublic?: boolean;
 };
 
 // ─── Supplier Product (catalogue pricing entry) ───────────────────────────────

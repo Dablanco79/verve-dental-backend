@@ -85,6 +85,23 @@ export function createInMemorySupplierRepository(): SupplierRepository {
         active: true,
         createdAt: now,
         updatedAt: now,
+        // ── Sprint 4C metadata ────────────────────────────────────────────────
+        legalName: input.legalName ?? null,
+        tradingName: input.tradingName ?? null,
+        countryCode: input.countryCode ?? "AU",
+        currencyCode: input.currencyCode ?? "AUD",
+        industryCategory: input.industryCategory ?? null,
+        healthcareSubcategory: input.healthcareSubcategory ?? null,
+        supplierCategory: input.supplierCategory ?? null,
+        verified: input.verified ?? false,
+        apiAvailable: input.apiAvailable ?? false,
+        catalogueAvailable: input.catalogueAvailable ?? false,
+        livePricing: input.livePricing ?? false,
+        onlineOrdering: input.onlineOrdering ?? false,
+        preferredCommMethod: input.preferredCommMethod ?? null,
+        logoStorageKey: input.logoStorageKey ?? null,
+        createdByClinicId: input.createdByClinicId ?? null,
+        isPublic: input.isPublic ?? true,
       };
       suppliers.push(record);
       return Promise.resolve({ ...record });
@@ -112,6 +129,28 @@ export function createInMemorySupplierRepository(): SupplierRepository {
         ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),
         ...(input.active !== undefined && { active: input.active }),
+        // ── Sprint 4C metadata ────────────────────────────────────────────────
+        ...(input.legalName !== undefined && { legalName: input.legalName }),
+        ...(input.tradingName !== undefined && { tradingName: input.tradingName }),
+        ...(input.countryCode !== undefined && { countryCode: input.countryCode }),
+        ...(input.currencyCode !== undefined && { currencyCode: input.currencyCode }),
+        ...(input.industryCategory !== undefined && { industryCategory: input.industryCategory }),
+        ...(input.healthcareSubcategory !== undefined && {
+          healthcareSubcategory: input.healthcareSubcategory,
+        }),
+        ...(input.supplierCategory !== undefined && { supplierCategory: input.supplierCategory }),
+        ...(input.verified !== undefined && { verified: input.verified }),
+        ...(input.apiAvailable !== undefined && { apiAvailable: input.apiAvailable }),
+        ...(input.catalogueAvailable !== undefined && {
+          catalogueAvailable: input.catalogueAvailable,
+        }),
+        ...(input.livePricing !== undefined && { livePricing: input.livePricing }),
+        ...(input.onlineOrdering !== undefined && { onlineOrdering: input.onlineOrdering }),
+        ...(input.preferredCommMethod !== undefined && {
+          preferredCommMethod: input.preferredCommMethod,
+        }),
+        ...(input.logoStorageKey !== undefined && { logoStorageKey: input.logoStorageKey }),
+        ...(input.isPublic !== undefined && { isPublic: input.isPublic }),
         updatedAt: new Date(),
       };
       suppliers[idx] = updated;

@@ -58,6 +58,25 @@ vi.mock("../src/api/client.js", () => ({
   }),
 }));
 
+const supplierMetaDefaults = {
+  legalName: null,
+  tradingName: null,
+  countryCode: "AU",
+  currencyCode: "AUD",
+  industryCategory: null,
+  healthcareSubcategory: null,
+  supplierCategory: null,
+  verified: false,
+  apiAvailable: false,
+  catalogueAvailable: false,
+  livePricing: false,
+  onlineOrdering: false,
+  preferredCommMethod: null,
+  logoStorageKey: null,
+  createdByClinicId: null,
+  isPublic: true,
+};
+
 const sampleSupplier: Supplier = {
   id: SUPPLIER_ID,
   supplierName: "DentalCo Australia",
@@ -72,6 +91,7 @@ const sampleSupplier: Supplier = {
   active: true,
   createdAt: "2026-01-15T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
+  ...supplierMetaDefaults,
 };
 
 const sampleCatalogue: SupplierProduct[] = [

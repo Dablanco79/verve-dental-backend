@@ -7,6 +7,28 @@ import type {
   UpdateSupplierInput,
 } from "../types/supplier.js";
 
+// ── Shared metadata field validation ──────────────────────────────────────────
+
+function validateMetadataFields(input: {
+  countryCode?: string;
+  currencyCode?: string;
+}): void {
+  if (input.countryCode !== undefined && input.countryCode.trim().length !== 2) {
+    throw new AppError(
+      400,
+      "VALIDATION_ERROR",
+      "country_code must be exactly 2 characters",
+    );
+  }
+  if (input.currencyCode !== undefined && input.currencyCode.trim().length !== 3) {
+    throw new AppError(
+      400,
+      "VALIDATION_ERROR",
+      "currency_code must be exactly 3 characters",
+    );
+  }
+}
+
 export function createSupplierService(
   supplierRepository: SupplierRepository,
   auditService: AuditService,
@@ -42,6 +64,8 @@ export function createSupplierService(
         }
       }
 
+      validateMetadataFields(input);
+
       const supplier = await supplierRepository.createSupplier(input);
 
       auditService.logEvent("supplier.created", {
@@ -70,6 +94,8 @@ export function createSupplierService(
           );
         }
       }
+
+      validateMetadataFields(input);
 
       const supplier = await supplierRepository.updateSupplier(
         supplierId,

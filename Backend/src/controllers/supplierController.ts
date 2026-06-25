@@ -4,10 +4,31 @@ import type { Request, Response } from "express";
 import type { SupplierService } from "../services/supplierService.js";
 import { AppError } from "../types/errors.js";
 import { zodToDetails } from "../utils/validation.js";
+import type { Supplier } from "../types/supplier.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const supplierIdSchema = z.string().uuid("supplierId must be a valid UUID");
+
+// Shared Sprint 4C metadata fields (reused in both create and update schemas)
+const supplierMetadataFields = {
+  legalName: z.string().trim().max(500).nullable().optional(),
+  tradingName: z.string().trim().max(500).nullable().optional(),
+  countryCode: z.string().trim().length(2).optional(),
+  currencyCode: z.string().trim().length(3).optional(),
+  industryCategory: z.string().trim().max(200).nullable().optional(),
+  healthcareSubcategory: z.string().trim().max(200).nullable().optional(),
+  supplierCategory: z.string().trim().max(200).nullable().optional(),
+  verified: z.boolean().optional(),
+  apiAvailable: z.boolean().optional(),
+  catalogueAvailable: z.boolean().optional(),
+  livePricing: z.boolean().optional(),
+  onlineOrdering: z.boolean().optional(),
+  preferredCommMethod: z.string().trim().max(100).nullable().optional(),
+  logoStorageKey: z.string().trim().max(500).nullable().optional(),
+  createdByClinicId: z.string().uuid().nullable().optional(),
+  isPublic: z.boolean().optional(),
+};
 
 const createSupplierBodySchema = z.object({
   supplierName: z.string().min(1, "supplierName is required").max(200),
@@ -19,6 +40,7 @@ const createSupplierBodySchema = z.object({
   abn: z.string().max(20).nullable().optional(),
   address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  ...supplierMetadataFields,
 });
 
 const updateSupplierBodySchema = z.object({
@@ -32,6 +54,7 @@ const updateSupplierBodySchema = z.object({
   address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   active: z.boolean().optional(),
+  ...supplierMetadataFields,
 }).strict();
 
 const listSuppliersQuerySchema = z.object({
@@ -143,22 +166,9 @@ export function createSupplierHandlers(service: SupplierService) {
 
 // ─── Serializer ───────────────────────────────────────────────────────────────
 
-function serializeSupplier(s: {
-  id: string;
-  supplierName: string;
-  supplierCode: string | null;
-  contactName: string | null;
-  email: string | null;
-  phone: string | null;
-  website: string | null;
-  abn: string | null;
-  address: string | null;
-  notes: string | null;
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
+function serializeSupplier(s: Supplier) {
   return {
+    // ── Core ─────────────────────────────────────────────────────────────────
     id: s.id,
     supplierName: s.supplierName,
     supplierCode: s.supplierCode,
@@ -172,6 +182,23 @@ function serializeSupplier(s: {
     active: s.active,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+    // ── Sprint 4C metadata ────────────────────────────────────────────────────
+    legalName: s.legalName,
+    tradingName: s.tradingName,
+    countryCode: s.countryCode,
+    currencyCode: s.currencyCode,
+    industryCategory: s.industryCategory,
+    healthcareSubcategory: s.healthcareSubcategory,
+    supplierCategory: s.supplierCategory,
+    verified: s.verified,
+    apiAvailable: s.apiAvailable,
+    catalogueAvailable: s.catalogueAvailable,
+    livePricing: s.livePricing,
+    onlineOrdering: s.onlineOrdering,
+    preferredCommMethod: s.preferredCommMethod,
+    logoStorageKey: s.logoStorageKey,
+    createdByClinicId: s.createdByClinicId,
+    isPublic: s.isPublic,
   };
 }
 

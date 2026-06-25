@@ -1688,6 +1688,55 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
   },
   {
     /**
+     * Sprint 4C — Supplier Master Foundation.
+     *
+     * Extends the global `suppliers` table with enterprise-grade metadata to
+     * support future features: supplier verification, API integrations, catalogue
+     * sync, live pricing, online ordering, and international expansion.
+     *
+     * Design notes:
+     *   • All new columns are additive — no existing column is renamed or removed.
+     *   • ABN uniqueness is NOT enforced here; enforcement is deferred to a
+     *     future sprint once data quality has been validated.
+     *   • country_code / currency_code are NOT NULL with platform defaults (AU/AUD);
+     *     existing rows are backfilled via the DEFAULT clause on ADD COLUMN.
+     *   • Boolean capability flags (verified, api_available, …) are NOT NULL DEFAULT false
+     *     so they are safe and meaningful for all existing rows.
+     *   • created_by_clinic_id is nullable — suppliers may exist before any clinic
+     *     creates them (system-generated, imported, or pre-seeded).
+     *   • is_public = true keeps existing suppliers visible to all clinics by default.
+     */
+    id: "027_supplier_master_metadata",
+    sql: `
+      ALTER TABLE suppliers
+        ADD COLUMN IF NOT EXISTS legal_name              text,
+        ADD COLUMN IF NOT EXISTS trading_name            text,
+        ADD COLUMN IF NOT EXISTS country_code            char(2)  NOT NULL DEFAULT 'AU',
+        ADD COLUMN IF NOT EXISTS currency_code           char(3)  NOT NULL DEFAULT 'AUD',
+        ADD COLUMN IF NOT EXISTS industry_category       text,
+        ADD COLUMN IF NOT EXISTS healthcare_subcategory  text,
+        ADD COLUMN IF NOT EXISTS supplier_category       text,
+        ADD COLUMN IF NOT EXISTS verified                boolean  NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS api_available           boolean  NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS catalogue_available     boolean  NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS live_pricing            boolean  NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS online_ordering         boolean  NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS preferred_comm_method   text,
+        ADD COLUMN IF NOT EXISTS logo_storage_key        text,
+        ADD COLUMN IF NOT EXISTS created_by_clinic_id    uuid     REFERENCES clinics(id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS is_public               boolean  NOT NULL DEFAULT true;
+
+      CREATE INDEX IF NOT EXISTS idx_suppliers_supplier_category
+        ON suppliers (supplier_category)
+        WHERE supplier_category IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_suppliers_verified
+        ON suppliers (verified)
+        WHERE verified = true;
+    `,
+  },
+  {
+    /**
      * Sprint 4B — Legal Entity Foundation.
      *
      * Creates the `legal_entities` table — a registered business/tax entity

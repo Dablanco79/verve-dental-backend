@@ -55,6 +55,25 @@ vi.mock("../src/api/client.js", () => ({
   }),
 }));
 
+const supplierMetaDefaults = {
+  legalName: null,
+  tradingName: null,
+  countryCode: "AU",
+  currencyCode: "AUD",
+  industryCategory: null,
+  healthcareSubcategory: null,
+  supplierCategory: null,
+  verified: false,
+  apiAvailable: false,
+  catalogueAvailable: false,
+  livePricing: false,
+  onlineOrdering: false,
+  preferredCommMethod: null,
+  logoStorageKey: null,
+  createdByClinicId: null,
+  isPublic: true,
+};
+
 const dentalCo: Supplier = {
   id: "sup-1111-1111-1111-111111111111",
   supplierName: "DentalCo Australia",
@@ -69,6 +88,7 @@ const dentalCo: Supplier = {
   active: true,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
+  ...supplierMetaDefaults,
 };
 
 const burDirect: Supplier = {
@@ -85,6 +105,7 @@ const burDirect: Supplier = {
   active: false,
   createdAt: "2026-02-01T00:00:00.000Z",
   updatedAt: "2026-02-01T00:00:00.000Z",
+  ...supplierMetaDefaults,
 };
 
 const sampleSuppliers: Supplier[] = [dentalCo, burDirect];
@@ -277,6 +298,7 @@ describe("SuppliersPage", () => {
       active: true,
       createdAt: "2026-06-24T00:00:00.000Z",
       updatedAt: "2026-06-24T00:00:00.000Z",
+      ...supplierMetaDefaults,
     };
     mockCreateSupplier.mockResolvedValue(newSupplier);
 

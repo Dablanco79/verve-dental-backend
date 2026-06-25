@@ -21,6 +21,14 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
   const [website, setWebsite] = useState(supplier.website ?? "");
   const [notes, setNotes] = useState(supplier.notes ?? "");
   const [active, setActive] = useState(supplier.active);
+  // Sprint 4C metadata
+  const [legalName, setLegalName] = useState(supplier.legalName ?? "");
+  const [tradingName, setTradingName] = useState(supplier.tradingName ?? "");
+  const [supplierCategory, setSupplierCategory] = useState(supplier.supplierCategory ?? "");
+  const [countryCode, setCountryCode] = useState(supplier.countryCode);
+  const [currencyCode, setCurrencyCode] = useState(supplier.currencyCode);
+  const [verified, setVerified] = useState(supplier.verified);
+  const [catalogueAvailable, setCatalogueAvailable] = useState(supplier.catalogueAvailable);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +42,18 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
       return;
     }
 
+    const trimmedCountry = countryCode.trim();
+    if (trimmedCountry && trimmedCountry.length !== 2) {
+      setError("Country code must be exactly 2 characters (e.g. AU).");
+      return;
+    }
+
+    const trimmedCurrency = currencyCode.trim();
+    if (trimmedCurrency && trimmedCurrency.length !== 3) {
+      setError("Currency code must be exactly 3 characters (e.g. AUD).");
+      return;
+    }
+
     const body: UpdateSupplierRequest = {
       supplierName: trimmedName,
       supplierCode: supplierCode.trim() || null,
@@ -43,6 +63,13 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
       website: website.trim() || null,
       notes: notes.trim() || null,
       active,
+      legalName: legalName.trim() || null,
+      tradingName: tradingName.trim() || null,
+      supplierCategory: supplierCategory.trim() || null,
+      countryCode: trimmedCountry || "AU",
+      currencyCode: trimmedCurrency || "AUD",
+      verified,
+      catalogueAvailable,
     };
 
     setSubmitting(true);
@@ -188,6 +215,107 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
               rows={3}
               disabled={submitting}
             />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">Legal Name</span>
+            <input
+              type="text"
+              className="supplier-form__control"
+              value={legalName}
+              onChange={(e) => {
+                setLegalName(e.target.value);
+              }}
+              maxLength={500}
+              placeholder="Registered business name"
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">Trading Name</span>
+            <input
+              type="text"
+              className="supplier-form__control"
+              value={tradingName}
+              onChange={(e) => {
+                setTradingName(e.target.value);
+              }}
+              maxLength={500}
+              placeholder="Public-facing name (if different)"
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">Supplier Category</span>
+            <input
+              type="text"
+              className="supplier-form__control"
+              value={supplierCategory}
+              onChange={(e) => {
+                setSupplierCategory(e.target.value);
+              }}
+              maxLength={200}
+              placeholder="e.g. Dental Supplies, Lab Equipment"
+              disabled={submitting}
+            />
+          </label>
+
+          <div className="supplier-form__row">
+            <label className="supplier-form__field">
+              <span className="supplier-form__label">Country Code</span>
+              <input
+                type="text"
+                className="supplier-form__control"
+                value={countryCode}
+                onChange={(e) => {
+                  setCountryCode(e.target.value.toUpperCase());
+                }}
+                maxLength={2}
+                placeholder="AU"
+                disabled={submitting}
+              />
+            </label>
+
+            <label className="supplier-form__field">
+              <span className="supplier-form__label">Currency</span>
+              <input
+                type="text"
+                className="supplier-form__control"
+                value={currencyCode}
+                onChange={(e) => {
+                  setCurrencyCode(e.target.value.toUpperCase());
+                }}
+                maxLength={3}
+                placeholder="AUD"
+                disabled={submitting}
+              />
+            </label>
+          </div>
+
+          <label className="supplier-form__checkbox-field">
+            <input
+              type="checkbox"
+              checked={verified}
+              onChange={(e) => {
+                setVerified(e.target.checked);
+              }}
+              disabled={submitting}
+            />
+            <span className="supplier-form__checkbox-label">Verified supplier</span>
+          </label>
+
+          <label className="supplier-form__checkbox-field">
+            <input
+              type="checkbox"
+              checked={catalogueAvailable}
+              onChange={(e) => {
+                setCatalogueAvailable(e.target.checked);
+              }}
+              disabled={submitting}
+            />
+            <span className="supplier-form__checkbox-label">Digital catalogue available</span>
           </label>
 
           <label className="supplier-form__checkbox-field">
