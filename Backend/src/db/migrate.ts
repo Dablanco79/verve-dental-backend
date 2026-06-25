@@ -1805,6 +1805,119 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
   },
   {
     /**
+     * Sprint 4D — Supplier Relationship Foundation.
+     *
+     * Introduces the `supplier_relationships` junction table that links a
+     * global Supplier Master record (suppliers.id) to a clinic (clinics.id).
+     *
+     * PURPOSE
+     * ───────
+     * Separates global supplier information from clinic-specific commercial
+     * information:
+     *
+     *   Supplier Master (global)         ← supplier identity, capabilities
+     *   Supplier Relationship (junction) ← account #, credit terms, contacts
+     *   Clinic (operational entity)      ← tenant anchor
+     *
+     * DESIGN DECISIONS
+     * ────────────────
+     * • UNIQUE (supplier_id, clinic_id) — one relationship per pair; managed
+     *   state (active/inactive) replaces hard delete for deactivation.
+     * • ON DELETE RESTRICT on both FKs — prevents orphaned relationships when
+     *   a supplier or clinic is removed (operators must deactivate first).
+     * • credit_limit_cents is integer cents (AUD), consistent with billing.
+     * • No RLS: supplier_relationships has its own clinic_id column that the
+     *   application layer guards via assertTenantAccess().  The table is
+     *   intentionally kept outside the RLS framework to match the
+     *   supplier_invoices pattern used in the same sprint family.
+     *   (RLS can be layered on in a future hardening sprint without schema
+     *   changes since clinic_id is already present.)
+     *
+     * BACKWARD COMPATIBILITY
+     * ──────────────────────
+     * Additive migration — no existing column is renamed or removed.
+     * All existing supplier IDs remain valid and unchanged.
+     * smart supplier detection continues to work as before.
+     *
+     * FUTURE COMPATIBILITY
+     * ────────────────────
+     * clinic_id is the operational entity today.  If a future OperationalEntity
+     * abstraction is introduced, the FK can be updated without a data migration
+     * because the UUID column semantics remain identical.
+     */
+    id: "028_supplier_relationships",
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_relationships (
+        id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Global Supplier Master reference.
+        -- ON DELETE RESTRICT: operators must deactivate the relationship before
+        -- a supplier can be removed from the master directory.
+        supplier_id           uuid        NOT NULL
+          REFERENCES suppliers (id) ON DELETE RESTRICT,
+
+        -- Clinic (operational entity) that owns this relationship.
+        -- ON DELETE RESTRICT: prevents orphaned relationship records.
+        clinic_id             uuid        NOT NULL
+          REFERENCES clinics (id) ON DELETE RESTRICT,
+
+        -- 'active'   = currently trading with this supplier.
+        -- 'inactive' = soft-deactivated; preserved for audit purposes.
+        -- No hard delete is ever performed.
+        relationship_status   text        NOT NULL DEFAULT 'active'
+          CONSTRAINT supplier_relationships_status_check
+            CHECK (relationship_status IN ('active', 'inactive')),
+
+        -- When true, this is the clinic's preferred supplier for its category.
+        preferred_supplier    boolean     NOT NULL DEFAULT false,
+
+        -- ── Clinic-specific account identifiers ──────────────────────────────
+        account_number        text,
+        customer_number       text,
+
+        -- ── Credit terms ─────────────────────────────────────────────────────
+        -- e.g. "30 days net", "COD", "EOM +14"
+        credit_terms          text,
+        -- Integer cents (AUD).  NULL = no agreed limit.
+        credit_limit_cents    integer
+          CONSTRAINT supplier_relationships_credit_limit_check
+            CHECK (credit_limit_cents IS NULL OR credit_limit_cents >= 0),
+
+        -- ── Contact and address overrides ─────────────────────────────────────
+        -- These override or supplement global supplier contact info for this clinic.
+        ordering_email        text,
+        delivery_address      text,
+        invoice_address       text,
+        representative_name   text,
+        representative_email  text,
+        representative_phone  text,
+
+        notes                 text,
+
+        created_at            timestamptz NOT NULL DEFAULT now(),
+        updated_at            timestamptz NOT NULL DEFAULT now(),
+
+        -- One relationship per (supplier, clinic) pair.  The relationship_status
+        -- field provides the active/inactive lifecycle — not separate rows.
+        UNIQUE (supplier_id, clinic_id)
+      );
+
+      -- Clinic's supplier list — primary access pattern.
+      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_clinic_status
+        ON supplier_relationships (clinic_id, relationship_status);
+
+      -- Supplier's clinic list — cross-clinic view (owner_admin only).
+      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_supplier_id
+        ON supplier_relationships (supplier_id);
+
+      -- Preferred supplier lookup for a clinic.
+      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_preferred
+        ON supplier_relationships (clinic_id, preferred_supplier)
+        WHERE preferred_supplier = true;
+    `,
+  },
+  {
+    /**
      * Sprint 4E — Procurement Decision Engine Foundation.
      *
      * Creates the `procurement_policies` table — the data model that future
@@ -1838,6 +1951,8 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
      * price_difference_threshold_percent, and reorder_strategy are all stored
      * now so future recommendation engines can evaluate them without a schema
      * redesign.
+     *
+     * DEPENDENCY: requires 028_supplier_relationships (supplier_relationships table).
      */
     id: "029_procurement_policies",
     sql: `
@@ -1956,119 +2071,6 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE policy_status = 'active'
           AND preferred_supplier = true
           AND master_catalog_item_id IS NULL;
-    `,
-  },
-  {
-    /**
-     * Sprint 4D — Supplier Relationship Foundation.
-     *
-     * Introduces the `supplier_relationships` junction table that links a
-     * global Supplier Master record (suppliers.id) to a clinic (clinics.id).
-     *
-     * PURPOSE
-     * ───────
-     * Separates global supplier information from clinic-specific commercial
-     * information:
-     *
-     *   Supplier Master (global)         ← supplier identity, capabilities
-     *   Supplier Relationship (junction) ← account #, credit terms, contacts
-     *   Clinic (operational entity)      ← tenant anchor
-     *
-     * DESIGN DECISIONS
-     * ────────────────
-     * • UNIQUE (supplier_id, clinic_id) — one relationship per pair; managed
-     *   state (active/inactive) replaces hard delete for deactivation.
-     * • ON DELETE RESTRICT on both FKs — prevents orphaned relationships when
-     *   a supplier or clinic is removed (operators must deactivate first).
-     * • credit_limit_cents is integer cents (AUD), consistent with billing.
-     * • No RLS: supplier_relationships has its own clinic_id column that the
-     *   application layer guards via assertTenantAccess().  The table is
-     *   intentionally kept outside the RLS framework to match the
-     *   supplier_invoices pattern used in the same sprint family.
-     *   (RLS can be layered on in a future hardening sprint without schema
-     *   changes since clinic_id is already present.)
-     *
-     * BACKWARD COMPATIBILITY
-     * ──────────────────────
-     * Additive migration — no existing column is renamed or removed.
-     * All existing supplier IDs remain valid and unchanged.
-     * smart supplier detection continues to work as before.
-     *
-     * FUTURE COMPATIBILITY
-     * ────────────────────
-     * clinic_id is the operational entity today.  If a future OperationalEntity
-     * abstraction is introduced, the FK can be updated without a data migration
-     * because the UUID column semantics remain identical.
-     */
-    id: "028_supplier_relationships",
-    sql: `
-      CREATE TABLE IF NOT EXISTS supplier_relationships (
-        id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-
-        -- Global Supplier Master reference.
-        -- ON DELETE RESTRICT: operators must deactivate the relationship before
-        -- a supplier can be removed from the master directory.
-        supplier_id           uuid        NOT NULL
-          REFERENCES suppliers (id) ON DELETE RESTRICT,
-
-        -- Clinic (operational entity) that owns this relationship.
-        -- ON DELETE RESTRICT: prevents orphaned relationship records.
-        clinic_id             uuid        NOT NULL
-          REFERENCES clinics (id) ON DELETE RESTRICT,
-
-        -- 'active'   = currently trading with this supplier.
-        -- 'inactive' = soft-deactivated; preserved for audit purposes.
-        -- No hard delete is ever performed.
-        relationship_status   text        NOT NULL DEFAULT 'active'
-          CONSTRAINT supplier_relationships_status_check
-            CHECK (relationship_status IN ('active', 'inactive')),
-
-        -- When true, this is the clinic's preferred supplier for its category.
-        preferred_supplier    boolean     NOT NULL DEFAULT false,
-
-        -- ── Clinic-specific account identifiers ──────────────────────────────
-        account_number        text,
-        customer_number       text,
-
-        -- ── Credit terms ─────────────────────────────────────────────────────
-        -- e.g. "30 days net", "COD", "EOM +14"
-        credit_terms          text,
-        -- Integer cents (AUD).  NULL = no agreed limit.
-        credit_limit_cents    integer
-          CONSTRAINT supplier_relationships_credit_limit_check
-            CHECK (credit_limit_cents IS NULL OR credit_limit_cents >= 0),
-
-        -- ── Contact and address overrides ─────────────────────────────────────
-        -- These override or supplement global supplier contact info for this clinic.
-        ordering_email        text,
-        delivery_address      text,
-        invoice_address       text,
-        representative_name   text,
-        representative_email  text,
-        representative_phone  text,
-
-        notes                 text,
-
-        created_at            timestamptz NOT NULL DEFAULT now(),
-        updated_at            timestamptz NOT NULL DEFAULT now(),
-
-        -- One relationship per (supplier, clinic) pair.  The relationship_status
-        -- field provides the active/inactive lifecycle — not separate rows.
-        UNIQUE (supplier_id, clinic_id)
-      );
-
-      -- Clinic's supplier list — primary access pattern.
-      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_clinic_status
-        ON supplier_relationships (clinic_id, relationship_status);
-
-      -- Supplier's clinic list — cross-clinic view (owner_admin only).
-      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_supplier_id
-        ON supplier_relationships (supplier_id);
-
-      -- Preferred supplier lookup for a clinic.
-      CREATE INDEX IF NOT EXISTS idx_supplier_relationships_preferred
-        ON supplier_relationships (clinic_id, preferred_supplier)
-        WHERE preferred_supplier = true;
     `,
   },
 ];
