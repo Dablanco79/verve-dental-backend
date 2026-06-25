@@ -12,6 +12,8 @@ export const SEED_MASTER_CATALOG_IDS = {
   compositeResin: "d3333333-3333-4333-8333-333333333333",
   salivaEjectors: "d4444444-4444-4444-8444-444444444444",
   faceMasks: "d5555555-5555-4555-8555-555555555555",
+  // Sprint 4G — added for negotiated pricing seed data.
+  matrixBands: "d6666666-6666-4666-8666-666666666666",
 } as const;
 
 export const SEED_BARCODE_IDS = {
@@ -96,6 +98,18 @@ export function buildMasterCatalogSeed(): MasterCatalogItem[] {
       category: "PPE",
       unitOfMeasure: "box",
       defaultUnitCostCents: 1599,
+      isActive: true,
+      createdAt: SEED_TIMESTAMP,
+      updatedAt: SEED_TIMESTAMP,
+    },
+    {
+      id: SEED_MASTER_CATALOG_IDS.matrixBands,
+      sku: "VRV-MTX-001",
+      name: "Sectional Matrix Bands (Box 100)",
+      description: "Stainless steel sectional matrix bands for Class II restorations",
+      category: "Restorative",
+      unitOfMeasure: "box",
+      defaultUnitCostCents: 2799,
       isActive: true,
       createdAt: SEED_TIMESTAMP,
       updatedAt: SEED_TIMESTAMP,

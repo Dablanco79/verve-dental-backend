@@ -14,9 +14,9 @@ describe("Inventory repositories (Session 1)", () => {
   const catalogRepository = createInMemoryCatalogRepository();
   const inventoryRepository = createInMemoryInventoryRepository(catalogRepository);
 
-  it("seeds five master catalog items", async () => {
+  it("seeds master catalog items (including Sprint 4G matrix bands)", async () => {
     const items = await catalogRepository.listMasterItems();
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(6);
     expect(items.map((item) => item.sku)).toEqual(
       expect.arrayContaining([
         "VRV-GLV-001",

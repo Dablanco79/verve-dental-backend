@@ -56,6 +56,10 @@ import {
   createRelationshipContractRouter,
   createSupplierContractRouter,
 } from "./supplierContractRoutes.js";
+import {
+  createContractPriceSubRouter,
+  createSupplierContractPriceRouter,
+} from "./supplierContractPriceRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -230,6 +234,20 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/supplier-contracts",
     createSupplierContractRouter(deps),
+  );
+
+  // Supplier Contract Prices — Sprint 4G. Contract-scoped list/create.
+  // Mounted at /supplier-contracts so the nested /:contractId/prices
+  // path is handled here without modifying the existing contract router.
+  router.use(
+    "/supplier-contracts",
+    createContractPriceSubRouter(deps),
+  );
+
+  // Supplier Contract Price standalone routes — GET/PATCH/expire by ID.
+  router.use(
+    "/supplier-contract-prices",
+    createSupplierContractPriceRouter(deps),
   );
 
   // Organisations — Sprint 4A. Global scope, owner_admin only.

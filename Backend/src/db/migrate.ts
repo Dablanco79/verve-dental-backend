@@ -2178,6 +2178,102 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE status = 'active';
     `,
   },
+  {
+    /**
+     * Supplier Contract Prices — Sprint 4G.
+     *
+     * Line-item negotiated pricing attached to a Supplier Contract.
+     * Pricing is informational only in this sprint — no purchasing
+     * behaviour changes.
+     *
+     * Design notes (future commercial intelligence):
+     *   • price_type distinguishes standing contract prices from short-lived
+     *     promotional prices.  Future types (e.g. 'rebate_tier') can be added
+     *     without a schema redesign.
+     *   • effective_from / effective_to date range supports promotional windows
+     *     and contract price changes over time without deleting history.
+     *   • minimum_quantity / maximum_quantity support tiered pricing.  Both null
+     *     = a flat (non-tiered) price.  The service layer enforces one active
+     *     price per (contract, product, priceType, qty-tier).
+     *   • currency_code defaults AUD; designed for multi-currency without
+     *     a schema change.
+     *   • No DELETE — prices are expired (effective_to set) only.
+     *   • This table is the foundation for future invoice-price variance
+     *     detection, AI purchasing recommendations, and savings reporting.
+     *
+     * DEPENDENCIES: requires 030_supplier_contracts (supplier_contracts table)
+     *               and the master_catalog_items table (migration 002).
+     */
+    id: "031_supplier_contract_prices",
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_contract_prices (
+        id                     uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+        -- Parent contract — all prices belong to exactly one contract.
+        supplier_contract_id   uuid        NOT NULL
+          REFERENCES supplier_contracts(id),
+
+        -- The product this price applies to.
+        master_catalog_item_id uuid        NOT NULL
+          REFERENCES master_catalog_items(id),
+
+        -- 'contract'    = standing negotiated price for the contract term.
+        -- 'promotional' = time-limited promotional price (e.g. end-of-quarter).
+        price_type             text        NOT NULL DEFAULT 'contract'
+          CHECK (price_type IN ('contract', 'promotional')),
+
+        -- Price in integer cents (avoids floating-point rounding issues).
+        unit_price_cents       integer     NOT NULL
+          CHECK (unit_price_cents > 0),
+
+        -- Effective date range.  effective_to NULL = open-ended (no expiry).
+        -- No hard deletes: set effective_to to expire a price.
+        effective_from         date        NOT NULL,
+        effective_to           date,
+
+        -- Optional quantity tier.  Both NULL = flat (non-tiered) price.
+        minimum_quantity       integer
+          CHECK (minimum_quantity >= 1),
+        maximum_quantity       integer,
+
+        -- Currency code (ISO 4217).  Defaults AUD for current single-currency use.
+        currency_code          text        NOT NULL DEFAULT 'AUD',
+
+        notes                  text,
+
+        created_at             timestamptz NOT NULL DEFAULT now(),
+        updated_at             timestamptz NOT NULL DEFAULT now(),
+
+        -- effective_to must be strictly after effective_from when present.
+        CONSTRAINT chk_scp_effective_to_after_from
+          CHECK (effective_to IS NULL OR effective_to > effective_from),
+
+        -- maximum_quantity must be >= minimum_quantity when both are provided.
+        CONSTRAINT chk_scp_max_gte_min_quantity
+          CHECK (
+            maximum_quantity IS NULL
+            OR minimum_quantity IS NULL
+            OR maximum_quantity >= minimum_quantity
+          )
+      );
+
+      -- Primary access pattern: all prices for a contract.
+      CREATE INDEX IF NOT EXISTS idx_supplier_contract_prices_contract_id
+        ON supplier_contract_prices (supplier_contract_id);
+
+      -- Lookup by catalog item (future: cross-contract price comparison).
+      CREATE INDEX IF NOT EXISTS idx_supplier_contract_prices_catalog_item_id
+        ON supplier_contract_prices (master_catalog_item_id);
+
+      -- Composite index for the findCurrentPrice query pattern.
+      CREATE INDEX IF NOT EXISTS idx_supplier_contract_prices_lookup
+        ON supplier_contract_prices (
+          supplier_contract_id,
+          master_catalog_item_id,
+          effective_from
+        );
+    `,
+  },
 ];
 
 /**

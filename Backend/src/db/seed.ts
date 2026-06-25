@@ -33,6 +33,12 @@ import {
   SEED_CONTRACT_DENTAL_DEPOT_ID,
   SEED_CONTRACT_MEDIGATE_EXPIRED_ID,
 } from "../repositories/supplierContractRepository.js";
+import {
+  SEED_CONTRACT_PRICE_GLOVES_ID,
+  SEED_CONTRACT_PRICE_COMPOSITE_ID,
+  SEED_CONTRACT_PRICE_MATRIX_ID,
+  SEED_CONTRACT_PRICE_GLOVES_PROMO_ID,
+} from "../repositories/supplierContractPriceRepository.js";
 import { SEED_POLICY_IDS } from "../repositories/procurementPolicyRepository.js";
 import {
   buildBarcodeMappingSeed,
@@ -803,6 +809,129 @@ export async function seedSupplierContracts(
   } else {
     logger.info(
       "Demo supplier contracts already present — skipping contract seed",
+    );
+  }
+}
+
+// ─── Supplier Contract Price seed ─────────────────────────────────────────────
+
+type DemoContractPrice = {
+  id: string;
+  supplierContractId: string;
+  masterCatalogItemId: string;
+  priceType: string;
+  unitPriceCents: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  minimumQuantity: number | null;
+  maximumQuantity: number | null;
+  currencyCode: string;
+  notes: string | null;
+};
+
+const DEMO_CONTRACT_PRICES: DemoContractPrice[] = [
+  {
+    id: SEED_CONTRACT_PRICE_GLOVES_ID,
+    supplierContractId: SEED_CONTRACT_DENTAL_DEPOT_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.nitrileGloves,
+    priceType: "contract",
+    unitPriceCents: 1320,
+    effectiveFrom: "2026-01-01",
+    effectiveTo: null,
+    minimumQuantity: null,
+    maximumQuantity: null,
+    currencyCode: "AUD",
+    notes: null,
+  },
+  {
+    id: SEED_CONTRACT_PRICE_COMPOSITE_ID,
+    supplierContractId: SEED_CONTRACT_DENTAL_DEPOT_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.compositeResin,
+    priceType: "contract",
+    unitPriceCents: 4690,
+    effectiveFrom: "2026-01-01",
+    effectiveTo: null,
+    minimumQuantity: null,
+    maximumQuantity: null,
+    currencyCode: "AUD",
+    notes: null,
+  },
+  {
+    id: SEED_CONTRACT_PRICE_MATRIX_ID,
+    supplierContractId: SEED_CONTRACT_DENTAL_DEPOT_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.matrixBands,
+    priceType: "contract",
+    unitPriceCents: 2410,
+    effectiveFrom: "2026-01-01",
+    effectiveTo: null,
+    minimumQuantity: null,
+    maximumQuantity: null,
+    currencyCode: "AUD",
+    notes: null,
+  },
+  {
+    id: SEED_CONTRACT_PRICE_GLOVES_PROMO_ID,
+    supplierContractId: SEED_CONTRACT_DENTAL_DEPOT_ID,
+    masterCatalogItemId: SEED_MASTER_CATALOG_IDS.nitrileGloves,
+    priceType: "promotional",
+    unitPriceCents: 1280,
+    effectiveFrom: "2026-07-01",
+    effectiveTo: "2026-07-31",
+    minimumQuantity: null,
+    maximumQuantity: null,
+    currencyCode: "AUD",
+    notes: "End-of-financial-year promotional pricing",
+  },
+];
+
+/**
+ * Seed demo supplier contract price records on first boot.
+ *
+ * Development/test only — restricted by the isDemoSeedEnv guard in dependencies.ts.
+ * Idempotent: ON CONFLICT (id) DO NOTHING.
+ * supplier_contract_prices has no RLS — safe to use pool.query directly.
+ * Must run after seedSupplierContracts and seedInventory (FK dependencies).
+ */
+export async function seedSupplierContractPrices(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  let seeded = 0;
+  for (const price of DEMO_CONTRACT_PRICES) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO supplier_contract_prices
+         (id, supplier_contract_id, master_catalog_item_id,
+          price_type, unit_price_cents,
+          effective_from, effective_to,
+          minimum_quantity, maximum_quantity,
+          currency_code, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        price.id,
+        price.supplierContractId,
+        price.masterCatalogItemId,
+        price.priceType,
+        price.unitPriceCents,
+        price.effectiveFrom,
+        price.effectiveTo,
+        price.minimumQuantity,
+        price.maximumQuantity,
+        price.currencyCode,
+        price.notes,
+      ],
+    );
+    seeded += rowCount ?? 0;
+  }
+
+  if (seeded > 0) {
+    logger.info(
+      { count: seeded },
+      "Demo supplier contract prices seeded into PostgreSQL",
+    );
+  } else {
+    logger.info(
+      "Demo supplier contract prices already present — skipping price seed",
     );
   }
 }

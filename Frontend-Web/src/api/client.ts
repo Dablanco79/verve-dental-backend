@@ -108,6 +108,11 @@ import type {
   SupplierContract,
   UpdateSupplierContractRequest,
 } from "../types/supplierContract.js";
+import type {
+  CreateSupplierContractPriceRequest,
+  SupplierContractPrice,
+  UpdateSupplierContractPriceRequest,
+} from "../types/supplierContractPrice.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1514,6 +1519,65 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Supplier Contract Prices (Sprint 4G) ─────────────────────────────────────
+
+  async function listSupplierContractPrices(
+    contractId: string,
+  ): Promise<SupplierContractPrice[]> {
+    return request<SupplierContractPrice[]>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}/prices`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getSupplierContractPrice(
+    priceId: string,
+  ): Promise<SupplierContractPrice> {
+    return request<SupplierContractPrice>(
+      config,
+      `/api/v1/supplier-contract-prices/${encodeURIComponent(priceId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createSupplierContractPrice(
+    contractId: string,
+    body: CreateSupplierContractPriceRequest,
+  ): Promise<SupplierContractPrice> {
+    return request<SupplierContractPrice>(
+      config,
+      `/api/v1/supplier-contracts/${encodeURIComponent(contractId)}/prices`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateSupplierContractPrice(
+    priceId: string,
+    body: UpdateSupplierContractPriceRequest,
+  ): Promise<SupplierContractPrice> {
+    return request<SupplierContractPrice>(
+      config,
+      `/api/v1/supplier-contract-prices/${encodeURIComponent(priceId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function expireSupplierContractPrice(
+    priceId: string,
+  ): Promise<SupplierContractPrice> {
+    return request<SupplierContractPrice>(
+      config,
+      `/api/v1/supplier-contract-prices/${encodeURIComponent(priceId)}/expire`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1609,6 +1673,11 @@ export function createApiClient(config: AppConfig) {
     updateSupplierContract,
     expireSupplierContract,
     terminateSupplierContract,
+    listSupplierContractPrices,
+    getSupplierContractPrice,
+    createSupplierContractPrice,
+    updateSupplierContractPrice,
+    expireSupplierContractPrice,
   };
 }
 
