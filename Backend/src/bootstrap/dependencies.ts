@@ -3,10 +3,12 @@ import { runBootstrapMigrations } from "../db/migrate.js";
 import { createDatabasePool } from "../db/pool.js";
 import {
   seedClinics,
+  seedDemoSuppliers,
   seedDemoUsers,
   seedInventory,
   seedLegalEntity,
   seedOrganisation,
+  seedSupplierRelationships,
 } from "../db/seed.js";
 import {
   createInMemoryAnalyticsRepository,
@@ -64,6 +66,10 @@ import {
   createInMemoryLegalEntityRepository,
 } from "../repositories/legalEntityRepository.js";
 import { createPostgresLegalEntityRepository } from "../repositories/legalEntityRepository.postgres.js";
+import {
+  createInMemorySupplierRelationshipRepository,
+} from "../repositories/supplierRelationshipRepository.js";
+import { createPostgresSupplierRelationshipRepository } from "../repositories/supplierRelationshipRepository.postgres.js";
 import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
 import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { createSupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -100,6 +106,7 @@ import type { SupplierCatalogueRepository } from "../repositories/supplierCatalo
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { OrganisationRepository } from "../repositories/organisationRepository.js";
 import type { LegalEntityRepository } from "../repositories/legalEntityRepository.js";
+import type { SupplierRelationshipRepository } from "../repositories/supplierRelationshipRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -141,6 +148,7 @@ export type AppDependencies = {
   supplierInvoiceRepository: SupplierInvoiceRepository;
   organisationRepository: OrganisationRepository;
   legalEntityRepository: LegalEntityRepository;
+  supplierRelationshipRepository: SupplierRelationshipRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -202,6 +210,7 @@ export async function createAppDependencies(
   let supplierInvoiceRepository: SupplierInvoiceRepository;
   let organisationRepository: OrganisationRepository;
   let legalEntityRepository: LegalEntityRepository;
+  let supplierRelationshipRepository: SupplierRelationshipRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -255,6 +264,8 @@ export async function createAppDependencies(
       await seedClinics(connectedPool, logger);
       await seedDemoUsers(connectedPool, logger, config.NODE_ENV);
       await seedInventory(connectedPool, logger);
+      await seedDemoSuppliers(connectedPool, logger);
+      await seedSupplierRelationships(connectedPool, logger);
     } else {
       // Warn operators when the users table is empty so they know they must
       // create an initial admin account through proper onboarding — not seeding.
@@ -293,9 +304,11 @@ export async function createAppDependencies(
     supplierInvoiceRepository = createPostgresSupplierInvoiceRepository(connectedPool);
     organisationRepository = createPostgresOrganisationRepository(connectedPool);
     legalEntityRepository = createPostgresLegalEntityRepository(connectedPool);
+    supplierRelationshipRepository =
+      createPostgresSupplierRelationshipRepository(connectedPool);
 
     logger.info(
-      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations, legal-entities)",
+      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations, legal-entities, supplier-relationships)",
     );
   } else {
     userRepository = await createInMemoryUserRepository(config.MFA_ENCRYPTION_KEY);
@@ -313,6 +326,8 @@ export async function createAppDependencies(
     supplierInvoiceRepository = createInMemorySupplierInvoiceRepository();
     organisationRepository = createInMemoryOrganisationRepository();
     legalEntityRepository = createInMemoryLegalEntityRepository();
+    supplierRelationshipRepository =
+      createInMemorySupplierRelationshipRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -407,6 +422,7 @@ export async function createAppDependencies(
     supplierCatalogueRepository,
     auditService,
     supplierRepository,
+    supplierRelationshipRepository,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,
@@ -460,6 +476,7 @@ export async function createAppDependencies(
     supplierInvoiceRepository,
     organisationRepository,
     legalEntityRepository,
+    supplierRelationshipRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

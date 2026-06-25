@@ -276,6 +276,22 @@ export type UploadAndExtractResult = {
   /** Existing supplier record that was matched (null when status is not "matched"). */
   matchedSupplier: import("./supplier.js").Supplier | null;
   supplierMatchStatus: SupplierMatchStatus;
+  /**
+   * Sprint 4D — Supplier Relationship awareness.
+   *
+   * true  — OCR matched a supplier in the global Supplier Master.
+   * false — No supplier was matched (supplierMatchStatus is not "matched").
+   */
+  supplierExists: boolean;
+  /**
+   * Sprint 4D — Whether an active clinic-supplier relationship exists.
+   *
+   * true  — An active SupplierRelationship exists for this clinic + supplier.
+   * false — Supplier matched but no relationship exists; the frontend should
+   *         prompt the user to create one.
+   * null  — Supplier was not matched (supplierExists = false); not applicable.
+   */
+  relationshipExists: boolean | null;
 };
 
 // ── Confirm result ────────────────────────────────────────────────────────────

@@ -189,6 +189,8 @@ describe("SupplierInvoiceReviewPage", () => {
       detectedSupplier: null,
       matchedSupplier: null,
       supplierMatchStatus: "not_detected",
+      supplierExists: false,
+      relationshipExists: null,
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });
@@ -272,6 +274,8 @@ describe("SupplierInvoiceReviewPage", () => {
       detectedSupplier: null,
       matchedSupplier: null,
       supplierMatchStatus: "not_detected",
+      supplierExists: false,
+      relationshipExists: null,
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });
@@ -291,6 +295,8 @@ describe("SupplierInvoiceReviewPage", () => {
       detectedSupplier: null,
       matchedSupplier: null,
       supplierMatchStatus: "not_detected",
+      supplierExists: false,
+      relationshipExists: null,
     };
 
     renderReviewPage(INVOICE_ID, { uploadResult });

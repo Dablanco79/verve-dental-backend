@@ -44,6 +44,10 @@ import {
   createLegalEntityOrganisationRouter,
   createLegalEntityRouter,
 } from "./legalEntityRoutes.js";
+import {
+  createClinicSupplierRelationshipRouter,
+  createSupplierRelationshipRouter,
+} from "./supplierRelationshipRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -179,6 +183,19 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use(
     "/clinics/:clinicId/supplier-intelligence",
     createSupplierIntelligenceRouter(deps),
+  );
+
+  // Supplier Relationships — Sprint 4D. Clinic-scoped junction between
+  // Supplier Master and operational clinics.
+  router.use(
+    "/clinics/:clinicId/supplier-relationships",
+    createClinicSupplierRelationshipRouter(deps),
+  );
+
+  // Supplier Relationship standalone routes — GET/PATCH/deactivate by ID.
+  router.use(
+    "/supplier-relationships",
+    createSupplierRelationshipRouter(deps),
   );
 
   // Organisations — Sprint 4A. Global scope, owner_admin only.

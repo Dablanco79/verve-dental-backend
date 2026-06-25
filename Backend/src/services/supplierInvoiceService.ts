@@ -23,6 +23,7 @@ import type { OcrProvider } from "./ocr/OcrProvider.js";
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
+import type { SupplierRelationshipRepository } from "../repositories/supplierRelationshipRepository.js";
 import { AppError } from "../types/errors.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type { Supplier } from "../types/supplier.js";
@@ -46,6 +47,7 @@ export function createSupplierInvoiceService(
   supplierCatalogueRepo: SupplierCatalogueRepository,
   auditService: AuditService,
   supplierRepo: SupplierRepository,
+  supplierRelationshipRepo?: SupplierRelationshipRepository,
 ) {
   // ── Tenant + role guards ─────────────────────────────────────────────────
 
@@ -169,6 +171,23 @@ export function createSupplierInvoiceService(
     const { detectedSupplier, matchedSupplier, supplierMatchStatus } =
       await matchSupplierFromOcr(ocrResult);
 
+    // Sprint 4D: Supplier Relationship awareness.
+    // When a supplier is matched, check whether an active relationship exists
+    // for this clinic.  We do NOT create a relationship automatically — the
+    // frontend implements that workflow separately.
+    const supplierExists = matchedSupplier !== null;
+    let relationshipExists: boolean | null = null;
+    if (matchedSupplier && supplierRelationshipRepo) {
+      const rel = await supplierRelationshipRepo.findByClinicAndSupplier(
+        clinicId,
+        matchedSupplier.id,
+      );
+      relationshipExists = rel !== null && rel.relationshipStatus === "active";
+    } else if (matchedSupplier) {
+      // Relationship repo not available (in-memory / test mode without repo).
+      relationshipExists = false;
+    }
+
     // If a confident match was found, attach the invoice to that supplier.
     const resolvedSupplierId = matchedSupplier?.id ?? null;
 
@@ -290,6 +309,8 @@ export function createSupplierInvoiceService(
       detectedSupplier,
       matchedSupplier,
       supplierMatchStatus,
+      supplierExists,
+      relationshipExists,
     };
   }
 

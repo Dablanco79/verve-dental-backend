@@ -195,6 +195,13 @@ export type UploadAndExtractResult = {
   detectedSupplier: DetectedSupplierInfo | null;
   matchedSupplier: Supplier | null;
   supplierMatchStatus: SupplierMatchStatus;
+  /** Sprint 4D: true when OCR matched a supplier in the global Supplier Master. */
+  supplierExists: boolean;
+  /**
+   * Sprint 4D: Whether an active clinic-supplier relationship exists.
+   * null when supplier was not matched (supplierExists = false).
+   */
+  relationshipExists: boolean | null;
 };
 
 export type ConfirmImportResult = {

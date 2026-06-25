@@ -23,6 +23,13 @@ import {
 import { SEED_ORGANISATION_ID } from "../repositories/organisationRepository.js";
 import { SEED_LEGAL_ENTITY_ID } from "../repositories/legalEntityRepository.js";
 import {
+  SEED_SUPPLIER_A_ID,
+  SEED_SUPPLIER_B_ID,
+  SEED_RELATIONSHIP_A1_ID,
+  SEED_RELATIONSHIP_B1_ID,
+  SEED_RELATIONSHIP_A2_ID,
+} from "../repositories/supplierRelationshipRepository.js";
+import {
   buildBarcodeMappingSeed,
   buildClinicInventorySeed,
   buildMasterCatalogSeed,
@@ -395,4 +402,168 @@ export async function seedInventory(
     },
     "Demo inventory seeded into PostgreSQL",
   );
+}
+
+// ─── Demo Supplier seed ────────────────────────────────────────────────────────
+
+type DemoSupplier = {
+  id: string;
+  supplierName: string;
+  supplierCode: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  abn: string | null;
+  supplierCategory: string | null;
+  healthcareSubcategory: string | null;
+  verified: boolean;
+};
+
+const DEMO_SUPPLIERS: DemoSupplier[] = [
+  {
+    id: SEED_SUPPLIER_A_ID,
+    supplierName: "Dental Depot Australia",
+    supplierCode: "DDA-001",
+    email: "orders@dentaldepot.com.au",
+    phone: "1800 123 456",
+    website: "https://www.dentaldepot.com.au",
+    abn: "12 345 678 901",
+    supplierCategory: "Dental Supplies",
+    healthcareSubcategory: "Dental",
+    verified: true,
+  },
+  {
+    id: SEED_SUPPLIER_B_ID,
+    supplierName: "Medigate Medical Supplies",
+    supplierCode: "MMS-001",
+    email: "procurement@medigate.com.au",
+    phone: "1800 654 321",
+    website: "https://www.medigate.com.au",
+    abn: "98 765 432 109",
+    supplierCategory: "Medical Supplies",
+    healthcareSubcategory: "Dental",
+    verified: false,
+  },
+];
+
+/**
+ * Seed demo supplier records into PostgreSQL on first boot.
+ *
+ * Uses ON CONFLICT (id) DO NOTHING so the function is safe to call on every
+ * cold start.  suppliers table has no RLS — safe to use pool.query directly.
+ */
+export async function seedDemoSuppliers(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  let seeded = 0;
+  for (const supplier of DEMO_SUPPLIERS) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO suppliers
+         (id, supplier_name, supplier_code, email, phone, website, abn,
+          supplier_category, healthcare_subcategory, verified,
+          country_code, currency_code, is_public, active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'AU', 'AUD', true, true)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        supplier.id,
+        supplier.supplierName,
+        supplier.supplierCode,
+        supplier.email,
+        supplier.phone,
+        supplier.website,
+        supplier.abn,
+        supplier.supplierCategory,
+        supplier.healthcareSubcategory,
+        supplier.verified,
+      ],
+    );
+    seeded += rowCount ?? 0;
+  }
+
+  if (seeded > 0) {
+    logger.info({ count: seeded }, "Demo suppliers seeded into PostgreSQL");
+  } else {
+    logger.info("Demo suppliers already present — skipping supplier seed");
+  }
+}
+
+// ─── Supplier Relationship seed ────────────────────────────────────────────────
+
+type DemoRelationship = {
+  id: string;
+  supplierId: string;
+  clinicId: string;
+  preferredSupplier: boolean;
+  accountNumber: string | null;
+  creditTerms: string | null;
+};
+
+const DEMO_RELATIONSHIPS: DemoRelationship[] = [
+  {
+    id: SEED_RELATIONSHIP_A1_ID,
+    supplierId: SEED_SUPPLIER_A_ID,
+    clinicId: SEED_CLINIC_A_ID,
+    preferredSupplier: true,
+    accountNumber: "ACC-CLA-001",
+    creditTerms: "30 days net",
+  },
+  {
+    id: SEED_RELATIONSHIP_B1_ID,
+    supplierId: SEED_SUPPLIER_B_ID,
+    clinicId: SEED_CLINIC_A_ID,
+    preferredSupplier: false,
+    accountNumber: "ACC-CLA-002",
+    creditTerms: "COD",
+  },
+  {
+    id: SEED_RELATIONSHIP_A2_ID,
+    supplierId: SEED_SUPPLIER_A_ID,
+    clinicId: SEED_CLINIC_B_ID,
+    preferredSupplier: true,
+    accountNumber: "ACC-CLB-001",
+    creditTerms: "30 days net",
+  },
+];
+
+/**
+ * Seed demo supplier relationship records on first boot.
+ *
+ * Idempotent: ON CONFLICT (id) DO NOTHING.
+ * supplier_relationships has no RLS — safe to use pool.query directly.
+ */
+export async function seedSupplierRelationships(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  let seeded = 0;
+  for (const rel of DEMO_RELATIONSHIPS) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO supplier_relationships
+         (id, supplier_id, clinic_id, relationship_status, preferred_supplier,
+          account_number, credit_terms)
+       VALUES ($1, $2, $3, 'active', $4, $5, $6)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        rel.id,
+        rel.supplierId,
+        rel.clinicId,
+        rel.preferredSupplier,
+        rel.accountNumber,
+        rel.creditTerms,
+      ],
+    );
+    seeded += rowCount ?? 0;
+  }
+
+  if (seeded > 0) {
+    logger.info(
+      { count: seeded },
+      "Demo supplier relationships seeded into PostgreSQL",
+    );
+  } else {
+    logger.info(
+      "Demo supplier relationships already present — skipping relationship seed",
+    );
+  }
 }

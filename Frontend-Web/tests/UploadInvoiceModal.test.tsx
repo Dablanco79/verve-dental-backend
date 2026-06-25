@@ -176,6 +176,8 @@ const matchedUploadResult: UploadAndExtractResult = {
   },
   matchedSupplier: dentalCo,
   supplierMatchStatus: "matched",
+  supplierExists: true,
+  relationshipExists: true,
 };
 
 /** Upload result where OCR detected a name but no existing supplier matched. */
@@ -194,6 +196,8 @@ const needsConfirmationResult: UploadAndExtractResult = {
   },
   matchedSupplier: null,
   supplierMatchStatus: "needs_confirmation",
+  supplierExists: false,
+  relationshipExists: null,
 };
 
 /** Upload result where OCR could not detect a supplier. */
@@ -205,6 +209,8 @@ const notDetectedResult: UploadAndExtractResult = {
   detectedSupplier: null,
   matchedSupplier: null,
   supplierMatchStatus: "not_detected",
+  supplierExists: false,
+  relationshipExists: null,
 };
 
 function makePdfFile(name = "invoice.pdf"): File {

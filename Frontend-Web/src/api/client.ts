@@ -90,6 +90,12 @@ import type {
   UpdateSupplierRequest,
   UploadAndExtractResult,
 } from "../types/supplier.js";
+import type {
+  CreateSupplierRelationshipRequest,
+  ListSupplierRelationshipsParams,
+  SupplierRelationship,
+  UpdateSupplierRelationshipRequest,
+} from "../types/supplierRelationship.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1302,6 +1308,69 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Supplier Relationships (Sprint 4D) ───────────────────────────────────────
+
+  async function listSupplierRelationships(
+    clinicId: string,
+    params?: ListSupplierRelationshipsParams,
+  ): Promise<SupplierRelationship[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<SupplierRelationship[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-relationships${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getSupplierRelationship(
+    relationshipId: string,
+  ): Promise<SupplierRelationship> {
+    return request<SupplierRelationship>(
+      config,
+      `/api/v1/supplier-relationships/${encodeURIComponent(relationshipId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createSupplierRelationship(
+    clinicId: string,
+    body: CreateSupplierRelationshipRequest,
+  ): Promise<SupplierRelationship> {
+    return request<SupplierRelationship>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-relationships`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateSupplierRelationship(
+    relationshipId: string,
+    body: UpdateSupplierRelationshipRequest,
+  ): Promise<SupplierRelationship> {
+    return request<SupplierRelationship>(
+      config,
+      `/api/v1/supplier-relationships/${encodeURIComponent(relationshipId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function deactivateSupplierRelationship(
+    relationshipId: string,
+  ): Promise<SupplierRelationship> {
+    return request<SupplierRelationship>(
+      config,
+      `/api/v1/supplier-relationships/${encodeURIComponent(relationshipId)}/deactivate`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1381,6 +1450,11 @@ export function createApiClient(config: AppConfig) {
     getLegalEntity,
     createLegalEntity,
     updateLegalEntity,
+    listSupplierRelationships,
+    getSupplierRelationship,
+    createSupplierRelationship,
+    updateSupplierRelationship,
+    deactivateSupplierRelationship,
   };
 }
 
