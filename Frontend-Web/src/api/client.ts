@@ -41,6 +41,11 @@ import type {
   OrganisationData,
   UpdateOrganisationData,
 } from "../types/organisation.js";
+import type {
+  CreateLegalEntityData,
+  LegalEntityData,
+  UpdateLegalEntityData,
+} from "../types/legalEntity.js";
 import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
 import type {
   AuditEvent,
@@ -1231,6 +1236,72 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Legal Entities (Sprint 4B — owner_admin only) ──────────────────────────
+
+  /**
+   * GET /organisations/:organisationId/legal-entities
+   * Returns all legal entities for the given organisation.
+   * owner_admin only.
+   */
+  async function listLegalEntities(
+    organisationId: string,
+  ): Promise<LegalEntityData[]> {
+    return request<LegalEntityData[]>(
+      config,
+      `/api/v1/organisations/${encodeURIComponent(organisationId)}/legal-entities`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /legal-entities/:id
+   * Returns a single legal entity by UUID.
+   * owner_admin only.
+   */
+  async function getLegalEntity(id: string): Promise<LegalEntityData> {
+    return request<LegalEntityData>(
+      config,
+      `/api/v1/legal-entities/${encodeURIComponent(id)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * POST /organisations/:organisationId/legal-entities
+   * Creates a new legal entity under the given organisation.
+   * owner_admin only.
+   */
+  async function createLegalEntity(
+    organisationId: string,
+    data: CreateLegalEntityData,
+  ): Promise<LegalEntityData> {
+    return request<LegalEntityData>(
+      config,
+      `/api/v1/organisations/${encodeURIComponent(organisationId)}/legal-entities`,
+      { method: "POST", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * PATCH /legal-entities/:id
+   * Partial update — only supplied fields are written.
+   * owner_admin only.
+   */
+  async function updateLegalEntity(
+    id: string,
+    data: UpdateLegalEntityData,
+  ): Promise<LegalEntityData> {
+    return request<LegalEntityData>(
+      config,
+      `/api/v1/legal-entities/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(data) },
+      requireAccessToken(),
+    );
+  }
+
   return {
     getHealth,
     login,
@@ -1306,6 +1377,10 @@ export function createApiClient(config: AppConfig) {
     getOrganisation,
     createOrganisation,
     updateOrganisation,
+    listLegalEntities,
+    getLegalEntity,
+    createLegalEntity,
+    updateLegalEntity,
   };
 }
 

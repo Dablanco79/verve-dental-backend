@@ -1686,6 +1686,74 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE organisation_id IS NOT NULL;
     `,
   },
+  {
+    /**
+     * Sprint 4B — Legal Entity Foundation.
+     *
+     * Creates the `legal_entities` table — a registered business/tax entity
+     * that sits beneath an Organisation in the enterprise hierarchy.
+     *
+     * Design notes:
+     *   • organisation_id is NOT NULL — every legal entity must belong to an org.
+     *   • country_code / currency_code are NOT NULL with platform defaults (AU/AUD).
+     *   • abn / tax_id / trading_name / registered_address are nullable so the row
+     *     can be created incrementally without forcing immediate completion of all
+     *     fields.
+     *   • No RLS: mirrors the `organisations` pattern — global registry, service-
+     *     layer access gate (owner_admin only).
+     *   • ON DELETE RESTRICT on organisation_id: prevents orphaned entities when
+     *     an org is removed; operators must deactivate entities first.
+     */
+    id: "025_legal_entities_schema",
+    sql: `
+      CREATE TABLE IF NOT EXISTS legal_entities (
+        id                 uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        organisation_id    uuid        NOT NULL
+          REFERENCES organisations (id) ON DELETE RESTRICT,
+        legal_name         text        NOT NULL,
+        trading_name       text,
+        abn                text,
+        tax_id             text,
+        country_code       char(2)     NOT NULL DEFAULT 'AU',
+        currency_code      char(3)     NOT NULL DEFAULT 'AUD',
+        registered_address text,
+        status             text        NOT NULL DEFAULT 'active'
+          CONSTRAINT legal_entities_status_check
+            CHECK (status IN ('active', 'inactive')),
+        created_at         timestamptz NOT NULL DEFAULT now(),
+        updated_at         timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_legal_entities_organisation_id
+        ON legal_entities (organisation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_legal_entities_status
+        ON legal_entities (status)
+        WHERE status = 'active';
+    `,
+  },
+  {
+    /**
+     * Sprint 4B — Link clinics to legal entities.
+     *
+     * Adds a nullable `legal_entity_id` FK to the `clinics` table.
+     * Nullable so all existing clinics continue working without any data
+     * migration or backfill.
+     *
+     * ON DELETE SET NULL: if a legal entity is ever removed from the database,
+     * its clinics are decoupled rather than cascade-deleted.
+     */
+    id: "026_clinics_legal_entity_id",
+    sql: `
+      ALTER TABLE clinics
+        ADD COLUMN IF NOT EXISTS legal_entity_id uuid
+          REFERENCES legal_entities (id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_clinics_legal_entity_id
+        ON clinics (legal_entity_id)
+        WHERE legal_entity_id IS NOT NULL;
+    `,
+  },
 ];
 
 /**

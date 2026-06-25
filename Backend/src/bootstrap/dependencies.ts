@@ -5,6 +5,7 @@ import {
   seedClinics,
   seedDemoUsers,
   seedInventory,
+  seedLegalEntity,
   seedOrganisation,
 } from "../db/seed.js";
 import {
@@ -59,6 +60,10 @@ import {
   createInMemoryOrganisationRepository,
 } from "../repositories/organisationRepository.js";
 import { createPostgresOrganisationRepository } from "../repositories/organisationRepository.postgres.js";
+import {
+  createInMemoryLegalEntityRepository,
+} from "../repositories/legalEntityRepository.js";
+import { createPostgresLegalEntityRepository } from "../repositories/legalEntityRepository.postgres.js";
 import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
 import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { createSupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -94,6 +99,7 @@ import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
 import type { OrganisationRepository } from "../repositories/organisationRepository.js";
+import type { LegalEntityRepository } from "../repositories/legalEntityRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -134,6 +140,7 @@ export type AppDependencies = {
   supplierCatalogueRepository: SupplierCatalogueRepository;
   supplierInvoiceRepository: SupplierInvoiceRepository;
   organisationRepository: OrganisationRepository;
+  legalEntityRepository: LegalEntityRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -194,6 +201,7 @@ export async function createAppDependencies(
   let supplierCatalogueRepository: SupplierCatalogueRepository;
   let supplierInvoiceRepository: SupplierInvoiceRepository;
   let organisationRepository: OrganisationRepository;
+  let legalEntityRepository: LegalEntityRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -243,6 +251,7 @@ export async function createAppDependencies(
 
     if (isDemoSeedEnv) {
       await seedOrganisation(connectedPool, logger);
+      await seedLegalEntity(connectedPool, logger);
       await seedClinics(connectedPool, logger);
       await seedDemoUsers(connectedPool, logger, config.NODE_ENV);
       await seedInventory(connectedPool, logger);
@@ -283,9 +292,10 @@ export async function createAppDependencies(
     supplierCatalogueRepository = createPostgresSupplierCatalogueRepository(connectedPool);
     supplierInvoiceRepository = createPostgresSupplierInvoiceRepository(connectedPool);
     organisationRepository = createPostgresOrganisationRepository(connectedPool);
+    legalEntityRepository = createPostgresLegalEntityRepository(connectedPool);
 
     logger.info(
-      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations)",
+      "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations, legal-entities)",
     );
   } else {
     userRepository = await createInMemoryUserRepository(config.MFA_ENCRYPTION_KEY);
@@ -302,6 +312,7 @@ export async function createAppDependencies(
     supplierCatalogueRepository = createInMemorySupplierCatalogueRepository();
     supplierInvoiceRepository = createInMemorySupplierInvoiceRepository();
     organisationRepository = createInMemoryOrganisationRepository();
+    legalEntityRepository = createInMemoryLegalEntityRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -448,6 +459,7 @@ export async function createAppDependencies(
     supplierCatalogueRepository,
     supplierInvoiceRepository,
     organisationRepository,
+    legalEntityRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

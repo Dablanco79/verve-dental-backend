@@ -21,6 +21,7 @@ import {
   SEED_USER_IDS,
 } from "../repositories/userRepository.js";
 import { SEED_ORGANISATION_ID } from "../repositories/organisationRepository.js";
+import { SEED_LEGAL_ENTITY_ID } from "../repositories/legalEntityRepository.js";
 import {
   buildBarcodeMappingSeed,
   buildClinicInventorySeed,
@@ -75,6 +76,42 @@ export async function seedOrganisation(
       "Default organisation seeded — no clinic backfill needed",
     );
   }
+}
+
+// ─── Legal Entity seed ────────────────────────────────────────────────────────
+
+/**
+ * Seed the default demo legal entity on first boot.
+ *
+ * Uses ON CONFLICT (id) DO NOTHING so the function is safe to call on every
+ * cold start.  Must run AFTER seedOrganisation so the organisation row exists
+ * when the FK constraint is evaluated.
+ *
+ * Does NOT backfill existing clinics — legal_entity_id is nullable and clinics
+ * operate correctly without one.  Any explicit clinic-to-entity linkage is done
+ * via the API by an owner_admin.
+ */
+export async function seedLegalEntity(
+  pool: DatabasePool,
+  logger: Logger,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO legal_entities
+       (id, organisation_id, legal_name, trading_name, country_code, currency_code, status)
+     VALUES ($1, $2, $3, $4, 'AU', 'AUD', 'active')
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      SEED_LEGAL_ENTITY_ID,
+      SEED_ORGANISATION_ID,
+      "Verve Demo Holdings Pty Ltd",
+      "Verve Dental",
+    ],
+  );
+
+  logger.info(
+    { legalEntityId: SEED_LEGAL_ENTITY_ID, organisationId: SEED_ORGANISATION_ID },
+    "Default legal entity seeded",
+  );
 }
 
 // ─── Clinic seed ──────────────────────────────────────────────────────────────

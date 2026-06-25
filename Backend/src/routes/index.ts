@@ -40,6 +40,10 @@ import { createSupplierRouter } from "./supplierRoutes.js";
 import { createSupplierInvoiceRouter } from "./supplierInvoiceRoutes.js";
 import { createSupplierIntelligenceRouter } from "./supplierIntelligenceRoutes.js";
 import { createOrganisationRouter } from "./organisationRoutes.js";
+import {
+  createLegalEntityOrganisationRouter,
+  createLegalEntityRouter,
+} from "./legalEntityRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -184,6 +188,23 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     authenticate,
     requireRoles("owner_admin"),
     createOrganisationRouter(deps),
+  );
+
+  // Legal Entities — Sprint 4B. Global scope, owner_admin only.
+  // Organisation-scoped list/create route: /organisations/:organisationId/legal-entities
+  router.use(
+    "/organisations/:organisationId/legal-entities",
+    authenticate,
+    requireRoles("owner_admin"),
+    createLegalEntityOrganisationRouter(deps),
+  );
+
+  // Legal Entity standalone routes: GET /legal-entities/:id, PATCH /legal-entities/:id
+  router.use(
+    "/legal-entities",
+    authenticate,
+    requireRoles("owner_admin"),
+    createLegalEntityRouter(deps),
   );
 
   return router;
