@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
@@ -430,6 +431,8 @@ type ActiveFilter = "all" | "active" | "inactive";
 
 export function SuppliersPage() {
   const { user } = useAuth();
+  const { selectedClinic } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
   const navigate = useNavigate();
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -447,7 +450,7 @@ export function SuppliersPage() {
   const [confirmToggleSupplier, setConfirmToggleSupplier] = useState<Supplier | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!user) {
+    if (!user || !selectedClinicId) {
       setIsLoading(false);
       return;
     }
@@ -458,7 +461,7 @@ export function SuppliersPage() {
     try {
       const [allSuppliers, pendingInvoices] = await Promise.all([
         apiClient.listSuppliers(),
-        apiClient.listClinicSupplierInvoices(user.homeClinicId, {
+        apiClient.listClinicSupplierInvoices(selectedClinicId, {
           status: "pending_review",
           limit: 100,
         }),
@@ -468,7 +471,7 @@ export function SuppliersPage() {
       setPendingOcrCount(pendingInvoices.length);
 
       if (allSuppliers.length > 0) {
-        const recentInvs = await apiClient.listClinicSupplierInvoices(user.homeClinicId, {
+        const recentInvs = await apiClient.listClinicSupplierInvoices(selectedClinicId, {
           limit: 50,
         });
         setRecentInvoices(recentInvs);
@@ -478,7 +481,7 @@ export function SuppliersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [selectedClinicId, user]);
 
   useEffect(() => {
     void loadData();
@@ -683,7 +686,7 @@ export function SuppliersPage() {
 
       {showUploadModal ? (
         <UploadInvoiceModal
-          clinicId={user.homeClinicId}
+          clinicId={selectedClinicId ?? user.homeClinicId}
           suppliers={suppliers.filter((s) => s.active)}
           onClose={() => {
             setShowUploadModal(false);

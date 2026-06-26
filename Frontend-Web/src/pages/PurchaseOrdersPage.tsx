@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { PurchaseOrderLine } from "../types/inventory.js";
@@ -30,6 +31,8 @@ function formatDate(iso: string): string {
 
 export function PurchaseOrdersPage() {
   const { user } = useAuth();
+  const { selectedClinic } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
   const [lines, setLines] = useState<PurchaseOrderLine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -39,18 +42,18 @@ export function PurchaseOrdersPage() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   const loadLines = useCallback(async () => {
-    if (!user) return;
+    if (!user || !selectedClinicId) return;
     setIsLoading(true);
     setLoadError(null);
     try {
-      const result = await apiClient.listPurchaseOrders(user.homeClinicId);
+      const result = await apiClient.listPurchaseOrders(selectedClinicId);
       setLines(result);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load purchase orders");
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [selectedClinicId, user]);
 
   useEffect(() => {
     void loadLines();
@@ -69,11 +72,11 @@ export function PurchaseOrdersPage() {
   );
 
   async function handleSubmit(poId: string) {
-    if (!user) return;
+    if (!user || !selectedClinicId) return;
     setSubmittingPoId(poId);
     setSubmitError(null);
     try {
-      await apiClient.submitPurchaseOrder(user.homeClinicId, poId);
+      await apiClient.submitPurchaseOrder(selectedClinicId, poId);
       await loadLines();
     } catch (err: unknown) {
       setSubmitError(
@@ -85,11 +88,11 @@ export function PurchaseOrdersPage() {
   }
 
   async function handleExport() {
-    if (!user) return;
+    if (!user || !selectedClinicId) return;
     setIsExporting(true);
     setExportError(null);
     try {
-      await apiClient.exportPurchaseOrdersCsv(user.homeClinicId);
+      await apiClient.exportPurchaseOrdersCsv(selectedClinicId);
     } catch (err: unknown) {
       setExportError(
         err instanceof Error ? err.message : "Failed to export purchase orders",
@@ -112,7 +115,7 @@ export function PurchaseOrdersPage() {
           <div>
             <h2>Purchase orders</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — auto-generated lines when stock falls below
+              {(selectedClinic?.name ?? user.homeClinicName)} — auto-generated lines when stock falls below
               reorder point
             </p>
           </div>

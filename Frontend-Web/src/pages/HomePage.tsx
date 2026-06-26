@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { DashboardKpis } from "../types/analytics.js";
@@ -82,6 +83,8 @@ function SummaryCard({ title, value, description, to, tone = "default" }: Summar
 
 export function HomePage() {
   const { user } = useAuth();
+  const { selectedClinic } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
   const [summary, setSummary] = useState<DailySummary>(EMPTY_SUMMARY);
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,13 +95,13 @@ export function HomePage() {
   const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !selectedClinicId) {
       return;
     }
 
     let cancelled = false;
     const activeUser = user;
-    const clinicId = activeUser.homeClinicId;
+    const activeClinicId = selectedClinicId;
     const today = todayLocalDate();
 
     setIsLoading(true);
@@ -115,28 +118,30 @@ export function HomePage() {
         leaveResult,
       ] = await Promise.allSettled([
         canViewAnalytics(activeUser.role)
-          ? apiClient.getAnalyticsDashboard(clinicId, { periodDays: 7 })
+          ? apiClient.getAnalyticsDashboard(activeClinicId, { periodDays: 7 })
           : Promise.resolve(null),
-        apiClient.listInventory(clinicId),
+        apiClient.listInventory(activeClinicId),
         canManageSuppliers(activeUser.role)
-          ? apiClient.listClinicSupplierInvoices(clinicId, {
+          ? apiClient.listClinicSupplierInvoices(activeClinicId, {
               status: "pending_review",
               limit: 50,
             })
           : Promise.resolve([]),
-        canManageUsers(activeUser.role) ? apiClient.listPurchaseOrders(clinicId) : Promise.resolve([]),
+        canManageUsers(activeUser.role)
+          ? apiClient.listPurchaseOrders(activeClinicId)
+          : Promise.resolve([]),
         canManagePayroll(activeUser.role)
-          ? apiClient.listTimesheets(clinicId, { pendingApprovalOnly: true })
-          : apiClient.listMyTimesheets(clinicId, { shiftDate: today }),
+          ? apiClient.listTimesheets(activeClinicId, { pendingApprovalOnly: true })
+          : apiClient.listMyTimesheets(activeClinicId, { shiftDate: today }),
         canManagePayroll(activeUser.role)
-          ? apiClient.listTimesheets(clinicId, {
+          ? apiClient.listTimesheets(activeClinicId, {
               attendanceStatus: "pending_verification",
               payrollType: "commission_log",
             })
           : Promise.resolve([]),
         canManagePayroll(activeUser.role)
-          ? apiClient.listLeave(clinicId, { status: "pending" })
-          : apiClient.listMyLeave(clinicId, { status: "pending" }),
+          ? apiClient.listLeave(activeClinicId, { status: "pending" })
+          : apiClient.listMyLeave(activeClinicId, { status: "pending" }),
       ]);
 
       if (cancelled) {
@@ -184,7 +189,7 @@ export function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [selectedClinicId, user]);
 
   const priorityCards = useMemo(() => {
     const lowStockCount = summary.inventoryItems.filter((item) => item.isBelowReorderPoint).length;
@@ -302,6 +307,16 @@ export function HomePage() {
     return null;
   }
 
+  if (!selectedClinic) {
+    return (
+      <AppShell>
+        <section className="status-card">
+          <p className="loading-message">Loading clinic context…</p>
+        </section>
+      </AppShell>
+    );
+  }
+
   const analytics = summary.analytics;
   const roleLabel = ROLE_LABELS[user.role];
   const lowStockCount = summary.inventoryItems.filter((item) => item.isBelowReorderPoint).length;
@@ -311,7 +326,7 @@ export function HomePage() {
       <section className="status-card">
         <div className="status-card__header">
           <div>
-            <h2>Today at {user.homeClinicName}</h2>
+            <h2>Today at {selectedClinic.name}</h2>
             <p className="inventory-page__subtitle">
               Welcome, {formatUserName(user)}. {roleLabel} daily priorities are ready below.
             </p>

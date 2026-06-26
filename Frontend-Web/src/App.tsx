@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider } from "./auth/AuthProvider.js";
 import { ProtectedRoute } from "./auth/ProtectedRoute.js";
+import { ClinicProvider } from "./clinic/ClinicProvider.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { HomePage } from "./pages/HomePage.js";
 import { AddProductPage } from "./pages/AddProductPage.js";
@@ -32,40 +33,42 @@ import { SupplierIntelligencePage } from "./pages/SupplierIntelligencePage.js";
 export function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/inventory" element={<InventoryPage />} />
-            <Route path="/inventory/products/new" element={<AddProductPage />} />
-            <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
-            <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
-            <Route path="/users" element={<ManageUsersPage />} />
-            <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
-            <Route path="/roster" element={<RosterCalendarPage />} />
-            <Route path="/my-shifts" element={<MyShiftsPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/forecast/labor" element={<LaborForecastPage />} />
-            <Route path="/forecast/materials" element={<MaterialsForecastPage />} />
-            <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
-            <Route path="/settings/clinics" element={<ClinicsListPage />} />
-            <Route path="/settings/clinics/new" element={<CreateClinicPage />} />
-            <Route path="/settings/clinics/:clinicId/edit" element={<ClinicSettingsPage />} />
-            <Route path="/settings/security" element={<SecurityPage />} />
-            <Route path="/timesheets" element={<TimesheetsPage />} />
-            <Route path="/leave" element={<LeavePage />} />
-            <Route path="/billing" element={<BillingLedgerPage />} />
-            <Route path="/analytics" element={<AnalyticsDashboardPage />} />
-            <Route path="/analytics/audit" element={<AuditTrailPage />} />
-            <Route path="/suppliers" element={<SuppliersPage />} />
-            <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
-            <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
-            <Route path="/supplier-intelligence" element={<SupplierIntelligencePage />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <ClinicProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/inventory" element={<InventoryPage />} />
+              <Route path="/inventory/products/new" element={<AddProductPage />} />
+              <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
+              <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
+              <Route path="/users" element={<ManageUsersPage />} />
+              <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+              <Route path="/roster" element={<RosterCalendarPage />} />
+              <Route path="/my-shifts" element={<MyShiftsPage />} />
+              <Route path="/account" element={<AccountPage />} />
+              <Route path="/forecast/labor" element={<LaborForecastPage />} />
+              <Route path="/forecast/materials" element={<MaterialsForecastPage />} />
+              <Route path="/settings/clinic" element={<ClinicSettingsPage />} />
+              <Route path="/settings/clinics" element={<ClinicsListPage />} />
+              <Route path="/settings/clinics/new" element={<CreateClinicPage />} />
+              <Route path="/settings/clinics/:clinicId/edit" element={<ClinicSettingsPage />} />
+              <Route path="/settings/security" element={<SecurityPage />} />
+              <Route path="/timesheets" element={<TimesheetsPage />} />
+              <Route path="/leave" element={<LeavePage />} />
+              <Route path="/billing" element={<BillingLedgerPage />} />
+              <Route path="/analytics" element={<AnalyticsDashboardPage />} />
+              <Route path="/analytics/audit" element={<AuditTrailPage />} />
+              <Route path="/suppliers" element={<SuppliersPage />} />
+              <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
+              <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
+              <Route path="/supplier-intelligence" element={<SupplierIntelligencePage />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </ClinicProvider>
     </AuthProvider>
   );
 }

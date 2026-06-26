@@ -53,19 +53,69 @@ body {
   font-size: 2rem;
 }
 
-.app-shell__nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 1rem;
+.app-shell__scope {
+  margin: 0.35rem 0 0;
+  color: #486581;
+  font-size: 0.9rem;
 }
 
+.app-shell__nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.85rem;
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.app-shell__tools {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  margin-top: 0.5rem;
+}
+
+.app-shell__clinic-control,
 .app-shell__user {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  flex-shrink: 0;
-  margin-top: 0.5rem;
+}
+
+.app-shell__clinic-control {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.app-shell__clinic-label,
+.app-shell__nav-heading {
+  margin: 0;
+  color: #627d98;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-shell__clinic-select,
+.app-shell__clinic-fixed {
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  padding: 0.35rem 0.65rem;
+  background: #ffffff;
+  color: #102a43;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.app-shell__clinic-error {
+  max-width: 18rem;
+  color: #b42318;
+  font-size: 0.75rem;
 }
 
 .app-shell__user-link {
@@ -94,7 +144,19 @@ body {
   background: #f0f4f8;
 }
 
-.app-shell__nav a {
+.app-shell__nav-group {
+  display: grid;
+  align-content: start;
+  gap: 0.4rem;
+}
+
+.app-shell__nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.app-shell__nav-links a {
   padding: 0.4rem 0.85rem;
   border-radius: 999px;
   color: #486581;
@@ -104,7 +166,7 @@ body {
   background: #e0e7ef;
 }
 
-.app-shell__nav a.active {
+.app-shell__nav-links a.active {
   color: #ffffff;
   background: #102a43;
 }

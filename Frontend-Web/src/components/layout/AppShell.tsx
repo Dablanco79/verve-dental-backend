@@ -2,13 +2,12 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth.js";
+import { useSelectedClinic } from "../../clinic/useSelectedClinic.js";
 import {
   canManageBilling,
   canManageClinics,
-  canManageInventory,
   canManageUsers,
   canViewAnalytics,
-  canViewAdjustmentHistory,
   canViewClinicSettings,
   canViewLaborForecast,
   canViewMaterialsForecast,
@@ -20,8 +19,28 @@ type AppShellProps = {
   children: ReactNode;
 };
 
+type NavItem = {
+  to: string;
+  label: string;
+  end?: boolean;
+};
+
+type NavGroup = {
+  label: string;
+  items: NavItem[];
+};
+
 export function AppShell({ children }: AppShellProps) {
   const { user, logout } = useAuth();
+  const {
+    selectedClinic,
+    availableClinics,
+    canSwitchClinics,
+    isLoadingClinics,
+    clinicError,
+    hasClinicProvider,
+    setSelectedClinicId,
+  } = useSelectedClinic();
   const navigate = useNavigate();
 
   async function handleLogout(): Promise<void> {
@@ -29,62 +48,112 @@ export function AppShell({ children }: AppShellProps) {
     await navigate("/login");
   }
 
+  const navGroups: NavGroup[] = user
+    ? [
+        {
+          label: "Daily",
+          items: [{ to: "/", label: "Daily Hub", end: true }],
+        },
+        {
+          label: "Operations",
+          items: [
+            { to: "/inventory", label: "Inventory" },
+            ...(canViewMaterialsForecast(user.role)
+              ? [{ to: "/forecast/materials", label: "Materials Forecast" }]
+              : []),
+            ...(canViewLaborForecast(user.role)
+              ? [{ to: "/forecast/labor", label: "Labor Forecast" }]
+              : []),
+          ],
+        },
+        {
+          label: "Procurement",
+          items: [
+            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers" }] : []),
+            ...(canManageSuppliers(user.role)
+              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence" }]
+              : []),
+            ...(canManageUsers(user.role)
+              ? [{ to: "/purchase-orders", label: "Purchase Orders" }]
+              : []),
+          ],
+        },
+        {
+          label: "People",
+          items: [
+            { to: "/roster", label: "Roster" },
+            { to: "/my-shifts", label: "My Shifts" },
+            { to: "/timesheets", label: "Timesheets" },
+            { to: "/leave", label: "Leave" },
+          ],
+        },
+        {
+          label: "Reporting",
+          items: [
+            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics" }] : []),
+            ...(canViewAnalytics(user.role)
+              ? [{ to: "/analytics/audit", label: "Audit Events" }]
+              : []),
+            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing" }] : []),
+          ],
+        },
+        {
+          label: "Admin / Settings",
+          items: [
+            ...(canManageClinics(user.role) ? [{ to: "/settings/clinics", label: "Clinics" }] : []),
+            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users" }] : []),
+            ...(canViewClinicSettings(user.role)
+              ? [{ to: "/settings/clinic", label: "Clinic Settings" }]
+              : []),
+          ],
+        },
+      ].filter((group) => group.items.length > 0)
+    : [];
+
   return (
     <div className="app-shell">
       <header className="app-shell__header">
         <div className="app-shell__brand">
           <p className="app-shell__eyebrow">Verve Dental</p>
           <h1>Operational Suite</h1>
+          {hasClinicProvider && selectedClinic ? (
+            <p className="app-shell__scope">
+              Current clinic: <strong>{selectedClinic.name}</strong>
+            </p>
+          ) : null}
         </div>
 
-        <nav className="app-shell__nav" aria-label="Main navigation">
-          <NavLink to="/" end>
-            Dashboard
-          </NavLink>
-          <NavLink to="/inventory">Inventory</NavLink>
-          <NavLink to="/suppliers">Suppliers</NavLink>
-          {user && canManageSuppliers(user.role) ? (
-            <NavLink to="/supplier-intelligence">Supplier Intelligence</NavLink>
+        <div className="app-shell__tools">
+          {hasClinicProvider && selectedClinic ? (
+            <div className="app-shell__clinic-control">
+              <label className="app-shell__clinic-label" htmlFor="clinic-scope">
+                Clinic scope
+              </label>
+              {canSwitchClinics ? (
+                <select
+                  id="clinic-scope"
+                  className="app-shell__clinic-select"
+                  value={selectedClinic.id}
+                  onChange={(event) => {
+                    setSelectedClinicId(event.target.value);
+                  }}
+                  disabled={isLoadingClinics}
+                >
+                  {availableClinics.map((clinic) => (
+                    <option key={clinic.id} value={clinic.id}>
+                      {clinic.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="app-shell__clinic-fixed">{selectedClinic.name}</span>
+              )}
+              {clinicError ? <span className="app-shell__clinic-error">{clinicError}</span> : null}
+            </div>
           ) : null}
-          {user && canManageInventory(user.role) ? (
-            <NavLink to="/inventory/adjust">Adjust Stock</NavLink>
-          ) : null}
-          {user && canViewAdjustmentHistory(user.role) ? (
-            <NavLink to="/inventory/adjustments">Adj. History</NavLink>
-          ) : null}
-          <NavLink to="/roster">Roster</NavLink>
-          <NavLink to="/my-shifts">My Shifts</NavLink>
-          <NavLink to="/timesheets">Timesheets</NavLink>
-          <NavLink to="/leave">Leave</NavLink>
-          {user && canManageUsers(user.role) ? (
-            <>
-              <NavLink to="/users">Users</NavLink>
-              <NavLink to="/purchase-orders">Purchase Orders</NavLink>
-            </>
-          ) : null}
-          {user && canViewLaborForecast(user.role) ? (
-            <NavLink to="/forecast/labor">Labor Forecast</NavLink>
-          ) : null}
-          {user && canViewMaterialsForecast(user.role) ? (
-            <NavLink to="/forecast/materials">Materials Forecast</NavLink>
-          ) : null}
-          {user && canManageBilling(user.role) ? (
-            <NavLink to="/billing">Billing</NavLink>
-          ) : null}
-          {user && canViewAnalytics(user.role) ? (
-            <NavLink to="/analytics">Analytics</NavLink>
-          ) : null}
-          {user && canViewClinicSettings(user.role) ? (
-            <NavLink to="/settings/clinic">Clinic Settings</NavLink>
-          ) : null}
-          {user && canManageClinics(user.role) ? (
-            <NavLink to="/settings/clinics">Clinics</NavLink>
-          ) : null}
-        </nav>
 
-        <div className="app-shell__user">
           {user ? (
-            <>
+            <div className="app-shell__user">
               <NavLink to="/account" className="app-shell__user-link">
                 {user.email}
               </NavLink>
@@ -98,9 +167,24 @@ export function AppShell({ children }: AppShellProps) {
               >
                 Log out
               </button>
-            </>
+            </div>
           ) : null}
         </div>
+
+        <nav className="app-shell__nav" aria-label="Main navigation">
+          {navGroups.map((group) => (
+            <section key={group.label} className="app-shell__nav-group">
+              <p className="app-shell__nav-heading">{group.label}</p>
+              <div className="app-shell__nav-links">
+                {group.items.map((item) => (
+                  <NavLink key={item.to} to={item.to} end={item.end}>
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            </section>
+          ))}
+        </nav>
       </header>
       <main className="app-shell__main">{children}</main>
     </div>

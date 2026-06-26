@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { InventoryTable } from "../components/inventory/InventoryTable.js";
 import { ScanForm } from "../components/inventory/ScanForm.js";
 import { AppShell } from "../components/layout/AppShell.js";
@@ -43,6 +44,8 @@ function buildScanNotice(result: ScanResponse): ScanNotice {
 
 export function InventoryPage() {
   const { user } = useAuth();
+  const { selectedClinic } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
@@ -57,7 +60,7 @@ export function InventoryPage() {
   const requestIdRef = useRef({ id: 0 });
 
   const loadInventory = useCallback(async () => {
-    if (!user) {
+    if (!user || !selectedClinicId) {
       // Clear the spinner immediately — there is no authenticated user to
       // fetch inventory for, so the loading state must not persist.
       setIsLoading(false);
@@ -70,7 +73,7 @@ export function InventoryPage() {
     setIsLoading(true);
 
     try {
-      const inventory = await apiClient.listInventory(user.homeClinicId);
+      const inventory = await apiClient.listInventory(selectedClinicId);
       // Discard the response if a newer request has started since this
       // one was dispatched.
       if (requestId === requestIdRef.current.id) {
@@ -87,7 +90,7 @@ export function InventoryPage() {
         setIsLoading(false);
       }
     }
-  }, [user]);
+  }, [selectedClinicId, user]);
 
   useEffect(() => {
     void loadInventory();
@@ -109,7 +112,7 @@ export function InventoryPage() {
     mode: ScanMode;
     reason?: string;
   }): Promise<void> {
-    if (!user) {
+    if (!user || !selectedClinicId) {
       return;
     }
 
@@ -117,7 +120,7 @@ export function InventoryPage() {
     setScanNotice(null);
 
     try {
-      const result = await apiClient.handleScan(user.homeClinicId, values);
+      const result = await apiClient.handleScan(selectedClinicId, values);
       setScanNotice(buildScanNotice(result));
       await loadInventory();
     } finally {
@@ -139,7 +142,9 @@ export function InventoryPage() {
           <div>
             <h2>Scanner</h2>
             <p className="inventory-page__subtitle">
-              {user ? `${user.homeClinicName} — scan to deduct or receive stock` : "Clinic inventory"}
+              {selectedClinic
+                ? `${selectedClinic.name} — scan to deduct or receive stock`
+                : "Clinic inventory"}
             </p>
           </div>
           <div className="inventory-page__actions">
