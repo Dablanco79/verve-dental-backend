@@ -272,9 +272,10 @@ function SupplierProductsSection({ catalogue, isLoading }: SupplierProductsProps
 type RecentInvoicesProps = {
   invoices: SupplierInvoice[];
   isLoading: boolean;
+  backPath: string;
 };
 
-function RecentInvoicesSection({ invoices, isLoading }: RecentInvoicesProps) {
+function RecentInvoicesSection({ invoices, isLoading, backPath }: RecentInvoicesProps) {
   return (
     <section className="status-card supplier-detail__section">
       <h3 className="supplier-detail__section-title">
@@ -290,7 +291,7 @@ function RecentInvoicesSection({ invoices, isLoading }: RecentInvoicesProps) {
         <div className="supplier-empty">
           <p className="supplier-empty__title">No invoices found</p>
           <p className="supplier-empty__hint">
-            Supplier invoices uploaded via OCR will appear here once confirmed.
+            Supplier invoices uploaded via OCR will appear here for review and confirmation.
           </p>
         </div>
       ) : (
@@ -304,6 +305,7 @@ function RecentInvoicesSection({ invoices, isLoading }: RecentInvoicesProps) {
                 <th className="supplier-table__th supplier-table__th--numeric">Total</th>
                 <th className="supplier-table__th">Uploaded By</th>
                 <th className="supplier-table__th">Uploaded</th>
+                <th className="supplier-table__th supplier-table__th--action" />
               </tr>
             </thead>
             <tbody>
@@ -323,6 +325,15 @@ function RecentInvoicesSection({ invoices, isLoading }: RecentInvoicesProps) {
                   </td>
                   <td className="supplier-table__td">{inv.importedByEmail}</td>
                   <td className="supplier-table__td">{formatDate(inv.createdAt)}</td>
+                  <td className="supplier-table__td supplier-table__td--action">
+                    <Link
+                      to={`/invoice-review/${inv.id}`}
+                      state={{ backPath }}
+                      className="supplier-view-btn"
+                    >
+                      {inv.status === "pending_review" ? "Review OCR" : "Open"}
+                    </Link>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -516,7 +527,11 @@ export function SupplierDetailPage() {
               catalogue={catalogue}
               isLoading={isLoadingCatalogue}
             />
-            <RecentInvoicesSection invoices={invoices} isLoading={isLoadingInvoices} />
+            <RecentInvoicesSection
+              invoices={invoices}
+              isLoading={isLoadingInvoices}
+              backPath={`/suppliers/${supplier.id}`}
+            />
             <PriceRecordsSection />
           </>
         ) : null}

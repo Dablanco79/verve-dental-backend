@@ -74,6 +74,74 @@ function SupplierKpiBar({ suppliers, pendingOcrCount }: KpiBarProps) {
   );
 }
 
+// ── Pending invoice review queue ───────────────────────────────────────────────
+
+type PendingInvoiceQueueProps = {
+  invoices: SupplierInvoice[];
+  suppliers: Supplier[];
+};
+
+function PendingInvoiceQueue({ invoices, suppliers }: PendingInvoiceQueueProps) {
+  if (invoices.length === 0) {
+    return null;
+  }
+
+  function getSupplierName(invoice: SupplierInvoice): string {
+    const matchedSupplier = suppliers.find((supplier) => supplier.id === invoice.supplierId);
+    return matchedSupplier?.supplierName ?? invoice.supplierNameRaw ?? "Unmatched supplier";
+  }
+
+  return (
+    <section className="status-card supplier-detail__section" id="pending-invoice-review">
+      <div className="status-card__header">
+        <div>
+          <h3 className="supplier-detail__section-title">Pending OCR Review</h3>
+          <p className="inventory-page__subtitle">
+            Resume uploaded invoices that still need line review and confirmation.
+          </p>
+        </div>
+      </div>
+
+      <div className="supplier-table-wrap">
+        <table className="supplier-table">
+          <thead>
+            <tr>
+              <th className="supplier-table__th">Supplier</th>
+              <th className="supplier-table__th">Invoice #</th>
+              <th className="supplier-table__th">Uploaded</th>
+              <th className="supplier-table__th">Uploaded By</th>
+              <th className="supplier-table__th supplier-table__th--action" />
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map((invoice) => (
+              <tr key={invoice.id} className="supplier-table__row">
+                <td className="supplier-table__td">Supplier: {getSupplierName(invoice)}</td>
+                <td className="supplier-table__td supplier-table__td--mono">
+                  {invoice.invoiceNumber ?? (
+                    <span className="supplier-table__muted">No number</span>
+                  )}
+                </td>
+                <td className="supplier-table__td">{formatDate(invoice.createdAt)}</td>
+                <td className="supplier-table__td">{invoice.importedByEmail}</td>
+                <td className="supplier-table__td supplier-table__td--action">
+                  <Link
+                    to={`/invoice-review/${invoice.id}`}
+                    state={{ backPath: "/suppliers" }}
+                    className="supplier-view-btn"
+                  >
+                    Review OCR
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 // ── Create supplier modal ──────────────────────────────────────────────────────
 
 type CreateModalProps = {
@@ -366,6 +434,7 @@ export function SuppliersPage() {
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recentInvoices, setRecentInvoices] = useState<SupplierInvoice[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState<SupplierInvoice[]>([]);
   const [pendingOcrCount, setPendingOcrCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -395,6 +464,7 @@ export function SuppliersPage() {
         }),
       ]);
       setSuppliers(allSuppliers);
+      setPendingInvoices(pendingInvoices);
       setPendingOcrCount(pendingInvoices.length);
 
       if (allSuppliers.length > 0) {
@@ -515,6 +585,10 @@ export function SuppliersPage() {
         ) : (
           <>
             <SupplierKpiBar suppliers={suppliers} pendingOcrCount={pendingOcrCount} />
+
+            {canManage ? (
+              <PendingInvoiceQueue invoices={pendingInvoices} suppliers={suppliers} />
+            ) : null}
 
             <div className="supplier-search-bar">
               <label className="supplier-search-bar__field">
