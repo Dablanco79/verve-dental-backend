@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -10,6 +10,7 @@ import type { DashboardKpis } from "../types/analytics.js";
 import type { InventoryItem, PurchaseOrderLine } from "../types/inventory.js";
 import type { LeaveRequest, TimesheetEntry } from "../types/payroll.js";
 import type { SupplierInvoice } from "../types/supplier.js";
+import type { UserRole } from "../types/index.js";
 import {
   ROLE_LABELS,
   canManagePayroll,
@@ -30,12 +31,34 @@ type DailySummary = {
   pendingLeaveRequests: LeaveRequest[];
 };
 
-type SummaryCardProps = {
+type DashboardStats = {
+  lowStockItems: InventoryItem[];
+  draftPurchaseOrderLines: PurchaseOrderLine[];
+  openTimesheet: TimesheetEntry | null;
+};
+
+type DashboardProps = {
+  userName: string;
+  roleLabel: string;
+  selectedClinicName: string;
+  availableClinicCount: number;
+  summary: DailySummary;
+  stats: DashboardStats;
+};
+
+type DashboardCardTone = "default" | "positive" | "warning" | "danger";
+
+type MetricCardProps = {
   title: string;
   value: string | number;
   description: string;
+  to?: string;
+  tone?: DashboardCardTone;
+};
+
+type QuickAction = {
+  label: string;
   to: string;
-  tone?: "default" | "warning" | "danger";
 };
 
 const EMPTY_SUMMARY: DailySummary = {
@@ -64,35 +87,399 @@ function formatUserName(user: NonNullable<ReturnType<typeof useAuth>["user"]>): 
   return user.displayName ?? user.firstName ?? user.email;
 }
 
-function SummaryCard({ title, value, description, to, tone = "default" }: SummaryCardProps) {
-  const valueClassName =
-    tone === "danger"
-      ? "analytics-card__value analytics-card__value--danger"
-      : tone === "warning"
-        ? "analytics-card__value analytics-card__value--warning"
-        : "analytics-card__value analytics-card__value--primary";
+function valueClassName(tone: DashboardCardTone): string {
+  if (tone === "danger") return "analytics-card__value analytics-card__value--danger";
+  if (tone === "warning") return "analytics-card__value analytics-card__value--warning";
+  if (tone === "positive") return "analytics-card__value analytics-card__value--positive";
+  return "analytics-card__value analytics-card__value--primary";
+}
+
+function MetricCard({
+  title,
+  value,
+  description,
+  to,
+  tone = "default",
+}: MetricCardProps) {
+  const content = (
+    <>
+      <h3 className="analytics-card__title">{title}</h3>
+      <p className={valueClassName(tone)}>{value}</p>
+      <p className="inventory-page__subtitle">{description}</p>
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className="analytics-card daily-hub__priority-card">
+        {content}
+      </Link>
+    );
+  }
+
+  return <section className="analytics-card">{content}</section>;
+}
+
+function DashboardIntro({
+  title,
+  subtitle,
+  actions,
+}: {
+  title: string;
+  subtitle: string;
+  actions: QuickAction[];
+}) {
+  return (
+    <section className="status-card">
+      <div className="status-card__header">
+        <div>
+          <h2>{title}</h2>
+          <p className="inventory-page__subtitle">{subtitle}</p>
+        </div>
+        <QuickActions actions={actions} />
+      </div>
+    </section>
+  );
+}
+
+function QuickActions({ actions }: { actions: QuickAction[] }) {
+  return (
+    <div className="inventory-page__actions">
+      {actions.map((action) => (
+        <Link key={`${action.label}:${action.to}`} to={action.to} className="button-link">
+          {action.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function DashboardSection({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="status-card">
+      <div className="status-card__header">
+        <div>
+          <h2>{title}</h2>
+          {subtitle ? <p className="inventory-page__subtitle">{subtitle}</p> : null}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function OwnerAdminDashboard({
+  userName,
+  roleLabel,
+  selectedClinicName,
+  availableClinicCount,
+  summary,
+  stats,
+}: DashboardProps) {
+  const analytics = summary.analytics;
+  const clinicScope =
+    availableClinicCount > 1
+      ? `${String(availableClinicCount)} clinics available`
+      : "Single clinic scope";
 
   return (
-    <Link to={to} className="analytics-card daily-hub__priority-card">
-      <h3 className="analytics-card__title">{title}</h3>
-      <p className={valueClassName}>{value}</p>
-      <p className="inventory-page__subtitle">{description}</p>
-    </Link>
+    <>
+      <DashboardIntro
+        title={`Executive overview for ${selectedClinicName}`}
+        subtitle={`Welcome, ${userName}. ${roleLabel} view focused on operational risk and clinic performance. ${clinicScope}.`}
+        actions={[
+          { label: "Inventory", to: "/inventory" },
+          { label: "Suppliers", to: "/suppliers" },
+          { label: "Purchase Orders", to: "/purchase-orders" },
+          { label: "OCR Queue", to: "/suppliers" },
+          { label: "Analytics", to: "/analytics" },
+          { label: "Workforce", to: "/timesheets" },
+        ]}
+      />
+
+      <DashboardSection
+        title="Executive KPIs"
+        subtitle="Existing operational data for the selected clinic."
+      >
+        <div className="analytics-cards-grid">
+          <MetricCard
+            title="Clinic Scope"
+            value={availableClinicCount}
+            description="clinics available to review"
+          />
+          <MetricCard
+            title="Inventory Health"
+            value={stats.lowStockItems.length}
+            description="items below reorder point"
+            to="/inventory"
+            tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Pending OCR"
+            value={summary.pendingSupplierInvoices.length}
+            description="supplier invoices awaiting review"
+            to="/suppliers"
+            tone={summary.pendingSupplierInvoices.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Purchase Orders"
+            value={stats.draftPurchaseOrderLines.length}
+            description="draft lines awaiting action"
+            to="/purchase-orders"
+            tone={stats.draftPurchaseOrderLines.length > 0 ? "warning" : "positive"}
+          />
+          {analytics ? (
+            <>
+              <MetricCard
+                title="7-day Revenue"
+                value={centsToDollars(analytics.revenue.totalRevenueCents)}
+                description="selected clinic revenue"
+                to="/analytics"
+              />
+              <MetricCard
+                title="Outstanding"
+                value={centsToDollars(analytics.revenue.outstandingCents)}
+                description="uncollected invoice balance"
+                to="/analytics"
+                tone={analytics.revenue.outstandingCents > 0 ? "warning" : "positive"}
+              />
+            </>
+          ) : null}
+        </div>
+      </DashboardSection>
+
+      <DashboardSection
+        title="Recent Operational Activity"
+        subtitle="Signals already available from inventory, purchasing, OCR, and workforce queues."
+      >
+        <div className="analytics-cards-grid">
+          <MetricCard
+            title="Stock Adjustments"
+            value={analytics?.inventory.adjustmentsCount ?? "—"}
+            description="adjustments in the reporting window"
+            to="/analytics"
+          />
+          <MetricCard
+            title="Top Consumed SKUs"
+            value={analytics?.inventory.topConsumedSkus.length ?? "—"}
+            description="materials consumption signals"
+            to="/analytics"
+          />
+          <MetricCard
+            title="Timesheets"
+            value={summary.pendingTimesheets.length}
+            description="items awaiting approval"
+            to="/timesheets"
+            tone={summary.pendingTimesheets.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Leave"
+            value={summary.pendingLeaveRequests.length}
+            description="requests awaiting review"
+            to="/leave"
+            tone={summary.pendingLeaveRequests.length > 0 ? "warning" : "positive"}
+          />
+        </div>
+      </DashboardSection>
+    </>
   );
+}
+
+function PracticeManagerDashboard({
+  userName,
+  roleLabel,
+  selectedClinicName,
+  summary,
+  stats,
+}: DashboardProps) {
+  return (
+    <>
+      <DashboardIntro
+        title={`What ${selectedClinicName} needs today`}
+        subtitle={`Welcome, ${userName}. ${roleLabel} view focused on today's operational work.`}
+        actions={[
+          { label: "Inventory", to: "/inventory" },
+          { label: "Receive Stock", to: "/inventory" },
+          { label: "OCR Queue", to: "/suppliers" },
+          { label: "Purchase Orders", to: "/purchase-orders" },
+          { label: "Staff Rosters", to: "/roster" },
+          { label: "Timesheets", to: "/timesheets" },
+        ]}
+      />
+
+      <DashboardSection
+        title="Today’s Operational Summary"
+        subtitle="Prioritised work queues for the selected clinic."
+      >
+        <div className="analytics-cards-grid">
+          <MetricCard
+            title="Low Stock"
+            value={stats.lowStockItems.length}
+            description="items requiring stock review"
+            to="/inventory"
+            tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Pending OCR"
+            value={summary.pendingSupplierInvoices.length}
+            description="invoices waiting for review"
+            to="/suppliers"
+            tone={summary.pendingSupplierInvoices.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Purchase Orders"
+            value={stats.draftPurchaseOrderLines.length}
+            description="draft PO lines ready to action"
+            to="/purchase-orders"
+            tone={stats.draftPurchaseOrderLines.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Timesheets"
+            value={summary.pendingTimesheets.length}
+            description="approvals waiting"
+            to="/timesheets"
+            tone={summary.pendingTimesheets.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Leave"
+            value={summary.pendingLeaveRequests.length}
+            description="leave requests waiting"
+            to="/leave"
+            tone={summary.pendingLeaveRequests.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Receiving"
+            value="Ready"
+            description="scan deliveries as stock arrives"
+            to="/inventory"
+          />
+        </div>
+      </DashboardSection>
+
+      <DashboardSection title="Clinic Alerts" subtitle="Operational reminders for the day.">
+        <div className="analytics-cards-grid">
+          <MetricCard
+            title="Inventory Attention"
+            value={stats.lowStockItems.length > 0 ? "Review" : "Clear"}
+            description={
+              stats.lowStockItems.length > 0
+                ? "low stock items may need ordering"
+                : "no low stock items in the current list"
+            }
+            to="/inventory"
+            tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Attendance Checks"
+            value={summary.pendingCommissionChecks.length}
+            description="commission attendance records to verify"
+            to="/timesheets"
+            tone={summary.pendingCommissionChecks.length > 0 ? "warning" : "positive"}
+          />
+          <MetricCard
+            title="Roster"
+            value={summary.analytics?.roster.shiftsScheduled ?? "Open"}
+            description="scheduled shifts in the reporting window"
+            to="/roster"
+          />
+        </div>
+      </DashboardSection>
+    </>
+  );
+}
+
+function ClinicalStaffDashboard({
+  userName,
+  selectedClinicName,
+  summary,
+  stats,
+}: DashboardProps) {
+  return (
+    <>
+      <DashboardIntro
+        title={`Your day at ${selectedClinicName}`}
+        subtitle={`Welcome, ${userName}. Here are the essentials for your shift.`}
+        actions={[
+          { label: "Clock In / Out", to: "/timesheets" },
+          { label: "My Roster", to: "/my-shifts" },
+          { label: "Scan Inventory", to: "/inventory" },
+          { label: "Leave", to: "/leave" },
+        ]}
+      />
+
+      <DashboardSection
+        title="Today’s Work"
+        subtitle="Simple actions for clinical staff without executive or procurement detail."
+      >
+        <div className="analytics-cards-grid">
+          <MetricCard
+            title="Today’s Shift"
+            value={stats.openTimesheet ? "Clocked in" : "Ready"}
+            description={
+              stats.openTimesheet
+                ? "clock out when your shift ends"
+                : "check your roster or clock in"
+            }
+            to="/timesheets"
+            tone={stats.openTimesheet ? "warning" : "default"}
+          />
+          <MetricCard
+            title="Timesheets"
+            value={summary.pendingTimesheets.length}
+            description="your timesheet entries today"
+            to="/timesheets"
+          />
+          <MetricCard
+            title="Leave"
+            value={summary.pendingLeaveRequests.length}
+            description="your pending leave requests"
+            to="/leave"
+          />
+          <MetricCard
+            title="Stock Tasks"
+            value="Scan"
+            description="deduct or receive stock as directed"
+            to="/inventory"
+          />
+        </div>
+      </DashboardSection>
+    </>
+  );
+}
+
+function RoleDashboard({
+  role,
+  props,
+}: {
+  role: UserRole;
+  props: DashboardProps;
+}) {
+  if (role === "owner_admin") {
+    return <OwnerAdminDashboard {...props} />;
+  }
+
+  if (role === "group_practice_manager") {
+    return <PracticeManagerDashboard {...props} />;
+  }
+
+  return <ClinicalStaffDashboard {...props} />;
 }
 
 export function HomePage() {
   const { user } = useAuth();
-  const { selectedClinic } = useSelectedClinic();
+  const { selectedClinic, availableClinics } = useSelectedClinic();
   const selectedClinicId = selectedClinic?.id;
   const [summary, setSummary] = useState<DailySummary>(EMPTY_SUMMARY);
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-
-  const canSeeManagerWorkflows = user ? canViewAnalytics(user.role) : false;
-  const canReviewSuppliers = user ? canManageSuppliers(user.role) : false;
-  const canReviewPayroll = user ? canManagePayroll(user.role) : false;
-  const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
 
   useEffect(() => {
     if (!user || !selectedClinicId) {
@@ -191,117 +578,16 @@ export function HomePage() {
     };
   }, [selectedClinicId, user]);
 
-  const priorityCards = useMemo(() => {
-    const lowStockCount = summary.inventoryItems.filter((item) => item.isBelowReorderPoint).length;
-    const draftPoLines = summary.purchaseOrderLines.filter(
-      (line) => line.orderStatus === "draft",
-    ).length;
-    const cards: SummaryCardProps[] = [
-      {
-        title: "Inventory",
-        value: lowStockCount,
-        description:
-          lowStockCount > 0
-            ? "items below reorder point need review"
-            : "review stock and receive deliveries",
-        to: "/inventory",
-        tone: lowStockCount > 0 ? "warning" : "default",
-      },
-    ];
-
-    if (canReviewSuppliers) {
-      cards.push({
-        title: "Invoice OCR",
-        value: summary.pendingSupplierInvoices.length,
-        description:
-          summary.pendingSupplierInvoices.length > 0
-            ? "supplier invoices waiting for review"
-            : "upload and review supplier invoices",
-        to: "/suppliers",
-        tone: summary.pendingSupplierInvoices.length > 0 ? "warning" : "default",
-      });
-    }
-
-    if (canReviewPurchaseOrders) {
-      cards.push({
-        title: "Purchase Orders",
-        value: draftPoLines,
-        description:
-          draftPoLines > 0
-            ? "draft lines ready for supplier ordering"
-            : "review reorder-generated purchase orders",
-        to: "/purchase-orders",
-        tone: draftPoLines > 0 ? "warning" : "default",
-      });
-    }
-
-    if (canReviewPayroll) {
-      cards.push(
-        {
-          title: "Timesheets",
-          value: summary.pendingTimesheets.length,
-          description:
-            summary.pendingTimesheets.length > 0
-              ? "timesheets waiting for approval"
-              : "approve hours and review staff entries",
-          to: "/timesheets",
-          tone: summary.pendingTimesheets.length > 0 ? "warning" : "default",
-        },
-        {
-          title: "Leave",
-          value: summary.pendingLeaveRequests.length,
-          description:
-            summary.pendingLeaveRequests.length > 0
-              ? "leave requests awaiting review"
-              : "review leave and staff availability",
-          to: "/leave",
-          tone: summary.pendingLeaveRequests.length > 0 ? "warning" : "default",
-        },
-      );
-    } else {
-      const openTimesheet = summary.pendingTimesheets.find((entry) => !entry.clockOutAt);
-      cards.push(
-        {
-          title: "My Shift",
-          value: openTimesheet ? "Clocked in" : "Ready",
-          description: openTimesheet ? "clock out when your shift ends" : "clock in or view today",
-          to: "/timesheets",
-          tone: openTimesheet ? "warning" : "default",
-        },
-        {
-          title: "My Leave",
-          value: summary.pendingLeaveRequests.length,
-          description:
-            summary.pendingLeaveRequests.length > 0
-              ? "pending leave requests"
-              : "request or review leave",
-          to: "/leave",
-        },
-      );
-    }
-
-    if (summary.pendingCommissionChecks.length > 0) {
-      cards.push({
-        title: "Attendance Checks",
-        value: summary.pendingCommissionChecks.length,
-        description: "commission attendance records need verification",
-        to: "/timesheets",
-        tone: "warning",
-      });
-    }
-
-    return cards;
-  }, [
-    canReviewPayroll,
-    canReviewPurchaseOrders,
-    canReviewSuppliers,
-    summary.inventoryItems,
-    summary.pendingCommissionChecks.length,
-    summary.pendingLeaveRequests.length,
-    summary.pendingSupplierInvoices.length,
-    summary.pendingTimesheets,
-    summary.purchaseOrderLines,
-  ]);
+  const stats = useMemo<DashboardStats>(
+    () => ({
+      lowStockItems: summary.inventoryItems.filter((item) => item.isBelowReorderPoint),
+      draftPurchaseOrderLines: summary.purchaseOrderLines.filter(
+        (line) => line.orderStatus === "draft",
+      ),
+      openTimesheet: summary.pendingTimesheets.find((entry) => !entry.clockOutAt) ?? null,
+    }),
+    [summary.inventoryItems, summary.pendingTimesheets, summary.purchaseOrderLines],
+  );
 
   if (!user) {
     return null;
@@ -317,123 +603,34 @@ export function HomePage() {
     );
   }
 
-  const analytics = summary.analytics;
-  const roleLabel = ROLE_LABELS[user.role];
-  const lowStockCount = summary.inventoryItems.filter((item) => item.isBelowReorderPoint).length;
-
   return (
     <AppShell>
-      <section className="status-card">
-        <div className="status-card__header">
-          <div>
-            <h2>Today at {selectedClinic.name}</h2>
-            <p className="inventory-page__subtitle">
-              Welcome, {formatUserName(user)}. {roleLabel} daily priorities are ready below.
-            </p>
-          </div>
-          <div className="inventory-page__actions">
-            <Link to="/inventory" className="button-link">
-              Receive stock
-            </Link>
-            {canSeeManagerWorkflows ? (
-              <Link to="/analytics" className="link-button">
-                Full analytics
-              </Link>
-            ) : (
-              <Link to="/my-shifts" className="link-button">
-                My shifts
-              </Link>
-            )}
-          </div>
-        </div>
-
-        {isLoading ? <p className="loading-message">Loading today&apos;s priorities…</p> : null}
-        {errors.length > 0 ? (
-          <p className="status-card__error" role="alert">
-            Some daily data could not be loaded: {errors.join(", ")}. You can still use the
-            workflow links below.
-          </p>
-        ) : null}
-      </section>
-
-      {analytics && canSeeManagerWorkflows ? (
+      {isLoading ? (
         <section className="status-card">
-          <h2>Operational KPIs</h2>
-          <dl className="supplier-kpi-bar">
-            <div className="supplier-kpi-bar__stat">
-              <dt>7-day revenue</dt>
-              <dd>{centsToDollars(analytics.revenue.totalRevenueCents)}</dd>
-            </div>
-            <div className="supplier-kpi-bar__stat">
-              <dt>Outstanding</dt>
-              <dd
-                className={
-                  analytics.revenue.outstandingCents > 0
-                    ? "supplier-kpi-bar__dd--pending"
-                    : undefined
-                }
-              >
-                {centsToDollars(analytics.revenue.outstandingCents)}
-              </dd>
-            </div>
-            <div className="supplier-kpi-bar__stat">
-              <dt>Low stock</dt>
-              <dd className={lowStockCount > 0 ? "supplier-kpi-bar__dd--pending" : undefined}>
-                {lowStockCount}
-              </dd>
-            </div>
-            <div className="supplier-kpi-bar__stat">
-              <dt>Rostered shifts</dt>
-              <dd>{analytics.roster.shiftsScheduled}</dd>
-            </div>
-          </dl>
+          <p className="loading-message">Loading role dashboard…</p>
         </section>
       ) : null}
 
-      <section className="status-card">
-        <h2>Today&apos;s Priorities</h2>
-        <div className="analytics-cards-grid">
-          {priorityCards.map((card) => (
-            <SummaryCard key={card.title} {...card} />
-          ))}
-        </div>
-      </section>
+      {errors.length > 0 ? (
+        <section className="status-card">
+          <p className="status-card__error" role="alert">
+            Some dashboard data could not be loaded: {errors.join(", ")}. Available actions remain
+            below.
+          </p>
+        </section>
+      ) : null}
 
-      <section className="status-card">
-        <h2>Common Workflows</h2>
-        <div className="inventory-page__actions">
-          <Link to="/inventory" className="button-link">
-            Review inventory
-          </Link>
-          <Link to="/inventory" className="button-link">
-            Receive deliveries
-          </Link>
-          {canReviewSuppliers ? (
-            <>
-              <Link to="/suppliers" className="button-link">
-                Upload invoices
-              </Link>
-              <Link to="/supplier-intelligence" className="button-link">
-                Review supplier pricing
-              </Link>
-            </>
-          ) : null}
-          {canReviewPurchaseOrders ? (
-            <Link to="/purchase-orders" className="button-link">
-              Create purchase orders
-            </Link>
-          ) : null}
-          <Link to="/roster" className="button-link">
-            Review roster
-          </Link>
-          <Link to="/timesheets" className="button-link">
-            {canReviewPayroll ? "Approve timesheets" : "My timesheet"}
-          </Link>
-          <Link to="/leave" className="button-link">
-            {canReviewPayroll ? "Review leave" : "My leave"}
-          </Link>
-        </div>
-      </section>
+      <RoleDashboard
+        role={user.role}
+        props={{
+          userName: formatUserName(user),
+          roleLabel: ROLE_LABELS[user.role],
+          selectedClinicName: selectedClinic.name,
+          availableClinicCount: availableClinics.length,
+          summary,
+          stats,
+        }}
+      />
     </AppShell>
   );
 }
