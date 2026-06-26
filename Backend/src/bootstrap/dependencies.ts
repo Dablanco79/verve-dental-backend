@@ -476,6 +476,7 @@ export async function createAppDependencies(
     inventoryRepository,
     rosterRepository,
     userRepository,
+    clinicRepository,
   );
 
   async function shutdown(): Promise<void> {

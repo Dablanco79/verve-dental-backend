@@ -6,7 +6,7 @@ import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
-import type { DashboardKpis } from "../types/analytics.js";
+import type { AllClinicsDashboardKpis, DashboardKpis } from "../types/analytics.js";
 import type { InventoryItem, PurchaseOrderLine } from "../types/inventory.js";
 import type { LeaveRequest, TimesheetEntry } from "../types/payroll.js";
 import type { SupplierInvoice } from "../types/supplier.js";
@@ -22,7 +22,7 @@ import {
 const apiClient = createApiClient(loadConfig());
 
 type DailySummary = {
-  analytics: DashboardKpis | null;
+  analytics: DashboardKpis | AllClinicsDashboardKpis | null;
   inventoryItems: InventoryItem[];
   pendingSupplierInvoices: SupplierInvoice[];
   purchaseOrderLines: PurchaseOrderLine[];
@@ -44,6 +44,7 @@ type DashboardProps = {
   availableClinicCount: number;
   summary: DailySummary;
   stats: DashboardStats;
+  isAllClinicsScope: boolean;
 };
 
 type DashboardCardTone = "default" | "positive" | "warning" | "danger";
@@ -81,6 +82,12 @@ function centsToDollars(cents: number): string {
     currency: "AUD",
     maximumFractionDigits: 0,
   }).format(cents / 100);
+}
+
+function isAllClinicsAnalytics(
+  analytics: DailySummary["analytics"],
+): analytics is AllClinicsDashboardKpis {
+  return analytics !== null && "scope" in analytics;
 }
 
 function formatUserName(user: NonNullable<ReturnType<typeof useAuth>["user"]>): string {
@@ -183,12 +190,16 @@ function OwnerAdminDashboard({
   availableClinicCount,
   summary,
   stats,
+  isAllClinicsScope,
 }: DashboardProps) {
   const analytics = summary.analytics;
   const clinicScope =
-    availableClinicCount > 1
+    isAllClinicsScope
+      ? `${String(availableClinicCount)} clinics included`
+      : availableClinicCount > 1
       ? `${String(availableClinicCount)} clinics available`
       : "Single clinic scope";
+  const allClinicsAnalytics = isAllClinicsAnalytics(analytics) ? analytics : null;
 
   return (
     <>
@@ -207,13 +218,17 @@ function OwnerAdminDashboard({
 
       <DashboardSection
         title="Executive KPIs"
-        subtitle="Existing operational data for the selected clinic."
+        subtitle={
+          isAllClinicsScope
+            ? "Organisation-wide operational data across all active clinics."
+            : "Existing operational data for the selected clinic."
+        }
       >
         <div className="analytics-cards-grid">
           <MetricCard
             title="Clinic Scope"
             value={availableClinicCount}
-            description="clinics available to review"
+            description={isAllClinicsScope ? "clinics included in this view" : "clinics available to review"}
           />
           <MetricCard
             title="Inventory Health"
@@ -241,7 +256,7 @@ function OwnerAdminDashboard({
               <MetricCard
                 title="7-day Revenue"
                 value={centsToDollars(analytics.revenue.totalRevenueCents)}
-                description="selected clinic revenue"
+                description={isAllClinicsScope ? "organisation-wide revenue" : "selected clinic revenue"}
                 to="/analytics"
               />
               <MetricCard
@@ -258,7 +273,11 @@ function OwnerAdminDashboard({
 
       <DashboardSection
         title="Recent Operational Activity"
-        subtitle="Signals already available from inventory, purchasing, OCR, and workforce queues."
+        subtitle={
+          isAllClinicsScope
+            ? "Aggregated signals from inventory, purchasing, OCR, and workforce queues."
+            : "Signals already available from inventory, purchasing, OCR, and workforce queues."
+        }
       >
         <div className="analytics-cards-grid">
           <MetricCard
@@ -289,6 +308,25 @@ function OwnerAdminDashboard({
           />
         </div>
       </DashboardSection>
+
+      {allClinicsAnalytics ? (
+        <DashboardSection
+          title="Clinic Breakdown"
+          subtitle="Per-clinic analytics rollup for executive drill-down."
+        >
+          <div className="analytics-cards-grid">
+            {allClinicsAnalytics.clinics.map((clinic) => (
+              <MetricCard
+                key={clinic.clinicId}
+                title={clinic.clinicName}
+                value={centsToDollars(clinic.kpis.revenue.totalRevenueCents)}
+                description={`${String(clinic.kpis.inventory.lowStockCount)} low-stock items`}
+                tone={clinic.kpis.inventory.lowStockCount > 0 ? "warning" : "positive"}
+              />
+            ))}
+          </div>
+        </DashboardSection>
+      ) : null}
     </>
   );
 }
@@ -475,26 +513,121 @@ function RoleDashboard({
 
 export function HomePage() {
   const { user } = useAuth();
-  const { selectedClinic, availableClinics } = useSelectedClinic();
+  const { selectedClinic, selectedDashboardScope, availableClinics } = useSelectedClinic();
   const selectedClinicId = selectedClinic?.id;
   const [summary, setSummary] = useState<DailySummary>(EMPTY_SUMMARY);
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (!user || !selectedClinicId) {
+    if (!user || (!selectedClinicId && selectedDashboardScope?.type !== "all_clinics")) {
       return;
     }
 
     let cancelled = false;
     const activeUser = user;
-    const activeClinicId = selectedClinicId;
+    const activeClinicId =
+      selectedDashboardScope?.type === "clinic"
+        ? selectedDashboardScope.clinic.id
+        : selectedClinicId;
+    const activeDashboardScope = selectedDashboardScope;
+    const activeClinics = availableClinics;
     const today = todayLocalDate();
 
     setIsLoading(true);
     setErrors([]);
 
     async function loadDailySummary(): Promise<void> {
+      if (activeDashboardScope?.type === "all_clinics" && activeUser.role === "owner_admin") {
+        const [
+          analyticsResult,
+          inventoryResults,
+          supplierInvoiceResults,
+          purchaseOrderResults,
+          timesheetResults,
+          commissionResults,
+          leaveResults,
+        ] = await Promise.all([
+          Promise.allSettled([
+            apiClient.getAllClinicsAnalyticsDashboard({ periodDays: 7 }),
+          ]),
+          Promise.allSettled(activeClinics.map((clinic) => apiClient.listInventory(clinic.id))),
+          Promise.allSettled(
+            activeClinics.map((clinic) =>
+              apiClient.listClinicSupplierInvoices(clinic.id, {
+                status: "pending_review",
+                limit: 50,
+              }),
+            ),
+          ),
+          Promise.allSettled(activeClinics.map((clinic) => apiClient.listPurchaseOrders(clinic.id))),
+          Promise.allSettled(
+            activeClinics.map((clinic) =>
+              apiClient.listTimesheets(clinic.id, { pendingApprovalOnly: true }),
+            ),
+          ),
+          Promise.allSettled(
+            activeClinics.map((clinic) =>
+              apiClient.listTimesheets(clinic.id, {
+                attendanceStatus: "pending_verification",
+                payrollType: "commission_log",
+              }),
+            ),
+          ),
+          Promise.allSettled(
+            activeClinics.map((clinic) => apiClient.listLeave(clinic.id, { status: "pending" })),
+          ),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        const nextErrors: string[] = [];
+
+        function flattenResults<T>(
+          results: PromiseSettledResult<T[]>[],
+          label: string,
+        ): T[] {
+          const values: T[] = [];
+          for (const result of results) {
+            if (result.status === "fulfilled") {
+              values.push(...result.value);
+            } else {
+              nextErrors.push(label);
+            }
+          }
+          return values;
+        }
+
+        const analytics = analyticsResult[0];
+        setSummary({
+          analytics: analytics.status === "fulfilled" ? analytics.value : null,
+          inventoryItems: flattenResults(inventoryResults, "Inventory"),
+          pendingSupplierInvoices: flattenResults(
+            supplierInvoiceResults,
+            "Pending invoice review",
+          ),
+          purchaseOrderLines: flattenResults(purchaseOrderResults, "Purchase orders"),
+          pendingTimesheets: flattenResults(timesheetResults, "Timesheets"),
+          pendingCommissionChecks: flattenResults(
+            commissionResults,
+            "Commission attendance",
+          ),
+          pendingLeaveRequests: flattenResults(leaveResults, "Leave requests"),
+        });
+        if (analytics.status === "rejected") {
+          nextErrors.push("Operational KPIs");
+        }
+        setErrors(nextErrors);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!activeClinicId) {
+        return;
+      }
+
       const [
         analyticsResult,
         inventoryResult,
@@ -576,7 +709,7 @@ export function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedClinicId, user]);
+  }, [availableClinics, selectedClinicId, selectedDashboardScope, user]);
 
   const stats = useMemo<DashboardStats>(
     () => ({
@@ -588,6 +721,13 @@ export function HomePage() {
     }),
     [summary.inventoryItems, summary.pendingTimesheets, summary.purchaseOrderLines],
   );
+  const isAllClinicsScope =
+    user?.role === "owner_admin" && selectedDashboardScope?.type === "all_clinics";
+  const dashboardClinicName = isAllClinicsScope
+    ? "All Clinics"
+    : selectedDashboardScope?.type === "clinic"
+    ? selectedDashboardScope.clinic.name
+    : selectedClinic?.name ?? "";
 
   if (!user) {
     return null;
@@ -625,10 +765,11 @@ export function HomePage() {
         props={{
           userName: formatUserName(user),
           roleLabel: ROLE_LABELS[user.role],
-          selectedClinicName: selectedClinic.name,
+          selectedClinicName: dashboardClinicName,
           availableClinicCount: availableClinics.length,
           summary,
           stats,
+          isAllClinicsScope,
         }}
       />
     </AppShell>

@@ -42,6 +42,18 @@ type DashboardKpis = {
   roster: { shiftsScheduled: number; uniqueStaffCount: number };
 };
 
+type AllClinicsDashboardKpis = {
+  scope: "all_clinics";
+  periodDays: number;
+  periodFrom: string;
+  periodTo: string;
+  clinicCount: number;
+  revenue: { totalRevenueCents: number; invoiceCount: number };
+  inventory: { totalItems: number; lowStockCount: number };
+  roster: { shiftsScheduled: number; uniqueStaffCount: number };
+  clinics: { clinicId: string; clinicName: string; kpis: DashboardKpis }[];
+};
+
 type RevenueReport = {
   clinicId: string;
   months: number;
@@ -77,6 +89,7 @@ type AuditEventsPage = {
 
 const BASE = (clinicId: string) =>
   `/api/v1/clinics/${clinicId}/analytics`;
+const ALL_CLINICS_BASE = "/api/v1/analytics/dashboard/all";
 
 /** Convenience: unauthenticated GET */
 async function unauthGet(app: Awaited<ReturnType<typeof createTestApp>>, path: string) {
@@ -181,6 +194,71 @@ describe("Analytics API — authentication and RBAC", () => {
 
     expect(res.status).toBe(400);
     expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/analytics/dashboard/all
+// ---------------------------------------------------------------------------
+
+describe("GET /analytics/dashboard/all", () => {
+  it("returns all-clinics dashboard data for owner_admin", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .get(`${ALL_CLINICS_BASE}?periodDays=7`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: AllClinicsDashboardKpis }).data;
+    expect(data.scope).toBe("all_clinics");
+    expect(data.periodDays).toBe(7);
+    expect(data.clinicCount).toBeGreaterThanOrEqual(2);
+    expect(Array.isArray(data.clinics)).toBe(true);
+    expect(data.clinics.map((clinic) => clinic.clinicId)).toContain(SEED_CLINIC_A_ID);
+    expect(data.clinics.map((clinic) => clinic.clinicId)).toContain(SEED_CLINIC_B_ID);
+    expect(typeof data.revenue.totalRevenueCents).toBe("number");
+    expect(typeof data.inventory.lowStockCount).toBe("number");
+    expect(typeof data.roster.shiftsScheduled).toBe("number");
+  });
+
+  it("returns 403 for group_practice_manager", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .get(ALL_CLINICS_BASE)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("FORBIDDEN");
+  });
+
+  it("returns 403 for clinical_staff", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const res = await request(app)
+      .get(ALL_CLINICS_BASE)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("FORBIDDEN");
+  });
+
+  it("leaves the existing clinic-scoped dashboard endpoint unchanged", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .get(`${BASE(SEED_CLINIC_A_ID)}/dashboard?periodDays=7`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    const data = (res.body as { data: DashboardKpis }).data;
+    expect(data.clinicId).toBe(SEED_CLINIC_A_ID);
+    expect(data.periodDays).toBe(7);
   });
 });
 

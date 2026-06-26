@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HomePage } from "../src/pages/HomePage.js";
-import type { DashboardKpis } from "../src/types/analytics.js";
+import type { AllClinicsDashboardKpis, DashboardKpis } from "../src/types/analytics.js";
 import type { InventoryItem, PurchaseOrderLine } from "../src/types/inventory.js";
 import type { LeaveRequest, TimesheetEntry } from "../src/types/payroll.js";
 import type { SupplierInvoice } from "../src/types/supplier.js";
@@ -22,6 +22,7 @@ const {
   authTestState,
   selectedClinicState,
   mockGetAnalyticsDashboard,
+  mockGetAllClinicsAnalyticsDashboard,
   mockListInventory,
   mockListSupplierInvoices,
   mockListPurchaseOrders,
@@ -31,10 +32,23 @@ const {
   mockListMyLeave,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
-  const selectedClinicState = {
+  const selectedClinicState: {
+    selectedClinic: { id: string; name: string };
+    selectedDashboardScope:
+      | { type: "all_clinics" }
+      | { type: "clinic"; clinic: { id: string; name: string } };
+    availableClinics: { id: string; name: string }[];
+  } = {
     selectedClinic: {
       id: "11111111-1111-4111-8111-111111111111",
       name: "Verve Dental Clinic A",
+    },
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Verve Dental Clinic A",
+      },
     },
     availableClinics: [
       {
@@ -48,6 +62,7 @@ const {
     authTestState,
     selectedClinicState,
     mockGetAnalyticsDashboard: vi.fn(),
+    mockGetAllClinicsAnalyticsDashboard: vi.fn(),
     mockListInventory: vi.fn(),
     mockListSupplierInvoices: vi.fn(),
     mockListPurchaseOrders: vi.fn(),
@@ -71,18 +86,22 @@ vi.mock("../src/auth/useAuth.js", () => ({
 vi.mock("../src/clinic/useSelectedClinic.js", () => ({
   useSelectedClinic: () => ({
     selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
     availableClinics: selectedClinicState.availableClinics,
     canSwitchClinics: selectedClinicState.availableClinics.length > 1,
+    canSelectAllClinics: false,
     isLoadingClinics: false,
     clinicError: null,
     hasClinicProvider: true,
     setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     getAnalyticsDashboard: mockGetAnalyticsDashboard,
+    getAllClinicsAnalyticsDashboard: mockGetAllClinicsAnalyticsDashboard,
     listInventory: mockListInventory,
     listClinicSupplierInvoices: mockListSupplierInvoices,
     listPurchaseOrders: mockListPurchaseOrders,
@@ -117,6 +136,52 @@ const dashboardKpis: DashboardKpis = {
     shiftsCancelled: 0,
     uniqueStaffCount: 4,
   },
+};
+
+const allClinicsDashboardKpis: AllClinicsDashboardKpis = {
+  scope: "all_clinics",
+  periodDays: 7,
+  periodFrom: "2026-06-20",
+  periodTo: "2026-06-26",
+  clinicCount: 2,
+  revenue: {
+    totalRevenueCents: 250000,
+    paidCents: 200000,
+    outstandingCents: 50000,
+    overdueCount: 2,
+    invoiceCount: 24,
+  },
+  inventory: {
+    totalItems: 4,
+    lowStockCount: 2,
+    adjustmentsCount: 8,
+    topConsumedSkus: [{ sku: "VRV-GLV-001", name: "Gloves", unitsConsumed: 20 }],
+  },
+  roster: {
+    shiftsScheduled: 16,
+    shiftsCompleted: 12,
+    shiftsCancelled: 0,
+    uniqueStaffCount: 8,
+  },
+  clinics: [
+    {
+      clinicId: TEST_CLINIC_ID,
+      clinicName: TEST_CLINIC_NAME,
+      kpis: dashboardKpis,
+    },
+    {
+      clinicId: TEST_CLINIC_B_ID,
+      clinicName: TEST_CLINIC_B_NAME,
+      kpis: {
+        ...dashboardKpis,
+        clinicId: TEST_CLINIC_B_ID,
+        revenue: {
+          ...dashboardKpis.revenue,
+          totalRevenueCents: 125000,
+        },
+      },
+    },
+  ],
 };
 
 const inventoryItems: InventoryItem[] = [
@@ -242,9 +307,14 @@ describe("HomePage role dashboards", () => {
     authTestState.user = createManagerUser();
     authTestState.isLoading = false;
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+    };
     selectedClinicState.availableClinics = [{ id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME }];
 
     mockGetAnalyticsDashboard.mockReset();
+    mockGetAllClinicsAnalyticsDashboard.mockReset();
     mockListInventory.mockReset();
     mockListSupplierInvoices.mockReset();
     mockListPurchaseOrders.mockReset();
@@ -254,6 +324,7 @@ describe("HomePage role dashboards", () => {
     mockListMyLeave.mockReset();
 
     mockGetAnalyticsDashboard.mockResolvedValue(dashboardKpis);
+    mockGetAllClinicsAnalyticsDashboard.mockResolvedValue(allClinicsDashboardKpis);
     mockListInventory.mockResolvedValue(inventoryItems);
     mockListSupplierInvoices.mockResolvedValue([pendingInvoice]);
     mockListPurchaseOrders.mockResolvedValue([draftPurchaseOrderLine]);
@@ -266,6 +337,10 @@ describe("HomePage role dashboards", () => {
   it("renders the owner admin executive dashboard", async () => {
     authTestState.user = createAdminUser();
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    };
     selectedClinicState.availableClinics = [
       { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
       { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
@@ -285,6 +360,31 @@ describe("HomePage role dashboards", () => {
     expect(mockGetAnalyticsDashboard).toHaveBeenCalledWith(TEST_CLINIC_B_ID, {
       periodDays: 7,
     });
+  });
+
+  it("renders the owner admin all-clinics dashboard scope", async () => {
+    authTestState.user = createAdminUser();
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    selectedClinicState.availableClinics = [
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    ];
+
+    renderHomePage();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Executive overview for All Clinics",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Organisation-wide operational data across all active clinics."))
+      .toBeInTheDocument();
+    expect(screen.getByText("Clinic Breakdown")).toBeInTheDocument();
+    expect(mockGetAllClinicsAnalyticsDashboard).toHaveBeenCalledWith({ periodDays: 7 });
+    expect(mockGetAnalyticsDashboard).not.toHaveBeenCalled();
+    expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
   });
 
   it("renders the group practice manager action dashboard", async () => {
@@ -324,6 +424,10 @@ describe("HomePage role dashboards", () => {
   it("keeps selected clinic context compatible with dashboard loading", async () => {
     authTestState.user = createManagerUser();
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    };
 
     renderHomePage();
 

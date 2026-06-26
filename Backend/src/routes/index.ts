@@ -23,7 +23,10 @@ import {
   clinicIdParamsSchema,
 } from "../middleware/validationMiddleware.js";
 import { createClinicService } from "../services/clinicService.js";
-import { createAnalyticsRouter } from "./analyticsRoutes.js";
+import {
+  createAnalyticsRouter,
+  createGlobalAnalyticsRouter,
+} from "./analyticsRoutes.js";
 import { createBillingRouter } from "./billingRoutes.js";
 import { createClinicRouter } from "./clinicRoutes.js";
 import { createForecastRouter } from "./forecastRoutes.js";
@@ -147,6 +150,10 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     requireRoles("owner_admin"),
     asyncHandler((req, res) => clinicHandlers.createClinic(req, res)),
   );
+
+  // Owner Admin all-clinics dashboard scope. This route intentionally lives
+  // outside /clinics/:clinicId so no synthetic clinic ID enters tenant-scoped routes.
+  router.use("/analytics", createGlobalAnalyticsRouter(deps));
 
   // rlsContext runs on all /clinics/:clinicId/* routes — sets the per-request
   // RLS session variable so installRlsPoolHook injects it on every DB checkout.

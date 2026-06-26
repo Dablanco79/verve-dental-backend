@@ -3,6 +3,7 @@ import { AppError } from "../types/errors.js";
 import type {
   AuditEvent,
   AuditEventsPage,
+  AllClinicsDashboardKpis,
   CreateAuditEventInput,
   DashboardKpis,
   InventoryReport,
@@ -15,6 +16,7 @@ import type {
 } from "../types/analytics.js";
 import type { AnalyticsRepository } from "../repositories/analyticsRepository.js";
 import type { BillingRepository } from "../repositories/billingRepository.js";
+import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
@@ -88,6 +90,7 @@ export function createAnalyticsService(
   inventoryRepository: InventoryRepository,
   rosterRepository: RosterRepository,
   userRepository: UserRepository,
+  clinicRepository: ClinicRepository,
 ) {
   // ── Audit trail ────────────────────────────────────────────────────────────
 
@@ -226,6 +229,101 @@ export function createAnalyticsService(
       revenue: revenueSummary,
       inventory: inventorySummary,
       roster: rosterSummary,
+    };
+  }
+
+  async function getAllClinicsDashboardKpis(
+    caller: AuthenticatedUser,
+    periodDays = 30,
+  ): Promise<AllClinicsDashboardKpis> {
+    if (caller.role !== "owner_admin") {
+      throw new AppError(
+        403,
+        "ANALYTICS_FORBIDDEN",
+        "Only owner administrators can access all-clinics analytics",
+      );
+    }
+
+    const clampedDays = Math.min(Math.max(periodDays, 1), 365);
+    const since = periodStartDate(clampedDays);
+    const clinics = await clinicRepository.findAll();
+    const breakdowns = await Promise.all(
+      clinics.map(async (clinic) => ({
+        clinicId: clinic.id,
+        clinicName: clinic.name,
+        kpis: await getDashboardKpis(caller, clinic.id, clampedDays),
+      })),
+    );
+
+    const topConsumedBySku = new Map<
+      string,
+      { sku: string; name: string; unitsConsumed: number }
+    >();
+
+    for (const breakdown of breakdowns) {
+      for (const item of breakdown.kpis.inventory.topConsumedSkus) {
+        const key = item.sku;
+        const existing = topConsumedBySku.get(key);
+        topConsumedBySku.set(key, {
+          sku: item.sku,
+          name: existing?.name ?? item.name,
+          unitsConsumed: (existing?.unitsConsumed ?? 0) + item.unitsConsumed,
+        });
+      }
+    }
+
+    return {
+      scope: "all_clinics",
+      periodDays: clampedDays,
+      periodFrom: breakdowns[0]?.kpis.periodFrom ?? toISODateString(since),
+      periodTo: breakdowns[0]?.kpis.periodTo ?? toISODateString(new Date()),
+      clinicCount: breakdowns.length,
+      revenue: {
+        totalRevenueCents: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.revenue.totalRevenueCents,
+          0,
+        ),
+        paidCents: breakdowns.reduce((sum, item) => sum + item.kpis.revenue.paidCents, 0),
+        outstandingCents: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.revenue.outstandingCents,
+          0,
+        ),
+        overdueCount: breakdowns.reduce((sum, item) => sum + item.kpis.revenue.overdueCount, 0),
+        invoiceCount: breakdowns.reduce((sum, item) => sum + item.kpis.revenue.invoiceCount, 0),
+      },
+      inventory: {
+        totalItems: breakdowns.reduce((sum, item) => sum + item.kpis.inventory.totalItems, 0),
+        lowStockCount: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.inventory.lowStockCount,
+          0,
+        ),
+        adjustmentsCount: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.inventory.adjustmentsCount,
+          0,
+        ),
+        topConsumedSkus: Array.from(topConsumedBySku.values())
+          .sort((a, b) => b.unitsConsumed - a.unitsConsumed)
+          .slice(0, 5),
+      },
+      roster: {
+        shiftsScheduled: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.roster.shiftsScheduled,
+          0,
+        ),
+        shiftsCompleted: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.roster.shiftsCompleted,
+          0,
+        ),
+        shiftsCancelled: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.roster.shiftsCancelled,
+          0,
+        ),
+        uniqueStaffCount: breakdowns.reduce(
+          (sum, item) => sum + item.kpis.roster.uniqueStaffCount,
+          0,
+        ),
+      },
+      clinics: breakdowns,
     };
   }
 
@@ -397,6 +495,7 @@ export function createAnalyticsService(
     listAuditEvents,
     getAuditEvent,
     getDashboardKpis,
+    getAllClinicsDashboardKpis,
     getRevenueReport,
     getInventoryReport,
     getStaffReport,

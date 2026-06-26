@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/useAuth.js";
+import { ALL_CLINICS_DASHBOARD_SCOPE } from "../../clinic/clinicContext.js";
 import { useSelectedClinic } from "../../clinic/useSelectedClinic.js";
 import {
   canManageBilling,
@@ -34,14 +35,24 @@ export function AppShell({ children }: AppShellProps) {
   const { user, logout } = useAuth();
   const {
     selectedClinic,
+    selectedDashboardScope,
     availableClinics,
     canSwitchClinics,
+    canSelectAllClinics,
     isLoadingClinics,
     clinicError,
     hasClinicProvider,
-    setSelectedClinicId,
+    setDashboardScope,
   } = useSelectedClinic();
   const navigate = useNavigate();
+  const scopeLabel =
+    selectedDashboardScope?.type === "all_clinics"
+      ? "All Clinics"
+      : selectedClinic?.name;
+  const selectorValue =
+    selectedDashboardScope?.type === "all_clinics"
+      ? ALL_CLINICS_DASHBOARD_SCOPE
+      : selectedClinic?.id ?? "";
 
   async function handleLogout(): Promise<void> {
     await logout();
@@ -118,7 +129,7 @@ export function AppShell({ children }: AppShellProps) {
           <h1>Operational Suite</h1>
           {hasClinicProvider && selectedClinic ? (
             <p className="app-shell__scope">
-              Current clinic: <strong>{selectedClinic.name}</strong>
+              Current scope: <strong>{scopeLabel}</strong>
             </p>
           ) : null}
         </div>
@@ -133,12 +144,19 @@ export function AppShell({ children }: AppShellProps) {
                 <select
                   id="clinic-scope"
                   className="app-shell__clinic-select"
-                  value={selectedClinic.id}
+                  value={selectorValue}
                   onChange={(event) => {
-                    setSelectedClinicId(event.target.value);
+                    if (event.target.value === ALL_CLINICS_DASHBOARD_SCOPE) {
+                      setDashboardScope({ type: "all_clinics" });
+                      return;
+                    }
+                    setDashboardScope({ type: "clinic", clinicId: event.target.value });
                   }}
                   disabled={isLoadingClinics}
                 >
+                  {canSelectAllClinics ? (
+                    <option value={ALL_CLINICS_DASHBOARD_SCOPE}>All Clinics</option>
+                  ) : null}
                   {availableClinics.map((clinic) => (
                     <option key={clinic.id} value={clinic.id}>
                       {clinic.name}

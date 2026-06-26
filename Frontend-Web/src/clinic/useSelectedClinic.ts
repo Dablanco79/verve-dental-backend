@@ -14,11 +14,14 @@ export function useSelectedClinic(): ClinicContextValue {
   const fallbackClinic = user ? homeClinicOption(user) : null;
   return {
     selectedClinic: fallbackClinic,
+    selectedDashboardScope: fallbackClinic ? { type: "clinic", clinic: fallbackClinic } : null,
     availableClinics: fallbackClinic ? [fallbackClinic] : [],
     canSwitchClinics: false,
+    canSelectAllClinics: false,
     isLoadingClinics: false,
     clinicError: null,
     hasClinicProvider: false,
     setSelectedClinicId: () => undefined,
+    setDashboardScope: () => undefined,
   };
 }

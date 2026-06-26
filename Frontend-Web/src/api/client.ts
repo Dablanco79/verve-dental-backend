@@ -48,6 +48,7 @@ import type {
 } from "../types/legalEntity.js";
 import type { Invoice, InvoiceFilters, RecordPaymentRequest } from "../types/billing.js";
 import type {
+  AllClinicsDashboardKpis,
   AuditEvent,
   AuditEventsFilters,
   AuditEventsPage,
@@ -701,6 +702,19 @@ export function createApiClient(config: AppConfig) {
     return request<DashboardKpis>(
       config,
       `/api/v1/clinics/${clinicId}/analytics/dashboard${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getAllClinicsAnalyticsDashboard(
+    filters: DashboardFilters = {},
+  ): Promise<AllClinicsDashboardKpis> {
+    const qs =
+      filters.periodDays !== undefined ? `?periodDays=${String(filters.periodDays)}` : "";
+    return request<AllClinicsDashboardKpis>(
+      config,
+      `/api/v1/analytics/dashboard/all${qs}`,
       {},
       requireAccessToken(),
     );
@@ -1617,6 +1631,7 @@ export function createApiClient(config: AppConfig) {
     getInvoice,
     recordPayment,
     getAnalyticsDashboard,
+    getAllClinicsAnalyticsDashboard,
     getAnalyticsRevenue,
     getAnalyticsInventory,
     getAnalyticsStaff,

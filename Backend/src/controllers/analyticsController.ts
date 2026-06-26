@@ -64,6 +64,21 @@ const auditEventsQuerySchema = z.object({
 export function createAnalyticsHandlers(service: AnalyticsService) {
   // ── GET /analytics/dashboard ──────────────────────────────────────────────
 
+  async function getAllClinicsDashboard(req: Request, res: Response): Promise<void> {
+    const parsedDays = periodDaysSchema.safeParse(
+      firstString(req.query["periodDays"]),
+    );
+    if (!parsedDays.success) {
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: "periodDays", message: "periodDays must be an integer between 1 and 365" },
+      ]);
+    }
+
+    if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+    const kpis = await service.getAllClinicsDashboardKpis(req.user, parsedDays.data);
+    res.status(200).json({ data: kpis });
+  }
+
   async function getDashboard(req: Request, res: Response): Promise<void> {
     const { clinicId } = req.params as { clinicId: string };
 
@@ -207,6 +222,7 @@ export function createAnalyticsHandlers(service: AnalyticsService) {
   }
 
   return {
+    getAllClinicsDashboard,
     getDashboard,
     getRevenue,
     getInventory,

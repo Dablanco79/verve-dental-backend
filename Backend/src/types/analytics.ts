@@ -99,6 +99,24 @@ export type DashboardKpis = {
   roster: DashboardRosterSummary;
 };
 
+export type AllClinicsDashboardBreakdown = {
+  clinicId: string;
+  clinicName: string;
+  kpis: DashboardKpis;
+};
+
+export type AllClinicsDashboardKpis = {
+  scope: "all_clinics";
+  periodDays: number;
+  periodFrom: string;
+  periodTo: string;
+  clinicCount: number;
+  revenue: DashboardRevenueSummary;
+  inventory: DashboardInventorySummary;
+  roster: DashboardRosterSummary;
+  clinics: AllClinicsDashboardBreakdown[];
+};
+
 // ─── Revenue report types ─────────────────────────────────────────────────────
 
 export type RevenueReportRow = {

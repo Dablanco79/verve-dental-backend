@@ -90,7 +90,8 @@ describe("AppShell navigation and clinic scope", () => {
     renderShell();
 
     const selector = await screen.findByRole("combobox", { name: "Clinic scope" });
-    expect(selector).toHaveValue(TEST_CLINIC_ID);
+    expect(selector).toHaveValue("all_clinics");
+    expect(screen.getByRole("option", { name: "All Clinics" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
     expect(screen.getByText("Procurement")).toBeInTheDocument();
 
@@ -100,11 +101,15 @@ describe("AppShell navigation and clinic scope", () => {
     expect(window.localStorage.getItem(`verve:selectedClinicId:${owner.id}`)).toBe(
       TEST_CLINIC_B_ID,
     );
+    expect(window.localStorage.getItem(`verve:dashboardScope:${owner.id}`)).toBe(
+      `clinic:${TEST_CLINIC_B_ID}`,
+    );
   });
 
   it("restores a persisted owner_admin clinic selection when it is still available", async () => {
     const owner = createAdminUser();
     window.localStorage.setItem(`verve:selectedClinicId:${owner.id}`, TEST_CLINIC_B_ID);
+    window.localStorage.setItem(`verve:dashboardScope:${owner.id}`, `clinic:${TEST_CLINIC_B_ID}`);
     setAuthenticatedUser(authTestState, owner);
     mockListClinics.mockResolvedValue([
       clinic({ id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME }),
@@ -118,6 +123,24 @@ describe("AppShell navigation and clinic scope", () => {
         TEST_CLINIC_B_ID,
       );
     });
+  });
+
+  it("allows owner_admin to return to the all-clinics dashboard scope", async () => {
+    const owner = createAdminUser();
+    window.localStorage.setItem(`verve:dashboardScope:${owner.id}`, `clinic:${TEST_CLINIC_B_ID}`);
+    setAuthenticatedUser(authTestState, owner);
+    mockListClinics.mockResolvedValue([
+      clinic({ id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME }),
+      clinic({ id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME }),
+    ]);
+
+    renderShell();
+
+    const selector = await screen.findByRole("combobox", { name: "Clinic scope" });
+    await userEvent.selectOptions(selector, "all_clinics");
+
+    expect(selector).toHaveValue("all_clinics");
+    expect(window.localStorage.getItem(`verve:dashboardScope:${owner.id}`)).toBe("all_clinics");
   });
 
   it("shows a fixed home clinic for group_practice_manager without cross-clinic switching", () => {

@@ -105,6 +105,26 @@ export type DashboardKpis = {
   roster: DashboardRosterSummary;
 };
 
+export type AllClinicsDashboardBreakdown = {
+  clinicId: string;
+  clinicName: string;
+  kpis: DashboardKpis;
+};
+
+export type AllClinicsDashboardKpis = {
+  scope: "all_clinics";
+  periodDays: number;
+  /** YYYY-MM-DD */
+  periodFrom: string;
+  /** YYYY-MM-DD */
+  periodTo: string;
+  clinicCount: number;
+  revenue: DashboardRevenueSummary;
+  inventory: DashboardInventorySummary;
+  roster: DashboardRosterSummary;
+  clinics: AllClinicsDashboardBreakdown[];
+};
+
 /** Query parameters accepted by GET /analytics/dashboard */
 export type DashboardFilters = {
   /** Number of trailing days to include (default decided by backend). */

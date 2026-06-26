@@ -38,6 +38,25 @@ const analyticsEventParamsSchema = z.object({
  *   GET /audit-events           — Paginated audit trail (?entityType=&actorId=&from=&to=&limit=&offset=)
  *   GET /audit-events/:eventId  — Single audit event detail
  */
+export function createGlobalAnalyticsRouter(deps: AppDependencies): Router {
+  const router = Router();
+  const authenticate = createAuthenticateMiddleware(
+    deps.authService,
+    deps.auditService,
+  );
+  const ownerOnly = requireRoles("owner_admin");
+  const h = createAnalyticsHandlers(deps.analyticsService);
+
+  router.get(
+    "/dashboard/all",
+    authenticate,
+    ownerOnly,
+    asyncHandler((req, res) => h.getAllClinicsDashboard(req, res)),
+  );
+
+  return router;
+}
+
 export function createAnalyticsRouter(deps: AppDependencies): Router {
   const router = Router({ mergeParams: true });
   const authenticate = createAuthenticateMiddleware(
