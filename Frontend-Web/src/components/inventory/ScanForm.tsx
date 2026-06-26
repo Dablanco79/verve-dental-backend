@@ -1,9 +1,12 @@
-import { useState, type SubmitEvent } from "react";
+import { useEffect, useState, type SubmitEvent } from "react";
 
 import type { BarcodeFormat, ScanMode } from "../../types/inventory.js";
 
 type ScanFormProps = {
   isSubmitting: boolean;
+  initialMode?: ScanMode;
+  initialReason?: string;
+  allowReceive?: boolean;
   onSubmit: (values: {
     barcodeValue: string;
     barcodeFormat?: BarcodeFormat;
@@ -22,13 +25,29 @@ const FORMAT_OPTIONS: Array<{ value: "" | BarcodeFormat; label: string }> = [
   { value: "data_matrix", label: "Data Matrix" },
 ];
 
-export function ScanForm({ isSubmitting, onSubmit }: ScanFormProps) {
-  const [scanMode, setScanMode] = useState<ScanMode>("deduct");
+export function ScanForm({
+  isSubmitting,
+  initialMode = "deduct",
+  initialReason = "",
+  allowReceive = true,
+  onSubmit,
+}: ScanFormProps) {
+  const [scanMode, setScanMode] = useState<ScanMode>(
+    initialMode === "receive" && allowReceive ? "receive" : "deduct",
+  );
   const [barcodeValue, setBarcodeValue] = useState("");
   const [barcodeFormat, setBarcodeFormat] = useState<"" | BarcodeFormat>("");
   const [quantity, setQuantity] = useState("1");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(initialReason);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setScanMode(initialMode === "receive" && allowReceive ? "receive" : "deduct");
+  }, [allowReceive, initialMode]);
+
+  useEffect(() => {
+    setReason(initialReason);
+  }, [initialReason]);
 
   async function handleSubmit(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -79,15 +98,17 @@ export function ScanForm({ isSubmitting, onSubmit }: ScanFormProps) {
         >
           Use stock
         </button>
-        <button
-          type="button"
-          className={scanMode === "receive" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active scan-mode-toggle__btn--receive" : "scan-mode-toggle__btn"}
-          onClick={() => {
-            setScanMode("receive");
-          }}
-        >
-          Receive stock
-        </button>
+        {allowReceive ? (
+          <button
+            type="button"
+            className={scanMode === "receive" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active scan-mode-toggle__btn--receive" : "scan-mode-toggle__btn"}
+            onClick={() => {
+              setScanMode("receive");
+            }}
+          >
+            Receive stock
+          </button>
+        ) : null}
       </div>
 
       <p className="scan-form__hint">

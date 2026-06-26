@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -42,7 +42,7 @@ export function PurchaseOrdersPage() {
   const [exportError, setExportError] = useState<string | null>(null);
 
   const loadLines = useCallback(async () => {
-    if (!user || !selectedClinicId) return;
+    if (!user || !selectedClinicId || !canManageUsers(user.role)) return;
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -164,8 +164,14 @@ export function PurchaseOrdersPage() {
             </p>
           </div>
         ) : (
-          <div className="inventory-table-wrapper">
-            <table className="inventory-table">
+          <>
+            <p className="po-summary__hint">
+              Submitted purchase orders can be used as a receiving checklist. Stock is
+              received through the Inventory scanner; purchase order status remains
+              unchanged until PO receiving is supported by the backend.
+            </p>
+            <div className="inventory-table-wrapper">
+              <table className="inventory-table">
               <thead>
                 <tr>
                   <th>Item</th>
@@ -217,14 +223,21 @@ export function PurchaseOrdersPage() {
                             : "Submit PO"}
                         </button>
                       ) : (
-                        <span className="inventory-table__meta">—</span>
+                        <Link
+                          to={`/inventory?mode=receive&reference=${encodeURIComponent(line.draftPurchaseOrderId)}`}
+                          className="link-button"
+                          aria-label={`Receive stock for ${line.itemName}`}
+                        >
+                          Receive stock
+                        </Link>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+          </>
         )}
 
         {draftPoIds.length > 0 && (

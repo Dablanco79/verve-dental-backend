@@ -208,6 +208,7 @@ function OwnerAdminDashboard({
         subtitle={`Welcome, ${userName}. ${roleLabel} view focused on operational risk and clinic performance. ${clinicScope}.`}
         actions={[
           { label: "Inventory", to: "/inventory" },
+          { label: "Receive Stock", to: "/inventory?mode=receive" },
           { label: "Suppliers", to: "/suppliers" },
           { label: "Purchase Orders", to: "/purchase-orders" },
           { label: "OCR Queue", to: "/suppliers" },
@@ -345,7 +346,7 @@ function PracticeManagerDashboard({
         subtitle={`Welcome, ${userName}. ${roleLabel} view focused on today's operational work.`}
         actions={[
           { label: "Inventory", to: "/inventory" },
-          { label: "Receive Stock", to: "/inventory" },
+          { label: "Receive Stock", to: "/inventory?mode=receive" },
           { label: "OCR Queue", to: "/suppliers" },
           { label: "Purchase Orders", to: "/purchase-orders" },
           { label: "Staff Rosters", to: "/roster" },
@@ -484,7 +485,7 @@ function ClinicalStaffDashboard({
           <MetricCard
             title="Stock Tasks"
             value="Scan"
-            description="deduct or receive stock as directed"
+            description="scan stock usage as directed"
             to="/inventory"
           />
         </div>

@@ -413,6 +413,55 @@ body {
   color: #0f5132;
 }
 
+.inventory-receiving-callout {
+  border: 1px solid #b6d4fe;
+  border-radius: 10px;
+  background: #e7f1ff;
+  color: #084298;
+  padding: 1rem;
+}
+
+.inventory-receiving-callout h3 {
+  margin: 0 0 0.35rem;
+}
+
+.inventory-receiving-callout p {
+  margin: 0;
+}
+
+.inventory-receiving-summary {
+  margin-top: 0.75rem;
+}
+
+.inventory-receiving-list {
+  margin-top: 1rem;
+}
+
+.inventory-receiving-list h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.inventory-receiving-list ul {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inventory-receiving-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
 .product-form {
   display: grid;
   gap: 1.25rem;
