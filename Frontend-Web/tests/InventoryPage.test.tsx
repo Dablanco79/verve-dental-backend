@@ -221,8 +221,26 @@ describe("InventoryPage", () => {
     expect(await screen.findByText("VRV-GLV-001")).toBeInTheDocument();
     expect(screen.getByText("1 below reorder point")).toBeInTheDocument();
     expect(screen.getAllByText("Low stock")).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: "Review PO" })).not.toBeInTheDocument();
 
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
+  });
+
+  it("links managers from low stock products to the matching purchase order review", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    expect(await screen.findByRole("heading", { name: "Low stock purchasing queue" }))
+      .toBeInTheDocument();
+
+    const reviewLinks = screen.getAllByRole("link", {
+      name: "Review purchase order for Nitrile Examination Gloves (Box 100)",
+    });
+    expect(reviewLinks[0]).toHaveAttribute(
+      "href",
+      "/purchase-orders?item=d1111111-1111-4111-8111-111111111111",
+    );
   });
 
   it("submits a barcode scan and shows a success notice", async () => {

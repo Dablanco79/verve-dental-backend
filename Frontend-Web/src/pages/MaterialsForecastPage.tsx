@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Navigate, Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { MaterialsForecastAlerts } from "../components/forecast/MaterialsForecastAlerts.js";
 import { MaterialsForecastCharts } from "../components/forecast/MaterialsForecastCharts.js";
 import { MaterialsForecastSummaryCards } from "../components/forecast/MaterialsForecastSummaryCards.js";
@@ -20,12 +21,15 @@ const DEFAULT_HORIZON: HorizonDays = 30;
 
 export function MaterialsForecastPage() {
   const { user } = useAuth();
+  const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
+  const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
   const [forecastDays, setForecastDays] = useState<HorizonDays>(DEFAULT_HORIZON);
 
   // Guard before passing clinicId to the hook — prevents API calls for
   // clinical_staff who will be redirected before seeing any data.
   const hasAccess = user !== null && canViewMaterialsForecast(user.role);
-  const clinicId = hasAccess ? user.homeClinicId : undefined;
+  const clinicId = hasAccess && !isAllClinicsScope ? selectedClinicId : undefined;
 
   const { projections, alerts, summary, isLoading, error, refetch } = useMaterialsForecast(
     clinicId,
@@ -36,6 +40,20 @@ export function MaterialsForecastPage() {
 
   if (!canViewMaterialsForecast(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view materials forecast</h2>
+          <p>
+            Materials forecasts depend on clinic inventory and roster demand.
+            Choose a real clinic from Clinic scope before reviewing reorder planning.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   const hasAlerts = alerts !== null && alerts.length > 0;
@@ -51,7 +69,7 @@ export function MaterialsForecastPage() {
           <div>
             <h2>Materials Forecast</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — projected supply consumption and reorder planning
+              {(selectedClinic?.name ?? user.homeClinicName)} — projected supply consumption and reorder planning
             </p>
           </div>
           <div className="inventory-page__actions">
@@ -171,7 +189,7 @@ export function MaterialsForecastPage() {
           <div className="mf-reorder-actions">
             <div className="mf-reorder-actions__primary">
               <Link to="/purchase-orders" className="mf-reorder-btn mf-reorder-btn--primary">
-                Create Purchase Order
+                Review Purchase Orders
               </Link>
               <p className="mf-reorder-actions__hint">
                 Use the purchase orders module to raise supplier orders for the products listed

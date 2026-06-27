@@ -83,6 +83,16 @@ export type PurchaseOrderLine = {
   reason: string;
   orderStatus: "draft" | "submitted";
   createdAt: string;
+  supplierPricing?: Array<{
+    supplierProductId: string;
+    supplierId: string;
+    supplierName: string;
+    supplierCode: string | null;
+    unitCostCents: number;
+    supplierSku: string | null;
+  }>;
+  estimatedUnitCostCents?: number | null;
+  estimatedLineCostCents?: number | null;
 };
 
 export type ScanResponse = {

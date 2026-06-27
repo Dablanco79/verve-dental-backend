@@ -399,7 +399,12 @@ describe("HomePage role dashboards", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Today’s Operational Summary")).toBeInTheDocument();
     expect(screen.getByText("Clinic Alerts")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Receive Stock" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Receive Stock" })).toHaveAttribute(
+      "href",
+      "/inventory?mode=receive",
+    );
+    expect(screen.getByRole("link", { name: "Low Stock 1 items requiring stock review" }))
+      .toHaveAttribute("href", "/inventory?focus=low-stock");
     expect(screen.queryByText("Executive KPIs")).not.toBeInTheDocument();
   });
 

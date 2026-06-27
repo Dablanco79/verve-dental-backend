@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useAdjustments } from "../hooks/useAdjustments.js";
 import { ADJUSTMENT_REASONS, type AdjustmentReason, type InventoryAdjustment } from "../types/inventory.js";
@@ -234,11 +235,17 @@ function PaginationBar({ total, page, pageSize, onPrev, onNext }: PaginationBarP
 
 export function AdjustmentHistoryPage() {
   const { user } = useAuth();
+  const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
+  const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
 
-  const { data, isLoading, error, refetch } = useAdjustments(user?.homeClinicId, {
-    limit: 200,
-    offset: 0,
-  });
+  const { data, isLoading, error, refetch } = useAdjustments(
+    user && !isAllClinicsScope ? selectedClinicId : undefined,
+    {
+      limit: 200,
+      offset: 0,
+    },
+  );
 
   const [localFilters, setLocalFilters] = useState<HistoryFilters>(EMPTY_FILTERS);
   const [page, setPage] = useState(0);
@@ -290,6 +297,20 @@ export function AdjustmentHistoryPage() {
     return <Navigate to="/inventory" replace />;
   }
 
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view adjustment history</h2>
+          <p>
+            Inventory adjustment history is clinic-specific. Choose a real clinic
+            from Clinic scope before reviewing stock movements.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <section className="status-card">
@@ -297,7 +318,7 @@ export function AdjustmentHistoryPage() {
           <div>
             <h2>Adjustment History</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — all inventory adjustments
+              {(selectedClinic?.name ?? user.homeClinicName)} — all inventory adjustments
             </p>
           </div>
           <div className="inventory-page__actions">

@@ -16,7 +16,12 @@ import type {
   ScanMode,
   ScanResponse,
 } from "../types/inventory.js";
-import { canManageInventory, canManageProducts, canViewAdjustmentHistory } from "../utils/roles.js";
+import {
+  canManageInventory,
+  canManageProducts,
+  canManageUsers,
+  canViewAdjustmentHistory,
+} from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -64,6 +69,7 @@ export function InventoryPage() {
   const requestedMode: ScanMode =
     searchParams.get("mode") === "receive" ? "receive" : "deduct";
   const requestedReference = searchParams.get("reference") ?? "";
+  const shouldFocusLowStock = searchParams.get("focus") === "low-stock";
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [recentAdjustments, setRecentAdjustments] = useState<InventoryAdjustment[]>([]);
   const [purchaseOrderLines, setPurchaseOrderLines] = useState<PurchaseOrderLine[]>([]);
@@ -227,6 +233,11 @@ export function InventoryPage() {
     () => purchaseOrderLines.filter((line) => line.orderStatus === "submitted"),
     [purchaseOrderLines],
   );
+  const lowStockItems = useMemo(
+    () => items.filter((item) => item.isBelowReorderPoint),
+    [items],
+  );
+  const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
   const itemNameById = useMemo(
     () => new Map(items.map((item) => [item.id, item.name])),
     [items],
@@ -276,6 +287,11 @@ export function InventoryPage() {
                 Add product
               </Link>
             ) : null}
+            {canReviewPurchaseOrders ? (
+              <Link to="/purchase-orders" className="link-button">
+                Purchase orders
+              </Link>
+            ) : null}
             <button
               type="button"
               className="link-button"
@@ -313,6 +329,65 @@ export function InventoryPage() {
           </p>
         ) : null}
       </section>
+
+      {canReviewPurchaseOrders && !isAllClinicsScope ? (
+        <section
+          className={
+            shouldFocusLowStock
+              ? "status-card inventory-page__section inventory-page__section--focus"
+              : "status-card inventory-page__section"
+          }
+        >
+          <div className="status-card__header">
+            <div>
+              <h2>Low stock purchasing queue</h2>
+              <p className="inventory-page__subtitle">
+                Review products that are below reorder point, then continue to purchase orders.
+              </p>
+            </div>
+            <div className="inventory-page__actions">
+              <Link to="/purchase-orders" className="button-link">
+                Review purchase orders
+              </Link>
+              <Link to="/suppliers" className="link-button">
+                View suppliers
+              </Link>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <p className="loading-message">Checking low-stock products...</p>
+          ) : lowStockItems.length > 0 ? (
+            <div className="inventory-receiving-list">
+              <ul>
+                {lowStockItems.slice(0, 5).map((item) => (
+                  <li key={item.id}>
+                    <span>
+                      <strong>{item.name}</strong>
+                      {" "}
+                      <span className="inventory-table__meta">
+                        {item.masterSku} — {item.quantityOnHand} on hand, reorder at {item.reorderPoint}
+                        {item.supplierPreference ? ` — supplier: ${item.supplierPreference}` : ""}
+                      </span>
+                    </span>
+                    <Link
+                      to={`/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`}
+                      className="link-button"
+                      aria-label={`Review purchase order for ${item.name}`}
+                    >
+                      Review PO
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="inventory-page__subtitle">
+              No products are currently below reorder point for this clinic.
+            </p>
+          )}
+        </section>
+      ) : null}
 
       {canUseReceivingWorkflow ? (
         <section className="status-card inventory-page__section">
@@ -439,7 +514,15 @@ export function InventoryPage() {
             Select a clinic to view stock on hand.
           </p>
         ) : !isLoading && !error ? (
-          <InventoryTable items={items} />
+          <InventoryTable
+            items={items}
+            purchaseOrderHrefForItem={
+              canReviewPurchaseOrders
+                ? (item) =>
+                    `/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`
+                : undefined
+            }
+          />
         ) : null}
       </section>
     </AppShell>

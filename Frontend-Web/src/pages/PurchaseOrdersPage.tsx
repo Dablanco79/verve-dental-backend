@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -29,20 +29,75 @@ function formatDate(iso: string): string {
   });
 }
 
+function formatCurrencyOrDash(cents: number | null | undefined): string {
+  if (cents === null || cents === undefined) return "—";
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
+  }).format(cents / 100);
+}
+
+function SupplierSummary({ line }: { line: PurchaseOrderLine }) {
+  const pricing = line.supplierPricing ?? [];
+
+  if (pricing.length === 0) {
+    return (
+      <span className="inventory-table__meta">
+        No supplier pricing linked
+      </span>
+    );
+  }
+
+  if (pricing.length === 1) {
+    const supplier = pricing[0];
+    if (!supplier) return null;
+    return (
+      <span>
+        <span className="inventory-table__name">{supplier.supplierName}</span>
+        <span className="inventory-table__meta">
+          {supplier.supplierSku ?? supplier.supplierCode ?? "Supplier pricing available"} -{" "}
+          {formatCurrencyOrDash(supplier.unitCostCents)} per unit
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span>
+      <span className="inventory-table__name">
+        {String(pricing.length)} supplier options
+      </span>
+      <span className="inventory-table__meta">
+        Review suppliers before ordering
+      </span>
+    </span>
+  );
+}
+
 export function PurchaseOrdersPage() {
   const { user } = useAuth();
-  const { selectedClinic } = useSelectedClinic();
+  const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
+  const [searchParams] = useSearchParams();
   const selectedClinicId = selectedClinic?.id;
+  const focusedItemId = searchParams.get("item");
+  const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
   const [lines, setLines] = useState<PurchaseOrderLine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [recentlySubmittedPoId, setRecentlySubmittedPoId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
   const loadLines = useCallback(async () => {
-    if (!user || !selectedClinicId || !canManageUsers(user.role)) return;
+    if (!user || !canManageUsers(user.role)) return;
+    if (!selectedClinicId || isAllClinicsScope) {
+      setLines([]);
+      setIsLoading(false);
+      setLoadError(null);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
@@ -53,7 +108,7 @@ export function PurchaseOrdersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedClinicId, user]);
+  }, [isAllClinicsScope, selectedClinicId, user]);
 
   useEffect(() => {
     void loadLines();
@@ -70,6 +125,19 @@ export function PurchaseOrdersPage() {
     ],
     [lines],
   );
+  const visibleLines = useMemo(
+    () =>
+      focusedItemId
+        ? lines.filter((line) => line.masterCatalogItemId === focusedItemId)
+        : lines,
+    [focusedItemId, lines],
+  );
+  const focusedLine = focusedItemId
+    ? lines.find((line) => line.masterCatalogItemId === focusedItemId)
+    : undefined;
+  const submittedReceiveHref = recentlySubmittedPoId
+    ? `/inventory?mode=receive&reference=${encodeURIComponent(recentlySubmittedPoId)}`
+    : null;
 
   async function handleSubmit(poId: string) {
     if (!user || !selectedClinicId) return;
@@ -77,6 +145,7 @@ export function PurchaseOrdersPage() {
     setSubmitError(null);
     try {
       await apiClient.submitPurchaseOrder(selectedClinicId, poId);
+      setRecentlySubmittedPoId(poId);
       await loadLines();
     } catch (err: unknown) {
       setSubmitError(
@@ -108,6 +177,20 @@ export function PurchaseOrdersPage() {
     return <Navigate to="/" replace />;
   }
 
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to manage purchase orders</h2>
+          <p>
+            Purchase orders are operational clinic records. Choose a real clinic
+            from Clinic scope before reviewing, submitting, or receiving stock.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <section className="status-card">
@@ -115,11 +198,17 @@ export function PurchaseOrdersPage() {
           <div>
             <h2>Purchase orders</h2>
             <p className="inventory-page__subtitle">
-              {(selectedClinic?.name ?? user.homeClinicName)} — auto-generated lines when stock falls below
-              reorder point
+              {(selectedClinic?.name ?? user.homeClinicName)} — review draft lines, submit purchase orders,
+              then receive deliveries through the inventory scanner.
             </p>
           </div>
           <div className="inventory-page__actions">
+            <Link to="/inventory?focus=low-stock" className="link-button">
+              Low stock
+            </Link>
+            <Link to="/suppliers" className="link-button">
+              Suppliers
+            </Link>
             <button
               type="button"
               className="button-link"
@@ -151,6 +240,32 @@ export function PurchaseOrdersPage() {
           </p>
         )}
 
+        {submittedReceiveHref ? (
+          <div className="inventory-notice inventory-notice--receive" role="status">
+            Purchase order submitted.{" "}
+            <Link to={submittedReceiveHref} className="inventory-notice__link">
+              Receive stock now
+            </Link>
+            .
+          </div>
+        ) : null}
+
+        {focusedItemId ? (
+          <div className="po-workflow-callout">
+            <div>
+              <strong>
+                {focusedLine ? `Reviewing ${focusedLine.itemName}` : "Reviewing selected inventory item"}
+              </strong>
+              <p className="inventory-page__subtitle">
+                This view was opened from a low-stock product. Clear the filter to review every purchase order line.
+              </p>
+            </div>
+            <Link to="/purchase-orders" className="link-button">
+              Clear filter
+            </Link>
+          </div>
+        ) : null}
+
         {loadError ? (
           <p className="status-card__error">{loadError}</p>
         ) : isLoading ? (
@@ -162,13 +277,45 @@ export function PurchaseOrdersPage() {
               Lines are created automatically when a barcode scan causes stock
               to drop below the reorder point.
             </p>
+            <div className="po-empty__actions">
+              <Link to="/inventory?focus=low-stock" className="button-link">
+                Review low stock
+              </Link>
+              <Link to="/inventory" className="link-button">
+                Scan inventory
+              </Link>
+            </div>
+          </div>
+        ) : visibleLines.length === 0 ? (
+          <div className="po-empty">
+            <p className="po-empty__title">No purchase order line matches this product yet.</p>
+            <p className="po-empty__hint">
+              If the product is below reorder point but has not crossed the threshold through a scan,
+              continue from Inventory to confirm stock and review suppliers.
+            </p>
+            <div className="po-empty__actions">
+              <Link to="/inventory?focus=low-stock" className="button-link">
+                Review low stock
+              </Link>
+              <Link to="/purchase-orders" className="link-button">
+                Show all purchase orders
+              </Link>
+            </div>
           </div>
         ) : (
           <>
+            <div className="po-workflow-callout">
+              <ol className="po-workflow-steps" aria-label="Purchase workflow">
+                <li>Low stock</li>
+                <li>Review supplier</li>
+                <li>Submit PO</li>
+                <li>Receive stock</li>
+              </ol>
+            </div>
             <p className="po-summary__hint">
-              Submitted purchase orders can be used as a receiving checklist. Stock is
-              received through the Inventory scanner; purchase order status remains
-              unchanged until PO receiving is supported by the backend.
+              Submitted purchase orders can be used as a receiving checklist. Stock is received
+              through the Inventory scanner; purchase order status remains unchanged until PO
+              receiving is supported by the backend.
             </p>
             <div className="inventory-table-wrapper">
               <table className="inventory-table">
@@ -176,6 +323,8 @@ export function PurchaseOrdersPage() {
                 <tr>
                   <th>Item</th>
                   <th className="inventory-table__numeric">Qty needed</th>
+                  <th>Supplier</th>
+                  <th className="inventory-table__numeric">Estimate</th>
                   <th>Trigger</th>
                   <th>Status</th>
                   <th>Created</th>
@@ -183,13 +332,19 @@ export function PurchaseOrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {lines.map((line) => (
+                {visibleLines.map((line) => (
                   <tr key={line.id}>
                     <td>
                       <span className="inventory-table__name">{line.itemName}</span>
                       <span className="inventory-table__meta">{line.masterSku}</span>
                     </td>
                     <td className="inventory-table__numeric">{line.quantity}</td>
+                    <td>
+                      <SupplierSummary line={line} />
+                    </td>
+                    <td className="inventory-table__numeric">
+                      {formatCurrencyOrDash(line.estimatedLineCostCents)}
+                    </td>
                     <td>{formatReason(line.reason)}</td>
                     <td>
                       <span
@@ -207,21 +362,30 @@ export function PurchaseOrdersPage() {
                     </td>
                     <td>
                       {line.orderStatus === "draft" ? (
-                        <button
-                          type="button"
-                          className="button-link po-submit-btn"
-                          onClick={() =>
-                            void handleSubmit(line.draftPurchaseOrderId)
-                          }
-                          disabled={
-                            submittingPoId === line.draftPurchaseOrderId
-                          }
-                          aria-label={`Submit purchase order for ${line.itemName}`}
-                        >
-                          {submittingPoId === line.draftPurchaseOrderId
-                            ? "Submitting…"
-                            : "Submit PO"}
-                        </button>
+                        <div className="po-row-actions">
+                          <Link
+                            to="/suppliers"
+                            className="link-button"
+                            aria-label={`View suppliers for ${line.itemName}`}
+                          >
+                            Suppliers
+                          </Link>
+                          <button
+                            type="button"
+                            className="button-link po-submit-btn"
+                            onClick={() =>
+                              void handleSubmit(line.draftPurchaseOrderId)
+                            }
+                            disabled={
+                              submittingPoId === line.draftPurchaseOrderId
+                            }
+                            aria-label={`Submit purchase order for ${line.itemName}`}
+                          >
+                            {submittingPoId === line.draftPurchaseOrderId
+                              ? "Submitting…"
+                              : "Submit PO"}
+                          </button>
+                        </div>
                       ) : (
                         <Link
                           to={`/inventory?mode=receive&reference=${encodeURIComponent(line.draftPurchaseOrderId)}`}

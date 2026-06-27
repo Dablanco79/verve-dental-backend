@@ -1,7 +1,10 @@
+import { Link } from "react-router-dom";
+
 import type { InventoryItem } from "../../types/inventory.js";
 
 type InventoryTableProps = {
   items: InventoryItem[];
+  purchaseOrderHrefForItem?: (item: InventoryItem) => string;
 };
 
 function formatCurrency(cents: number): string {
@@ -19,9 +22,10 @@ function compareItems(a: InventoryItem, b: InventoryItem): number {
   return a.name.localeCompare(b.name);
 }
 
-export function InventoryTable({ items }: InventoryTableProps) {
+export function InventoryTable({ items, purchaseOrderHrefForItem }: InventoryTableProps) {
   const sortedItems = [...items].sort(compareItems);
   const lowStockCount = items.filter((item) => item.isBelowReorderPoint).length;
+  const showPurchaseActions = Boolean(purchaseOrderHrefForItem);
 
   if (items.length === 0) {
     return <p className="inventory-empty">No inventory items found for this clinic.</p>;
@@ -50,34 +54,49 @@ export function InventoryTable({ items }: InventoryTableProps) {
             <th scope="col">Reorder</th>
             <th scope="col">Unit cost</th>
             <th scope="col">Status</th>
+            {showPurchaseActions ? <th scope="col">Action</th> : null}
           </tr>
         </thead>
         <tbody>
-          {sortedItems.map((item) => (
-            <tr
-              key={item.id}
-              className={item.isBelowReorderPoint ? "inventory-table__row--low" : undefined}
-            >
-              <td>
-                <span className="inventory-table__name">{item.name}</span>
-                <span className="inventory-table__meta">{item.unitOfMeasure}</span>
-              </td>
-              <td>
-                <code>{item.masterSku}</code>
-              </td>
-              <td>{item.category}</td>
-              <td className="inventory-table__numeric">{item.quantityOnHand}</td>
-              <td className="inventory-table__numeric">{item.reorderPoint}</td>
-              <td className="inventory-table__numeric">{formatCurrency(item.unitCostCents)}</td>
-              <td>
-                {item.isBelowReorderPoint ? (
-                  <span className="inventory-badge inventory-badge--low">Low stock</span>
-                ) : (
-                  <span className="inventory-badge inventory-badge--ok">OK</span>
-                )}
-              </td>
-            </tr>
-          ))}
+          {sortedItems.map((item) => {
+            const purchaseHref = purchaseOrderHrefForItem?.(item);
+            return (
+              <tr
+                key={item.id}
+                className={item.isBelowReorderPoint ? "inventory-table__row--low" : undefined}
+              >
+                <td>
+                  <span className="inventory-table__name">{item.name}</span>
+                  <span className="inventory-table__meta">{item.unitOfMeasure}</span>
+                </td>
+                <td>
+                  <code>{item.masterSku}</code>
+                </td>
+                <td>{item.category}</td>
+                <td className="inventory-table__numeric">{item.quantityOnHand}</td>
+                <td className="inventory-table__numeric">{item.reorderPoint}</td>
+                <td className="inventory-table__numeric">{formatCurrency(item.unitCostCents)}</td>
+                <td>
+                  {item.isBelowReorderPoint ? (
+                    <span className="inventory-badge inventory-badge--low">Low stock</span>
+                  ) : (
+                    <span className="inventory-badge inventory-badge--ok">OK</span>
+                  )}
+                </td>
+                {showPurchaseActions ? (
+                  <td>
+                    {purchaseHref && item.isBelowReorderPoint ? (
+                      <Link to={purchaseHref} className="link-button">
+                        Review PO
+                      </Link>
+                    ) : (
+                      <span className="inventory-table__meta">No action</span>
+                    )}
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -8,7 +8,15 @@ import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
 } from "../src/types/materialsForecast.js";
-import { createManagerUser, createStaffUser, TEST_CLINIC_ID } from "./helpers/auth.js";
+import {
+  createAdminUser,
+  createManagerUser,
+  createStaffUser,
+  TEST_CLINIC_B_ID,
+  TEST_CLINIC_B_NAME,
+  TEST_CLINIC_ID,
+  TEST_CLINIC_NAME,
+} from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
   setAuthenticatedUser,
@@ -19,13 +27,30 @@ import {
 
 const {
   authTestState,
+  selectedClinicState,
   mockGetMaterialsForecast,
   mockGetMaterialsAlerts,
   mockListInventory,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
+  const selectedClinicState = {
+    selectedClinic: {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Verve Dental Clinic A",
+    },
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Verve Dental Clinic A",
+      },
+    } as
+      | { type: "all_clinics" }
+      | { type: "clinic"; clinic: { id: string; name: string } },
+  };
   return {
     authTestState,
+    selectedClinicState,
     mockGetMaterialsForecast: vi.fn(),
     mockGetMaterialsAlerts: vi.fn(),
     mockListInventory: vi.fn(),
@@ -39,6 +64,21 @@ vi.mock("../src/auth/useAuth.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/clinic/useSelectedClinic.js", () => ({
+  useSelectedClinic: () => ({
+    selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
+    availableClinics: [selectedClinicState.selectedClinic],
+    canSwitchClinics: false,
+    canSelectAllClinics: false,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
@@ -199,6 +239,14 @@ function renderPage() {
   );
 }
 
+function resetSelectedClinic() {
+  selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
+  selectedClinicState.selectedDashboardScope = {
+    type: "clinic",
+    clinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+  };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("MaterialsForecastPage", () => {
@@ -207,6 +255,7 @@ describe("MaterialsForecastPage", () => {
     mockGetMaterialsForecast.mockReset();
     mockGetMaterialsAlerts.mockReset();
     mockListInventory.mockReset();
+    resetSelectedClinic();
 
     setAuthenticatedUser(authTestState, managerUser);
     mockGetMaterialsForecast.mockResolvedValue(sampleProjections);
@@ -219,7 +268,7 @@ describe("MaterialsForecastPage", () => {
   it("renders the page heading and clinic name for a manager", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Materials Forecast" })).toBeInTheDocument();
-    expect(screen.getByText(/Verve Dental Clinic A/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Verve Dental Clinic A/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("redirects clinical_staff away from the materials forecast page", () => {
@@ -249,6 +298,37 @@ describe("MaterialsForecastPage", () => {
       expect(mockGetMaterialsAlerts).toHaveBeenCalledWith(TEST_CLINIC_ID, 30);
       expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
     });
+  });
+
+  it("uses the selected clinic instead of the user's home clinic", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    };
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Materials Forecast" });
+    expect(screen.getAllByText(new RegExp(TEST_CLINIC_B_NAME)).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(mockGetMaterialsForecast).toHaveBeenCalledWith(TEST_CLINIC_B_ID, 30);
+      expect(mockGetMaterialsAlerts).toHaveBeenCalledWith(TEST_CLINIC_B_ID, 30);
+      expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
+    });
+  });
+
+  it("blocks materials forecast in All Clinics scope", () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+
+    renderPage();
+
+    expect(screen.getByText("Select a clinic to view materials forecast")).toBeInTheDocument();
+    expect(mockGetMaterialsForecast).not.toHaveBeenCalled();
+    expect(mockGetMaterialsAlerts).not.toHaveBeenCalled();
+    expect(mockListInventory).not.toHaveBeenCalled();
   });
 
   it("renders summary cards after data loads", async () => {
@@ -410,11 +490,11 @@ describe("MaterialsForecastPage", () => {
 
   // ── Reorder workflow ────────────────────────────────────────────────────────
 
-  it("shows the Create Purchase Order button when reorder items exist", async () => {
+  it("shows the Review Purchase Orders button when reorder items exist", async () => {
     renderPage();
 
     expect(
-      await screen.findByRole("link", { name: "Create Purchase Order" }),
+      await screen.findByRole("link", { name: "Review Purchase Orders" }),
     ).toBeInTheDocument();
   });
 

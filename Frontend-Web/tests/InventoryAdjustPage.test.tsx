@@ -4,17 +4,41 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InventoryAdjustPage } from "../src/pages/InventoryAdjustPage.js";
 import type { InventoryItem } from "../src/types/inventory.js";
-import { createManagerUser, createStaffUser, TEST_CLINIC_ID } from "./helpers/auth.js";
+import {
+  createAdminUser,
+  createManagerUser,
+  createStaffUser,
+  TEST_CLINIC_B_ID,
+  TEST_CLINIC_B_NAME,
+  TEST_CLINIC_ID,
+  TEST_CLINIC_NAME,
+} from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockListInventory, mockAdjustInventory } = vi.hoisted(() => {
+const { authTestState, selectedClinicState, mockListInventory, mockAdjustInventory } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
+  const selectedClinicState = {
+    selectedClinic: {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Verve Dental Clinic A",
+    },
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Verve Dental Clinic A",
+      },
+    } as
+      | { type: "all_clinics" }
+      | { type: "clinic"; clinic: { id: string; name: string } },
+  };
   return {
     authTestState,
+    selectedClinicState,
     mockListInventory: vi.fn(),
     mockAdjustInventory: vi.fn(),
   };
@@ -27,6 +51,21 @@ vi.mock("../src/auth/useAuth.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/clinic/useSelectedClinic.js", () => ({
+  useSelectedClinic: () => ({
+    selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
+    availableClinics: [selectedClinicState.selectedClinic],
+    canSwitchClinics: false,
+    canSelectAllClinics: false,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
@@ -95,11 +134,20 @@ function renderPage(initialPath = "/inventory/adjust") {
   );
 }
 
+function resetSelectedClinic() {
+  selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
+  selectedClinicState.selectedDashboardScope = {
+    type: "clinic",
+    clinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+  };
+}
+
 describe("InventoryAdjustPage — RBAC", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
     mockListInventory.mockReset();
     mockAdjustInventory.mockReset();
+    resetSelectedClinic();
   });
 
   it("redirects clinical_staff to /inventory", () => {
@@ -120,6 +168,33 @@ describe("InventoryAdjustPage — RBAC", () => {
     expect(await screen.findByRole("heading", { name: "Adjust Inventory" })).toBeInTheDocument();
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
   });
+
+  it("uses the selected clinic instead of the user's home clinic", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    };
+    mockListInventory.mockResolvedValue(sampleItems);
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Adjust Inventory" });
+    expect(screen.getAllByText(new RegExp(TEST_CLINIC_B_NAME)).length).toBeGreaterThanOrEqual(1);
+    expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
+  });
+
+  it("blocks manual adjustments in All Clinics scope", () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    mockListInventory.mockResolvedValue(sampleItems);
+
+    renderPage();
+
+    expect(screen.getByText("Select a clinic to adjust inventory")).toBeInTheDocument();
+    expect(mockListInventory).not.toHaveBeenCalled();
+  });
 });
 
 describe("InventoryAdjustPage — item selection", () => {
@@ -127,6 +202,7 @@ describe("InventoryAdjustPage — item selection", () => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListInventory.mockResolvedValue(sampleItems);
     mockAdjustInventory.mockReset();
+    resetSelectedClinic();
   });
 
   it("shows all items after inventory loads", async () => {
@@ -175,6 +251,7 @@ describe("InventoryAdjustPage — adjustment form", () => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListInventory.mockResolvedValue(sampleItems);
     mockAdjustInventory.mockReset();
+    resetSelectedClinic();
   });
 
   async function advanceToForm() {
@@ -237,6 +314,7 @@ describe("InventoryAdjustPage — confirm and submit", () => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListInventory.mockResolvedValue(sampleItems);
     mockAdjustInventory.mockReset();
+    resetSelectedClinic();
   });
 
   async function advanceToConfirm() {

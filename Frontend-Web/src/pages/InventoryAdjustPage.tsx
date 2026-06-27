@@ -3,6 +3,7 @@ import { Link, Navigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import {
@@ -454,6 +455,9 @@ const EMPTY_FORM: FormValues = {
 
 export function InventoryAdjustPage() {
   const { user } = useAuth();
+  const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
+  const selectedClinicId = selectedClinic?.id;
+  const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
 
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoadingItems, setIsLoadingItems] = useState(true);
@@ -474,11 +478,17 @@ export function InventoryAdjustPage() {
       setIsLoadingItems(false);
       return;
     }
+    if (!selectedClinicId || isAllClinicsScope) {
+      setItems([]);
+      setIsLoadingItems(false);
+      setLoadError(null);
+      return;
+    }
     const requestId = ++requestIdRef.current.id;
     setIsLoadingItems(true);
     setLoadError(null);
     try {
-      const inventory = await apiClient.listInventory(user.homeClinicId);
+      const inventory = await apiClient.listInventory(selectedClinicId);
       if (requestId === requestIdRef.current.id) {
         setItems(inventory);
       }
@@ -491,7 +501,7 @@ export function InventoryAdjustPage() {
         setIsLoadingItems(false);
       }
     }
-  }, [user]);
+  }, [isAllClinicsScope, selectedClinicId, user]);
 
   useEffect(() => {
     void loadItems();
@@ -505,6 +515,20 @@ export function InventoryAdjustPage() {
 
   if (!canManageInventory(user.role)) {
     return <Navigate to="/inventory" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to adjust inventory</h2>
+          <p>
+            Manual stock adjustments are clinic-specific. Choose a real clinic
+            from Clinic scope before changing stock on hand.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   function handleSelectItem(item: InventoryItem) {
@@ -537,7 +561,7 @@ export function InventoryAdjustPage() {
   }
 
   async function handleConfirm() {
-    if (!selectedItem || !user) return;
+    if (!selectedItem || !user || !selectedClinicId) return;
 
     const qty = parseInt(formValues.quantity, 10);
     const delta = formValues.direction === "increase" ? qty : -qty;
@@ -547,7 +571,7 @@ export function InventoryAdjustPage() {
     setSubmitError(null);
 
     try {
-      const response = await apiClient.adjustInventory(user.homeClinicId, {
+      const response = await apiClient.adjustInventory(selectedClinicId, {
         itemId: selectedItem.id,
         quantityDelta: delta,
         reason: reasonFull || undefined,
@@ -585,7 +609,7 @@ export function InventoryAdjustPage() {
           <div>
             <h2>Adjust Inventory</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — manual stock adjustment
+              {(selectedClinic?.name ?? user.homeClinicName)} — manual stock adjustment
             </p>
           </div>
           <div className="inventory-page__actions">

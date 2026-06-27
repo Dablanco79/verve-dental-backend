@@ -235,7 +235,7 @@ function OwnerAdminDashboard({
             title="Inventory Health"
             value={stats.lowStockItems.length}
             description="items below reorder point"
-            to="/inventory"
+            to="/inventory?focus=low-stock"
             tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
           />
           <MetricCard
@@ -363,7 +363,7 @@ function PracticeManagerDashboard({
             title="Low Stock"
             value={stats.lowStockItems.length}
             description="items requiring stock review"
-            to="/inventory"
+            to="/inventory?focus=low-stock"
             tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
           />
           <MetricCard
@@ -398,7 +398,7 @@ function PracticeManagerDashboard({
             title="Receiving"
             value="Ready"
             description="scan deliveries as stock arrives"
-            to="/inventory"
+            to="/inventory?mode=receive"
           />
         </div>
       </DashboardSection>
@@ -413,7 +413,7 @@ function PracticeManagerDashboard({
                 ? "low stock items may need ordering"
                 : "no low stock items in the current list"
             }
-            to="/inventory"
+            to="/inventory?focus=low-stock"
             tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
           />
           <MetricCard

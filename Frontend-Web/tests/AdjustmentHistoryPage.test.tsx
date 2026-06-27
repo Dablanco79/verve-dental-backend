@@ -4,17 +4,41 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdjustmentHistoryPage } from "../src/pages/AdjustmentHistoryPage.js";
 import type { InventoryAdjustment } from "../src/types/inventory.js";
-import { createManagerUser, createStaffUser, TEST_CLINIC_ID } from "./helpers/auth.js";
+import {
+  createAdminUser,
+  createManagerUser,
+  createStaffUser,
+  TEST_CLINIC_B_ID,
+  TEST_CLINIC_B_NAME,
+  TEST_CLINIC_ID,
+  TEST_CLINIC_NAME,
+} from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockListAdjustments } = vi.hoisted(() => {
+const { authTestState, selectedClinicState, mockListAdjustments } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
+  const selectedClinicState = {
+    selectedClinic: {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Verve Dental Clinic A",
+    },
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Verve Dental Clinic A",
+      },
+    } as
+      | { type: "all_clinics" }
+      | { type: "clinic"; clinic: { id: string; name: string } },
+  };
   return {
     authTestState,
+    selectedClinicState,
     mockListAdjustments: vi.fn(),
   };
 });
@@ -26,6 +50,21 @@ vi.mock("../src/auth/useAuth.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/clinic/useSelectedClinic.js", () => ({
+  useSelectedClinic: () => ({
+    selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
+    availableClinics: [selectedClinicState.selectedClinic],
+    canSwitchClinics: false,
+    canSelectAllClinics: false,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
@@ -112,10 +151,19 @@ function renderPage() {
   );
 }
 
+function resetSelectedClinic() {
+  selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
+  selectedClinicState.selectedDashboardScope = {
+    type: "clinic",
+    clinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+  };
+}
+
 describe("AdjustmentHistoryPage — RBAC", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
     mockListAdjustments.mockReset();
+    resetSelectedClinic();
   });
 
   it("redirects clinical_staff away from the history page", () => {
@@ -134,6 +182,40 @@ describe("AdjustmentHistoryPage — RBAC", () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Adjustment History" })).toBeInTheDocument();
+    expect(mockListAdjustments).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      expect.objectContaining({ limit: 200, offset: 0 }),
+    );
+  });
+
+  it("uses the selected clinic instead of the user's home clinic", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    };
+    mockListAdjustments.mockResolvedValue(mockPage);
+
+    renderPage();
+
+    await screen.findByRole("heading", { name: "Adjustment History" });
+    expect(screen.getAllByText(new RegExp(TEST_CLINIC_B_NAME)).length).toBeGreaterThanOrEqual(1);
+    expect(mockListAdjustments).toHaveBeenCalledWith(
+      TEST_CLINIC_B_ID,
+      expect.objectContaining({ limit: 200, offset: 0 }),
+    );
+  });
+
+  it("blocks adjustment history in All Clinics scope", () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    mockListAdjustments.mockResolvedValue(mockPage);
+
+    renderPage();
+
+    expect(screen.getByText("Select a clinic to view adjustment history")).toBeInTheDocument();
+    expect(mockListAdjustments).not.toHaveBeenCalled();
   });
 });
 
@@ -141,6 +223,7 @@ describe("AdjustmentHistoryPage — loading and error states", () => {
   beforeEach(() => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListAdjustments.mockReset();
+    resetSelectedClinic();
   });
 
   it("shows a loading message while fetching", () => {
@@ -170,6 +253,7 @@ describe("AdjustmentHistoryPage — data display", () => {
   beforeEach(() => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListAdjustments.mockResolvedValue(mockPage);
+    resetSelectedClinic();
   });
 
   it("renders all adjustments in the table", async () => {
@@ -228,6 +312,7 @@ describe("AdjustmentHistoryPage — client-side filtering", () => {
   beforeEach(() => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListAdjustments.mockResolvedValue(mockPage);
+    resetSelectedClinic();
   });
 
   it("filters by search text", async () => {
