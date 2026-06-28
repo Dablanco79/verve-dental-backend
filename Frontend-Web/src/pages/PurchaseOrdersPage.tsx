@@ -313,9 +313,10 @@ export function PurchaseOrdersPage() {
               </ol>
             </div>
             <p className="po-summary__hint">
-              Submitted purchase orders can be used as a receiving checklist. Stock is received
-              through the Inventory scanner; purchase order status remains unchanged until PO
-              receiving is supported by the backend.
+              Submitted purchase orders serve as a receiving reference. Stock is received through
+              the Inventory scanner, which updates stock on hand and records an adjustment entry.
+              Purchase order status does not update automatically when items are received — use
+              adjustment history as proof of receipt.
             </p>
             <div className="inventory-table-wrapper">
               <table className="inventory-table">

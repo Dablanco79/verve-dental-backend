@@ -2,6 +2,7 @@ import { Navigate, Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useAnalyticsDashboard } from "../hooks/useAnalyticsDashboard.js";
 import type {
   DashboardInventorySummary,
@@ -196,14 +197,29 @@ function RosterCard({ roster }: { roster: DashboardRosterSummary }) {
 
 export function AnalyticsDashboardPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   const { data, isLoading, error, periodDays, setPeriodDays, refetch } =
-    useAnalyticsDashboard(user?.homeClinicId);
+    useAnalyticsDashboard(clinicId);
 
   if (!user) return null;
 
   if (!canViewAnalytics(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view analytics</h2>
+          <p>
+            Analytics are clinic-specific. Choose a clinic from the clinic selector to view
+            operational KPIs.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   return (
@@ -213,7 +229,7 @@ export function AnalyticsDashboardPage() {
           <div>
             <h2>Analytics Dashboard</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — operational KPIs
+              {clinicName ?? user.homeClinicName} — operational KPIs
               {data ? ` · ${data.periodFrom} to ${data.periodTo}` : ""}
             </p>
           </div>

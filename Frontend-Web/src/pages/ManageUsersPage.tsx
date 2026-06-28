@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type { ClinicData } from "../types/clinic.js";
 import type {
@@ -68,6 +69,7 @@ function nameLabel(u: StaffUser): string {
 
 export function ManageUsersPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   // ── Users list ──────────────────────────────────────────────────────────────
   const [users, setUsers] = useState<StaffUser[]>([]);
@@ -106,18 +108,21 @@ export function ManageUsersPage() {
   }
 
   const loadUsers = useCallback(async () => {
-    if (!user) return;
+    if (!user || !clinicId) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
-      const result = await apiClient.listUsers(user.homeClinicId);
+      const result = await apiClient.listUsers(clinicId);
       setUsers(result);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load users");
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, clinicId]);
 
   // Load clinic list for owner_admin so they can pick the target clinic.
   const loadClinics = useCallback(async () => {
@@ -142,6 +147,20 @@ export function ManageUsersPage() {
 
   if (!canManageUsers(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to manage staff accounts</h2>
+          <p>
+            Staff account management is clinic-specific. Choose a clinic from the clinic selector
+            to view and manage user accounts.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   const isAdmin = user.role === "owner_admin";
@@ -265,7 +284,7 @@ export function ManageUsersPage() {
     setResetState((s) => s && { ...s, isSubmitting: true, error: null });
 
     try {
-      await apiClient.resetUserPassword(user.homeClinicId, resetState.userId, {
+      await apiClient.resetUserPassword(clinicId ?? user.homeClinicId, resetState.userId, {
         newPassword: resetState.newPassword,
       });
       setResetState((s) => s && { ...s, isSubmitting: false, success: true });
@@ -298,7 +317,7 @@ export function ManageUsersPage() {
           <div>
             <h2>Manage staff accounts</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — {users.length} account{users.length !== 1 ? "s" : ""}
+              {clinicName ?? user.homeClinicName} — {users.length} account{users.length !== 1 ? "s" : ""}
             </p>
           </div>
           <div className="inventory-page__actions">

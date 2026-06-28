@@ -448,12 +448,16 @@ export function InventoryPage() {
 
               {submittedPurchaseOrderLines.length > 0 ? (
                 <div className="inventory-receiving-list">
-                  <h3>Still to receive</h3>
+                  <h3>Submitted purchase orders</h3>
+                  <p className="inventory-page__subtitle">
+                    These items appear on submitted purchase orders. Scan items to add them to stock.
+                    Purchase order status does not update automatically when items are received.
+                  </p>
                   <ul>
                     {submittedPurchaseOrderLines.slice(0, 4).map((line) => (
                       <li key={line.id}>
                         <span>
-                          {line.itemName} — {line.quantity} expected
+                          {line.itemName} — {line.quantity} ordered
                         </span>
                         <Link
                           to={`/inventory?mode=receive&reference=${encodeURIComponent(line.draftPurchaseOrderId)}`}

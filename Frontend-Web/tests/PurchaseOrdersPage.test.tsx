@@ -138,7 +138,7 @@ describe("PurchaseOrdersPage", () => {
     renderPurchaseOrdersPage();
 
     expect(await screen.findByText("Diamond Burs FG Round #2 (Pack 5)")).toBeInTheDocument();
-    expect(screen.getByText(/purchase order status remains unchanged/i)).toBeInTheDocument();
+    expect(screen.getByText(/purchase order status does not update automatically/i)).toBeInTheDocument();
     expect(screen.getByText("BurDirect")).toBeInTheDocument();
     expect(screen.getByText(/\$183\.96/)).toBeInTheDocument();
 

@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { createApiClient } from "../api/client.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
@@ -269,12 +270,13 @@ function NeedsAttentionSection({ rows }: { rows: SupplierIntelligenceRow[] }) {
 
 export function SupplierIntelligencePage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
   const [data, setData] = useState<SupplierIntelligenceResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!user) {
+    if (!user || !clinicId) {
       setIsLoading(false);
       return;
     }
@@ -283,7 +285,7 @@ export function SupplierIntelligencePage() {
     setError(null);
 
     try {
-      const result = await apiClient.getSupplierIntelligence(user.homeClinicId);
+      const result = await apiClient.getSupplierIntelligence(clinicId);
       setData(result);
     } catch (err) {
       setError(
@@ -294,13 +296,27 @@ export function SupplierIntelligencePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, clinicId]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
   if (!user) return null;
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view supplier intelligence</h2>
+          <p>
+            Supplier intelligence is clinic-specific. Choose a clinic from the clinic selector
+            to view pricing comparisons and saving opportunities.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   const generatedAt = data?.generatedAt
     ? new Date(data.generatedAt).toLocaleString("en-AU", {
@@ -319,8 +335,8 @@ export function SupplierIntelligencePage() {
           <div>
             <h2>Supplier Intelligence</h2>
             <p className="inventory-page__subtitle">
-              Pricing comparison and saving opportunities based on confirmed invoice
-              data and supplier catalogue pricing
+              {clinicName ?? user.homeClinicName} — pricing comparison and saving opportunities
+              based on confirmed invoice data and supplier catalogue pricing
             </p>
             {generatedAt ? (
               <p className="intel-generated-at">

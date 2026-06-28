@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type { StaffUser } from "../types/index.js";
 import type {
@@ -131,6 +132,7 @@ function formFromEntry(entry: RosterEntry): ShiftFormState {
 
 export function RosterCalendarPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   const [weekStart, setWeekStart] = useState<Date>(() => getWeekStart(new Date()));
   const [entries, setEntries] = useState<RosterEntry[]>([]);
@@ -153,34 +155,51 @@ export function RosterCalendarPage() {
   }
 
   const loadWeek = useCallback(async () => {
-    if (!user) return;
+    if (!user || !clinicId) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
     try {
       const from = weekStart.toISOString();
       const to = addDays(weekStart, 7).toISOString();
-      const result = await apiClient.listRoster(user.homeClinicId, { from, to });
+      const result = await apiClient.listRoster(clinicId, { from, to });
       setEntries(result);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load roster");
     } finally {
       setIsLoading(false);
     }
-  }, [user, weekStart]);
+  }, [user, clinicId, weekStart]);
 
   useEffect(() => {
     void loadWeek();
   }, [loadWeek]);
 
   useEffect(() => {
-    if (!user || !canWrite) return;
+    if (!user || !clinicId || !canWrite) return;
     void apiClient
-      .listUsers(user.homeClinicId)
+      .listUsers(clinicId)
       .then(setStaffList)
       .catch(() => undefined);
-  }, [user, canWrite]);
+  }, [user, clinicId, canWrite]);
 
   if (!user) return null;
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view the roster</h2>
+          <p>
+            The roster is clinic-specific. Choose a clinic from the clinic selector to view and
+            manage scheduled shifts.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
@@ -216,7 +235,7 @@ export function RosterCalendarPage() {
       const notes = form.notes.trim() || null;
 
       if (editingEntry) {
-        const updated = await apiClient.updateShift(user.homeClinicId, editingEntry.id, {
+        const updated = await apiClient.updateShift(clinicId ?? user.homeClinicId, editingEntry.id, {
           shiftStartAt,
           shiftEndAt,
           shiftType: form.shiftType,
@@ -224,9 +243,9 @@ export function RosterCalendarPage() {
         });
         setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
       } else {
-        const created = await apiClient.createShift(user.homeClinicId, {
+        const created = await apiClient.createShift(clinicId ?? user.homeClinicId, {
           staffUserId: form.staffUserId,
-          rosteredClinicName: user.homeClinicName,
+          rosteredClinicName: clinicName ?? user.homeClinicName,
           shiftStartAt,
           shiftEndAt,
           shiftType: form.shiftType,
@@ -248,7 +267,7 @@ export function RosterCalendarPage() {
     setFormError(null);
     setIsSubmitting(true);
     try {
-      const cancelled = await apiClient.cancelShift(user.homeClinicId, editingEntry.id);
+      const cancelled = await apiClient.cancelShift(clinicId ?? user.homeClinicId, editingEntry.id);
       setEntries((prev) => prev.map((e) => (e.id === cancelled.id ? cancelled : e)));
       closeModal();
     } catch (err: unknown) {
@@ -264,7 +283,7 @@ export function RosterCalendarPage() {
         <div className="status-card__header roster-cal__header">
           <div>
             <h2>Roster</h2>
-            <p className="inventory-page__subtitle">{user.homeClinicName}</p>
+            <p className="inventory-page__subtitle">{clinicName ?? user.homeClinicName}</p>
           </div>
 
           <div className="roster-cal__nav">

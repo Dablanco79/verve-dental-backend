@@ -2,6 +2,7 @@ import { Fragment, useState } from "react";
 
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useTimesheets } from "../hooks/useTimesheets.js";
 import type {
   AttendanceStatus,
@@ -628,6 +629,7 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
 
 export function TimesheetsPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   // Stable 30-day window initialised once at mount — avoids refetch on re-render.
   const [filters] = useState<TimesheetFilters>(() => ({
@@ -646,9 +648,23 @@ export function TimesheetsPage() {
     approveTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
-  } = useTimesheets(user?.homeClinicId, user?.role, filters);
+  } = useTimesheets(clinicId, user?.role, filters);
 
   if (!user) return null;
+
+  if (isAllClinicsScope && isManager) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view timesheets</h2>
+          <p>
+            Timesheets are clinic-specific. Choose a clinic from the clinic selector to review
+            and approve staff timesheets.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   // Client-side splits for the two manager queues.
   const pendingApproval = timesheets.filter(
@@ -681,7 +697,7 @@ export function TimesheetsPage() {
           <div>
             <h2>Timesheets</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — {subtitleText}
+              {clinicName ?? user.homeClinicName} — {subtitleText}
             </p>
           </div>
           <div className="inventory-page__actions">

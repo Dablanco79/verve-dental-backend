@@ -2,6 +2,7 @@ import React, { Fragment, useState } from "react";
 
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useLeave } from "../hooks/useLeave.js";
 import type {
   CreateLeaveRequest,
@@ -529,6 +530,7 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
 
 export function LeavePage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   // Stable 90-day window — leave history is more meaningful over a longer period.
   const [filters] = useState<LeaveFilters>(() => ({
@@ -546,9 +548,23 @@ export function LeavePage() {
     approveLeave,
     rejectLeave,
     withdrawLeave,
-  } = useLeave(user?.homeClinicId, user?.role, filters);
+  } = useLeave(clinicId, user?.role, filters);
 
   if (!user) return null;
+
+  if (isAllClinicsScope && isManager) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view leave</h2>
+          <p>
+            Leave management is clinic-specific. Choose a clinic from the clinic selector to
+            review and approve leave requests.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
 
@@ -563,7 +579,7 @@ export function LeavePage() {
           <div>
             <h2>Leave Management</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — {subtitleText}
+              {clinicName ?? user.homeClinicName} — {subtitleText}
             </p>
           </div>
           <div className="inventory-page__actions">

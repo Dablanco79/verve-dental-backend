@@ -3,6 +3,7 @@ import { Navigate, Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useAuditEvents } from "../hooks/useAuditEvents.js";
 import { AUDIT_ENTITY_TYPES } from "../types/analytics.js";
 import type { AuditEntityType, AuditEventsFilters } from "../types/analytics.js";
@@ -255,9 +256,10 @@ function PaginationBar({ total, offset, limit, onPrev, onNext, isLoading }: Pagi
 
 export function AuditTrailPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   const { data, isLoading, error, filters, setFilters, nextPage, prevPage } =
-    useAuditEvents(user?.homeClinicId, { limit: 25, offset: 0 });
+    useAuditEvents(clinicId, { limit: 25, offset: 0 });
 
   const limit = filters.limit ?? 25;
   const offset = filters.offset ?? 0;
@@ -268,6 +270,20 @@ export function AuditTrailPage() {
     return <Navigate to="/" replace />;
   }
 
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view the audit trail</h2>
+          <p>
+            The audit trail is clinic-specific. Choose a clinic from the clinic selector to view
+            the immutable event log.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <section className="status-card">
@@ -275,7 +291,7 @@ export function AuditTrailPage() {
           <div>
             <h2>Audit Trail</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — full immutable event log
+              {clinicName ?? user.homeClinicName} — full immutable event log
             </p>
           </div>
           <div className="inventory-page__actions">

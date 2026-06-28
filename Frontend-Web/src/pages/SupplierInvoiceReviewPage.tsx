@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type {
   SupplierInvoice,
@@ -341,8 +342,9 @@ function LineRow({
                 type="button"
                 className={`supplier-toggle-btn ${isIgnored ? "supplier-toggle-btn--activate" : "invoice-review__ignore-btn"}`}
                 onClick={() => { onIgnoreToggle(line.id); }}
+                title={isIgnored ? "Show this line" : "Hide this line from view (display only — does not affect import)"}
               >
-                {isIgnored ? "Restore" : "Ignore"}
+                {isIgnored ? "Show" : "Hide"}
               </button>
             </div>
           )}
@@ -436,7 +438,7 @@ function LinesTable({
                 className="supplier-table__td invoice-review__subtotal-label"
                 colSpan={readOnly ? 4 : 4}
               >
-                Active lines subtotal
+                Visible lines subtotal
               </td>
               <td className="supplier-table__td supplier-table__td--numeric invoice-review__subtotal-value">
                 {centsToDollars(subtotal)}
@@ -517,6 +519,7 @@ type LocationState = {
 export function SupplierInvoiceReviewPage() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const { user } = useAuth();
+  const { clinicId } = useOperationalClinic();
   const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as LocationState | null;
@@ -575,7 +578,7 @@ export function SupplierInvoiceReviewPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const data = await apiClient.getSupplierInvoice(user.homeClinicId, invoiceId);
+      const data = await apiClient.getSupplierInvoice(clinicId ?? user.homeClinicId, invoiceId);
       setInvoice(data.invoice);
       setLines(data.lines);
     } catch (err) {
@@ -583,7 +586,7 @@ export function SupplierInvoiceReviewPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [invoiceId, user, locationState]);
+  }, [invoiceId, user, clinicId, locationState]);
 
   useEffect(() => {
     void loadInvoice();
@@ -641,7 +644,7 @@ export function SupplierInvoiceReviewPage() {
 
     try {
       const updated = await apiClient.updateSupplierInvoiceLine(
-        user.homeClinicId,
+        clinicId ?? user.homeClinicId,
         invoice.id,
         editingLineId,
         body,
@@ -674,7 +677,7 @@ export function SupplierInvoiceReviewPage() {
     setIsConfirming(true);
     setConfirmError(null);
     try {
-      const result = await apiClient.confirmSupplierInvoice(user.homeClinicId, invoice.id);
+      const result = await apiClient.confirmSupplierInvoice(clinicId ?? user.homeClinicId, invoice.id);
       setInvoice(result.invoice);
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : "Failed to approve invoice.");
@@ -690,7 +693,7 @@ export function SupplierInvoiceReviewPage() {
     setIsVoiding(true);
     setVoidError(null);
     try {
-      const voided = await apiClient.voidSupplierInvoice(user.homeClinicId, invoice.id);
+      const voided = await apiClient.voidSupplierInvoice(clinicId ?? user.homeClinicId, invoice.id);
       setInvoice(voided);
       setShowVoidConfirm(false);
     } catch (err) {
@@ -743,8 +746,8 @@ export function SupplierInvoiceReviewPage() {
                   Line Items
                   {lines.length > 0 ? (
                     <span className="supplier-detail__count">
-                      {String(lines.length - ignoredLineIds.size)} active /{" "}
-                      {String(lines.length)} total
+                  {String(lines.length - ignoredLineIds.size)} visible /{" "}
+                  {String(lines.length)} total
                     </span>
                   ) : null}
                 </h3>
@@ -776,8 +779,9 @@ export function SupplierInvoiceReviewPage() {
               <section className="status-card supplier-detail__section invoice-review__approval">
                 <h3 className="supplier-detail__section-title">Approve Import</h3>
                 <p className="invoice-review__approval-hint">
-                  Approving will confirm all active line items, update supplier pricing, and record
-                  price history. This action cannot be undone.
+                  Approving will import all matched line items and update supplier pricing. Hidden
+                  lines are display-only and are still imported if they are matched. This action
+                  cannot be undone.
                 </p>
                 {confirmError ? (
                   <p className="status-card__error" role="alert">

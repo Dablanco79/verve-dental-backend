@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat } from "../types/inventory.js";
 import { canManageProducts } from "../utils/roles.js";
@@ -48,6 +49,7 @@ function dollarsToCents(value: string): number | null {
 
 export function AddProductPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
   const navigate = useNavigate();
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
@@ -66,6 +68,20 @@ export function AddProductPage() {
 
   if (!user) {
     return null;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to add a product</h2>
+          <p>
+            Products are added to a specific clinic&apos;s inventory. Choose a clinic from the
+            clinic selector before adding a new product.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   // Render an explicit Access Denied panel instead of a silent redirect so
@@ -155,7 +171,7 @@ export function AddProductPage() {
     setIsSubmitting(true);
 
     try {
-      await apiClient.createProduct(user.homeClinicId, {
+      await apiClient.createProduct(clinicId ?? user.homeClinicId, {
         sku: sku.trim(),
         name: name.trim(),
         description: description.trim() || undefined,
@@ -186,7 +202,7 @@ export function AddProductPage() {
             <h2>Add new product</h2>
             <p className="inventory-page__subtitle">
               Create a master catalog item, barcode mapping, and clinic stock row for{" "}
-              {user.homeClinicName}.
+              {clinicName ?? user.homeClinicName}.
             </p>
           </div>
           <Link to="/inventory" className="link-button">

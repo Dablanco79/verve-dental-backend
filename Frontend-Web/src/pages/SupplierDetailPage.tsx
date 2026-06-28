@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
 import { UploadInvoiceModal } from "../components/supplier/UploadInvoiceModal.js";
@@ -370,6 +371,7 @@ function PriceRecordsSection() {
 export function SupplierDetailPage() {
   const { supplierId } = useParams<{ supplierId: string }>();
   const { user } = useAuth();
+  const { clinicId } = useOperationalClinic();
   const navigate = useNavigate();
 
   const [supplier, setSupplier] = useState<Supplier | null>(null);
@@ -421,17 +423,17 @@ export function SupplierDetailPage() {
     }
 
     try {
-      const invoiceData = await apiClient.listClinicSupplierInvoices(user.homeClinicId, {
-        supplierId,
-        limit: 50,
-      });
+      const invoiceData = await apiClient.listClinicSupplierInvoices(
+        clinicId ?? user.homeClinicId,
+        { supplierId, limit: 50 },
+      );
       setInvoices(invoiceData);
     } catch {
       setInvoices([]);
     } finally {
       setIsLoadingInvoices(false);
     }
-  }, [supplierId, user]);
+  }, [supplierId, user, clinicId]);
 
   useEffect(() => {
     void loadAll();
@@ -567,7 +569,7 @@ export function SupplierDetailPage() {
 
       {showUploadModal && supplier ? (
         <UploadInvoiceModal
-          clinicId={user.homeClinicId}
+          clinicId={clinicId ?? user.homeClinicId}
           suppliers={[supplier]}
           defaultSupplierId={supplier.id}
           onClose={() => {

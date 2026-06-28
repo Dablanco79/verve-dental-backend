@@ -5,6 +5,7 @@ import { useAuth } from "../auth/useAuth.js";
 import { LaborForecastSummaryCard } from "../components/forecast/LaborForecastSummaryCard.js";
 import { LaborForecastTable } from "../components/forecast/LaborForecastTable.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useLaborForecast } from "../hooks/useLaborForecast.js";
 import { canViewLaborForecast } from "../utils/roles.js";
 
@@ -14,16 +15,30 @@ const DEFAULT_DAYS = 14;
 
 export function LaborForecastPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
   const [forecastDays, setForecastDays] = useState(DEFAULT_DAYS);
   const [inputValue, setInputValue] = useState(String(DEFAULT_DAYS));
 
-  const clinicId = user?.homeClinicId;
   const { data, isLoading, error, refetch } = useLaborForecast(clinicId, forecastDays);
 
   if (!user) return null;
 
   if (!canViewLaborForecast(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view the labour forecast</h2>
+          <p>
+            Labour forecasts are clinic-specific. Choose a clinic from the clinic selector to
+            view projected staffing costs.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   function handleSliderChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -60,7 +75,7 @@ export function LaborForecastPage() {
           <div>
             <h2>Labor Cost Forecast</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — projected labor costs for upcoming scheduled shifts
+              {clinicName ?? user.homeClinicName} — projected labor costs for upcoming scheduled shifts
             </p>
           </div>
           <div className="inventory-page__actions">

@@ -14,14 +14,24 @@ import {
 
 const {
   authTestState,
+  selectedClinicState,
   mockListSuppliers,
   mockCreateSupplier,
   mockUpdateSupplier,
   mockListClinicSupplierInvoices,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
+  // Hardcoded because vi.hoisted() runs before module imports resolve.
+  const selectedClinicState = {
+    selectedClinic: { id: "11111111-1111-4111-8111-111111111111", name: "Verve Dental Clinic A" } as { id: string; name: string } | null,
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: { id: "11111111-1111-4111-8111-111111111111", name: "Verve Dental Clinic A" },
+    } as { type: "all_clinics" } | { type: "clinic"; clinic: { id: string; name: string } },
+  };
   return {
     authTestState,
+    selectedClinicState,
     mockListSuppliers: vi.fn(),
     mockCreateSupplier: vi.fn(),
     mockUpdateSupplier: vi.fn(),
@@ -36,6 +46,21 @@ vi.mock("../src/auth/useAuth.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/clinic/useSelectedClinic.js", () => ({
+  useSelectedClinic: () => ({
+    selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
+    availableClinics: selectedClinicState.selectedClinic ? [selectedClinicState.selectedClinic] : [],
+    canSwitchClinics: true,
+    canSelectAllClinics: true,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
@@ -155,6 +180,13 @@ describe("SuppliersPage", () => {
     mockCreateSupplier.mockReset();
     mockUpdateSupplier.mockReset();
     mockListClinicSupplierInvoices.mockReset();
+
+    // Reset clinic scope to a specific clinic before each test.
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
 
     setAuthenticatedUser(authTestState, createManagerUser());
     mockListSuppliers.mockResolvedValue(sampleSuppliers);
@@ -551,5 +583,32 @@ describe("SuppliersPage", () => {
     await screen.findByText("DentalCo Australia");
 
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+  });
+
+  // ── All Clinics guard ─────────────────────────────────────────────────────────
+
+  it("shows clinic selector guard when dashboard scope is All Clinics", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+
+    renderSuppliersPage();
+
+    expect(
+      await screen.findByRole("heading", { name: /select a clinic to view suppliers/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("DentalCo Australia")).not.toBeInTheDocument();
+  });
+
+  it("loads suppliers for the selected clinic when a specific clinic is active", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
+
+    renderSuppliersPage();
+
+    expect(await screen.findByText("DentalCo Australia")).toBeInTheDocument();
   });
 });

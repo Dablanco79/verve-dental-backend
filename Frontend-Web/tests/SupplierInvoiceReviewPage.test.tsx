@@ -20,14 +20,24 @@ const INVOICE_ID = "inv-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 const {
   authTestState,
+  selectedClinicState,
   mockGetSupplierInvoice,
   mockUpdateSupplierInvoiceLine,
   mockConfirmSupplierInvoice,
   mockVoidSupplierInvoice,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
+  // Hardcoded because vi.hoisted() runs before module imports resolve.
+  const selectedClinicState = {
+    selectedClinic: { id: "11111111-1111-4111-8111-111111111111", name: "Verve Dental Clinic A" },
+    selectedDashboardScope: {
+      type: "clinic" as const,
+      clinic: { id: "11111111-1111-4111-8111-111111111111", name: "Verve Dental Clinic A" },
+    } as { type: "all_clinics" } | { type: "clinic"; clinic: { id: string; name: string } },
+  };
   return {
     authTestState,
+    selectedClinicState,
     mockGetSupplierInvoice: vi.fn(),
     mockUpdateSupplierInvoiceLine: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
@@ -42,6 +52,21 @@ vi.mock("../src/auth/useAuth.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     logout: vi.fn(),
+  }),
+}));
+
+vi.mock("../src/clinic/useSelectedClinic.js", () => ({
+  useSelectedClinic: () => ({
+    selectedClinic: selectedClinicState.selectedClinic,
+    selectedDashboardScope: selectedClinicState.selectedDashboardScope,
+    availableClinics: [selectedClinicState.selectedClinic],
+    canSwitchClinics: false,
+    canSelectAllClinics: false,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
   }),
 }));
 
@@ -162,6 +187,13 @@ describe("SupplierInvoiceReviewPage", () => {
     mockUpdateSupplierInvoiceLine.mockReset();
     mockConfirmSupplierInvoice.mockReset();
     mockVoidSupplierInvoice.mockReset();
+
+    // Reset clinic scope to a specific clinic before each test.
+    selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" };
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
 
     setAuthenticatedUser(authTestState, createManagerUser());
     mockGetSupplierInvoice.mockResolvedValue({ invoice: sampleInvoice, lines: [sampleLine] });
@@ -460,25 +492,46 @@ describe("SupplierInvoiceReviewPage", () => {
     expect(await screen.findByText("Database error")).toBeInTheDocument();
   });
 
-  // ── Ignore row ────────────────────────────────────────────────────────────────
+  // ── Hide row (display-only, no backend persist) ────────────────────────────────
 
-  it("shows Ignore button for each line", async () => {
+  it("shows Hide button for each line in pending_review state", async () => {
     renderReviewPage();
 
     await screen.findByText("Nitrile Gloves Large");
 
-    expect(screen.getByRole("button", { name: "Ignore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
   });
 
-  it("toggles row to ignored state and shows Restore button", async () => {
+  it("toggles row to hidden state and shows Show button", async () => {
     const user = userEvent.setup();
     renderReviewPage();
 
     await screen.findByText("Nitrile Gloves Large");
 
-    await user.click(screen.getByRole("button", { name: "Ignore" }));
+    await user.click(screen.getByRole("button", { name: "Hide" }));
 
-    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument();
+  });
+
+  it("does not call API when Hide is clicked — hide is display-only", async () => {
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await screen.findByText("Nitrile Gloves Large");
+
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+
+    expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalled();
+  });
+
+  it("shows approval hint explaining hidden lines are still imported if matched", async () => {
+    renderReviewPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(
+      screen.getByText(/hidden lines are display-only and are still imported if they are matched/i),
+    ).toBeInTheDocument();
   });
 
   // ── Approve Import ────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useBilling } from "../hooks/useBilling.js";
 import type { Invoice, InvoiceFilters, InvoiceStatus, PaymentMethod } from "../types/billing.js";
@@ -460,10 +461,10 @@ function FiltersBar({ filters, onChange }: FiltersBarProps) {
 
 export function BillingLedgerPage() {
   const { user } = useAuth();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
   const [filters, setFilters] = useState<InvoiceFilters>({});
   const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
 
-  const clinicId = user?.homeClinicId;
   const { invoices, isLoading, error, refetch, recordSettlement } = useBilling(
     clinicId,
     filters,
@@ -473,6 +474,20 @@ export function BillingLedgerPage() {
 
   if (!canManageBilling(user.role)) {
     return <Navigate to="/" replace />;
+  }
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view billing</h2>
+          <p>
+            The billing ledger is clinic-specific. Choose a clinic from the clinic selector to
+            view invoices and record settlements.
+          </p>
+        </section>
+      </AppShell>
+    );
   }
 
   const canSettle = canManageBilling(user.role);
@@ -500,7 +515,7 @@ export function BillingLedgerPage() {
           <div>
             <h2>Internal Billing Ledger</h2>
             <p className="inventory-page__subtitle">
-              {user.homeClinicName} — operational costs, vendor balances &amp; settlements
+              {clinicName ?? user.homeClinicName} — operational costs, vendor balances &amp; settlements
             </p>
           </div>
           <div className="inventory-page__actions">

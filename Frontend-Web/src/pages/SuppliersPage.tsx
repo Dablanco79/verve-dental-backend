@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
-import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { EditSupplierModal } from "../components/supplier/EditSupplierModal.js";
@@ -431,8 +431,7 @@ type ActiveFilter = "all" | "active" | "inactive";
 
 export function SuppliersPage() {
   const { user } = useAuth();
-  const { selectedClinic } = useSelectedClinic();
-  const selectedClinicId = selectedClinic?.id;
+  const { clinicId: selectedClinicId, isAllClinicsScope } = useOperationalClinic();
   const navigate = useNavigate();
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -488,6 +487,20 @@ export function SuppliersPage() {
   }, [loadData]);
 
   if (!user) return null;
+
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view suppliers</h2>
+          <p>
+            Invoice review and supplier history are clinic-specific. Choose a clinic from the
+            clinic selector to manage invoices and supplier records.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   const canManage = canManageSuppliers(user.role);
 
