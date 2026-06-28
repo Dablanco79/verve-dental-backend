@@ -76,6 +76,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at top left, rgba(118, 2, 163, 0.1), transparent 30rem),
     radial-gradient(circle at top right, rgba(0, 142, 170, 0.1), transparent 28rem),
@@ -84,6 +85,7 @@ body {
 
 #root {
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 .app-shell {
@@ -5051,13 +5053,15 @@ textarea:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(260px, 292px) minmax(0, 1fr);
-  gap: var(--vds-space-8);
-  width: min(100%, 1520px);
-  max-width: none;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--vds-space-6);
+  width: 100%;
+  max-width: 1520px;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
   padding: var(--vds-space-6);
+  overflow-x: hidden;
 }
 
 .app-shell__header {
@@ -5068,9 +5072,11 @@ textarea:focus-visible {
   align-self: start;
   gap: var(--vds-space-5);
   max-height: calc(100vh - (var(--vds-space-6) * 2));
+  max-height: calc(100dvh - (var(--vds-space-6) * 2));
+  min-width: 0;
   margin: 0;
   padding: var(--vds-space-5);
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.68);
   border-radius: var(--vds-radius-xl);
   background:
@@ -5081,7 +5087,10 @@ textarea:focus-visible {
 }
 
 .app-shell__brand {
+  flex: 0 0 auto;
+  min-width: 0;
   width: 100%;
+  order: 1;
 }
 
 .app-shell__eyebrow {
@@ -5100,15 +5109,19 @@ textarea:focus-visible {
 }
 
 .app-shell__tools {
+  flex: 0 0 auto;
+  order: 3;
   width: 100%;
   justify-content: stretch;
   gap: var(--vds-space-3);
   margin-top: 0;
+  min-width: 0;
 }
 
 .app-shell__clinic-control,
 .app-shell__user {
   width: 100%;
+  min-width: 0;
   padding: var(--vds-space-3);
   border: var(--vds-card-border);
   border-radius: var(--vds-radius-lg);
@@ -5155,8 +5168,10 @@ textarea:focus-visible {
 .app-shell__user-link {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   color: var(--vds-colour-muted);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .app-shell__user-link:hover {
@@ -5176,20 +5191,30 @@ textarea:focus-visible {
 }
 
 .app-shell__nav {
+  flex: 1 1 auto;
+  order: 2;
   display: flex;
   flex-direction: column;
   gap: var(--vds-space-4);
   width: 100%;
+  min-height: 0;
+  min-width: 0;
   margin-top: 0;
+  padding-right: var(--vds-space-1);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .app-shell__nav-group {
   gap: var(--vds-space-2);
+  min-width: 0;
 }
 
 .app-shell__nav-links {
   display: grid;
   gap: var(--vds-space-1);
+  min-width: 0;
 }
 
 .app-shell__nav-links a {
@@ -5205,6 +5230,8 @@ textarea:focus-visible {
   color: var(--vds-colour-charcoal);
   font-size: var(--vds-font-size-sm);
   font-weight: 680;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .app-shell__nav-icon {
@@ -5245,6 +5272,9 @@ textarea:focus-visible {
   align-content: start;
   gap: var(--vds-space-6);
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   padding: var(--vds-space-2) 0 var(--vds-space-10);
 }
 
@@ -5273,6 +5303,8 @@ textarea:focus-visible {
   border-radius: var(--vds-card-radius);
   background: var(--vds-card-background);
   box-shadow: var(--vds-shadow-xs);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .status-card,
@@ -5280,6 +5312,7 @@ textarea:focus-visible {
 .analytics-card,
 .supplier-detail__section {
   padding: var(--vds-card-padding);
+  min-width: 0;
 }
 
 .status-card__header,
@@ -5287,6 +5320,8 @@ textarea:focus-visible {
 .invoice-review__summary-header,
 .invoice-review__lines-header {
   gap: var(--vds-space-4);
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .status-card h2,
@@ -5613,14 +5648,25 @@ textarea:focus-visible {
 .mf-summary-cards,
 .mf-alerts__grid,
 .mf-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: var(--vds-space-4);
+  min-width: 0;
+  width: 100%;
 }
 
 .analytics-card,
 .daily-hub__priority-card,
 .mf-summary-card,
 .lf-summary__kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  min-width: 0;
+  min-height: auto;
+  overflow: visible;
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .daily-hub__priority-card:hover,
@@ -5638,6 +5684,9 @@ textarea:focus-visible {
 .mf-summary-card__value {
   color: var(--vds-colour-heading);
   font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .analytics-card__value--primary,
@@ -5706,7 +5755,8 @@ textarea:focus-visible {
   border-radius: var(--vds-card-radius);
   background: var(--vds-card-background);
   box-shadow: var(--vds-shadow-xs);
-  overflow: hidden;
+  overflow: visible;
+  overflow-wrap: anywhere;
 }
 
 .vds-kpi-card::before {
@@ -5721,6 +5771,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--vds-space-3);
+  min-width: 0;
 }
 
 .vds-kpi-card__icon {
@@ -5748,16 +5799,20 @@ textarea:focus-visible {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--vds-space-3);
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .vds-kpi-card__value {
   margin: 0;
+  min-width: 0;
   color: var(--vds-colour-heading);
-  font-size: var(--vds-font-size-2xl);
+  font-size: clamp(1.45rem, 4vw, var(--vds-font-size-2xl));
   font-weight: 780;
   letter-spacing: -0.04em;
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .vds-kpi-card__trend {
@@ -5776,6 +5831,7 @@ textarea:focus-visible {
   margin: 0;
   color: var(--vds-colour-muted);
   font-size: var(--vds-font-size-sm);
+  overflow-wrap: anywhere;
 }
 
 .vds-kpi-card--neutral {
@@ -5808,16 +5864,20 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
     gap: var(--vds-space-5);
     padding: var(--vds-space-4);
+    overflow-x: hidden;
   }
 
   .app-shell__header {
     position: static;
     max-height: none;
+    overflow: visible;
   }
 
   .app-shell__nav {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    overflow: visible;
+    padding-right: 0;
   }
 }
 
