@@ -23,6 +23,7 @@ type AppShellProps = {
 type NavItem = {
   to: string;
   label: string;
+  icon: string;
   end?: boolean;
 };
 
@@ -63,58 +64,66 @@ export function AppShell({ children }: AppShellProps) {
     ? [
         {
           label: "Daily",
-          items: [{ to: "/", label: "Daily Hub", end: true }],
+          items: [{ to: "/", label: "Daily Hub", icon: "DH", end: true }],
         },
         {
           label: "Operations",
           items: [
-            { to: "/inventory", label: "Inventory" },
+            { to: "/inventory", label: "Inventory", icon: "IN" },
             ...(canViewMaterialsForecast(user.role)
-              ? [{ to: "/forecast/materials", label: "Materials Forecast" }]
+              ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: "MF" }]
               : []),
             ...(canViewLaborForecast(user.role)
-              ? [{ to: "/forecast/labor", label: "Labor Forecast" }]
+              ? [{ to: "/forecast/labor", label: "Labor Forecast", icon: "LF" }]
               : []),
           ],
         },
         {
           label: "Procurement",
           items: [
-            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers" }] : []),
             ...(canManageSuppliers(user.role)
-              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence" }]
+              ? [{ to: "/suppliers", label: "Suppliers", icon: "SU" }]
+              : []),
+            ...(canManageSuppliers(user.role)
+              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: "SI" }]
               : []),
             ...(canManageUsers(user.role)
-              ? [{ to: "/purchase-orders", label: "Purchase Orders" }]
+              ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: "PO" }]
               : []),
           ],
         },
         {
           label: "People",
           items: [
-            { to: "/roster", label: "Roster" },
-            { to: "/my-shifts", label: "My Shifts" },
-            { to: "/timesheets", label: "Timesheets" },
-            { to: "/leave", label: "Leave" },
+            { to: "/roster", label: "Roster", icon: "RO" },
+            { to: "/my-shifts", label: "My Shifts", icon: "MS" },
+            { to: "/timesheets", label: "Timesheets", icon: "TS" },
+            { to: "/leave", label: "Leave", icon: "LV" },
           ],
         },
         {
           label: "Reporting",
           items: [
-            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics" }] : []),
             ...(canViewAnalytics(user.role)
-              ? [{ to: "/analytics/audit", label: "Audit Events" }]
+              ? [{ to: "/analytics", label: "Analytics", icon: "AN" }]
               : []),
-            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing" }] : []),
+            ...(canViewAnalytics(user.role)
+              ? [{ to: "/analytics/audit", label: "Audit Events", icon: "AU" }]
+              : []),
+            ...(canManageBilling(user.role)
+              ? [{ to: "/billing", label: "Billing", icon: "BI" }]
+              : []),
           ],
         },
         {
           label: "Admin / Settings",
           items: [
-            ...(canManageClinics(user.role) ? [{ to: "/settings/clinics", label: "Clinics" }] : []),
-            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users" }] : []),
+            ...(canManageClinics(user.role)
+              ? [{ to: "/settings/clinics", label: "Clinics", icon: "CL" }]
+              : []),
+            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users", icon: "US" }] : []),
             ...(canViewClinicSettings(user.role)
-              ? [{ to: "/settings/clinic", label: "Clinic Settings" }]
+              ? [{ to: "/settings/clinic", label: "Clinic Settings", icon: "CS" }]
               : []),
           ],
         },
@@ -196,7 +205,10 @@ export function AppShell({ children }: AppShellProps) {
               <div className="app-shell__nav-links">
                 {group.items.map((item) => (
                   <NavLink key={item.to} to={item.to} end={item.end}>
-                    {item.label}
+                    <span className="app-shell__nav-icon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                    <span>{item.label}</span>
                   </NavLink>
                 ))}
               </div>
