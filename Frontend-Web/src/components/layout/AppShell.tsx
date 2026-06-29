@@ -23,7 +23,6 @@ type AppShellProps = {
 type NavItem = {
   to: string;
   label: string;
-  icon: string;
   end?: boolean;
 };
 
@@ -64,66 +63,60 @@ export function AppShell({ children }: AppShellProps) {
     ? [
         {
           label: "Daily",
-          items: [{ to: "/", label: "Dashboard", icon: "DB", end: true }],
+          items: [{ to: "/", label: "Daily Hub", end: true }],
         },
         {
           label: "Operations",
           items: [
-            { to: "/inventory", label: "Inventory", icon: "IN" },
+            { to: "/inventory", label: "Inventory" },
             ...(canViewMaterialsForecast(user.role)
-              ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: "MF" }]
+              ? [{ to: "/forecast/materials", label: "Materials Forecast" }]
               : []),
             ...(canViewLaborForecast(user.role)
-              ? [{ to: "/forecast/labor", label: "Labor Forecast", icon: "LF" }]
+              ? [{ to: "/forecast/labor", label: "Labor Forecast" }]
               : []),
           ],
         },
         {
           label: "Procurement",
           items: [
+            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers" }] : []),
             ...(canManageSuppliers(user.role)
-              ? [{ to: "/suppliers", label: "Suppliers", icon: "SU" }]
-              : []),
-            ...(canManageSuppliers(user.role)
-              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: "SI" }]
+              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence" }]
               : []),
             ...(canManageUsers(user.role)
-              ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: "PO" }]
+              ? [{ to: "/purchase-orders", label: "Purchase Orders" }]
               : []),
           ],
         },
         {
           label: "People",
           items: [
-            { to: "/roster", label: "Roster", icon: "RO" },
-            { to: "/my-shifts", label: "My Shifts", icon: "MS" },
-            { to: "/timesheets", label: "Timesheets", icon: "TS" },
-            { to: "/leave", label: "Leave", icon: "LV" },
+            { to: "/roster", label: "Roster" },
+            { to: "/my-shifts", label: "My Shifts" },
+            { to: "/timesheets", label: "Timesheets" },
+            { to: "/leave", label: "Leave" },
           ],
         },
         {
           label: "Reporting",
           items: [
+            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics" }] : []),
             ...(canViewAnalytics(user.role)
-              ? [{ to: "/analytics", label: "Analytics", icon: "AN" }]
+              ? [{ to: "/analytics/audit", label: "Audit Events" }]
               : []),
-            ...(canViewAnalytics(user.role)
-              ? [{ to: "/analytics/audit", label: "Audit Events", icon: "AU" }]
-              : []),
-            ...(canManageBilling(user.role)
-              ? [{ to: "/billing", label: "Billing", icon: "BI" }]
-              : []),
+            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing" }] : []),
           ],
         },
         {
           label: "Admin / Settings",
           items: [
             ...(canManageClinics(user.role)
-              ? [{ to: "/settings/clinics", label: "Clinics", icon: "CL" }]
+              ? [{ to: "/settings/clinics", label: "Clinics" }]
               : []),
-            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users", icon: "US" }] : []),
+            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users" }] : []),
             ...(canViewClinicSettings(user.role)
-              ? [{ to: "/settings/clinic", label: "Clinic Settings", icon: "CS" }]
+              ? [{ to: "/settings/clinic", label: "Clinic Settings" }]
               : []),
           ],
         },
@@ -132,7 +125,7 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="app-shell">
-      <aside className="app-shell__sidebar">
+      <header className="app-shell__header">
         <div className="app-shell__brand">
           <p className="app-shell__eyebrow">Verve Dental</p>
           <h1>Operational Suite</h1>
@@ -143,6 +136,61 @@ export function AppShell({ children }: AppShellProps) {
           ) : null}
         </div>
 
+        <div className="app-shell__tools">
+          {hasClinicProvider && selectedClinic ? (
+            <div className="app-shell__clinic-control">
+              <label className="app-shell__clinic-label" htmlFor="clinic-scope">
+                Clinic scope
+              </label>
+              {canSwitchClinics ? (
+                <select
+                  id="clinic-scope"
+                  className="app-shell__clinic-select"
+                  value={selectorValue}
+                  onChange={(event) => {
+                    if (event.target.value === ALL_CLINICS_DASHBOARD_SCOPE) {
+                      setDashboardScope({ type: "all_clinics" });
+                      return;
+                    }
+                    setDashboardScope({ type: "clinic", clinicId: event.target.value });
+                  }}
+                  disabled={isLoadingClinics}
+                >
+                  {canSelectAllClinics ? (
+                    <option value={ALL_CLINICS_DASHBOARD_SCOPE}>All Clinics</option>
+                  ) : null}
+                  {availableClinics.map((clinic) => (
+                    <option key={clinic.id} value={clinic.id}>
+                      {clinic.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="app-shell__clinic-fixed">{selectedClinic.name}</span>
+              )}
+              {clinicError ? <span className="app-shell__clinic-error">{clinicError}</span> : null}
+            </div>
+          ) : null}
+
+          {user ? (
+            <div className="app-shell__user">
+              <NavLink to="/account" className="app-shell__user-link">
+                {user.email}
+              </NavLink>
+              <NavLink to="/settings/security" className="app-shell__user-link">
+                Security
+              </NavLink>
+              <button
+                type="button"
+                className="app-shell__logout"
+                onClick={() => { void handleLogout(); }}
+              >
+                Log out
+              </button>
+            </div>
+          ) : null}
+        </div>
+
         <nav className="app-shell__nav" aria-label="Main navigation">
           {navGroups.map((group) => (
             <section key={group.label} className="app-shell__nav-group">
@@ -150,81 +198,15 @@ export function AppShell({ children }: AppShellProps) {
               <div className="app-shell__nav-links">
                 {group.items.map((item) => (
                   <NavLink key={item.to} to={item.to} end={item.end}>
-                    <span className="app-shell__nav-icon" aria-hidden="true">
-                      {item.icon}
-                    </span>
-                    <span>{item.label}</span>
+                    {item.label}
                   </NavLink>
                 ))}
               </div>
             </section>
           ))}
         </nav>
-      </aside>
-      <div className="app-shell__workspace">
-        <header className="app-shell__topbar">
-          <div className="app-shell__context">
-            <p className="app-shell__context-label">Current scope</p>
-            <p className="app-shell__context-value">{scopeLabel ?? "Clinic context"}</p>
-          </div>
-
-          <div className="app-shell__tools">
-            {hasClinicProvider && selectedClinic ? (
-              <div className="app-shell__clinic-control">
-                <label className="app-shell__clinic-label" htmlFor="clinic-scope">
-                  Clinic scope
-                </label>
-                {canSwitchClinics ? (
-                  <select
-                    id="clinic-scope"
-                    className="app-shell__clinic-select"
-                    value={selectorValue}
-                    onChange={(event) => {
-                      if (event.target.value === ALL_CLINICS_DASHBOARD_SCOPE) {
-                        setDashboardScope({ type: "all_clinics" });
-                        return;
-                      }
-                      setDashboardScope({ type: "clinic", clinicId: event.target.value });
-                    }}
-                    disabled={isLoadingClinics}
-                  >
-                    {canSelectAllClinics ? (
-                      <option value={ALL_CLINICS_DASHBOARD_SCOPE}>All Clinics</option>
-                    ) : null}
-                    {availableClinics.map((clinic) => (
-                      <option key={clinic.id} value={clinic.id}>
-                        {clinic.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="app-shell__clinic-fixed">{selectedClinic.name}</span>
-                )}
-                {clinicError ? <span className="app-shell__clinic-error">{clinicError}</span> : null}
-              </div>
-            ) : null}
-
-            {user ? (
-              <div className="app-shell__user">
-                <NavLink to="/account" className="app-shell__user-link">
-                  {user.email}
-                </NavLink>
-                <NavLink to="/settings/security" className="app-shell__user-link">
-                  Security
-                </NavLink>
-                <button
-                  type="button"
-                  className="app-shell__logout"
-                  onClick={() => { void handleLogout(); }}
-                >
-                  Log out
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </header>
-        <main className="app-shell__main">{children}</main>
-      </div>
+      </header>
+      <main className="app-shell__main">{children}</main>
     </div>
   );
 }
