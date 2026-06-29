@@ -78,11 +78,11 @@ type BriefItem = {
 
 type HealthRow = {
   clinicName: string;
-  score: number;
-  inventory: number;
-  payroll: number;
-  budget: number;
-  compliance: number;
+  score: number | null;
+  inventory: number | null;
+  payroll: number | null;
+  budget: number | null;
+  compliance: number | null;
   to: string;
 };
 
@@ -128,22 +128,33 @@ function formatUserName(user: NonNullable<ReturnType<typeof useAuth>["user"]>): 
   return user.displayName ?? user.firstName ?? fallbackName;
 }
 
-function formatCompactCurrency(value: number): string {
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency: "AUD",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function scoreTone(score: number): "good" | "warn" | "risk" {
+function scoreTone(score: number | null): "good" | "warn" | "risk" {
+  if (score === null) return "warn";
   if (score >= 90) return "good";
   if (score >= 75) return "warn";
   return "risk";
+}
+
+function renderHealthMetric(value: number | null) {
+  if (value === null) {
+    return (
+      <>
+        —
+        <span style={{ width: "0%" }} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      {value}%
+      <span style={{ width: `${String(value)}%` }} />
+    </>
+  );
 }
 
 function valueClassName(tone: DashboardCardTone): string {
@@ -304,24 +315,14 @@ function ClinicHealthTable({ rows }: { rows: HealthRow[] }) {
               <span>{row.clinicName}</span>
             </span>
             <strong className={`clinic-health-row__score clinic-health-row__score--${scoreTone(row.score)}`}>
-              {row.score}
+              {row.score ?? "—"}
             </strong>
-            <span className="clinic-health-row__metric">
-              {row.inventory}%
-              <span style={{ width: `${String(row.inventory)}%` }} />
-            </span>
-            <span className="clinic-health-row__metric">
-              {row.payroll}%
-              <span style={{ width: `${String(row.payroll)}%` }} />
-            </span>
+            <span className="clinic-health-row__metric">{renderHealthMetric(row.inventory)}</span>
+            <span className="clinic-health-row__metric">{renderHealthMetric(row.payroll)}</span>
             <span className={`clinic-health-row__delta clinic-health-row__delta--${scoreTone(row.budget)}`}>
-              {row.budget >= 90 ? "+" : "-"}
-              {Math.abs(row.budget - 90).toFixed(1)}%
+              {row.budget === null ? "—" : `${row.budget >= 90 ? "+" : "-"}${Math.abs(row.budget - 90).toFixed(1)}%`}
             </span>
-            <span className="clinic-health-row__metric">
-              {row.compliance}%
-              <span style={{ width: `${String(row.compliance)}%` }} />
-            </span>
+            <span className="clinic-health-row__metric">{renderHealthMetric(row.compliance)}</span>
           </Link>
         ))}
       </div>
@@ -333,7 +334,6 @@ function ClinicHealthTable({ rows }: { rows: HealthRow[] }) {
 }
 
 function SpendBudgetPanel() {
-  const chartPoints = [18, 24, 28, 29, 37, 42, 45, 51, 55, 62, 68, 74];
   return (
     <section className="dashboard-panel dashboard-panel--spend">
       <div className="dashboard-panel__header">
@@ -345,34 +345,26 @@ function SpendBudgetPanel() {
       </div>
       <div className="spend-summary">
         <div>
-          <strong>{formatCompactCurrency(45290)}</strong>
+          <strong>—</strong>
           <span>Total Spend</span>
         </div>
         <div>
-          <strong>{formatCompactCurrency(43890)}</strong>
+          <strong>—</strong>
           <span>Budget</span>
         </div>
         <div className="spend-summary__variance">
-          <strong>+3.2%</strong>
+          <strong>—</strong>
           <span>Variance</span>
         </div>
       </div>
-      <div className="spend-chart" aria-label="Placeholder spend versus budget chart">
+      <div className="spend-chart" aria-label="Empty spend versus budget chart">
         <div className="spend-chart__legend">
           <span><i />Actual Spend</span>
           <span><i />Budget</span>
         </div>
-        <div className="spend-chart__grid">
-          {chartPoints.map((point, index) => (
-            <span
-              key={`${String(point)}-${String(index)}`}
-              className="spend-chart__bar"
-              style={{ height: `${String(point)}%` }}
-            />
-          ))}
-        </div>
+        <div className="spend-chart__grid" />
       </div>
-      <p className="dashboard-placeholder-note">Placeholder chart container ready for live budget analytics.</p>
+      <p className="dashboard-placeholder-note">No live spend or budget data available. Budget module not configured.</p>
     </section>
   );
 }
@@ -412,29 +404,26 @@ function RecentActivity({ items }: { items: ActivityItem[] }) {
         <Link to="/analytics/audit" className="dashboard-panel__link">View all</Link>
       </div>
       <div className="activity-list">
-        {items.map((item) => (
-          <Link key={item.title} to={item.to} className="activity-item">
-            <span className={`activity-item__avatar activity-item__avatar--${item.tone}`} aria-hidden="true" />
-            <span>
-              <strong>{item.title}</strong>
-              <small>{item.subtitle}</small>
-            </span>
-            <time>{item.time}</time>
-          </Link>
-        ))}
+        {items.length > 0 ? (
+          items.map((item) => (
+            <Link key={item.title} to={item.to} className="activity-item">
+              <span className={`activity-item__avatar activity-item__avatar--${item.tone}`} aria-hidden="true" />
+              <span>
+                <strong>{item.title}</strong>
+                <small>{item.subtitle}</small>
+              </span>
+              <time>{item.time}</time>
+            </Link>
+          ))
+        ) : (
+          <p className="dashboard-placeholder-note">No recent activity available.</p>
+        )}
       </div>
     </section>
   );
 }
 
 function AiInsights() {
-  const insights = [
-    { title: "You could save $2,840 annually", subtitle: "by switching Composite A2 supplier", tone: "green" },
-    { title: "Inventory turnover improved", subtitle: "Up 8% vs last month", tone: "purple" },
-    { title: "Reorder optimisation available", subtitle: "5 products can reorder in 12 days", tone: "blue" },
-    { title: "Consolidate 3 suppliers", subtitle: "Potential saving of $1,240 annually", tone: "orange" },
-  ];
-
   return (
     <section className="dashboard-panel dashboard-panel--ai">
       <div className="dashboard-panel__header">
@@ -442,30 +431,13 @@ function AiInsights() {
         <Link to="/supplier-intelligence" className="dashboard-panel__link">View all</Link>
       </div>
       <div className="ai-insights-list">
-        {insights.map((item) => (
-          <Link key={item.title} to="/supplier-intelligence" className={`ai-insight ai-insight--${item.tone}`}>
-            <span>
-              <strong>{item.title}</strong>
-              <small>{item.subtitle}</small>
-            </span>
-            <span aria-hidden="true">›</span>
-          </Link>
-        ))}
+        <p className="dashboard-placeholder-note">No insights available yet.</p>
       </div>
     </section>
   );
 }
 
 function OperationsTimeline() {
-  const events = [
-    { time: "09:02", title: "Invoice INV-5678 approved", tone: "green" },
-    { time: "09:08", title: "Delivery received", tone: "green" },
-    { time: "09:15", title: "Low stock alert triggered", tone: "orange" },
-    { time: "09:27", title: "Purchase Order #PO-2048 created", tone: "blue" },
-    { time: "09:42", title: "Payroll forecast updated", tone: "purple" },
-    { time: "10:01", title: "Budget variance exceeded", tone: "red" },
-  ];
-
   return (
     <section className="dashboard-panel dashboard-panel--timeline">
       <div className="dashboard-panel__header">
@@ -473,12 +445,10 @@ function OperationsTimeline() {
         <Link to="/analytics/audit" className="dashboard-panel__link">View timeline</Link>
       </div>
       <ol className="operations-timeline">
-        {events.map((event) => (
-          <li key={`${event.time}-${event.title}`} className={`operations-timeline__item operations-timeline__item--${event.tone}`}>
-            <time>{event.time}</time>
-            <span>{event.title}</span>
-          </li>
-        ))}
+        <li className="operations-timeline__item operations-timeline__item--purple">
+          <time>—</time>
+          <span>No operational events available.</span>
+        </li>
       </ol>
     </section>
   );
@@ -498,11 +468,7 @@ function OwnerAdminDashboard({
   const lowStockCount = analytics?.inventory.lowStockCount ?? stats.lowStockItems.length;
   const inventoryHealth = inventoryTotal > 0
     ? clampScore(((inventoryTotal - lowStockCount) / inventoryTotal) * 100)
-    : 96;
-  const forecastSpend = 48250;
-  const payrollForecast = 82300;
-  const budgetVariance = 1.4;
-  const estimatedSavings = 2840;
+    : null;
   const pendingApprovals =
     summary.pendingSupplierInvoices.length +
     summary.pendingTimesheets.length +
@@ -516,59 +482,62 @@ function OwnerAdminDashboard({
           : 96;
         const rosterScore = clinic.kpis.roster.shiftsScheduled > 0
           ? clampScore((clinic.kpis.roster.shiftsCompleted / clinic.kpis.roster.shiftsScheduled) * 100)
-          : 94;
-        const score = clampScore((inventoryScore + rosterScore + 92 + 97) / 4);
+          : null;
         return {
           clinicName: clinic.clinicName,
-          score,
+          score: null,
           inventory: inventoryScore,
           payroll: rosterScore,
-          budget: score > 88 ? 92 : 84,
-          compliance: score > 88 ? 98 : 85,
+          budget: null,
+          compliance: null,
           to: "/analytics",
         };
       })
     : [
         {
           clinicName: selectedClinicName,
-          score: clampScore((inventoryHealth + 94 + 92 + 97) / 4),
+          score: null,
           inventory: inventoryHealth,
           payroll: analytics?.roster.shiftsScheduled
             ? clampScore((analytics.roster.shiftsCompleted / analytics.roster.shiftsScheduled) * 100)
-            : 94,
-          budget: 92,
-          compliance: 97,
+            : null,
+          budget: null,
+          compliance: null,
           to: "/analytics",
         },
       ];
   const kpis: ExecutiveKpi[] = [
     {
       title: "Inventory Health",
-      value: `${String(inventoryHealth)}%`,
-      trend: lowStockCount > 0 ? `${String(lowStockCount)} items need attention` : "3% vs last week",
+      value: inventoryHealth === null ? "—" : `${String(inventoryHealth)}%`,
+      trend: inventoryHealth === null
+        ? "No live inventory data"
+        : lowStockCount > 0
+          ? `${String(lowStockCount)} items need attention`
+          : "Live inventory data",
       icon: "IH",
       tone: "green",
       to: "/inventory?focus=low-stock",
     },
     {
       title: "Forecast Spend",
-      value: formatCompactCurrency(forecastSpend),
-      trend: "5.4% vs last week",
+      value: "—",
+      trend: "Forecast engine coming soon",
       icon: "$",
       tone: "purple",
     },
     {
       title: "Payroll Forecast",
-      value: formatCompactCurrency(payrollForecast),
-      trend: "1.3% vs last week",
+      value: "—",
+      trend: "Awaiting payroll forecast",
       icon: "PF",
       tone: "orange",
       to: "/forecast/labor",
     },
     {
       title: "Budget Variance",
-      value: `+${budgetVariance.toFixed(1)}%`,
-      trend: `${formatCompactCurrency(6240)} favourable`,
+      value: "—",
+      trend: "Budget module not configured",
       icon: "BV",
       tone: "teal",
       to: "/analytics",
@@ -585,9 +554,9 @@ function OwnerAdminDashboard({
   const briefItems: BriefItem[] = [
     {
       label: isAllClinicsScope
-        ? "All clinics opened successfully"
-        : `${selectedClinicName} opened successfully`,
-      tone: "green",
+        ? "Clinic opening status not connected"
+        : `${selectedClinicName} opening status not connected`,
+      tone: "blue",
     },
     {
       label: `${String(summary.pendingSupplierInvoices.length)} supplier invoices awaiting approval`,
@@ -600,11 +569,11 @@ function OwnerAdminDashboard({
       tone: lowStockCount > 0 ? "red" : "green",
     },
     {
-      label: `Estimated purchasing savings: ${formatCompactCurrency(estimatedSavings)}`,
+      label: "Estimated purchasing savings available after supplier benchmarking",
       tone: "green",
     },
     {
-      label: `Labour forecast ${budgetVariance.toFixed(1)}% under budget`,
+      label: "Labour forecast awaiting payroll forecast",
       tone: "blue",
     },
   ];
@@ -627,8 +596,8 @@ function OwnerAdminDashboard({
     },
     {
       title: "Stock Adjustments",
-      subtitle: `${String(analytics?.inventory.adjustmentsCount ?? 0)} this period`,
-      badge: analytics?.inventory.adjustmentsCount ?? 0,
+      subtitle: analytics ? `${String(analytics.inventory.adjustmentsCount)} this period` : "No live adjustment data",
+      badge: analytics ? analytics.inventory.adjustmentsCount : "—",
       icon: "ST",
       tone: "orange",
       to: "/inventory/adjustments",
@@ -641,53 +610,8 @@ function OwnerAdminDashboard({
       tone: "purple",
       to: "/timesheets",
     },
-    {
-      title: "Price Change Alerts",
-      subtitle: "3 items",
-      badge: 3,
-      icon: "$",
-      tone: "blue",
-      to: "/supplier-intelligence",
-    },
-    {
-      title: "Contract Expiry",
-      subtitle: "4 expiring soon",
-      badge: 4,
-      icon: "CX",
-      tone: "teal",
-      to: "/supplier-intelligence",
-    },
   ];
-  const activities: ActivityItem[] = [
-    {
-      title: stats.draftPurchaseOrderLines.length > 0 ? "Purchase order ready for approval" : "Purchase order queue clear",
-      subtitle: stats.draftPurchaseOrderLines[0]?.itemName ?? "Procurement workflow",
-      time: "2 min ago",
-      tone: "green",
-      to: "/purchase-orders",
-    },
-    {
-      title: summary.pendingSupplierInvoices.length > 0 ? "Supplier invoice requires approval" : "No invoices awaiting approval",
-      subtitle: summary.pendingSupplierInvoices[0]?.supplierNameRaw ?? "Invoice OCR",
-      time: "15 min ago",
-      tone: "purple",
-      to: "/suppliers",
-    },
-    {
-      title: stats.lowStockItems.length > 0 ? "Stock received or below reorder" : "Inventory health stable",
-      subtitle: stats.lowStockItems[0]?.name ?? "Inventory",
-      time: "32 min ago",
-      tone: "blue",
-      to: "/inventory",
-    },
-    {
-      title: summary.pendingTimesheets.length > 0 ? "Timesheet approval requested" : "Timesheet queue clear",
-      subtitle: summary.pendingTimesheets[0]?.staffEmail ?? "Workforce",
-      time: "1 hour ago",
-      tone: "orange",
-      to: "/timesheets",
-    },
-  ];
+  const activities: ActivityItem[] = [];
 
   return (
     <div className="executive-dashboard">

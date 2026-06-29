@@ -380,7 +380,7 @@ describe("HomePage role dashboards", () => {
         name: /Good Morning, admin/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("All clinics opened successfully")).toBeInTheDocument();
+    expect(screen.getByText("Clinic opening status not connected")).toBeInTheDocument();
     expect(screen.getByText("Clinic Operational Health")).toBeInTheDocument();
     expect(screen.getAllByText(TEST_CLINIC_NAME).length).toBeGreaterThan(0);
     expect(screen.getAllByText(TEST_CLINIC_B_NAME).length).toBeGreaterThan(0);
