@@ -41,7 +41,7 @@ function buildScanNotice(result: ScanResponse): ScanNotice {
   if (mode === "receive") {
     return {
       tone: "receive",
-      message: `Received ${item.masterSku} — now ${stockLabel}.`,
+      message: `Received ${item.masterSku} — inventory is now ${stockLabel}. Next: check adjustment history as the receiving log; PO status reconciliation is not automated yet.`,
     };
   }
 
@@ -283,9 +283,14 @@ export function InventoryPage() {
               </Link>
             ) : null}
             {user && canManageProducts(user.role) ? (
-              <Link to="/inventory/products/new" className="link-button">
-                Add product
-              </Link>
+              <>
+                <Link to="/inventory/products" className="link-button">
+                  Products
+                </Link>
+                <Link to="/inventory/products/new" className="link-button">
+                  Add product
+                </Link>
+              </>
             ) : null}
             {canReviewPurchaseOrders ? (
               <Link to="/purchase-orders" className="link-button">
@@ -324,9 +329,14 @@ export function InventoryPage() {
         )}
 
         {scanNotice ? (
-          <p className={noticeClassName} role="status">
-            {scanNotice.message}
-          </p>
+          <div className={noticeClassName} role="status">
+            <p>{scanNotice.message}</p>
+            {scanNotice.tone === "receive" ? (
+              <Link to="/inventory/adjustments" className="inventory-notice__link">
+                View receiving history
+              </Link>
+            ) : null}
+          </div>
         ) : null}
       </section>
 
@@ -397,7 +407,7 @@ export function InventoryPage() {
               <p className="inventory-page__subtitle">
                 {isAllClinicsScope
                   ? "Select a clinic before receiving stock."
-                  : "Receive deliveries by scanning items, then use adjustment history as the receiving log."}
+                  : "Receiving stock updates inventory immediately. PO status reconciliation and auto-close are not automated yet, so use adjustment history as the receiving log."}
               </p>
             </div>
             {!isAllClinicsScope ? (

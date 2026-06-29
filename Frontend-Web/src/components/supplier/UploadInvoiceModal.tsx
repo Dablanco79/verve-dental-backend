@@ -57,6 +57,41 @@ function validateFile(file: File): string | null {
   return null;
 }
 
+function formatUploadError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Upload failed. Please try again.";
+  const lower = message.toLowerCase();
+
+  if (lower.includes("unsupported_media_type") || lower.includes("unsupported file type")) {
+    return "Unsupported file type. Upload a PDF, PNG, JPG, or JPEG invoice file.";
+  }
+
+  if (lower.includes("no file uploaded") || lower.includes("validation_error")) {
+    return `Upload failed before OCR processing. ${message}`;
+  }
+
+  if (
+    lower.includes("anthropic_api_key") ||
+    lower.includes("api key") ||
+    lower.includes("ocr_provider")
+  ) {
+    return "OCR processing is unavailable because the OCR provider is not configured for this environment. Ask an administrator to verify the provider key before uploading real pilot invoices.";
+  }
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return "OCR processing timed out. Retry once with the same file; if it repeats, OCR may be unavailable or the file may be too large/complex.";
+  }
+
+  if (lower.includes("failed while processing ocr") || lower.includes("ocr")) {
+    return `${message}. OCR processing did not complete. Retry once, then capture the Request ID for backend/OCR investigation if shown.`;
+  }
+
+  if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
+    return "Upload failed before the server responded. Check the connection and confirm the API is running, then retry.";
+  }
+
+  return message;
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function ProgressCard({ activeStep }: { activeStep: number }) {
@@ -395,12 +430,7 @@ export function UploadInvoiceModal({
       setUploadResult(result);
       setPhase("detection");
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Upload failed. Please try again.";
-      setUploadError(
-        message.includes("An unexpected error occurred")
-          ? `${message}. The server accepted the request but failed while processing OCR. Please retry; if it repeats, capture the request ID above for backend/OCR investigation.`
-          : message,
-      );
+      setUploadError(formatUploadError(e));
       setPhase("select");
     }
   }
@@ -620,9 +650,19 @@ export function UploadInvoiceModal({
             ) : (
               <p className="upload-mode-toggle__hint">
                 The supplier will be automatically detected from the invoice content.
-                You can confirm or override after upload.
+                You can confirm or override after upload. If no supplier is matched,
+                Verve will ask you to choose or create the supplier before review.
               </p>
             )}
+
+            <div className="inventory-receiving-callout" role="status">
+              <h3>OCR environment check</h3>
+              <p>
+                Upload accepts PDF, PNG, JPG, and JPEG files. If OCR provider configuration is
+                missing or processing is unavailable, this dialog will show the safe error detail
+                and any request ID returned by the API.
+              </p>
+            </div>
 
             {/* File drop zone */}
             <div className="supplier-form__field">

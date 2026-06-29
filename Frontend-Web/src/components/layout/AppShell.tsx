@@ -13,6 +13,7 @@ import {
   canViewLaborForecast,
   canViewMaterialsForecast,
   canManageSuppliers,
+  canManageProducts,
 } from "../../utils/roles.js";
 
 
@@ -71,6 +72,9 @@ export function AppShell({ children }: AppShellProps) {
           label: "Operations",
           items: [
             { to: "/inventory", label: "Inventory", icon: "IN" },
+            ...(canManageProducts(user.role)
+              ? [{ to: "/inventory/products", label: "Products", icon: "PR" }]
+              : []),
             ...(canViewMaterialsForecast(user.role)
               ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: "MF" }]
               : []),
@@ -113,6 +117,7 @@ export function AppShell({ children }: AppShellProps) {
         {
           label: "Admin / Settings",
           items: [
+            ...(canManageUsers(user.role) ? [{ to: "/pilot-setup", label: "Pilot Setup", icon: "PS" }] : []),
             ...(canManageClinics(user.role)
               ? [{ to: "/settings/clinics", label: "Clinics", icon: "CL" }]
               : []),

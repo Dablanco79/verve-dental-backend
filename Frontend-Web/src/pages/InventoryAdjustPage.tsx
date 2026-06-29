@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -19,6 +19,7 @@ const apiClient = createApiClient(loadConfig());
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type AdjustmentDirection = "increase" | "decrease";
+type AdjustmentMode = "manual" | "opening";
 
 type FormValues = {
   direction: AdjustmentDirection;
@@ -41,15 +42,19 @@ function buildReasonString(reason: AdjustmentReason | "", notes: string): string
   return trimmedNotes ? `${reason} — ${trimmedNotes}` : reason;
 }
 
-function validateForm(values: FormValues): Record<string, string> {
+function validateForm(values: FormValues, mode: AdjustmentMode): Record<string, string> {
   const errors: Record<string, string> = {};
 
   const qty = parseInt(values.quantity, 10);
-  if (!values.quantity.trim() || isNaN(qty) || qty <= 0) {
+  if (!values.quantity.trim() || isNaN(qty) || !Number.isInteger(qty) || qty < 0) {
+    errors.quantity = mode === "opening"
+      ? "Opening quantity must be a zero or positive whole number."
+      : "Quantity must be a positive whole number.";
+  } else if (mode === "manual" && qty <= 0) {
     errors.quantity = "Quantity must be a positive whole number.";
   }
 
-  if (!values.reason) {
+  if (mode === "manual" && !values.reason) {
     errors.reason = "Please select a reason for this adjustment.";
   }
 
@@ -136,14 +141,19 @@ type AdjustFormProps = {
   item: InventoryItem;
   values: FormValues;
   errors: Record<string, string>;
+  mode: AdjustmentMode;
   onChange: (partial: Partial<FormValues>) => void;
   onBack: () => void;
   onPreview: () => void;
 };
 
-function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: AdjustFormProps) {
+function AdjustForm({ item, values, errors, mode, onChange, onBack, onPreview }: AdjustFormProps) {
   const previewQty = parseInt(values.quantity, 10);
-  const delta = values.direction === "increase" ? previewQty : -previewQty;
+  const delta = mode === "opening"
+    ? previewQty - item.quantityOnHand
+    : values.direction === "increase"
+      ? previewQty
+      : -previewQty;
   const resulting = isNaN(previewQty) ? null : item.quantityOnHand + delta;
 
   return (
@@ -170,41 +180,51 @@ function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: Adjus
         ) : null}
       </div>
 
-      <fieldset className="adj-form__fieldset">
-        <legend className="adj-form__legend">Adjustment type</legend>
-        <div className="adj-form__direction-group">
-          <label className={`adj-form__direction-option${values.direction === "increase" ? " adj-form__direction-option--active" : ""}`}>
-            <input
-              type="radio"
-              name="direction"
-              value="increase"
-              checked={values.direction === "increase"}
-              onChange={() => { onChange({ direction: "increase" }); }}
-            />
-            <span>Increase stock</span>
-          </label>
-          <label className={`adj-form__direction-option${values.direction === "decrease" ? " adj-form__direction-option--active" : ""}`}>
-            <input
-              type="radio"
-              name="direction"
-              value="decrease"
-              checked={values.direction === "decrease"}
-              onChange={() => { onChange({ direction: "decrease" }); }}
-            />
-            <span>Decrease stock</span>
-          </label>
+      {mode === "opening" ? (
+        <div className="inventory-receiving-callout" role="status">
+          <h3>Opening stock count</h3>
+          <p>
+            Enter the counted quantity on hand. Verve will calculate the stock movement
+            required and save it with reason &quot;Opening stock count&quot;.
+          </p>
         </div>
-      </fieldset>
+      ) : (
+        <fieldset className="adj-form__fieldset">
+          <legend className="adj-form__legend">Adjustment type</legend>
+          <div className="adj-form__direction-group">
+            <label className={`adj-form__direction-option${values.direction === "increase" ? " adj-form__direction-option--active" : ""}`}>
+              <input
+                type="radio"
+                name="direction"
+                value="increase"
+                checked={values.direction === "increase"}
+                onChange={() => { onChange({ direction: "increase" }); }}
+              />
+              <span>Increase stock</span>
+            </label>
+            <label className={`adj-form__direction-option${values.direction === "decrease" ? " adj-form__direction-option--active" : ""}`}>
+              <input
+                type="radio"
+                name="direction"
+                value="decrease"
+                checked={values.direction === "decrease"}
+                onChange={() => { onChange({ direction: "decrease" }); }}
+              />
+              <span>Decrease stock</span>
+            </label>
+          </div>
+        </fieldset>
+      )}
 
       <div className="adj-form__field">
         <label htmlFor="adj-quantity" className="adj-form__field-label">
-          Quantity <span aria-hidden="true">*</span>
+          {mode === "opening" ? "Opening quantity counted" : "Quantity"} <span aria-hidden="true">*</span>
         </label>
         <input
           id="adj-quantity"
           type="number"
           className={`adj-form__field-input${errors.quantity ? " adj-form__field-input--error" : ""}`}
-          min="1"
+          min={mode === "opening" ? "0" : "1"}
           step="1"
           value={values.quantity}
           onChange={(e) => { onChange({ quantity: e.target.value }); }}
@@ -218,31 +238,33 @@ function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: Adjus
         ) : null}
       </div>
 
-      <div className="adj-form__field">
-        <label htmlFor="adj-reason" className="adj-form__field-label">
-          Reason <span aria-hidden="true">*</span>
-        </label>
-        <select
-          id="adj-reason"
-          className={`adj-form__field-input${errors.reason ? " adj-form__field-input--error" : ""}`}
-          value={values.reason}
-          onChange={(e) => { onChange({ reason: e.target.value as AdjustmentReason | "" }); }}
-          aria-describedby={errors.reason ? "adj-reason-error" : undefined}
-          aria-required="true"
-        >
-          <option value="">Select a reason…</option>
-          {ADJUSTMENT_REASONS.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        {errors.reason ? (
-          <p id="adj-reason-error" className="adj-form__field-error" role="alert">
-            {errors.reason}
-          </p>
-        ) : null}
-      </div>
+      {mode === "opening" ? null : (
+        <div className="adj-form__field">
+          <label htmlFor="adj-reason" className="adj-form__field-label">
+            Reason <span aria-hidden="true">*</span>
+          </label>
+          <select
+            id="adj-reason"
+            className={`adj-form__field-input${errors.reason ? " adj-form__field-input--error" : ""}`}
+            value={values.reason}
+            onChange={(e) => { onChange({ reason: e.target.value as AdjustmentReason | "" }); }}
+            aria-describedby={errors.reason ? "adj-reason-error" : undefined}
+            aria-required="true"
+          >
+            <option value="">Select a reason…</option>
+            {ADJUSTMENT_REASONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          {errors.reason ? (
+            <p id="adj-reason-error" className="adj-form__field-error" role="alert">
+              {errors.reason}
+            </p>
+          ) : null}
+        </div>
+      )}
 
       <div className="adj-form__field">
         <label htmlFor="adj-notes" className="adj-form__field-label">
@@ -279,7 +301,7 @@ function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: Adjus
           <div className="adj-preview__row adj-preview__row--delta">
             <span className="adj-preview__label">Adjustment</span>
             <span className={`adj-preview__value adj-preview__value--${values.direction}`}>
-              {values.direction === "increase" ? "+" : "−"}{previewQty} {item.unitOfMeasure}
+              {delta > 0 ? "+" : delta < 0 ? "−" : ""}{Math.abs(delta)} {item.unitOfMeasure}
             </span>
           </div>
           <div className="adj-preview__row adj-preview__row--result">
@@ -296,7 +318,7 @@ function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: Adjus
           ← Back
         </button>
         <button type="submit" className="button-link">
-          Review adjustment →
+          {mode === "opening" ? "Review opening count →" : "Review adjustment →"}
         </button>
       </div>
     </form>
@@ -308,22 +330,31 @@ function AdjustForm({ item, values, errors, onChange, onBack, onPreview }: Adjus
 type ConfirmStepProps = {
   item: InventoryItem;
   values: FormValues;
+  mode: AdjustmentMode;
   isSubmitting: boolean;
   onBack: () => void;
   onConfirm: () => void;
 };
 
-function ConfirmStep({ item, values, isSubmitting, onBack, onConfirm }: ConfirmStepProps) {
+function ConfirmStep({ item, values, mode, isSubmitting, onBack, onConfirm }: ConfirmStepProps) {
   const qty = parseInt(values.quantity, 10);
-  const delta = values.direction === "increase" ? qty : -qty;
+  const delta = mode === "opening"
+    ? qty - item.quantityOnHand
+    : values.direction === "increase"
+      ? qty
+      : -qty;
   const resulting = item.quantityOnHand + delta;
-  const reasonFull = buildReasonString(values.reason, values.notes);
+  const reasonFull = mode === "opening"
+    ? buildReasonString("Opening stock count", values.notes)
+    : buildReasonString(values.reason, values.notes);
 
   return (
     <div className="adj-confirm">
       <h3 className="adj-confirm__heading">Confirm adjustment</h3>
       <p className="adj-confirm__subtitle">
-        Review the details below, then confirm to apply the change.
+        {mode === "opening"
+          ? "Review the counted opening stock below, then confirm to record the stock movement."
+          : "Review the details below, then confirm to apply the change."}
       </p>
 
       <dl className="adj-confirm__summary">
@@ -341,7 +372,7 @@ function ConfirmStep({ item, values, isSubmitting, onBack, onConfirm }: ConfirmS
 
         <dt>Adjustment</dt>
         <dd className={`adj-confirm__delta adj-confirm__delta--${values.direction}`}>
-          {values.direction === "increase" ? "+" : "−"}{qty} {item.unitOfMeasure}
+          {delta > 0 ? "+" : delta < 0 ? "−" : ""}{Math.abs(delta)} {item.unitOfMeasure}
         </dd>
 
         <dt>Resulting stock</dt>
@@ -356,6 +387,13 @@ function ConfirmStep({ item, values, isSubmitting, onBack, onConfirm }: ConfirmS
         <dd>{reasonFull || "—"}</dd>
       </dl>
 
+      {delta === 0 ? (
+        <p className="inventory-notice inventory-notice--info" role="status">
+          Counted stock already matches Verve. No adjustment is needed, and the backend only records
+          non-zero stock movements.
+        </p>
+      ) : null}
+
       <div className="adj-confirm__actions">
         <button
           type="button"
@@ -369,9 +407,9 @@ function ConfirmStep({ item, values, isSubmitting, onBack, onConfirm }: ConfirmS
           type="button"
           className="button-link"
           onClick={onConfirm}
-          disabled={isSubmitting}
+          disabled={isSubmitting || delta === 0}
         >
-          {isSubmitting ? "Applying…" : "Confirm adjustment"}
+          {isSubmitting ? "Applying…" : mode === "opening" ? "Confirm opening count" : "Confirm adjustment"}
         </button>
       </div>
     </div>
@@ -456,8 +494,11 @@ const EMPTY_FORM: FormValues = {
 export function InventoryAdjustPage() {
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
+  const [searchParams] = useSearchParams();
   const selectedClinicId = selectedClinic?.id;
   const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
+  const mode: AdjustmentMode = searchParams.get("mode") === "opening" ? "opening" : "manual";
+  const requestedItemId = searchParams.get("item");
 
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [isLoadingItems, setIsLoadingItems] = useState(true);
@@ -511,6 +552,20 @@ export function InventoryAdjustPage() {
     };
   }, [loadItems]);
 
+  useEffect(() => {
+    if (!requestedItemId || selectedItem || items.length === 0) {
+      return;
+    }
+
+    const requestedItem = items.find((item) => item.id === requestedItemId);
+    if (requestedItem) {
+      setSelectedItem(requestedItem);
+      setFormValues(mode === "opening" ? { ...EMPTY_FORM, reason: "Opening stock count" } : EMPTY_FORM);
+      setFormErrors({});
+      setStep("form");
+    }
+  }, [items, mode, requestedItemId, selectedItem]);
+
   if (!user) return null;
 
   if (!canManageInventory(user.role)) {
@@ -533,7 +588,7 @@ export function InventoryAdjustPage() {
 
   function handleSelectItem(item: InventoryItem) {
     setSelectedItem(item);
-    setFormValues(EMPTY_FORM);
+    setFormValues(mode === "opening" ? { ...EMPTY_FORM, reason: "Opening stock count" } : EMPTY_FORM);
     setFormErrors({});
     setStep("form");
   }
@@ -551,7 +606,7 @@ export function InventoryAdjustPage() {
   }
 
   function handlePreview() {
-    const errors = validateForm(formValues);
+    const errors = validateForm(formValues, mode);
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
       return;
@@ -564,8 +619,19 @@ export function InventoryAdjustPage() {
     if (!selectedItem || !user || !selectedClinicId) return;
 
     const qty = parseInt(formValues.quantity, 10);
-    const delta = formValues.direction === "increase" ? qty : -qty;
-    const reasonFull = buildReasonString(formValues.reason, formValues.notes);
+    const delta = mode === "opening"
+      ? qty - selectedItem.quantityOnHand
+      : formValues.direction === "increase"
+        ? qty
+        : -qty;
+    const reasonFull = mode === "opening"
+      ? buildReasonString("Opening stock count", formValues.notes)
+      : buildReasonString(formValues.reason, formValues.notes);
+
+    if (delta === 0) {
+      setSubmitError("Counted stock already matches Verve. No adjustment was recorded.");
+      return;
+    }
 
     setIsSubmitting(true);
     setSubmitError(null);
@@ -607,15 +673,26 @@ export function InventoryAdjustPage() {
       <section className="status-card adj-page">
         <div className="status-card__header">
           <div>
-            <h2>Adjust Inventory</h2>
+            <h2>{mode === "opening" ? "Opening Stock Counts" : "Adjust Inventory"}</h2>
             <p className="inventory-page__subtitle">
-              {(selectedClinic?.name ?? user.homeClinicName)} — manual stock adjustment
+              {(selectedClinic?.name ?? user.homeClinicName)}
+              {" — "}
+              {mode === "opening" ? "enter counted opening quantities" : "manual stock adjustment"}
             </p>
           </div>
           <div className="inventory-page__actions">
             <Link to="/inventory/adjustments" className="link-button">
               Adjustment history
             </Link>
+            {mode === "opening" ? (
+              <Link to="/inventory/adjust" className="link-button">
+                Manual adjustment
+              </Link>
+            ) : (
+              <Link to="/inventory/adjust?mode=opening" className="link-button">
+                Opening counts
+              </Link>
+            )}
             <Link to="/inventory" className="link-button">
               ← Back to inventory
             </Link>
@@ -657,6 +734,7 @@ export function InventoryAdjustPage() {
             item={selectedItem}
             values={formValues}
             errors={formErrors}
+            mode={mode}
             onChange={handleFormChange}
             onBack={() => { setStep("select"); }}
             onPreview={handlePreview}
@@ -671,6 +749,7 @@ export function InventoryAdjustPage() {
             <ConfirmStep
               item={selectedItem}
               values={formValues}
+              mode={mode}
               isSubmitting={isSubmitting}
               onBack={() => { setStep("form"); }}
               onConfirm={() => { void handleConfirm(); }}

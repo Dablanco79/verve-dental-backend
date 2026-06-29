@@ -125,6 +125,7 @@ export type ScanResponse = {
 // ── Inventory adjustment reason codes ─────────────────────────────────────────
 
 export const ADJUSTMENT_REASONS = [
+  "Opening stock count",
   "Stock received",
   "Stock correction",
   "Damaged stock",

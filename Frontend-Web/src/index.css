@@ -927,6 +927,48 @@ body {
   font-weight: 700;
 }
 
+.pilot-setup {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.pilot-setup__steps {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pilot-setup__step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.pilot-setup__step h3 {
+  margin: 0 0 0.35rem;
+}
+
+.pilot-setup__step .button-link {
+  margin-top: 0.75rem;
+}
+
+.pilot-setup__number {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #102a43;
+  color: #fff;
+  font-weight: 700;
+}
+
 .po-row-actions,
 .po-empty__actions {
   display: flex;
