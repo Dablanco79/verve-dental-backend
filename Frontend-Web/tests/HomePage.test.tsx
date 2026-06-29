@@ -350,12 +350,14 @@ describe("HomePage role dashboards", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: `Executive overview for ${TEST_CLINIC_B_NAME}`,
+        name: /Good Morning, admin/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Executive KPIs")).toBeInTheDocument();
-    expect(screen.getByText("Recent Operational Activity")).toBeInTheDocument();
-    expect(screen.getByText("Clinic Scope")).toBeInTheDocument();
+    expect(screen.getByText("Today's Operational Brief")).toBeInTheDocument();
+    expect(screen.getByText("Clinic Operational Health")).toBeInTheDocument();
+    expect(screen.getByText("Spend vs Budget")).toBeInTheDocument();
+    expect(screen.getByText("Action Centre")).toBeInTheDocument();
+    expect(screen.getByText("AI Insights")).toBeInTheDocument();
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
     expect(mockGetAnalyticsDashboard).toHaveBeenCalledWith(TEST_CLINIC_B_ID, {
       periodDays: 7,
@@ -375,12 +377,13 @@ describe("HomePage role dashboards", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: "Executive overview for All Clinics",
+        name: /Good Morning, admin/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Organisation-wide operational data across all active clinics."))
-      .toBeInTheDocument();
-    expect(screen.getByText("Clinic Breakdown")).toBeInTheDocument();
+    expect(screen.getByText("All clinics opened successfully")).toBeInTheDocument();
+    expect(screen.getByText("Clinic Operational Health")).toBeInTheDocument();
+    expect(screen.getAllByText(TEST_CLINIC_NAME).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(TEST_CLINIC_B_NAME).length).toBeGreaterThan(0);
     expect(mockGetAllClinicsAnalyticsDashboard).toHaveBeenCalledWith({ periodDays: 7 });
     expect(mockGetAnalyticsDashboard).not.toHaveBeenCalled();
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
