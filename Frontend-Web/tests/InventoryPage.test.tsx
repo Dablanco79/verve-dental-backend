@@ -348,7 +348,9 @@ describe("InventoryPage", () => {
     });
 
     expect(
-      await screen.findByText(/Received VRV-BUR-001 — now 16 pack on hand/i),
+      await screen.findByText(
+        /Received VRV-BUR-001 — inventory is now 16 pack on hand\. Next: check adjustment history as the receiving log; PO status reconciliation is not automated yet\./i,
+      ),
     ).toBeInTheDocument();
   });
 
