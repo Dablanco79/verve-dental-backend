@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -217,6 +217,7 @@ describe("InventoryPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Stock on hand" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deduct" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan product with camera" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Receive stock" })).not.toBeInTheDocument();
     expect(await screen.findByText("VRV-GLV-001")).toBeInTheDocument();
     expect(screen.getByText("1 below reorder point")).toBeInTheDocument();
@@ -224,6 +225,64 @@ describe("InventoryPage", () => {
     expect(screen.queryByRole("link", { name: "Review PO" })).not.toBeInTheDocument();
 
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
+  });
+
+  it("shows a product summary card when the barcode field matches a known SKU", async () => {
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "VRV-BUR-001" },
+    });
+
+    const productSummary = await screen.findByLabelText("Scanned product summary");
+    expect(productSummary).toBeInTheDocument();
+    expect(within(productSummary).getByText("Diamond Burs FG Round #2 (Pack 5)")).toBeInTheDocument();
+    expect(within(productSummary).getByText("Supplier: BurDirect")).toBeInTheDocument();
+    expect(within(productSummary).getByText("Current stock")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deduct scanned product" })).toBeInTheDocument();
+  });
+
+  it("shows unknown product state without submitting when barcode is not in the local inventory list", async () => {
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    expect(await screen.findByText("Unknown product")).toBeInTheDocument();
+    expect(screen.getByText("This barcode was not found.")).toBeInTheDocument();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    expect(screen.getByLabelText("Barcode")).toHaveValue("");
+  });
+
+  it("shows a friendly camera error when media devices are unavailable", async () => {
+    const originalMediaDevices = navigator.mediaDevices;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: undefined,
+    });
+
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.click(screen.getByRole("button", { name: "Scan product with camera" }));
+
+    expect(
+      await screen.findByText(
+        "Camera scanning is not available in this browser. Use the barcode field or a USB/Bluetooth scanner.",
+      ),
+    ).toBeInTheDocument();
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: originalMediaDevices,
+    });
   });
 
   it("links managers from low stock products to the matching purchase order review", async () => {

@@ -324,6 +324,7 @@ export function InventoryPage() {
             initialMode={requestedMode}
             initialReason={requestedReference}
             allowReceive={canReceiveStock}
+            inventoryItems={items}
             onSubmit={handleScan}
           />
         )}
