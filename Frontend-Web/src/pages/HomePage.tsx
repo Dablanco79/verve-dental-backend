@@ -76,14 +76,6 @@ function todayLocalDate(): string {
   return new Date().toLocaleDateString("en-CA");
 }
 
-function centsToDollars(cents: number): string {
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency: "AUD",
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
-}
-
 function isAllClinicsAnalytics(
   analytics: DailySummary["analytics"],
 ): analytics is AllClinicsDashboardKpis {
@@ -255,17 +247,17 @@ function OwnerAdminDashboard({
           {analytics ? (
             <>
               <MetricCard
-                title="7-day Revenue"
-                value={centsToDollars(analytics.revenue.totalRevenueCents)}
-                description={isAllClinicsScope ? "organisation-wide revenue" : "selected clinic revenue"}
+                title="Roster Coverage"
+                value={analytics.roster.shiftsScheduled}
+                description={isAllClinicsScope ? "scheduled shifts across clinics" : "scheduled shifts in this clinic"}
                 to="/analytics"
               />
               <MetricCard
-                title="Outstanding"
-                value={centsToDollars(analytics.revenue.outstandingCents)}
-                description="uncollected invoice balance"
+                title="Stock Adjustments"
+                value={analytics.inventory.adjustmentsCount}
+                description="inventory movements in the reporting window"
                 to="/analytics"
-                tone={analytics.revenue.outstandingCents > 0 ? "warning" : "positive"}
+                tone={analytics.inventory.adjustmentsCount > 0 ? "warning" : "positive"}
               />
             </>
           ) : null}
@@ -320,8 +312,8 @@ function OwnerAdminDashboard({
               <MetricCard
                 key={clinic.clinicId}
                 title={clinic.clinicName}
-                value={centsToDollars(clinic.kpis.revenue.totalRevenueCents)}
-                description={`${String(clinic.kpis.inventory.lowStockCount)} low-stock items`}
+                value={clinic.kpis.inventory.lowStockCount}
+                description={`${String(clinic.kpis.roster.shiftsScheduled)} scheduled shifts`}
                 tone={clinic.kpis.inventory.lowStockCount > 0 ? "warning" : "positive"}
               />
             ))}
