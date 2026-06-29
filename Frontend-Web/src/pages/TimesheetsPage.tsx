@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
@@ -720,6 +721,17 @@ export function TimesheetsPage() {
           <p className="loading-message">Loading timesheets…</p>
         ) : isManager ? (
           <>
+            <div className="inventory-receiving-callout pr-self-service-callout" role="note">
+              <h3>Personal shifts and clock in/out</h3>
+              <p>
+                Owner/Admin timesheets open in approval mode. Personal roster visibility remains
+                under My Shifts; clock in/out is shown here for users with staff timekeeping access.
+              </p>
+              <Link to="/my-shifts" className="link-button">
+                Open My Shifts
+              </Link>
+            </div>
+
             {/* ── Manager: Hourly approval queue ── */}
             <div className="pr-section">
               <h3 className="pr-section__title">

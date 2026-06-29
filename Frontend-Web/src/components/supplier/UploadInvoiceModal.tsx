@@ -43,7 +43,12 @@ function formatFileSize(bytes: number): string {
 }
 
 function validateFile(file: File): string | null {
-  if (!ALLOWED_MIME_TYPES.has(file.type)) {
+  const extension = file.name.toLowerCase().split(".").pop() ?? "";
+  const hasAcceptedExtension = ["pdf", "png", "jpg", "jpeg"].includes(extension);
+  if (file.type && !ALLOWED_MIME_TYPES.has(file.type) && !hasAcceptedExtension) {
+    return "Invalid file type. Please upload a PDF, PNG, JPG, or JPEG file.";
+  }
+  if (!file.type && !hasAcceptedExtension) {
     return "Invalid file type. Please upload a PDF, PNG, JPG, or JPEG file.";
   }
   if (file.size > MAX_FILE_SIZE) {
@@ -390,7 +395,12 @@ export function UploadInvoiceModal({
       setUploadResult(result);
       setPhase("detection");
     } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "Upload failed. Please try again.");
+      const message = e instanceof Error ? e.message : "Upload failed. Please try again.";
+      setUploadError(
+        message.includes("An unexpected error occurred")
+          ? `${message}. The server accepted the request but failed while processing OCR. Please retry; if it repeats, capture the request ID above for backend/OCR investigation.`
+          : message,
+      );
       setPhase("select");
     }
   }

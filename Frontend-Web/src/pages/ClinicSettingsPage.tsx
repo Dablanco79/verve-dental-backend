@@ -3,6 +3,7 @@ import { Navigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { ClinicData, UpdateClinicData } from "../types/clinic.js";
@@ -126,11 +127,13 @@ function formatUpdatedAt(iso: string): string {
 
 export function ClinicSettingsPage() {
   const { user } = useAuth();
+  const { clinicId: operationalClinicId, clinicName: operationalClinicName, isAllClinicsScope } =
+    useOperationalClinic();
   const { clinicId: urlClinicId } = useParams<{ clinicId?: string }>();
 
   // When accessed via /settings/clinics/:clinicId/edit the URL param takes
-  // precedence; /settings/clinic falls back to the user's home clinic.
-  const targetClinicId = urlClinicId ?? user?.homeClinicId ?? "";
+  // precedence; /settings/clinic follows the current clinic scope.
+  const targetClinicId = urlClinicId ?? operationalClinicId ?? "";
 
   const [clinic,       setClinic]       = useState<ClinicData | null>(null);
   const [form,         setForm]         = useState<FormValues | null>(null);
@@ -175,6 +178,20 @@ export function ClinicSettingsPage() {
   }
 
   if (!user) return null;
+
+  if (!urlClinicId && isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card inventory-receiving-callout" role="status">
+          <h2>Select a clinic to view clinic settings</h2>
+          <p>
+            Clinic settings are specific to one clinic. Choose a clinic from Clinic scope before
+            viewing or editing clinic details.
+          </p>
+        </section>
+      </AppShell>
+    );
+  }
 
   // ── Field change handler ─────────────────────────────────────────────────
 
@@ -240,7 +257,7 @@ export function ClinicSettingsPage() {
           <div>
             <h2>Clinic settings</h2>
             <p className="inventory-page__subtitle">
-              {clinic?.name ?? (urlClinicId ? "Loading…" : user.homeClinicName)}
+              {clinic?.name ?? (urlClinicId ? "Loading…" : operationalClinicName ?? user.homeClinicName)}
               {clinic ? ` — last updated ${formatUpdatedAt(clinic.updatedAt)}` : ""}
             </p>
           </div>

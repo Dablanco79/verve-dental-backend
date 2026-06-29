@@ -88,38 +88,46 @@ export function ScanForm({
 
   return (
     <form className="scan-form" onSubmit={(event) => void handleSubmit(event)}>
-      <div className="scan-mode-toggle" role="group" aria-label="Scanner mode">
-        <button
-          type="button"
-          className={scanMode === "deduct" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active" : "scan-mode-toggle__btn"}
-          onClick={() => {
-            setScanMode("deduct");
-          }}
-        >
-          Use stock
-        </button>
-        {allowReceive ? (
+      <div className="scan-form__intro">
+        <div>
+          <h3 className="scan-form__title">Barcode scanning workflow</h3>
+          <p className="scan-form__hint">
+            Scan or type a barcode first, then confirm the quantity and action.
+          </p>
+        </div>
+        <div className="scan-mode-toggle" role="group" aria-label="Scanner mode">
           <button
             type="button"
-            className={scanMode === "receive" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active scan-mode-toggle__btn--receive" : "scan-mode-toggle__btn"}
+            className={scanMode === "deduct" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active" : "scan-mode-toggle__btn"}
             onClick={() => {
-              setScanMode("receive");
+              setScanMode("deduct");
             }}
           >
-            Receive stock
+            Use stock
           </button>
-        ) : null}
+          {allowReceive ? (
+            <button
+              type="button"
+              className={scanMode === "receive" ? "scan-mode-toggle__btn scan-mode-toggle__btn--active scan-mode-toggle__btn--receive" : "scan-mode-toggle__btn"}
+              onClick={() => {
+                setScanMode("receive");
+              }}
+            >
+              Receive stock
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <p className="scan-form__hint">
+      <p className="scan-form__mode-hint">
         {scanMode === "deduct"
           ? "Deducts inventory when items are used in clinic."
           : "Adds inventory when deliveries or purchase orders arrive."}
       </p>
 
-      <div className="scan-form__row">
+      <div className="scan-form__row scan-form__row--scanner">
         <label className="scan-form__field scan-form__field--grow">
-          Barcode
+          Barcode / scanner input
           <input
             value={barcodeValue}
             onChange={(event) => {
@@ -181,7 +189,7 @@ export function ScanForm({
       </div>
 
       {scanMode === "receive" ? (
-        <label className="scan-form__field scan-form__field--grow">
+        <label className="scan-form__field scan-form__field--grow scan-form__reference">
           Delivery reference (optional)
           <input
             value={reason}

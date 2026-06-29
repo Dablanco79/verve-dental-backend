@@ -449,7 +449,7 @@ export function SuppliersPage() {
   const [confirmToggleSupplier, setConfirmToggleSupplier] = useState<Supplier | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!user || !selectedClinicId) {
+    if (!user) {
       setIsLoading(false);
       return;
     }
@@ -458,22 +458,24 @@ export function SuppliersPage() {
     setError(null);
 
     try {
-      const [allSuppliers, pendingInvoices] = await Promise.all([
-        apiClient.listSuppliers(),
-        apiClient.listClinicSupplierInvoices(selectedClinicId, {
-          status: "pending_review",
-          limit: 100,
-        }),
-      ]);
+      const allSuppliers = await apiClient.listSuppliers();
+      const pendingInvoices = selectedClinicId
+        ? await apiClient.listClinicSupplierInvoices(selectedClinicId, {
+            status: "pending_review",
+            limit: 100,
+          })
+        : [];
       setSuppliers(allSuppliers);
       setPendingInvoices(pendingInvoices);
       setPendingOcrCount(pendingInvoices.length);
 
-      if (allSuppliers.length > 0) {
+      if (allSuppliers.length > 0 && selectedClinicId) {
         const recentInvs = await apiClient.listClinicSupplierInvoices(selectedClinicId, {
           limit: 50,
         });
         setRecentInvoices(recentInvs);
+      } else {
+        setRecentInvoices([]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load suppliers.");
@@ -487,20 +489,6 @@ export function SuppliersPage() {
   }, [loadData]);
 
   if (!user) return null;
-
-  if (isAllClinicsScope) {
-    return (
-      <AppShell>
-        <section className="status-card inventory-receiving-callout" role="status">
-          <h2>Select a clinic to view suppliers</h2>
-          <p>
-            Invoice review and supplier history are clinic-specific. Choose a clinic from the
-            clinic selector to manage invoices and supplier records.
-          </p>
-        </section>
-      </AppShell>
-    );
-  }
 
   const canManage = canManageSuppliers(user.role);
 
@@ -553,21 +541,25 @@ export function SuppliersPage() {
           <div>
             <h2>Suppliers</h2>
             <p className="inventory-page__subtitle">
-              Manage supplier records and track procurement relationships
+              {isAllClinicsScope
+                ? "Manage the organisation supplier master list. Select a clinic for invoice upload and clinic-specific history."
+                : "Manage supplier records and track clinic procurement relationships"}
             </p>
           </div>
           <div className="inventory-page__actions">
             {canManage ? (
               <>
-                <button
-                  type="button"
-                  className="button-link"
-                  onClick={() => {
-                    setShowUploadModal(true);
-                  }}
-                >
-                  Upload Invoice
-                </button>
+                {!isAllClinicsScope ? (
+                  <button
+                    type="button"
+                    className="button-link"
+                    onClick={() => {
+                      setShowUploadModal(true);
+                    }}
+                  >
+                    Upload Invoice
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="button-link"
@@ -600,9 +592,19 @@ export function SuppliersPage() {
           <p className="loading-message">Loading suppliers…</p>
         ) : (
           <>
+            {isAllClinicsScope ? (
+              <div className="inventory-receiving-callout supplier-scope-callout" role="note">
+                <h3>Organisation supplier master</h3>
+                <p>
+                  Supplier records are global. Invoice upload, OCR review, and recent invoice
+                  history are clinic-specific, so select a clinic to use those workflows.
+                </p>
+              </div>
+            ) : null}
+
             <SupplierKpiBar suppliers={suppliers} pendingOcrCount={pendingOcrCount} />
 
-            {canManage ? (
+            {canManage && !isAllClinicsScope ? (
               <PendingInvoiceQueue invoices={pendingInvoices} suppliers={suppliers} />
             ) : null}
 
@@ -697,9 +699,9 @@ export function SuppliersPage() {
         />
       ) : null}
 
-      {showUploadModal ? (
+      {showUploadModal && selectedClinicId ? (
         <UploadInvoiceModal
-          clinicId={selectedClinicId ?? user.homeClinicId}
+          clinicId={selectedClinicId}
           suppliers={suppliers.filter((s) => s.active)}
           onClose={() => {
             setShowUploadModal(false);

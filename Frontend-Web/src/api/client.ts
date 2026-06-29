@@ -1110,9 +1110,29 @@ export function createApiClient(config: AppConfig) {
     if (!response.ok) {
       const errorBody = await response
         .json()
-        .catch(() => null) as { error?: { message?: string } } | null;
-      const message =
-        errorBody?.error?.message ?? `Upload failed (${String(response.status)})`;
+        .catch(() => null) as {
+          error?: {
+            code?: string;
+            message?: string;
+            requestId?: string;
+            details?: Array<{ path?: string; message?: string }>;
+          };
+        } | null;
+      const errorCode = errorBody?.error?.code;
+      const requestId = errorBody?.error?.requestId;
+      const details = errorBody?.error?.details
+        ?.map((detail) => detail.message)
+        .filter(Boolean)
+        .join("; ");
+      const baseMessage =
+        errorBody?.error?.message ?? (response.statusText || `HTTP ${String(response.status)}`);
+      const messageParts = [
+        baseMessage,
+        errorCode ? `Code: ${errorCode}` : null,
+        details ? `Details: ${details}` : null,
+        requestId ? `Request ID: ${requestId}` : null,
+      ].filter(Boolean);
+      const message = `Upload failed (${String(response.status)}): ${messageParts.join(" · ")}`;
       throw new Error(message);
     }
 
