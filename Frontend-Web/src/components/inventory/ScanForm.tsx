@@ -127,7 +127,7 @@ export function ScanForm({
 
       <div className="scan-form__row scan-form__row--scanner">
         <label className="scan-form__field scan-form__field--grow">
-          Barcode / scanner input
+          Barcode
           <input
             value={barcodeValue}
             onChange={(event) => {

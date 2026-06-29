@@ -585,18 +585,22 @@ describe("SuppliersPage", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
-  // ── All Clinics guard ─────────────────────────────────────────────────────────
+  // ── All Clinics supplier master ───────────────────────────────────────────────
 
-  it("shows clinic selector guard when dashboard scope is All Clinics", async () => {
+  it("shows supplier master list while keeping invoice actions clinic-scoped when dashboard scope is All Clinics", async () => {
     setAuthenticatedUser(authTestState, createAdminUser());
     selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
 
     renderSuppliersPage();
 
     expect(
-      await screen.findByRole("heading", { name: /select a clinic to view suppliers/i }),
+      await screen.findByRole("heading", { name: /organisation supplier master/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("DentalCo Australia")).not.toBeInTheDocument();
+    expect(screen.getByText("DentalCo Australia")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ New Supplier" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload Invoice" })).not.toBeInTheDocument();
+    expect(mockListSuppliers).toHaveBeenCalled();
+    expect(mockListClinicSupplierInvoices).not.toHaveBeenCalled();
   });
 
   it("loads suppliers for the selected clinic when a specific clinic is active", async () => {

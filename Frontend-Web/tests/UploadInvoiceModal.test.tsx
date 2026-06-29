@@ -40,7 +40,7 @@
  *   26. Close button hidden during upload
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -313,11 +313,10 @@ describe("UploadInvoiceModal", () => {
   });
 
   it("9. shows invalid file type error for non-PDF/image files", async () => {
-    const user = userEvent.setup();
     renderModal();
     const input = document.querySelector("input[type=file]") as HTMLInputElement;
-    const masqueradeFile = new File(["hello"], "invoice.pdf", { type: "text/plain" });
-    await user.upload(input, masqueradeFile);
+    const masqueradeFile = new File(["hello"], "invoice.txt", { type: "text/plain" });
+    fireEvent.change(input, { target: { files: [masqueradeFile] } });
     expect(await screen.findByText(/Invalid file type/i)).toBeInTheDocument();
   });
 
