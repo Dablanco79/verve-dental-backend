@@ -9,6 +9,7 @@ import type {
   DraftPurchaseOrder,
   InventoryAdjustment,
   InventoryPage,
+  ProductSupplier,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -84,12 +85,16 @@ export interface InventoryRepository {
   createClinicInventoryItem(
     item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">,
   ): Promise<ClinicInventoryItem>;
+  createProductSupplier(
+    productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
+  ): Promise<ProductSupplier>;
 }
 
 export function createInMemoryInventoryRepository(
   catalogRepository: CatalogRepository,
 ): InventoryRepository {
   const clinicInventory = buildClinicInventorySeed().map((item) => ({ ...item }));
+  const productSuppliers: ProductSupplier[] = [];
   const adjustments: InventoryAdjustment[] = [];
   const draftOrders: DraftPurchaseOrder[] = [];
   const draftPoLines: DraftPoLine[] = [];
@@ -104,6 +109,13 @@ export function createInMemoryInventoryRepository(
     }
 
     const unitCostCents = item.unitCostOverrideCents ?? master.defaultUnitCostCents;
+    const preferredSupplier = productSuppliers.find(
+      (supplier) =>
+        supplier.clinicId === item.clinicId &&
+        supplier.productId === item.masterCatalogItemId &&
+        supplier.isPreferred &&
+        supplier.active,
+    );
 
     return {
       ...item,
@@ -113,6 +125,8 @@ export function createInMemoryInventoryRepository(
       unitOfMeasure: master.unitOfMeasure,
       unitCostCents,
       isBelowReorderPoint: item.quantityOnHand < item.reorderPoint,
+      preferredSupplierId: preferredSupplier?.supplierId ?? null,
+      preferredSupplierName: preferredSupplier?.supplierName ?? item.supplierPreference,
     };
   }
 
@@ -372,6 +386,33 @@ export function createInMemoryInventoryRepository(
       };
 
       clinicInventory.push(record);
+      return Promise.resolve({ ...record });
+    },
+
+    createProductSupplier(
+      productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
+    ): Promise<ProductSupplier> {
+      const now = new Date();
+      if (productSupplier.isPreferred && productSupplier.active) {
+        for (const existing of productSuppliers) {
+          if (
+            existing.clinicId === productSupplier.clinicId &&
+            existing.productId === productSupplier.productId &&
+            existing.active
+          ) {
+            existing.isPreferred = false;
+            existing.updatedAt = now;
+          }
+        }
+      }
+
+      const record: ProductSupplier = {
+        ...productSupplier,
+        id: randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      };
+      productSuppliers.push(record);
       return Promise.resolve({ ...record });
     },
   };

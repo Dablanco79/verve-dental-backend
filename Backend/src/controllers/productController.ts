@@ -23,7 +23,7 @@ const createProductSchema = z.object({
   initialQuantity: z.number().int().nonnegative(),
   reorderPoint: z.number().int().nonnegative(),
   unitCostOverrideCents: z.number().int().nonnegative().optional(),
-  supplierPreference: z.string().trim().max(128).optional(),
+  supplierId: z.string().uuid(),
 });
 
 function serializeMasterItem(item: MasterCatalogItem) {
@@ -65,6 +65,8 @@ function serializeInventoryItem(item: ClinicInventoryItemView) {
     unitCostCents: item.unitCostCents,
     unitCostOverrideCents: item.unitCostOverrideCents,
     supplierPreference: item.supplierPreference,
+    preferredSupplierId: item.preferredSupplierId,
+    preferredSupplierName: item.preferredSupplierName,
     isBelowReorderPoint: item.isBelowReorderPoint,
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
@@ -106,7 +108,7 @@ export function createProductHandlers(productService: ProductService) {
         initialQuantity: body.initialQuantity,
         reorderPoint: body.reorderPoint,
         unitCostOverrideCents: body.unitCostOverrideCents ?? null,
-        supplierPreference: body.supplierPreference ?? null,
+        supplierId: body.supplierId,
       });
 
       res.status(201).json({

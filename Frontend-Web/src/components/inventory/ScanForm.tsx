@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BarcodeFormat, InventoryItem, ScanMode } from "../../types/inventory.js";
+import type { Supplier } from "../../types/supplier.js";
 
 type SmartScanProductInput = {
   barcodeValue: string;
   barcodeFormat?: BarcodeFormat;
   name: string;
-  supplierPreference: string;
+  supplierId: string;
   category: string;
   unitOfMeasure: string;
   minimumStock: number;
@@ -19,6 +20,7 @@ type ScanFormProps = {
   initialReason?: string;
   allowReceive?: boolean;
   inventoryItems?: InventoryItem[];
+  suppliers?: Supplier[];
   onCreateProduct?: (values: SmartScanProductInput) => Promise<InventoryItem>;
   onSubmit: (values: {
     barcodeValue: string;
@@ -45,7 +47,7 @@ type ZxingScannerControls = {
 
 type CreateProductFormValues = {
   name: string;
-  supplierPreference: string;
+  supplierId: string;
   category: string;
   unitOfMeasure: string;
   minimumStock: string;
@@ -69,6 +71,7 @@ export function ScanForm({
   initialReason = "",
   allowReceive = true,
   inventoryItems = [],
+  suppliers = [],
   onCreateProduct,
   onSubmit,
 }: ScanFormProps) {
@@ -85,7 +88,7 @@ export function ScanForm({
   const [createdProduct, setCreatedProduct] = useState<InventoryItem | null>(null);
   const [createProductValues, setCreateProductValues] = useState<CreateProductFormValues>({
     name: "",
-    supplierPreference: "",
+    supplierId: "",
     category: "",
     unitOfMeasure: "unit",
     minimumStock: "0",
@@ -129,14 +132,8 @@ export function ScanForm({
     [inventoryItems],
   );
   const supplierOptions = useMemo(
-    () => [
-      ...new Set(
-        inventoryItems
-          .map((item) => item.supplierPreference)
-          .filter((supplier): supplier is string => Boolean(supplier)),
-      ),
-    ].sort(),
-    [inventoryItems],
+    () => suppliers.filter((supplier) => supplier.active).sort((a, b) => a.supplierName.localeCompare(b.supplierName)),
+    [suppliers],
   );
   const unitOptions = useMemo(
     () => [...new Set(inventoryItems.map((item) => item.unitOfMeasure).filter(Boolean))].sort(),
@@ -218,7 +215,7 @@ export function ScanForm({
     setBarcodeValue("");
     setCreateProductValues({
       name: "",
-      supplierPreference: "",
+      supplierId: "",
       category: "",
       unitOfMeasure: unitOptions[0] || "unit",
       minimumStock: "0",
@@ -259,8 +256,10 @@ export function ScanForm({
     if (!createProductValues.name.trim()) {
       errors.name = "Product name is required.";
     }
-    if (!createProductValues.supplierPreference.trim()) {
-      errors.supplierPreference = "Supplier is required.";
+    if (!createProductValues.supplierId.trim()) {
+      errors.supplierId = "Supplier is required.";
+    } else if (!supplierOptions.some((supplier) => supplier.id === createProductValues.supplierId)) {
+      errors.supplierId = "Select an existing supplier.";
     }
     if (!createProductValues.category.trim()) {
       errors.category = "Category is required.";
@@ -301,7 +300,7 @@ export function ScanForm({
         barcodeValue: trimmedBarcode,
         barcodeFormat: barcodeFormat || undefined,
         name: createProductValues.name.trim(),
-        supplierPreference: createProductValues.supplierPreference.trim(),
+        supplierId: createProductValues.supplierId,
         category: createProductValues.category.trim(),
         unitOfMeasure: createProductValues.unitOfMeasure.trim(),
         minimumStock,
@@ -311,7 +310,7 @@ export function ScanForm({
       setBarcodeValue(product.masterSku);
       setCreateProductValues({
         name: "",
-        supplierPreference: "",
+        supplierId: "",
         category: "",
         unitOfMeasure: unitOptions[0] || "unit",
         minimumStock: "0",
@@ -627,7 +626,7 @@ export function ScanForm({
             <p className="scan-product-card__eyebrow">Product found</p>
             <h3>{matchedProduct.name}</h3>
             <p className="inventory-page__subtitle">
-              Supplier: {matchedProduct.supplierPreference ?? "No supplier preference set"}
+              Supplier: {matchedProduct.preferredSupplierName ?? matchedProduct.supplierPreference ?? "No supplier set"}
             </p>
           </div>
           <dl className="scan-product-card__details">
@@ -759,23 +758,33 @@ export function ScanForm({
 
             <label className="scan-form__field">
               Supplier *
-              <input
-                value={createProductValues.supplierPreference}
-                onChange={(event) => {
-                  updateCreateProductField("supplierPreference", event.target.value);
-                }}
-                list="scan-supplier-options"
-                aria-invalid={createProductErrors.supplierPreference ? true : undefined}
-                required
-              />
-              <datalist id="scan-supplier-options">
-                {supplierOptions.map((supplier) => (
-                  <option key={supplier} value={supplier} />
-                ))}
-              </datalist>
-              {createProductErrors.supplierPreference ? (
+              {supplierOptions.length === 0 ? (
+                <div className="billing-empty" role="status">
+                  <p className="billing-empty__title">No suppliers have been created yet.</p>
+                  <p className="billing-empty__hint">Please create a supplier before adding products.</p>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={createProductValues.supplierId}
+                    onChange={(event) => {
+                      updateCreateProductField("supplierId", event.target.value);
+                    }}
+                    aria-invalid={createProductErrors.supplierId ? true : undefined}
+                    required
+                  >
+                    <option value="">Select supplier...</option>
+                    {supplierOptions.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.supplierName}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              {createProductErrors.supplierId ? (
                 <span className="product-form__field-error" role="alert">
-                  {createProductErrors.supplierPreference}
+                  {createProductErrors.supplierId}
                 </span>
               ) : null}
             </label>
@@ -888,7 +897,7 @@ export function ScanForm({
               <button
                 type="button"
                 className="button-link"
-                disabled={isCreatingProduct}
+                disabled={isCreatingProduct || supplierOptions.length === 0}
                 onClick={() => {
                   void handleCreateProduct();
                 }}

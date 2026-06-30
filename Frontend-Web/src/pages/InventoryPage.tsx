@@ -17,6 +17,7 @@ import type {
   ScanMode,
   ScanResponse,
 } from "../types/inventory.js";
+import type { Supplier } from "../types/supplier.js";
 import {
   canManageInventory,
   canManageProducts,
@@ -72,6 +73,7 @@ export function InventoryPage() {
   const requestedReference = searchParams.get("reference") ?? "";
   const shouldFocusLowStock = searchParams.get("focus") === "low-stock";
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recentAdjustments, setRecentAdjustments] = useState<InventoryAdjustment[]>([]);
   const [purchaseOrderLines, setPurchaseOrderLines] = useState<PurchaseOrderLine[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -183,6 +185,30 @@ export function InventoryPage() {
     void loadReceivingWorkflow();
   }, [loadReceivingWorkflow]);
 
+  useEffect(() => {
+    if (!user || !canManageProducts(user.role)) {
+      setSuppliers([]);
+      return;
+    }
+
+    let cancelled = false;
+    void apiClient.listSuppliers({ active: true })
+      .then((result) => {
+        if (!cancelled) {
+          setSuppliers(result);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuppliers([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   async function handleScan(values: {
     barcodeValue: string;
     barcodeFormat?: BarcodeFormat;
@@ -224,7 +250,7 @@ export function InventoryPage() {
     barcodeValue: string;
     barcodeFormat?: BarcodeFormat;
     name: string;
-    supplierPreference: string;
+    supplierId: string;
     category: string;
     unitOfMeasure: string;
     minimumStock: number;
@@ -243,7 +269,7 @@ export function InventoryPage() {
       barcodeFormat: inferBarcodeFormat(values.barcodeValue, values.barcodeFormat),
       initialQuantity: 0,
       reorderPoint: values.minimumStock,
-      supplierPreference: values.supplierPreference,
+      supplierId: values.supplierId,
     };
     const response = await apiClient.createProduct(selectedClinicId, request);
     setItems((current) => {
@@ -364,6 +390,7 @@ export function InventoryPage() {
             initialReason={requestedReference}
             allowReceive={canReceiveStock}
             inventoryItems={items}
+            suppliers={suppliers}
             onCreateProduct={handleCreateScannedProduct}
             onSubmit={handleScan}
           />
@@ -418,7 +445,9 @@ export function InventoryPage() {
                       {" "}
                       <span className="inventory-table__meta">
                         {item.masterSku} — {item.quantityOnHand} on hand, reorder at {item.reorderPoint}
-                        {item.supplierPreference ? ` — supplier: ${item.supplierPreference}` : ""}
+                        {item.preferredSupplierName ?? item.supplierPreference
+                          ? ` — supplier: ${item.preferredSupplierName ?? item.supplierPreference ?? ""}`
+                          : ""}
                       </span>
                     </span>
                     <Link

@@ -1,4 +1,4 @@
-import { useState, type SubmitEvent } from "react";
+import { useEffect, useMemo, useState, type SubmitEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -7,6 +7,7 @@ import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat } from "../types/inventory.js";
+import type { Supplier } from "../types/supplier.js";
 import { canManageProducts } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -28,6 +29,7 @@ type FieldErrors = Partial<{
   barcodeValue: string;
   initialQuantity: string;
   reorderPoint: string;
+  supplierId: string;
 }>;
 
 /** True when the string contains a decimal point followed by more than two digits. */
@@ -61,10 +63,51 @@ export function AddProductPage() {
   const [barcodeFormat, setBarcodeFormat] = useState<BarcodeFormat>("ean13");
   const [initialQuantity, setInitialQuantity] = useState("0");
   const [reorderPoint, setReorderPoint] = useState("5");
-  const [supplierPreference, setSupplierPreference] = useState("");
+  const [supplierId, setSupplierId] = useState("");
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [isLoadingSuppliers, setIsLoadingSuppliers] = useState(true);
+  const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const activeSuppliers = useMemo(
+    () => suppliers.filter((supplier) => supplier.active).sort((a, b) => a.supplierName.localeCompare(b.supplierName)),
+    [suppliers],
+  );
+
+  useEffect(() => {
+    if (!user || !canManageProducts(user.role) || isAllClinicsScope) {
+      setIsLoadingSuppliers(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingSuppliers(true);
+    setSupplierLoadError(null);
+
+    void apiClient.listSuppliers({ active: true })
+      .then((result) => {
+        if (!cancelled) {
+          setSuppliers(result);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setSupplierLoadError(err instanceof Error ? err.message : "Unable to load suppliers");
+          setSuppliers([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingSuppliers(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAllClinicsScope, user]);
 
   if (!user) {
     return null;
@@ -133,6 +176,11 @@ export function AddProductPage() {
     if (!barcodeValue.trim()) {
       errors.barcodeValue = "Barcode value is required.";
     }
+    if (!supplierId.trim()) {
+      errors.supplierId = "Supplier is required.";
+    } else if (!activeSuppliers.some((supplier) => supplier.id === supplierId)) {
+      errors.supplierId = "Select an existing supplier.";
+    }
 
     // Compute once so the result can be reused in the API payload below
     // without a second conversion (which would require a non-null assertion).
@@ -182,12 +230,18 @@ export function AddProductPage() {
         barcodeFormat,
         initialQuantity: parsedInitialQuantity,
         reorderPoint: parsedReorderPoint,
-        supplierPreference: supplierPreference.trim() || undefined,
+        supplierId,
       });
 
       void navigate("/inventory");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to create product";
+      const lowerMessage = message.toLowerCase();
+      if (lowerMessage.includes("sku")) {
+        setFieldErrors({ sku: message });
+      } else if (lowerMessage.includes("barcode")) {
+        setFieldErrors({ barcodeValue: message });
+      }
       setApiError(message);
     } finally {
       setIsSubmitting(false);
@@ -210,7 +264,20 @@ export function AddProductPage() {
           </Link>
         </div>
 
-        <form className="product-form" onSubmit={(event) => void handleSubmit(event)}>
+        {isLoadingSuppliers ? (
+          <p className="loading-message">Loading suppliers...</p>
+        ) : supplierLoadError ? (
+          <p className="status-card__error" role="alert">{supplierLoadError}</p>
+        ) : activeSuppliers.length === 0 ? (
+          <div className="billing-empty" role="status">
+            <p className="billing-empty__title">No suppliers have been created yet.</p>
+            <p className="billing-empty__hint">Please create a supplier before adding products.</p>
+            <Link to="/suppliers" className="button-link">
+              Create supplier
+            </Link>
+          </div>
+        ) : (
+        <form className="product-form" onSubmit={(event) => void handleSubmit(event)} noValidate>
           <fieldset className="product-form__section">
             <legend>Product details</legend>
             <div className="product-form__grid">
@@ -308,12 +375,24 @@ export function AddProductPage() {
 
               <div className="product-form__field">
                 <label>
-                  Supplier preference
-                  <input
-                    value={supplierPreference}
-                    onChange={(event) => { setSupplierPreference(event.target.value); }}
-                  />
+                  Supplier
+                  <select
+                    value={supplierId}
+                    onChange={(event) => { setSupplierId(event.target.value); }}
+                    aria-invalid={fieldErrors.supplierId ? true : undefined}
+                    required
+                  >
+                    <option value="">Select supplier...</option>
+                    {activeSuppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.supplierName}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                {fieldErrors.supplierId ? (
+                  <p className="product-form__field-error" role="alert">{fieldErrors.supplierId}</p>
+                ) : null}
               </div>
 
             </div>
@@ -407,6 +486,7 @@ export function AddProductPage() {
             </button>
           </div>
         </form>
+        )}
 
         {apiError ? <p className="status-card__error">{apiError}</p> : null}
       </section>

@@ -15,7 +15,7 @@
  *   quantity_on_hand         → quantityOnHand
  *   reorder_point            → reorderPoint
  *   unit_cost_override_cents → unitCostOverrideCents
- *   supplier_preference      → supplierPreference
+ *   supplier_preference      → supplierPreference (legacy fallback only)
  *   created_at / updated_at  → createdAt / updatedAt
  */
 
@@ -30,6 +30,7 @@ import type {
   DraftPurchaseOrder,
   InventoryAdjustment,
   InventoryPage,
+  ProductSupplier,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -59,6 +60,24 @@ type ClinicInventoryViewRow = ClinicInventoryRow & {
   unit_of_measure: string;
   unit_cost_cents: number;
   is_below_reorder_point: boolean;
+  preferred_supplier_id: string | null;
+  preferred_supplier_name: string | null;
+};
+
+type ProductSupplierRow = {
+  id: string;
+  clinic_id: string;
+  product_id: string;
+  supplier_id: string;
+  supplier_name: string | null;
+  supplier_sku: string | null;
+  supplier_barcode: string | null;
+  unit_cost_cents: number | null;
+  pack_size: number | null;
+  is_preferred: boolean;
+  active: boolean;
+  created_at: Date;
+  updated_at: Date;
 };
 
 type AdjustmentRow = {
@@ -121,6 +140,26 @@ function rowToClinicInventoryView(row: ClinicInventoryViewRow): ClinicInventoryI
     unitOfMeasure: row.unit_of_measure,
     unitCostCents: row.unit_cost_cents,
     isBelowReorderPoint: row.is_below_reorder_point,
+    preferredSupplierId: row.preferred_supplier_id,
+    preferredSupplierName: row.preferred_supplier_name,
+  };
+}
+
+function rowToProductSupplier(row: ProductSupplierRow): ProductSupplier {
+  return {
+    id: row.id,
+    clinicId: row.clinic_id,
+    productId: row.product_id,
+    supplierId: row.supplier_id,
+    supplierName: row.supplier_name,
+    supplierSku: row.supplier_sku,
+    supplierBarcode: row.supplier_barcode,
+    unitCostCents: row.unit_cost_cents,
+    packSize: row.pack_size,
+    isPreferred: row.is_preferred,
+    active: row.active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -183,9 +222,17 @@ const INVENTORY_VIEW_SELECT = `
     mci.category,
     mci.unit_of_measure,
     COALESCE(ci.unit_cost_override_cents, mci.default_unit_cost_cents) AS unit_cost_cents,
-    (ci.quantity_on_hand < ci.reorder_point)                         AS is_below_reorder_point
+    (ci.quantity_on_hand < ci.reorder_point)                         AS is_below_reorder_point,
+    ps.supplier_id                                                   AS preferred_supplier_id,
+    COALESCE(s.supplier_name, ci.supplier_preference)                 AS preferred_supplier_name
   FROM clinic_inventory_items ci
   JOIN master_catalog_items mci ON mci.id = ci.master_catalog_item_id
+  LEFT JOIN product_suppliers ps
+    ON ps.clinic_id = ci.clinic_id
+   AND ps.product_id = ci.master_catalog_item_id
+   AND ps.active = true
+   AND ps.is_preferred = true
+  LEFT JOIN suppliers s ON s.id = ps.supplier_id
 `;
 
 // ─── Repository factory ───────────────────────────────────────────────────────
@@ -490,6 +537,47 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create clinic inventory item");
       return rowToClinicInventoryItem(row);
+    },
+
+    async createProductSupplier(
+      productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
+    ): Promise<ProductSupplier> {
+      if (productSupplier.isPreferred && productSupplier.active) {
+        await pool.query(
+          `UPDATE product_suppliers
+           SET is_preferred = false, updated_at = now()
+           WHERE clinic_id = $1
+             AND product_id = $2
+             AND active = true`,
+          [productSupplier.clinicId, productSupplier.productId],
+        );
+      }
+
+      const { rows } = await pool.query<ProductSupplierRow>(
+        `INSERT INTO product_suppliers
+           (clinic_id, product_id, supplier_id, supplier_sku, supplier_barcode,
+            unit_cost_cents, pack_size, is_preferred, active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING
+           product_suppliers.*,
+           (SELECT supplier_name FROM suppliers WHERE suppliers.id = product_suppliers.supplier_id)
+             AS supplier_name`,
+        [
+          productSupplier.clinicId,
+          productSupplier.productId,
+          productSupplier.supplierId,
+          productSupplier.supplierSku,
+          productSupplier.supplierBarcode,
+          productSupplier.unitCostCents,
+          productSupplier.packSize,
+          productSupplier.isPreferred,
+          productSupplier.active,
+        ],
+      );
+
+      const row = rows[0];
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create product supplier");
+      return rowToProductSupplier(row);
     },
   };
 }

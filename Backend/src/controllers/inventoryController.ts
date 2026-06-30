@@ -47,6 +47,8 @@ function serializeInventoryItem(item: ClinicInventoryItemView) {
     unitCostCents: item.unitCostCents,
     unitCostOverrideCents: item.unitCostOverrideCents,
     supplierPreference: item.supplierPreference,
+    preferredSupplierId: item.preferredSupplierId,
+    preferredSupplierName: item.preferredSupplierName,
     isBelowReorderPoint: item.isBelowReorderPoint,
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),

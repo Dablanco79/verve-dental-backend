@@ -10,9 +10,9 @@ import {
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockCreateProduct } = vi.hoisted(() => {
+const { authTestState, mockCreateProduct, mockListSuppliers } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
-  return { authTestState, mockCreateProduct: vi.fn() };
+  return { authTestState, mockCreateProduct: vi.fn(), mockListSuppliers: vi.fn() };
 });
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -34,21 +34,29 @@ vi.mock("../src/api/client.js", () => ({
     logout: vi.fn(),
     getMe: vi.fn(),
     listInventory: vi.fn(),
+    listSuppliers: mockListSuppliers,
     handleScan: vi.fn(),
     createProduct: mockCreateProduct,
   }),
 }));
 
 const managerUser = createManagerUser();
+const activeSupplier = {
+  id: "supplier-1",
+  supplierName: "DentalCo AU",
+  active: true,
+};
 
 describe("AddProductPage", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
     mockCreateProduct.mockReset();
+    mockListSuppliers.mockReset();
+    mockListSuppliers.mockResolvedValue([activeSupplier]);
     setAuthenticatedUser(authTestState, managerUser);
   });
 
-  it("renders the add product form for managers", () => {
+  it("renders the add product form for managers", async () => {
     render(
       <MemoryRouter>
         <AddProductPage />
@@ -61,8 +69,10 @@ describe("AddProductPage", () => {
         `Create a master catalog item, barcode mapping, and clinic stock row for ${managerUser.homeClinicName}.`,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("SKU")).toBeInTheDocument();
+    expect(await screen.findByLabelText("SKU")).toBeInTheDocument();
+    expect(screen.getByLabelText("Supplier")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create product" })).toBeInTheDocument();
+    expect(mockListSuppliers).toHaveBeenCalledWith({ active: true });
   });
 
   it("renders an access denied panel for clinical staff", () => {
@@ -87,8 +97,9 @@ describe("AddProductPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
+    fireEvent.change(await screen.findByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
     fireEvent.change(screen.getByLabelText("Product name"), { target: { value: "   " } });
+    fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "PPE" } });
     fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "10.00" } });
     fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
@@ -107,8 +118,9 @@ describe("AddProductPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
+    fireEvent.change(await screen.findByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
     fireEvent.change(screen.getByLabelText("Product name"), { target: { value: "Test Product" } });
+    fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "PPE" } });
     fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "89.999" } });
     fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
@@ -135,12 +147,13 @@ describe("AddProductPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(new RegExp(managerUser.homeClinicName))).toBeInTheDocument();
+    expect(await screen.findByText(new RegExp(managerUser.homeClinicName))).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "VRV-ANE-001" } });
     fireEvent.change(screen.getByLabelText("Product name"), {
       target: { value: "Dental Anaesthetic Cartridges" },
     });
+    fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Pharmacy" } });
     fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "89.99" } });
     fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
@@ -155,8 +168,66 @@ describe("AddProductPage", () => {
           category: "Pharmacy",
           defaultUnitCostCents: 8999,
           barcodeValue: "9301234567899",
+          supplierId: activeSupplier.id,
         }),
       );
     });
+  });
+
+  it("blocks product creation when no suppliers exist", async () => {
+    mockListSuppliers.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <AddProductPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("No suppliers have been created yet.")).toBeInTheDocument();
+    expect(screen.getByText("Please create a supplier before adding products.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create product" })).not.toBeInTheDocument();
+  });
+
+  it("requires selecting an existing supplier", async () => {
+    render(
+      <MemoryRouter>
+        <AddProductPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
+    fireEvent.change(screen.getByLabelText("Product name"), { target: { value: "Test Product" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "PPE" } });
+    fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "10.00" } });
+    fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+
+    expect(await screen.findByText("Supplier is required.")).toBeInTheDocument();
+    expect(mockCreateProduct).not.toHaveBeenCalled();
+  });
+
+  it("maps duplicate barcode and SKU API errors inline", async () => {
+    mockCreateProduct.mockRejectedValueOnce(new Error("A product with this SKU already exists"));
+
+    render(
+      <MemoryRouter>
+        <AddProductPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("SKU"), { target: { value: "VRV-TST-001" } });
+    fireEvent.change(screen.getByLabelText("Product name"), { target: { value: "Test Product" } });
+    fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "PPE" } });
+    fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "10.00" } });
+    fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+
+    expect(await screen.findAllByText("A product with this SKU already exists")).not.toHaveLength(0);
+
+    mockCreateProduct.mockRejectedValueOnce(new Error("This barcode is already assigned to a product"));
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+
+    expect(await screen.findAllByText("This barcode is already assigned to a product")).not.toHaveLength(0);
   });
 });

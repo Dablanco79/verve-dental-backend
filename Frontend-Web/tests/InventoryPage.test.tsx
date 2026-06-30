@@ -29,6 +29,7 @@ const {
   mockListPurchaseOrders,
   mockHandleScan,
   mockCreateProduct,
+  mockListSuppliers,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -54,6 +55,7 @@ const {
     mockListPurchaseOrders: vi.fn(),
     mockHandleScan: vi.fn(),
     mockCreateProduct: vi.fn(),
+    mockListSuppliers: vi.fn(),
   };
 });
 
@@ -78,6 +80,7 @@ vi.mock("../src/api/client.js", () => ({
     listInventory: mockListInventory,
     listAdjustments: mockListAdjustments,
     listPurchaseOrders: mockListPurchaseOrders,
+    listSuppliers: mockListSuppliers,
     handleScan: mockHandleScan,
     createProduct: mockCreateProduct,
   }),
@@ -147,7 +150,9 @@ const createdScanProduct: InventoryItem = {
   reorderPoint: 2,
   unitCostCents: 0,
   unitCostOverrideCents: null,
-  supplierPreference: "New Supplier",
+  supplierPreference: "DentalCo AU",
+  preferredSupplierId: "supplier-1",
+  preferredSupplierName: "DentalCo AU",
   isBelowReorderPoint: true,
   createdAt: "2026-06-30T00:00:00.000Z",
   updatedAt: "2026-06-30T00:00:00.000Z",
@@ -201,6 +206,7 @@ describe("InventoryPage", () => {
     mockListPurchaseOrders.mockReset();
     mockHandleScan.mockReset();
     mockCreateProduct.mockReset();
+    mockListSuppliers.mockReset();
     setAuthenticatedUser(authTestState, authUser);
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
     selectedClinicState.selectedDashboardScope = {
@@ -210,6 +216,10 @@ describe("InventoryPage", () => {
     mockListInventory.mockResolvedValue(sampleInventory);
     mockListAdjustments.mockResolvedValue({ items: [receiveAdjustment], total: 1, limit: 25, offset: 0 });
     mockListPurchaseOrders.mockResolvedValue([submittedPoLine]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "DentalCo AU", active: true },
+      { id: "supplier-2", supplierName: "BurDirect", active: true },
+    ]);
     mockCreateProduct.mockResolvedValue({
       masterItem: {
         id: createdScanProduct.masterCatalogItemId,
@@ -277,6 +287,7 @@ describe("InventoryPage", () => {
   });
 
   it("opens the create product modal when a barcode is not found", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
     renderInventoryPage();
 
     await screen.findByText("VRV-BUR-001");
@@ -288,10 +299,12 @@ describe("InventoryPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
     expect(within(dialog).getByDisplayValue("UNKNOWN-CODE")).toHaveAttribute("readonly");
     expect(within(dialog).getByLabelText("Product Name *")).toHaveFocus();
+    expect(within(dialog).getByLabelText("Supplier *")).toBeInTheDocument();
     expect(mockHandleScan).not.toHaveBeenCalled();
   });
 
   it("shows inline validation errors before creating an unknown scanned product", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
     renderInventoryPage();
 
     await screen.findByText("VRV-BUR-001");
@@ -309,6 +322,7 @@ describe("InventoryPage", () => {
   });
 
   it("creates an unknown scanned product and immediately displays it as found", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
     renderInventoryPage();
 
     await screen.findByText("VRV-BUR-001");
@@ -321,9 +335,7 @@ describe("InventoryPage", () => {
     fireEvent.change(within(dialog).getByLabelText("Product Name *"), {
       target: { value: "New Scan Product" },
     });
-    fireEvent.change(within(dialog).getByLabelText("Supplier *"), {
-      target: { value: "New Supplier" },
-    });
+    fireEvent.change(within(dialog).getByLabelText("Supplier *"), { target: { value: "supplier-1" } });
     fireEvent.change(within(dialog).getByLabelText("Minimum Stock"), {
       target: { value: "2" },
     });
@@ -336,7 +348,7 @@ describe("InventoryPage", () => {
           sku: "UNKNOWN-CODE",
           barcodeValue: "UNKNOWN-CODE",
           name: "New Scan Product",
-          supplierPreference: "New Supplier",
+          supplierId: "supplier-1",
           initialQuantity: 0,
           reorderPoint: 2,
         }),
@@ -346,11 +358,12 @@ describe("InventoryPage", () => {
     expect(await screen.findByText("✅ Product Created Successfully")).toBeInTheDocument();
     const productSummary = await screen.findByLabelText("Scanned product summary");
     expect(within(productSummary).getByText("New Scan Product")).toBeInTheDocument();
-    expect(within(productSummary).getByText("Supplier: New Supplier")).toBeInTheDocument();
+    expect(within(productSummary).getByText("Supplier: DentalCo AU")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Create product from scan" })).not.toBeInTheDocument();
   });
 
   it("shows duplicate barcode errors returned by product creation", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
     mockCreateProduct.mockRejectedValue(new Error("This barcode is already assigned to a product"));
 
     renderInventoryPage();
@@ -365,9 +378,7 @@ describe("InventoryPage", () => {
     fireEvent.change(within(dialog).getByLabelText("Product Name *"), {
       target: { value: "New Scan Product" },
     });
-    fireEvent.change(within(dialog).getByLabelText("Supplier *"), {
-      target: { value: "New Supplier" },
-    });
+    fireEvent.change(within(dialog).getByLabelText("Supplier *"), { target: { value: "supplier-1" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save Product" }));
 
     expect(
@@ -376,7 +387,25 @@ describe("InventoryPage", () => {
     expect(within(dialog).getByRole("button", { name: "Save Product" })).toBeInTheDocument();
   });
 
+  it("blocks scanned product creation when no suppliers exist", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+    mockListSuppliers.mockResolvedValue([]);
+
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    expect(within(dialog).getByText("No suppliers have been created yet.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save Product" })).toBeDisabled();
+  });
+
   it("cancels unknown scanned product creation and returns to scanner", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
     renderInventoryPage();
 
     await screen.findByText("VRV-BUR-001");

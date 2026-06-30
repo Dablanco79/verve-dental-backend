@@ -2274,6 +2274,48 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         );
     `,
   },
+  {
+    /**
+     * Clinic-scoped product ↔ supplier links.
+     *
+     * supplier_catalogue remains global supplier pricing/product data; this
+     * table records which supplier a clinic uses for a product.
+     */
+    id: "032_product_suppliers",
+    sql: `
+      CREATE TABLE IF NOT EXISTS product_suppliers (
+        id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        clinic_id             uuid        NOT NULL,
+        product_id            uuid        NOT NULL REFERENCES master_catalog_items(id),
+        supplier_id           uuid        NOT NULL REFERENCES suppliers(id),
+        supplier_sku          text,
+        supplier_barcode      text,
+        unit_cost_cents       integer     CHECK (unit_cost_cents IS NULL OR unit_cost_cents >= 0),
+        pack_size             integer     CHECK (pack_size IS NULL OR pack_size > 0),
+        is_preferred          boolean     NOT NULL DEFAULT true,
+        active                boolean     NOT NULL DEFAULT true,
+        created_at            timestamptz NOT NULL DEFAULT now(),
+        updated_at            timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_product_suppliers_clinic_product
+        ON product_suppliers (clinic_id, product_id);
+
+      CREATE INDEX IF NOT EXISTS idx_product_suppliers_supplier
+        ON product_suppliers (supplier_id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_product_suppliers_active_preferred
+        ON product_suppliers (clinic_id, product_id)
+        WHERE active = true AND is_preferred = true;
+
+      ALTER TABLE product_suppliers ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE product_suppliers FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS rls_product_suppliers_tenant ON product_suppliers;
+      CREATE POLICY rls_product_suppliers_tenant ON product_suppliers FOR ALL
+        USING (app_is_owner_admin() OR clinic_id = app_current_clinic_id())
+        WITH CHECK (app_is_owner_admin() OR clinic_id = app_current_clinic_id());
+    `,
+  },
 ];
 
 /**

@@ -60,6 +60,22 @@ export type ClinicInventoryItem = {
   updatedAt: Date;
 };
 
+export type ProductSupplier = {
+  id: string;
+  clinicId: string;
+  productId: string;
+  supplierId: string;
+  supplierName: string | null;
+  supplierSku: string | null;
+  supplierBarcode: string | null;
+  unitCostCents: number | null;
+  packSize: number | null;
+  isPreferred: boolean;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type ClinicInventoryItemView = ClinicInventoryItem & {
   masterSku: string;
   name: string;
@@ -67,6 +83,8 @@ export type ClinicInventoryItemView = ClinicInventoryItem & {
   unitOfMeasure: string;
   unitCostCents: number;
   isBelowReorderPoint: boolean;
+  preferredSupplierId: string | null;
+  preferredSupplierName: string | null;
 };
 
 export type InventoryAdjustment = {

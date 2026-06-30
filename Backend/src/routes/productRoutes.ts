@@ -21,6 +21,7 @@ export function createProductRouter(deps: AppDependencies): Router {
   const productService = createProductService(
     deps.catalogRepository,
     deps.inventoryRepository,
+    deps.supplierRepository,
   );
   const handlers = createProductHandlers(productService);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);

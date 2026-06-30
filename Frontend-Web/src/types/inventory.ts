@@ -15,6 +15,8 @@ export type InventoryItem = {
   unitCostCents: number;
   unitCostOverrideCents: number | null;
   supplierPreference: string | null;
+  preferredSupplierId?: string | null;
+  preferredSupplierName?: string | null;
   isBelowReorderPoint: boolean;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +58,7 @@ export type CreateProductRequest = {
   initialQuantity: number;
   reorderPoint: number;
   unitCostOverrideCents?: number;
-  supplierPreference?: string;
+  supplierId: string;
 };
 
 export type CreateProductResponse = {

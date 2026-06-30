@@ -1,5 +1,6 @@
 import type { CatalogRepository } from "../repositories/catalogRepository.js";
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
+import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type {
   BarcodeFormat,
   BarcodeMapping,
@@ -21,7 +22,7 @@ export type CreateProductInput = {
   initialQuantity: number;
   reorderPoint: number;
   unitCostOverrideCents: number | null;
-  supplierPreference: string | null;
+  supplierId: string;
 };
 
 export type CreateProductResult = {
@@ -33,6 +34,7 @@ export type CreateProductResult = {
 export function createProductService(
   catalogRepository: CatalogRepository,
   inventoryRepository: InventoryRepository,
+  supplierRepository: SupplierRepository,
 ) {
   return {
     async createProduct(input: CreateProductInput): Promise<CreateProductResult> {
@@ -61,6 +63,11 @@ export function createProductService(
           "VALIDATION_ERROR",
           "defaultUnitCostCents must be a non-negative integer",
         );
+      }
+
+      const supplier = await supplierRepository.findSupplierById(input.supplierId);
+      if (!supplier || !supplier.active) {
+        throw new AppError(400, "INVALID_SUPPLIER", "Select an active supplier");
       }
 
       const existingSku = await catalogRepository.findMasterItemBySku(sku);
@@ -97,10 +104,23 @@ export function createProductService(
         quantityOnHand: input.initialQuantity,
         reorderPoint: input.reorderPoint,
         unitCostOverrideCents: input.unitCostOverrideCents,
-        supplierPreference: input.supplierPreference,
+        supplierPreference: null,
       });
 
-      const clinicItem = await inventoryRepository.findClinicInventoryItem(
+      await inventoryRepository.createProductSupplier({
+        clinicId: input.clinicId,
+        productId: masterItem.id,
+        supplierId: supplier.id,
+        supplierName: supplier.supplierName,
+        supplierSku: null,
+        supplierBarcode: barcodeValue,
+        unitCostCents: input.defaultUnitCostCents,
+        packSize: null,
+        isPreferred: true,
+        active: true,
+      });
+
+      let clinicItem = await inventoryRepository.findClinicInventoryItem(
         input.clinicId,
         clinicRecord.id,
       );
@@ -108,6 +128,13 @@ export function createProductService(
       if (!clinicItem) {
         throw new AppError(500, "INTERNAL_ERROR", "Failed to load created clinic inventory item");
       }
+
+      clinicItem = {
+        ...clinicItem,
+        preferredSupplierId: supplier.id,
+        preferredSupplierName: supplier.supplierName,
+        supplierPreference: supplier.supplierName,
+      };
 
       return {
         masterItem,
