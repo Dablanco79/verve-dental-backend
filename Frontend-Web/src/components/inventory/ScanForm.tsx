@@ -1,6 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SubmitEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BarcodeFormat, InventoryItem, ScanMode } from "../../types/inventory.js";
+
+type SmartScanProductInput = {
+  barcodeValue: string;
+  barcodeFormat?: BarcodeFormat;
+  name: string;
+  supplierPreference: string;
+  category: string;
+  unitOfMeasure: string;
+  minimumStock: number;
+  reorderQuantity: number;
+};
 
 type ScanFormProps = {
   isSubmitting: boolean;
@@ -8,6 +19,7 @@ type ScanFormProps = {
   initialReason?: string;
   allowReceive?: boolean;
   inventoryItems?: InventoryItem[];
+  onCreateProduct?: (values: SmartScanProductInput) => Promise<InventoryItem>;
   onSubmit: (values: {
     barcodeValue: string;
     barcodeFormat?: BarcodeFormat;
@@ -31,6 +43,17 @@ type ZxingScannerControls = {
   stop: () => void;
 };
 
+type CreateProductFormValues = {
+  name: string;
+  supplierPreference: string;
+  category: string;
+  unitOfMeasure: string;
+  minimumStock: string;
+  reorderQuantity: string;
+};
+
+type CreateProductFieldErrors = Partial<Record<keyof CreateProductFormValues | "barcode", string>>;
+
 const FORMAT_OPTIONS: Array<{ value: "" | BarcodeFormat; label: string }> = [
   { value: "", label: "Auto-detect" },
   { value: "ean13", label: "EAN-13" },
@@ -46,6 +69,7 @@ export function ScanForm({
   initialReason = "",
   allowReceive = true,
   inventoryItems = [],
+  onCreateProduct,
   onSubmit,
 }: ScanFormProps) {
   const [scanMode, setScanMode] = useState<ScanMode>(
@@ -58,7 +82,21 @@ export function ScanForm({
   const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>("idle");
+  const [createdProduct, setCreatedProduct] = useState<InventoryItem | null>(null);
+  const [createProductValues, setCreateProductValues] = useState<CreateProductFormValues>({
+    name: "",
+    supplierPreference: "",
+    category: "",
+    unitOfMeasure: "unit",
+    minimumStock: "0",
+    reorderQuantity: "0",
+  });
+  const [createProductErrors, setCreateProductErrors] = useState<CreateProductFieldErrors>({});
+  const [createProductError, setCreateProductError] = useState<string | null>(null);
+  const [isCreatingProduct, setIsCreatingProduct] = useState(false);
+  const [productCreatedMessage, setProductCreatedMessage] = useState<string | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const productNameInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -66,22 +104,44 @@ export function ScanForm({
   const isCameraActiveRef = useRef(false);
 
   const trimmedBarcode = barcodeValue.trim();
+  const searchableInventoryItems = useMemo(
+    () => (createdProduct ? [createdProduct, ...inventoryItems] : inventoryItems),
+    [createdProduct, inventoryItems],
+  );
   const matchedProduct = useMemo(() => {
     const lookup = trimmedBarcode.toLowerCase();
     if (!lookup) return null;
 
     return (
-      inventoryItems.find(
+      searchableInventoryItems.find(
         (item) =>
           item.masterSku.toLowerCase() === lookup ||
           item.name.toLowerCase() === lookup,
       ) ?? null
     );
-  }, [inventoryItems, trimmedBarcode]);
+  }, [searchableInventoryItems, trimmedBarcode]);
   const hasUnknownBarcode = trimmedBarcode.length > 0 && !matchedProduct;
   const parsedQuantity = Number(quantity);
   const quantityForPreview =
     Number.isInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
+  const categoryOptions = useMemo(
+    () => [...new Set(inventoryItems.map((item) => item.category).filter(Boolean))].sort(),
+    [inventoryItems],
+  );
+  const supplierOptions = useMemo(
+    () => [
+      ...new Set(
+        inventoryItems
+          .map((item) => item.supplierPreference)
+          .filter((supplier): supplier is string => Boolean(supplier)),
+      ),
+    ].sort(),
+    [inventoryItems],
+  );
+  const unitOptions = useMemo(
+    () => [...new Set(inventoryItems.map((item) => item.unitOfMeasure).filter(Boolean))].sort(),
+    [inventoryItems],
+  );
 
   useEffect(() => {
     setScanMode(initialMode === "receive" && allowReceive ? "receive" : "deduct");
@@ -94,6 +154,24 @@ export function ScanForm({
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (hasUnknownBarcode) {
+      window.setTimeout(() => productNameInputRef.current?.focus(), 0);
+    }
+  }, [hasUnknownBarcode]);
+
+  useEffect(() => {
+    if (!hasUnknownBarcode) {
+      return;
+    }
+
+    setCreateProductValues((current) => ({
+      ...current,
+      category: current.category || categoryOptions[0] || "General",
+      unitOfMeasure: current.unitOfMeasure || unitOptions[0] || "unit",
+    }));
+  }, [categoryOptions, hasUnknownBarcode, unitOptions]);
 
   const stopCamera = useCallback((): void => {
     isCameraActiveRef.current = false;
@@ -129,10 +207,127 @@ export function ScanForm({
     if (!nextValue) return;
 
     setBarcodeValue(nextValue);
+    setProductCreatedMessage(null);
     setError(null);
     setCameraError(null);
     stopCamera();
     window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
+  }
+
+  function closeCreateProductModal(): void {
+    setBarcodeValue("");
+    setCreateProductValues({
+      name: "",
+      supplierPreference: "",
+      category: "",
+      unitOfMeasure: unitOptions[0] || "unit",
+      minimumStock: "0",
+      reorderQuantity: "0",
+    });
+    setCreateProductErrors({});
+    setCreateProductError(null);
+    setProductCreatedMessage(null);
+    window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
+  }
+
+  function updateCreateProductField<K extends keyof CreateProductFormValues>(
+    field: K,
+    value: CreateProductFormValues[K],
+  ): void {
+    setCreateProductValues((current) => ({ ...current, [field]: value }));
+    setCreateProductErrors((current) => {
+      return Object.fromEntries(
+        Object.entries(current).filter(([key]) => key !== field),
+      );
+    });
+    setCreateProductError(null);
+  }
+
+  function validateCreateProduct(): CreateProductFieldErrors {
+    const errors: CreateProductFieldErrors = {};
+    const minimumStock = Number(createProductValues.minimumStock);
+    const reorderQuantity = Number(createProductValues.reorderQuantity);
+
+    if (!trimmedBarcode) {
+      errors.barcode = "Barcode is required.";
+    }
+    if (
+      inventoryItems.some((item) => item.masterSku.toLowerCase() === trimmedBarcode.toLowerCase())
+    ) {
+      errors.barcode = "This barcode already matches an existing product code.";
+    }
+    if (!createProductValues.name.trim()) {
+      errors.name = "Product name is required.";
+    }
+    if (!createProductValues.supplierPreference.trim()) {
+      errors.supplierPreference = "Supplier is required.";
+    }
+    if (!createProductValues.category.trim()) {
+      errors.category = "Category is required.";
+    }
+    if (!createProductValues.unitOfMeasure.trim()) {
+      errors.unitOfMeasure = "Unit of measure is required.";
+    }
+    if (!Number.isInteger(minimumStock) || minimumStock < 0) {
+      errors.minimumStock = "Minimum stock must be zero or a positive whole number.";
+    }
+    if (!Number.isInteger(reorderQuantity) || reorderQuantity < 0) {
+      errors.reorderQuantity = "Reorder quantity must be zero or a positive whole number.";
+    }
+
+    return errors;
+  }
+
+  async function handleCreateProduct(): Promise<void> {
+    if (!onCreateProduct) {
+      setCreateProductError("Product creation is not available in this scanner.");
+      return;
+    }
+
+    const errors = validateCreateProduct();
+    if (Object.keys(errors).length > 0) {
+      setCreateProductErrors(errors);
+      return;
+    }
+
+    setCreateProductErrors({});
+    setCreateProductError(null);
+    setIsCreatingProduct(true);
+
+    try {
+      const minimumStock = Number(createProductValues.minimumStock);
+      const reorderQuantity = Number(createProductValues.reorderQuantity);
+      const product = await onCreateProduct({
+        barcodeValue: trimmedBarcode,
+        barcodeFormat: barcodeFormat || undefined,
+        name: createProductValues.name.trim(),
+        supplierPreference: createProductValues.supplierPreference.trim(),
+        category: createProductValues.category.trim(),
+        unitOfMeasure: createProductValues.unitOfMeasure.trim(),
+        minimumStock,
+        reorderQuantity,
+      });
+      setCreatedProduct(product);
+      setBarcodeValue(product.masterSku);
+      setCreateProductValues({
+        name: "",
+        supplierPreference: "",
+        category: "",
+        unitOfMeasure: unitOptions[0] || "unit",
+        minimumStock: "0",
+        reorderQuantity: "0",
+      });
+      setProductCreatedMessage("Product Created Successfully");
+      window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unable to create product.";
+      if (message.toLowerCase().includes("barcode")) {
+        setCreateProductErrors({ barcode: "This barcode is already assigned to a product." });
+      }
+      setCreateProductError(message);
+    } finally {
+      setIsCreatingProduct(false);
+    }
   }
 
   async function startNativeBarcodeDetector(video: HTMLVideoElement): Promise<boolean> {
@@ -266,13 +461,8 @@ export function ScanForm({
     }
   }
 
-  async function handleSubmit(event: SubmitEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    await submitScan(scanMode);
-  }
-
   return (
-    <form className="scan-form" onSubmit={(event) => void handleSubmit(event)}>
+    <div className="scan-form">
       <div className="scan-form__intro">
         <div>
           <h3 className="scan-form__title">Barcode scanning workflow</h3>
@@ -319,12 +509,19 @@ export function ScanForm({
             value={barcodeValue}
             onChange={(event) => {
               setBarcodeValue(event.target.value);
+              setProductCreatedMessage(null);
               setError(null);
               setCameraError(null);
             }}
             placeholder="e.g. 9301234567890 or VRV-CMP-001"
             autoComplete="off"
             autoFocus
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void submitScan(scanMode);
+              }
+            }}
             required
           />
         </label>
@@ -372,13 +569,16 @@ export function ScanForm({
         </label>
 
         <button
-          type="submit"
+          type="button"
           className={
             scanMode === "receive"
               ? "scan-form__submit scan-form__submit--receive"
               : "scan-form__submit"
           }
           disabled={isSubmitting}
+          onClick={() => {
+            void submitScan(scanMode);
+          }}
         >
           {isSubmitting
             ? scanMode === "receive"
@@ -497,35 +697,213 @@ export function ScanForm({
       ) : null}
 
       {hasUnknownBarcode ? (
-        <section className="scan-unknown-card" aria-live="polite" role="status">
-          <h3>Unknown product</h3>
-          <p>This barcode was not found.</p>
-          <div className="scan-product-card__actions">
-            <button
-              type="button"
-              className="button-link"
-              onClick={() => {
-                setBarcodeValue("");
-                setError(null);
-                setCameraError(null);
-                barcodeInputRef.current?.focus();
-              }}
-            >
-              Try Again
-            </button>
-            <button
-              type="button"
-              className="link-button"
-              onClick={() => {
-                setBarcodeValue("");
-                setError(null);
-                setCameraError(null);
-              }}
-            >
-              Cancel
-            </button>
+        <div
+          className="scan-create-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="scan-create-product-title"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              closeCreateProductModal();
+              return;
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void handleCreateProduct();
+            }
+          }}
+        >
+          <div
+            className="scan-create-modal__panel"
+          >
+            <div className="status-card__header">
+              <div>
+                <p className="scan-product-card__eyebrow">Unknown product</p>
+                <h3 id="scan-create-product-title">Create product from scan</h3>
+                <p className="inventory-page__subtitle">
+                  This barcode was not found. Create the product without leaving scan mode.
+                </p>
+              </div>
+            </div>
+
+            <label className="scan-form__field">
+              Barcode
+              <input value={trimmedBarcode} readOnly aria-describedby="scan-create-barcode-help" />
+            </label>
+            <p id="scan-create-barcode-help" className="scan-form__hint">
+              Barcode is read-only because it came from the current scan.
+            </p>
+            {createProductErrors.barcode ? (
+              <p className="product-form__field-error" role="alert">
+                {createProductErrors.barcode}
+              </p>
+            ) : null}
+
+            <label className="scan-form__field">
+              Product Name *
+              <input
+                ref={productNameInputRef}
+                value={createProductValues.name}
+                onChange={(event) => {
+                  updateCreateProductField("name", event.target.value);
+                }}
+                aria-invalid={createProductErrors.name ? true : undefined}
+                required
+              />
+              {createProductErrors.name ? (
+                <span className="product-form__field-error" role="alert">
+                  {createProductErrors.name}
+                </span>
+              ) : null}
+            </label>
+
+            <label className="scan-form__field">
+              Supplier *
+              <input
+                value={createProductValues.supplierPreference}
+                onChange={(event) => {
+                  updateCreateProductField("supplierPreference", event.target.value);
+                }}
+                list="scan-supplier-options"
+                aria-invalid={createProductErrors.supplierPreference ? true : undefined}
+                required
+              />
+              <datalist id="scan-supplier-options">
+                {supplierOptions.map((supplier) => (
+                  <option key={supplier} value={supplier} />
+                ))}
+              </datalist>
+              {createProductErrors.supplierPreference ? (
+                <span className="product-form__field-error" role="alert">
+                  {createProductErrors.supplierPreference}
+                </span>
+              ) : null}
+            </label>
+
+            <div className="scan-create-modal__grid">
+              <label className="scan-form__field">
+                Category
+                <input
+                  value={createProductValues.category}
+                  onChange={(event) => {
+                    updateCreateProductField("category", event.target.value);
+                  }}
+                  list="scan-category-options"
+                  aria-invalid={createProductErrors.category ? true : undefined}
+                />
+                <datalist id="scan-category-options">
+                  {categoryOptions.map((category) => (
+                    <option key={category} value={category} />
+                  ))}
+                </datalist>
+                {createProductErrors.category ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.category}
+                  </span>
+                ) : null}
+              </label>
+
+              <label className="scan-form__field">
+                Unit of Measure
+                <input
+                  value={createProductValues.unitOfMeasure}
+                  onChange={(event) => {
+                    updateCreateProductField("unitOfMeasure", event.target.value);
+                  }}
+                  list="scan-unit-options"
+                  aria-invalid={createProductErrors.unitOfMeasure ? true : undefined}
+                />
+                <datalist id="scan-unit-options">
+                  {unitOptions.map((unit) => (
+                    <option key={unit} value={unit} />
+                  ))}
+                </datalist>
+                {createProductErrors.unitOfMeasure ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.unitOfMeasure}
+                  </span>
+                ) : null}
+              </label>
+
+              <label className="scan-form__field">
+                Minimum Stock
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={createProductValues.minimumStock}
+                  onChange={(event) => {
+                    updateCreateProductField("minimumStock", event.target.value);
+                  }}
+                  aria-invalid={createProductErrors.minimumStock ? true : undefined}
+                />
+                {createProductErrors.minimumStock ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.minimumStock}
+                  </span>
+                ) : null}
+              </label>
+
+              <label className="scan-form__field">
+                Reorder Quantity
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={createProductValues.reorderQuantity}
+                  onChange={(event) => {
+                    updateCreateProductField("reorderQuantity", event.target.value);
+                  }}
+                  aria-invalid={createProductErrors.reorderQuantity ? true : undefined}
+                />
+                {createProductErrors.reorderQuantity ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.reorderQuantity}
+                  </span>
+                ) : null}
+              </label>
+            </div>
+
+            <p className="scan-form__hint">
+              Minimum Stock is saved as the product reorder level. Reorder Quantity is captured
+              in this workflow, but the current product API does not persist a separate reorder
+              quantity field.
+            </p>
+
+            {createProductError ? (
+              <p className="status-card__error" role="alert">
+                {createProductError}
+              </p>
+            ) : null}
+
+            <div className="scan-product-card__actions">
+              <button
+                type="button"
+                className="link-button"
+                onClick={closeCreateProductModal}
+                disabled={isCreatingProduct}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button-link"
+                disabled={isCreatingProduct}
+                onClick={() => {
+                  void handleCreateProduct();
+                }}
+              >
+                {isCreatingProduct ? "Saving..." : "Save Product"}
+              </button>
+            </div>
           </div>
-        </section>
+        </div>
+      ) : null}
+
+      {productCreatedMessage ? (
+        <p className="inventory-notice" role="status">
+          ✅ {productCreatedMessage}
+        </p>
       ) : null}
 
       {scanMode === "receive" ? (
@@ -542,6 +920,6 @@ export function ScanForm({
       ) : null}
 
       {error ? <p className="status-card__error">{error}</p> : null}
-    </form>
+    </div>
   );
 }

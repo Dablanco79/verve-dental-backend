@@ -10,6 +10,7 @@ import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type {
   BarcodeFormat,
+  CreateProductRequest,
   InventoryAdjustment,
   InventoryItem,
   PurchaseOrderLine,
@@ -214,6 +215,44 @@ export function InventoryPage() {
     }
   }
 
+  function inferBarcodeFormat(value: string, selectedFormat?: BarcodeFormat): BarcodeFormat {
+    if (selectedFormat) return selectedFormat;
+    return /^\d{13}$/.test(value) ? "ean13" : "code128";
+  }
+
+  async function handleCreateScannedProduct(values: {
+    barcodeValue: string;
+    barcodeFormat?: BarcodeFormat;
+    name: string;
+    supplierPreference: string;
+    category: string;
+    unitOfMeasure: string;
+    minimumStock: number;
+  }): Promise<InventoryItem> {
+    if (!user || !selectedClinicId) {
+      throw new Error("Select a clinic before creating products.");
+    }
+
+    const request: CreateProductRequest = {
+      sku: values.barcodeValue,
+      name: values.name,
+      category: values.category,
+      unitOfMeasure: values.unitOfMeasure,
+      defaultUnitCostCents: 0,
+      barcodeValue: values.barcodeValue,
+      barcodeFormat: inferBarcodeFormat(values.barcodeValue, values.barcodeFormat),
+      initialQuantity: 0,
+      reorderPoint: values.minimumStock,
+      supplierPreference: values.supplierPreference,
+    };
+    const response = await apiClient.createProduct(selectedClinicId, request);
+    setItems((current) => {
+      const withoutDuplicate = current.filter((item) => item.id !== response.clinicItem.id);
+      return [...withoutDuplicate, response.clinicItem];
+    });
+    return response.clinicItem;
+  }
+
   const receivingAdjustments = useMemo(
     () =>
       recentAdjustments.filter(
@@ -325,6 +364,7 @@ export function InventoryPage() {
             initialReason={requestedReference}
             allowReceive={canReceiveStock}
             inventoryItems={items}
+            onCreateProduct={handleCreateScannedProduct}
             onSubmit={handleScan}
           />
         )}

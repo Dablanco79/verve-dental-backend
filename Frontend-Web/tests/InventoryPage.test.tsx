@@ -28,6 +28,7 @@ const {
   mockListAdjustments,
   mockListPurchaseOrders,
   mockHandleScan,
+  mockCreateProduct,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -52,6 +53,7 @@ const {
     mockListAdjustments: vi.fn(),
     mockListPurchaseOrders: vi.fn(),
     mockHandleScan: vi.fn(),
+    mockCreateProduct: vi.fn(),
   };
 });
 
@@ -77,7 +79,7 @@ vi.mock("../src/api/client.js", () => ({
     listAdjustments: mockListAdjustments,
     listPurchaseOrders: mockListPurchaseOrders,
     handleScan: mockHandleScan,
-    createProduct: vi.fn(),
+    createProduct: mockCreateProduct,
   }),
 }));
 
@@ -133,6 +135,23 @@ const sampleInventory: InventoryItem[] = [
   },
 ];
 const rotaryInventoryItem = sampleInventory[1] as InventoryItem;
+const createdScanProduct: InventoryItem = {
+  id: "e3333333-3333-4333-8333-333333333333",
+  clinicId: TEST_CLINIC_ID,
+  masterCatalogItemId: "d3333333-3333-4333-8333-333333333333",
+  masterSku: "UNKNOWN-CODE",
+  name: "New Scan Product",
+  category: "PPE",
+  unitOfMeasure: "pack",
+  quantityOnHand: 0,
+  reorderPoint: 2,
+  unitCostCents: 0,
+  unitCostOverrideCents: null,
+  supplierPreference: "New Supplier",
+  isBelowReorderPoint: true,
+  createdAt: "2026-06-30T00:00:00.000Z",
+  updatedAt: "2026-06-30T00:00:00.000Z",
+};
 
 const authUser = createStaffUser();
 const managerUser = createManagerUser();
@@ -181,6 +200,7 @@ describe("InventoryPage", () => {
     mockListAdjustments.mockReset();
     mockListPurchaseOrders.mockReset();
     mockHandleScan.mockReset();
+    mockCreateProduct.mockReset();
     setAuthenticatedUser(authTestState, authUser);
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
     selectedClinicState.selectedDashboardScope = {
@@ -190,6 +210,18 @@ describe("InventoryPage", () => {
     mockListInventory.mockResolvedValue(sampleInventory);
     mockListAdjustments.mockResolvedValue({ items: [receiveAdjustment], total: 1, limit: 25, offset: 0 });
     mockListPurchaseOrders.mockResolvedValue([submittedPoLine]);
+    mockCreateProduct.mockResolvedValue({
+      masterItem: {
+        id: createdScanProduct.masterCatalogItemId,
+        sku: createdScanProduct.masterSku,
+        name: createdScanProduct.name,
+      },
+      barcodeMapping: {
+        barcodeValue: createdScanProduct.masterSku,
+        barcodeFormat: "code128",
+      },
+      clinicItem: createdScanProduct,
+    });
   });
 
   it("clears the loading state immediately when no user is authenticated", async () => {
@@ -244,7 +276,7 @@ describe("InventoryPage", () => {
     expect(screen.getByRole("button", { name: "Deduct scanned product" })).toBeInTheDocument();
   });
 
-  it("shows unknown product state without submitting when barcode is not in the local inventory list", async () => {
+  it("opens the create product modal when a barcode is not found", async () => {
     renderInventoryPage();
 
     await screen.findByText("VRV-BUR-001");
@@ -253,12 +285,112 @@ describe("InventoryPage", () => {
       target: { value: "UNKNOWN-CODE" },
     });
 
-    expect(await screen.findByText("Unknown product")).toBeInTheDocument();
-    expect(screen.getByText("This barcode was not found.")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    expect(within(dialog).getByDisplayValue("UNKNOWN-CODE")).toHaveAttribute("readonly");
+    expect(within(dialog).getByLabelText("Product Name *")).toHaveFocus();
     expect(mockHandleScan).not.toHaveBeenCalled();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+  it("shows inline validation errors before creating an unknown scanned product", async () => {
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Product" }));
+
+    expect(await within(dialog).findByText("Product name is required.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Supplier is required.")).toBeInTheDocument();
+    expect(mockCreateProduct).not.toHaveBeenCalled();
+  });
+
+  it("creates an unknown scanned product and immediately displays it as found", async () => {
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    fireEvent.change(within(dialog).getByLabelText("Product Name *"), {
+      target: { value: "New Scan Product" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Supplier *"), {
+      target: { value: "New Supplier" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Minimum Stock"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Product" }));
+
+    await waitFor(() => {
+      expect(mockCreateProduct).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        expect.objectContaining({
+          sku: "UNKNOWN-CODE",
+          barcodeValue: "UNKNOWN-CODE",
+          name: "New Scan Product",
+          supplierPreference: "New Supplier",
+          initialQuantity: 0,
+          reorderPoint: 2,
+        }),
+      );
+    });
+
+    expect(await screen.findByText("✅ Product Created Successfully")).toBeInTheDocument();
+    const productSummary = await screen.findByLabelText("Scanned product summary");
+    expect(within(productSummary).getByText("New Scan Product")).toBeInTheDocument();
+    expect(within(productSummary).getByText("Supplier: New Supplier")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Create product from scan" })).not.toBeInTheDocument();
+  });
+
+  it("shows duplicate barcode errors returned by product creation", async () => {
+    mockCreateProduct.mockRejectedValue(new Error("This barcode is already assigned to a product"));
+
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    fireEvent.change(within(dialog).getByLabelText("Product Name *"), {
+      target: { value: "New Scan Product" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Supplier *"), {
+      target: { value: "New Supplier" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save Product" }));
+
+    expect(
+      await within(dialog).findByText("This barcode is already assigned to a product."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Save Product" })).toBeInTheDocument();
+  });
+
+  it("cancels unknown scanned product creation and returns to scanner", async () => {
+    renderInventoryPage();
+
+    await screen.findByText("VRV-BUR-001");
+
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: "UNKNOWN-CODE" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Create product from scan" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog", { name: "Create product from scan" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Barcode")).toHaveValue("");
+    expect(mockCreateProduct).not.toHaveBeenCalled();
   });
 
   it("shows a friendly camera error when media devices are unavailable", async () => {
