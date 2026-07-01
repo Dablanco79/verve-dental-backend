@@ -496,9 +496,9 @@ export function InventoryPage() {
                     <Link
                       to={`/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`}
                       className="link-button"
-                      aria-label={`Review purchase order for ${item.name}`}
                     >
-                      Review PO
+                      Review purchase order
+                      <span className="visually-hidden"> for {item.name}</span>
                     </Link>
                   </li>
                 ))}

@@ -141,6 +141,7 @@ export function InventoryTable({
                     {purchaseHref && item.isBelowReorderPoint ? (
                       <Link to={purchaseHref} className="link-button">
                         Review PO
+                        <span className="visually-hidden"> for {item.name}</span>
                       </Link>
                     ) : (
                       <span className="inventory-table__meta">No action</span>
