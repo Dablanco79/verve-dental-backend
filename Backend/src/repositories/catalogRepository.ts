@@ -6,15 +6,23 @@ import {
   buildMasterCatalogSeed,
 } from "./seed/inventorySeed.js";
 
+type CreateMasterCatalogItemBase = Pick<
+  MasterCatalogItem,
+  "sku" | "name" | "description" | "category" | "defaultUnitCostCents"
+>;
+
+export type CreateMasterCatalogItemInput = CreateMasterCatalogItemBase & (
+  | Pick<MasterCatalogItem, "stockUnit" | "receivingUnit" | "unitsPerReceivingUnit">
+  | Pick<MasterCatalogItem, "unitOfMeasure">
+);
+
 export interface CatalogRepository {
   listMasterItems(): Promise<MasterCatalogItem[]>;
   findMasterItemById(id: string): Promise<MasterCatalogItem | null>;
   findMasterItemBySku(sku: string): Promise<MasterCatalogItem | null>;
   findBarcodeMapping(barcodeValue: string): Promise<BarcodeMapping | null>;
   listBarcodeMappingsForItem(masterCatalogItemId: string): Promise<BarcodeMapping[]>;
-  createMasterItem(
-    item: Omit<MasterCatalogItem, "id" | "isActive" | "createdAt" | "updatedAt">,
-  ): Promise<MasterCatalogItem>;
+  createMasterItem(item: CreateMasterCatalogItemInput): Promise<MasterCatalogItem>;
   createBarcodeMapping(
     mapping: Omit<BarcodeMapping, "id" | "createdAt">,
   ): Promise<BarcodeMapping>;
@@ -56,12 +64,18 @@ export function createInMemoryCatalogRepository(): CatalogRepository {
       );
     },
 
-    createMasterItem(
-      item: Omit<MasterCatalogItem, "id" | "isActive" | "createdAt" | "updatedAt">,
-    ): Promise<MasterCatalogItem> {
+    createMasterItem(item: CreateMasterCatalogItemInput): Promise<MasterCatalogItem> {
       const now = new Date();
+      const stockUnit = "stockUnit" in item ? item.stockUnit : item.unitOfMeasure;
+      const receivingUnit = "receivingUnit" in item ? item.receivingUnit : stockUnit;
+      const unitsPerReceivingUnit =
+        "unitsPerReceivingUnit" in item ? item.unitsPerReceivingUnit : 1;
       const record: MasterCatalogItem = {
         ...item,
+        stockUnit,
+        receivingUnit,
+        unitsPerReceivingUnit,
+        unitOfMeasure: stockUnit,
         id: randomUUID(),
         isActive: true,
         createdAt: now,

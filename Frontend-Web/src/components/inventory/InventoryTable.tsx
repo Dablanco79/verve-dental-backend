@@ -4,6 +4,7 @@ import type { InventoryItem } from "../../types/inventory.js";
 import {
   formatInventoryCurrency,
   getInventoryBarcode,
+  getInventoryStockUnit,
   getInventoryStockStatus,
   getInventorySupplierDisplay,
 } from "../../utils/inventoryDisplay.js";
@@ -120,7 +121,7 @@ export function InventoryTable({
                   ) : (
                     <span className="inventory-table__name">{item.name}</span>
                   )}
-                  <span className="inventory-table__meta">{item.unitOfMeasure}</span>
+                  <span className="inventory-table__meta">{getInventoryStockUnit(item)}</span>
                 </td>
                 <td>
                   <code>{item.masterSku}</code>

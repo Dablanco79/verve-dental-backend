@@ -16,6 +16,18 @@ export function getInventoryBarcode(item: InventoryItem): string {
   return item.barcodeValue ?? item.primaryBarcode ?? item.masterSku;
 }
 
+export function getInventoryStockUnit(item: InventoryItem): string {
+  return item.stockUnit ?? item.unitOfMeasure;
+}
+
+export function getInventoryReceivingUnit(item: InventoryItem): string {
+  return item.receivingUnit ?? getInventoryStockUnit(item);
+}
+
+export function getInventoryUnitsPerReceivingUnit(item: InventoryItem): number {
+  return item.unitsPerReceivingUnit ?? 1;
+}
+
 export function getInventorySupplierName(item: InventoryItem): string {
   return item.preferredSupplierName ?? item.supplierPreference ?? "";
 }

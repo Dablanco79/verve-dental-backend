@@ -20,7 +20,7 @@
 import type { DatabasePool } from "../db/pool.js";
 import type { BarcodeFormat, BarcodeMapping, MasterCatalogItem } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
-import type { CatalogRepository } from "./catalogRepository.js";
+import type { CatalogRepository, CreateMasterCatalogItemInput } from "./catalogRepository.js";
 
 type MasterCatalogRow = {
   id: string;
@@ -28,6 +28,9 @@ type MasterCatalogRow = {
   name: string;
   description: string | null;
   category: string;
+  stock_unit?: string | null;
+  receiving_unit?: string | null;
+  units_per_receiving_unit?: number | null;
   unit_of_measure: string;
   default_unit_cost_cents: number;
   is_active: boolean;
@@ -51,7 +54,10 @@ function rowToMasterItem(row: MasterCatalogRow): MasterCatalogItem {
     name: row.name,
     description: row.description,
     category: row.category,
-    unitOfMeasure: row.unit_of_measure,
+    stockUnit: row.stock_unit ?? row.unit_of_measure,
+    receivingUnit: row.receiving_unit ?? row.unit_of_measure,
+    unitsPerReceivingUnit: row.units_per_receiving_unit ?? 1,
+    unitOfMeasure: row.stock_unit ?? row.unit_of_measure,
     defaultUnitCostCents: row.default_unit_cost_cents,
     isActive: row.is_active,
     createdAt: row.created_at,
@@ -114,19 +120,26 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
     },
 
     async createMasterItem(
-      item: Omit<MasterCatalogItem, "id" | "isActive" | "createdAt" | "updatedAt">,
+      item: CreateMasterCatalogItemInput,
     ): Promise<MasterCatalogItem> {
+      const stockUnit = "stockUnit" in item ? item.stockUnit : item.unitOfMeasure;
+      const receivingUnit = "receivingUnit" in item ? item.receivingUnit : stockUnit;
+      const unitsPerReceivingUnit =
+        "unitsPerReceivingUnit" in item ? item.unitsPerReceivingUnit : 1;
       const { rows } = await pool.query<MasterCatalogRow>(
         `INSERT INTO master_catalog_items
-           (sku, name, description, category, unit_of_measure, default_unit_cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6)
+           (sku, name, description, category, stock_unit, receiving_unit,
+            units_per_receiving_unit, unit_of_measure, default_unit_cost_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $5, $8)
          RETURNING *`,
         [
           item.sku,
           item.name,
           item.description ?? null,
           item.category,
-          item.unitOfMeasure,
+          stockUnit,
+          receivingUnit,
+          unitsPerReceivingUnit,
           item.defaultUnitCostCents,
         ],
       );

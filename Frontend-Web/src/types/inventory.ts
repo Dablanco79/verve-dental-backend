@@ -11,6 +11,10 @@ export type InventoryItem = {
   primaryBarcode?: string | null;
   name: string;
   category: string;
+  stockUnit?: string;
+  receivingUnit?: string;
+  unitsPerReceivingUnit?: number;
+  /** Legacy API alias retained while older screens migrate to stockUnit. */
   unitOfMeasure: string;
   quantityOnHand: number;
   reorderPoint: number;
@@ -53,7 +57,9 @@ export type CreateProductRequest = {
   name: string;
   description?: string;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
   defaultUnitCostCents: number;
   barcodeValue: string;
   barcodeFormat: BarcodeFormat;

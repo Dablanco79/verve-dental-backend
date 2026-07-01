@@ -10,8 +10,11 @@ import type { InventoryItem } from "../types/inventory.js";
 import {
   formatInventoryCurrency,
   getInventoryBarcode,
+  getInventoryReceivingUnit,
+  getInventoryStockUnit,
   getInventoryStockStatus,
   getInventorySupplierDisplay,
+  getInventoryUnitsPerReceivingUnit,
 } from "../utils/inventoryDisplay.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -139,7 +142,12 @@ export function ProductDetailPage() {
           <DetailMetric label="SKU" value={product.masterSku} />
           <DetailMetric label="Barcode" value={getInventoryBarcode(product)} />
           <DetailMetric label="Category" value={product.category} />
-          <DetailMetric label="Unit of Measure" value={product.unitOfMeasure} />
+          <DetailMetric label="Stock Unit" value={getInventoryStockUnit(product)} />
+          <DetailMetric label="Receiving Unit" value={getInventoryReceivingUnit(product)} />
+          <DetailMetric
+            label="Units Per Receiving Unit"
+            value={getInventoryUnitsPerReceivingUnit(product)}
+          />
           <DetailMetric label="Preferred Supplier" value={supplierDisplay} />
           <DetailMetric label="Current Quantity" value={product.quantityOnHand} />
           <DetailMetric label="Reorder Point" value={product.reorderPoint} />

@@ -34,7 +34,9 @@ describe("Product API", () => {
         name: "Dental Anaesthetic Cartridges (Box 50)",
         description: "Lidocaine 2% with epinephrine",
         category: "Pharmacy",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 8999,
         barcodeValue: "9301234567899",
         barcodeFormat: "ean13",
@@ -44,7 +46,7 @@ describe("Product API", () => {
       });
 
     const body = response.body as ApiData<{
-      masterItem: { sku: string };
+      masterItem: { sku: string; stockUnit: string; receivingUnit: string; unitsPerReceivingUnit: number };
       barcodeMapping: { barcodeValue: string };
       clinicItem: {
         masterSku: string;
@@ -56,6 +58,9 @@ describe("Product API", () => {
 
     expect(response.status).toBe(201);
     expect(body.data.masterItem.sku).toBe("VRV-ANE-001");
+    expect(body.data.masterItem.stockUnit).toBe("Box");
+    expect(body.data.masterItem.receivingUnit).toBe("Carton");
+    expect(body.data.masterItem.unitsPerReceivingUnit).toBe(10);
     expect(body.data.barcodeMapping.barcodeValue).toBe("9301234567899");
     expect(body.data.clinicItem.quantityOnHand).toBe(6);
     expect(body.data.clinicItem.preferredSupplierId).toBe(supplier.id);
@@ -74,7 +79,9 @@ describe("Product API", () => {
         sku: "VRV-GLV-001",
         name: "Duplicate gloves",
         category: "PPE",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 1000,
         barcodeValue: "9999999999991",
         barcodeFormat: "ean13",
@@ -100,7 +107,9 @@ describe("Product API", () => {
         sku: "VRV-NEW-001",
         name: "Unauthorized product",
         category: "PPE",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 1000,
         barcodeValue: "9999999999992",
         barcodeFormat: "ean13",
@@ -126,7 +135,9 @@ describe("Product API", () => {
         sku: "VRV-NEW-002",
         name: "Cross-tenant product",
         category: "PPE",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 1000,
         barcodeValue: "9999999999993",
         barcodeFormat: "ean13",
@@ -152,12 +163,43 @@ describe("Product API", () => {
         sku: "VRV-MISS-SUP-001",
         name: "Missing supplier product",
         category: "PPE",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 1000,
         barcodeValue: "9999999999994",
         barcodeFormat: "ean13",
         initialQuantity: 1,
         reorderPoint: 1,
+      });
+
+    const body = response.body as ApiError;
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("rejects zero units per receiving unit", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const supplier = await createSupplier(app, token);
+
+    const response = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/products`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        sku: "VRV-ZERO-CONV-001",
+        name: "Zero conversion product",
+        category: "PPE",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 0,
+        defaultUnitCostCents: 1000,
+        barcodeValue: "9999999999996",
+        barcodeFormat: "ean13",
+        initialQuantity: 1,
+        reorderPoint: 1,
+        supplierId: supplier.id,
       });
 
     const body = response.body as ApiError;
@@ -177,7 +219,9 @@ describe("Product API", () => {
         sku: "VRV-BAD-SUP-001",
         name: "Invalid supplier product",
         category: "PPE",
-        unitOfMeasure: "box",
+        stockUnit: "Box",
+        receivingUnit: "Carton",
+        unitsPerReceivingUnit: 10,
         defaultUnitCostCents: 1000,
         barcodeValue: "9999999999995",
         barcodeFormat: "ean13",

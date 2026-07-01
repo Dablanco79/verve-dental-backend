@@ -5,10 +5,19 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import {
+  RECEIVING_UNIT_OPTIONS,
+  STOCK_UNIT_OPTIONS,
+} from "../constants/inventoryUnits.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat, CreateProductRequest, InventoryItem } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
-import { getInventoryBarcode } from "../utils/inventoryDisplay.js";
+import {
+  getInventoryBarcode,
+  getInventoryReceivingUnit,
+  getInventoryStockUnit,
+  getInventoryUnitsPerReceivingUnit,
+} from "../utils/inventoryDisplay.js";
 import { canManageInventory, canManageProducts } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -21,7 +30,9 @@ type ReceivingLine = {
 type CreateProductValues = {
   name: string;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: string;
   minimumStock: string;
 };
 
@@ -99,7 +110,9 @@ export function InventoryReceivingPage() {
   const [createProductValues, setCreateProductValues] = useState<CreateProductValues>({
     name: "",
     category: "General",
-    unitOfMeasure: "unit",
+    stockUnit: "Unit",
+    receivingUnit: "Box",
+    unitsPerReceivingUnit: "1",
     minimumStock: "0",
   });
   const [createProductErrors, setCreateProductErrors] = useState<CreateProductErrors>({});
@@ -213,7 +226,9 @@ export function InventoryReceivingPage() {
     setCreateProductValues({
       name: "",
       category: "General",
-      unitOfMeasure: "unit",
+      stockUnit: "Unit",
+      receivingUnit: "Box",
+      unitsPerReceivingUnit: "1",
       minimumStock: "0",
     });
     setCreateProductErrors({});
@@ -242,6 +257,10 @@ export function InventoryReceivingPage() {
     setFormError(null);
   }
 
+  function calculateStockIncrease(item: InventoryItem, receivingQuantity: number): number {
+    return receivingQuantity * getInventoryUnitsPerReceivingUnit(item);
+  }
+
   function handleAddBarcodeItem(): void {
     setBarcodeError(null);
     if (!barcodeValue.trim()) {
@@ -261,6 +280,7 @@ export function InventoryReceivingPage() {
   function validateCreateProduct(): CreateProductErrors {
     const errors: CreateProductErrors = {};
     const minimumStock = Number(createProductValues.minimumStock);
+    const unitsPerReceivingUnit = Number(createProductValues.unitsPerReceivingUnit);
 
     if (!createProductValues.name.trim()) {
       errors.name = "Product name is required.";
@@ -268,8 +288,15 @@ export function InventoryReceivingPage() {
     if (!createProductValues.category.trim()) {
       errors.category = "Category is required.";
     }
-    if (!createProductValues.unitOfMeasure.trim()) {
-      errors.unitOfMeasure = "Unit of measure is required.";
+    if (!STOCK_UNIT_OPTIONS.some((unit) => unit === createProductValues.stockUnit)) {
+      errors.stockUnit = "Select a valid stock unit.";
+    }
+    if (!RECEIVING_UNIT_OPTIONS.some((unit) => unit === createProductValues.receivingUnit)) {
+      errors.receivingUnit = "Select a valid receiving unit.";
+    }
+    if (!Number.isInteger(unitsPerReceivingUnit) || unitsPerReceivingUnit <= 0) {
+      errors.unitsPerReceivingUnit =
+        "Units per receiving unit must be a positive whole number.";
     }
     if (!Number.isInteger(minimumStock) || minimumStock < 0) {
       errors.minimumStock = "Minimum stock must be zero or a positive whole number.";
@@ -298,11 +325,14 @@ export function InventoryReceivingPage() {
 
     try {
       const barcode = barcodeValue.trim();
+      const unitsPerReceivingUnit = Number(createProductValues.unitsPerReceivingUnit);
       const request: CreateProductRequest = {
         sku: barcode,
         name: createProductValues.name.trim(),
         category: createProductValues.category.trim(),
-        unitOfMeasure: createProductValues.unitOfMeasure.trim(),
+        stockUnit: createProductValues.stockUnit,
+        receivingUnit: createProductValues.receivingUnit,
+        unitsPerReceivingUnit,
         defaultUnitCostCents: 0,
         barcodeValue: barcode,
         barcodeFormat: inferBarcodeFormat(barcode),
@@ -362,9 +392,10 @@ export function InventoryReceivingPage() {
       });
 
       for (const line of lineItems) {
+        const receivingQuantity = Number(line.quantity);
         await apiClient.adjustInventory(selectedClinicId, {
           itemId: line.item.id,
-          quantityDelta: Number(line.quantity),
+          quantityDelta: calculateStockIncrease(line.item, receivingQuantity),
           reason,
         });
       }
@@ -532,7 +563,9 @@ export function InventoryReceivingPage() {
                     />
                   </label>
                   <label className="scan-form__field scan-form__field--narrow">
-                    Quantity received
+                    Quantity received (
+                    {matchedBarcodeItem ? getInventoryReceivingUnit(matchedBarcodeItem) : "receiving units"}
+                    )
                     <input
                       type="number"
                       min={1}
@@ -563,7 +596,15 @@ export function InventoryReceivingPage() {
                       <div>
                         <dt>Current quantity</dt>
                         <dd>
-                          {matchedBarcodeItem.quantityOnHand} {matchedBarcodeItem.unitOfMeasure}
+                          {matchedBarcodeItem.quantityOnHand} {getInventoryStockUnit(matchedBarcodeItem)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Conversion</dt>
+                        <dd>
+                          1 {getInventoryReceivingUnit(matchedBarcodeItem)} ={" "}
+                          {getInventoryUnitsPerReceivingUnit(matchedBarcodeItem)}{" "}
+                          {getInventoryStockUnit(matchedBarcodeItem)}
                         </dd>
                       </div>
                     </dl>
@@ -610,16 +651,62 @@ export function InventoryReceivingPage() {
                             ) : null}
                           </label>
                           <label className="scan-form__field">
-                            Unit of Measure
-                            <input
-                              value={createProductValues.unitOfMeasure}
+                            Stock Unit
+                            <select
+                              value={createProductValues.stockUnit}
                               onChange={(event) => {
-                                updateCreateProductField("unitOfMeasure", event.target.value);
+                                updateCreateProductField("stockUnit", event.target.value);
                               }}
-                            />
-                            {createProductErrors.unitOfMeasure ? (
+                              aria-invalid={createProductErrors.stockUnit ? true : undefined}
+                            >
+                              {STOCK_UNIT_OPTIONS.map((unit) => (
+                                <option key={unit} value={unit}>
+                                  {unit}
+                                </option>
+                              ))}
+                            </select>
+                            {createProductErrors.stockUnit ? (
                               <span className="product-form__field-error" role="alert">
-                                {createProductErrors.unitOfMeasure}
+                                {createProductErrors.stockUnit}
+                              </span>
+                            ) : null}
+                          </label>
+                          <label className="scan-form__field">
+                            Receiving Unit
+                            <select
+                              value={createProductValues.receivingUnit}
+                              onChange={(event) => {
+                                updateCreateProductField("receivingUnit", event.target.value);
+                              }}
+                              aria-invalid={createProductErrors.receivingUnit ? true : undefined}
+                            >
+                              {RECEIVING_UNIT_OPTIONS.map((unit) => (
+                                <option key={unit} value={unit}>
+                                  {unit}
+                                </option>
+                              ))}
+                            </select>
+                            {createProductErrors.receivingUnit ? (
+                              <span className="product-form__field-error" role="alert">
+                                {createProductErrors.receivingUnit}
+                              </span>
+                            ) : null}
+                          </label>
+                          <label className="scan-form__field">
+                            Units Per Receiving Unit
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={createProductValues.unitsPerReceivingUnit}
+                              onChange={(event) => {
+                                updateCreateProductField("unitsPerReceivingUnit", event.target.value);
+                              }}
+                              aria-invalid={createProductErrors.unitsPerReceivingUnit ? true : undefined}
+                            />
+                            {createProductErrors.unitsPerReceivingUnit ? (
+                              <span className="product-form__field-error" role="alert">
+                                {createProductErrors.unitsPerReceivingUnit}
                               </span>
                             ) : null}
                           </label>
@@ -715,7 +802,11 @@ export function InventoryReceivingPage() {
                         <span>{getInventoryBarcode(item)}</span>
                       </span>
                       <span className="adj-selector__stock">
-                        <strong>{item.quantityOnHand}</strong> {item.unitOfMeasure}
+                        <strong>{item.quantityOnHand}</strong> {getInventoryStockUnit(item)}
+                        <span className="inventory-table__meta">
+                          1 {getInventoryReceivingUnit(item)} ={" "}
+                          {getInventoryUnitsPerReceivingUnit(item)} {getInventoryStockUnit(item)}
+                        </span>
                       </span>
                     </button>
                   ))}
@@ -743,15 +834,19 @@ export function InventoryReceivingPage() {
                         <th>Supplier</th>
                         <th>Quantity received</th>
                         <th>Current quantity</th>
+                        <th>Stock increase</th>
                         <th>New quantity preview</th>
                         <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {lineItems.map((line) => {
-                        const quantity = Number(line.quantity);
-                        const preview = Number.isFinite(quantity)
-                          ? line.item.quantityOnHand + quantity
+                        const receivingQuantity = Number(line.quantity);
+                        const stockIncrease = Number.isInteger(receivingQuantity) && receivingQuantity > 0
+                          ? calculateStockIncrease(line.item, receivingQuantity)
+                          : 0;
+                        const preview = stockIncrease > 0
+                          ? line.item.quantityOnHand + stockIncrease
                           : line.item.quantityOnHand;
                         return (
                           <tr key={line.item.id}>
@@ -771,8 +866,9 @@ export function InventoryReceivingPage() {
                                 }}
                               />
                             </td>
-                            <td>{line.item.quantityOnHand} {line.item.unitOfMeasure}</td>
-                            <td>{preview} {line.item.unitOfMeasure}</td>
+                            <td>{line.item.quantityOnHand} {getInventoryStockUnit(line.item)}</td>
+                            <td>{stockIncrease} {getInventoryStockUnit(line.item)}</td>
+                            <td>{preview} {getInventoryStockUnit(line.item)}</td>
                             <td>
                               <button
                                 type="button"

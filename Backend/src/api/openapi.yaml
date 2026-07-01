@@ -597,6 +597,9 @@ components:
         - clinicId
         - masterSku
         - name
+        - stockUnit
+        - receivingUnit
+        - unitsPerReceivingUnit
         - quantityOnHand
         - reorderPoint
         - isBelowReorderPoint
@@ -623,6 +626,20 @@ components:
         unitOfMeasure:
           type: string
           nullable: true
+          description: Legacy alias for stockUnit.
+        stockUnit:
+          type: string
+          nullable: true
+          description: Unit inventory is counted and displayed in.
+        receivingUnit:
+          type: string
+          nullable: true
+          description: Default unit entered during stock receiving.
+        unitsPerReceivingUnit:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: Number of stock units contained in one receiving unit.
         quantityOnHand:
           type: integer
           minimum: 0
@@ -833,7 +850,9 @@ components:
         - sku
         - name
         - category
-        - unitOfMeasure
+        - stockUnit
+        - receivingUnit
+        - unitsPerReceivingUnit
         - defaultUnitCostCents
         - barcodeValue
         - barcodeFormat
@@ -852,9 +871,23 @@ components:
         category:
           type: string
           maxLength: 128
+        stockUnit:
+          type: string
+          maxLength: 32
+          description: Unit inventory is always counted in.
+        receivingUnit:
+          type: string
+          maxLength: 32
+          description: Default receiving package/unit for this product.
+        unitsPerReceivingUnit:
+          type: integer
+          minimum: 1
+          description: Number of stock units contained in one receiving unit.
         unitOfMeasure:
           type: string
           maxLength: 32
+          deprecated: true
+          description: Legacy alias; use stockUnit.
         defaultUnitCostCents:
           type: integer
           minimum: 0

@@ -20,6 +20,7 @@ import type {
 import type { Supplier } from "../types/supplier.js";
 import {
   getInventoryBarcode,
+  getInventoryStockUnit,
   getInventorySupplierName,
 } from "../utils/inventoryDisplay.js";
 import {
@@ -42,7 +43,7 @@ type ScanNotice = {
 
 function buildScanNotice(result: ScanResponse): ScanNotice {
   const { item, draftPoLineAdded, mode } = result;
-  const stockLabel = `${String(item.quantityOnHand)} ${item.unitOfMeasure} on hand`;
+  const stockLabel = `${String(item.quantityOnHand)} ${getInventoryStockUnit(item)} on hand`;
 
   if (mode === "receive") {
     return {
@@ -259,7 +260,9 @@ export function InventoryPage() {
     name: string;
     supplierId: string;
     category: string;
-    unitOfMeasure: string;
+    stockUnit: string;
+    receivingUnit: string;
+    unitsPerReceivingUnit: number;
     minimumStock: number;
   }): Promise<InventoryItem> {
     if (!user || !selectedClinicId) {
@@ -270,7 +273,9 @@ export function InventoryPage() {
       sku: values.barcodeValue,
       name: values.name,
       category: values.category,
-      unitOfMeasure: values.unitOfMeasure,
+      stockUnit: values.stockUnit,
+      receivingUnit: values.receivingUnit,
+      unitsPerReceivingUnit: values.unitsPerReceivingUnit,
       defaultUnitCostCents: 0,
       barcodeValue: values.barcodeValue,
       barcodeFormat: inferBarcodeFormat(values.barcodeValue, values.barcodeFormat),

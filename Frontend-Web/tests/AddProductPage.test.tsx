@@ -71,6 +71,9 @@ describe("AddProductPage", () => {
     ).toBeInTheDocument();
     expect(await screen.findByLabelText("SKU")).toBeInTheDocument();
     expect(screen.getByLabelText("Supplier")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stock Unit")).toBeInTheDocument();
+    expect(screen.getByLabelText("Receiving Unit")).toBeInTheDocument();
+    expect(screen.getByLabelText("Units Per Receiving Unit")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create product" })).toBeInTheDocument();
     expect(mockListSuppliers).toHaveBeenCalledWith({ active: true });
   });
@@ -155,6 +158,9 @@ describe("AddProductPage", () => {
     });
     fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Pharmacy" } });
+    fireEvent.change(screen.getByLabelText("Stock Unit"), { target: { value: "Box" } });
+    fireEvent.change(screen.getByLabelText("Receiving Unit"), { target: { value: "Carton" } });
+    fireEvent.change(screen.getByLabelText("Units Per Receiving Unit"), { target: { value: "10" } });
     fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "89.99" } });
     fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567899" } });
     fireEvent.click(screen.getByRole("button", { name: "Create product" }));
@@ -166,6 +172,9 @@ describe("AddProductPage", () => {
           sku: "VRV-ANE-001",
           name: "Dental Anaesthetic Cartridges",
           category: "Pharmacy",
+          stockUnit: "Box",
+          receivingUnit: "Carton",
+          unitsPerReceivingUnit: 10,
           defaultUnitCostCents: 8999,
           barcodeValue: "9301234567899",
           supplierId: activeSupplier.id,
@@ -203,6 +212,28 @@ describe("AddProductPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create product" }));
 
     expect(await screen.findByText("Supplier is required.")).toBeInTheDocument();
+    expect(mockCreateProduct).not.toHaveBeenCalled();
+  });
+
+  it("validates units per receiving unit", async () => {
+    render(
+      <MemoryRouter>
+        <AddProductPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("SKU"), { target: { value: "VRV-TST-002" } });
+    fireEvent.change(screen.getByLabelText("Product name"), { target: { value: "Test Product" } });
+    fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "PPE" } });
+    fireEvent.change(screen.getByLabelText("Units Per Receiving Unit"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Default unit cost (AUD)"), { target: { value: "10.00" } });
+    fireEvent.change(screen.getByLabelText("Barcode value"), { target: { value: "9301234567800" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+
+    expect(
+      await screen.findByText("Units per receiving unit must be a positive whole number."),
+    ).toBeInTheDocument();
     expect(mockCreateProduct).not.toHaveBeenCalled();
   });
 

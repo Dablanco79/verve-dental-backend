@@ -32,6 +32,10 @@ export type MasterCatalogItem = {
   name: string;
   description: string | null;
   category: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
+  /** Legacy API alias retained while scan/forecast surfaces migrate to stockUnit. */
   unitOfMeasure: string;
   defaultUnitCostCents: number;
   isActive: boolean;
@@ -80,6 +84,10 @@ export type ClinicInventoryItemView = ClinicInventoryItem & {
   masterSku: string;
   name: string;
   category: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
+  /** Legacy API alias retained while scan/forecast surfaces migrate to stockUnit. */
   unitOfMeasure: string;
   unitCostCents: number;
   isBelowReorderPoint: boolean;

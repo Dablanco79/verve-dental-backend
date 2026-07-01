@@ -94,6 +94,9 @@ const burItem: InventoryItem = {
   barcodeValue: "9301234567891",
   name: "Diamond Burs FG Round #2 (Pack 5)",
   category: "Rotary",
+  stockUnit: "Pack",
+  receivingUnit: "Case",
+  unitsPerReceivingUnit: 6,
   unitOfMeasure: "pack",
   quantityOnHand: 12,
   reorderPoint: 4,
@@ -115,6 +118,9 @@ const gloveItem: InventoryItem = {
   barcodeValue: "9301234567890",
   name: "Nitrile Examination Gloves (Box 100)",
   category: "PPE",
+  stockUnit: "Box",
+  receivingUnit: "Carton",
+  unitsPerReceivingUnit: 10,
   unitOfMeasure: "box",
   quantityOnHand: 3,
   reorderPoint: 5,
@@ -136,6 +142,10 @@ const createdProduct: InventoryItem = {
   barcodeValue: "UNKNOWN-CODE",
   name: "New Receiving Product",
   quantityOnHand: 0,
+  stockUnit: "Unit",
+  receivingUnit: "Box",
+  unitsPerReceivingUnit: 1,
+  unitOfMeasure: "Unit",
 };
 
 function renderReceivingPage() {
@@ -147,7 +157,7 @@ function renderReceivingPage() {
 }
 
 function getQuantityReceivedInput(index: number): HTMLElement {
-  const input = screen.getAllByLabelText("Quantity received")[index];
+  const input = screen.getAllByLabelText(/Quantity received/)[index];
   if (!input) {
     throw new Error(`Quantity received input at index ${String(index)} was not found`);
   }
@@ -242,7 +252,8 @@ describe("InventoryReceivingPage", () => {
     expect(screen.getByText("Receiving line items")).toBeInTheDocument();
     expect(screen.getByLabelText("Quantity received for Nitrile Examination Gloves (Box 100)"))
       .toHaveValue(4);
-    expect(screen.getByText("7 box")).toBeInTheDocument();
+    expect(screen.getByText("40 Box")).toBeInTheDocument();
+    expect(screen.getByText("43 Box")).toBeInTheDocument();
   });
 
   it("adds a product by barcode", async () => {
@@ -261,7 +272,8 @@ describe("InventoryReceivingPage", () => {
 
     expect(screen.getByLabelText("Quantity received for Diamond Burs FG Round #2 (Pack 5)"))
       .toHaveValue(1);
-    expect(screen.getByText("13 pack")).toBeInTheDocument();
+    expect(screen.getByText("6 Pack")).toBeInTheDocument();
+    expect(screen.getByText("18 Pack")).toBeInTheDocument();
   });
 
   it("creates an unknown barcode product and continues receiving", async () => {
@@ -285,6 +297,9 @@ describe("InventoryReceivingPage", () => {
         expect.objectContaining({
           sku: "UNKNOWN-CODE",
           barcodeValue: "UNKNOWN-CODE",
+          stockUnit: "Unit",
+          receivingUnit: "Box",
+          unitsPerReceivingUnit: 1,
           supplierId: supplier.id,
         }),
       );
@@ -350,7 +365,7 @@ describe("InventoryReceivingPage", () => {
     expect(firstAdjustCall[1]).toEqual(
       expect.objectContaining({
         itemId: burItem.id,
-        quantityDelta: 3,
+          quantityDelta: 18,
       }),
     );
     expect(firstAdjustCall[1].reason).toContain("Reference: INV-1024");

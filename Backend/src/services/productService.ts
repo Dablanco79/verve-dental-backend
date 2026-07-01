@@ -15,7 +15,9 @@ export type CreateProductInput = {
   name: string;
   description: string | null;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
   defaultUnitCostCents: number;
   barcodeValue: string;
   barcodeFormat: BarcodeFormat;
@@ -57,6 +59,22 @@ export function createProductService(
         throw new AppError(400, "VALIDATION_ERROR", "reorderPoint must be a non-negative integer");
       }
 
+      if (!input.stockUnit.trim()) {
+        throw new AppError(400, "VALIDATION_ERROR", "stockUnit is required");
+      }
+
+      if (!input.receivingUnit.trim()) {
+        throw new AppError(400, "VALIDATION_ERROR", "receivingUnit is required");
+      }
+
+      if (!Number.isInteger(input.unitsPerReceivingUnit) || input.unitsPerReceivingUnit <= 0) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "unitsPerReceivingUnit must be a positive integer",
+        );
+      }
+
       if (!Number.isInteger(input.defaultUnitCostCents) || input.defaultUnitCostCents < 0) {
         throw new AppError(
           400,
@@ -87,7 +105,9 @@ export function createProductService(
         name: input.name.trim(),
         description: input.description,
         category: input.category.trim(),
-        unitOfMeasure: input.unitOfMeasure.trim(),
+        stockUnit: input.stockUnit.trim(),
+        receivingUnit: input.receivingUnit.trim(),
+        unitsPerReceivingUnit: input.unitsPerReceivingUnit,
         defaultUnitCostCents: input.defaultUnitCostCents,
       });
 

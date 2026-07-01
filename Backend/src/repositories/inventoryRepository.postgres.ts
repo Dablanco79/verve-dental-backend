@@ -57,6 +57,9 @@ type ClinicInventoryViewRow = ClinicInventoryRow & {
   master_sku: string;
   name: string;
   category: string;
+  stock_unit?: string | null;
+  receiving_unit?: string | null;
+  units_per_receiving_unit?: number | null;
   unit_of_measure: string;
   unit_cost_cents: number;
   is_below_reorder_point: boolean;
@@ -137,7 +140,10 @@ function rowToClinicInventoryView(row: ClinicInventoryViewRow): ClinicInventoryI
     masterSku: row.master_sku,
     name: row.name,
     category: row.category,
-    unitOfMeasure: row.unit_of_measure,
+    stockUnit: row.stock_unit ?? row.unit_of_measure,
+    receivingUnit: row.receiving_unit ?? row.unit_of_measure,
+    unitsPerReceivingUnit: row.units_per_receiving_unit ?? 1,
+    unitOfMeasure: row.stock_unit ?? row.unit_of_measure,
     unitCostCents: row.unit_cost_cents,
     isBelowReorderPoint: row.is_below_reorder_point,
     preferredSupplierId: row.preferred_supplier_id,
@@ -220,6 +226,9 @@ const INVENTORY_VIEW_SELECT = `
     mci.sku                                                          AS master_sku,
     mci.name,
     mci.category,
+    mci.stock_unit,
+    mci.receiving_unit,
+    mci.units_per_receiving_unit,
     mci.unit_of_measure,
     COALESCE(ci.unit_cost_override_cents, mci.default_unit_cost_cents) AS unit_cost_cents,
     (ci.quantity_on_hand < ci.reorder_point)                         AS is_below_reorder_point,

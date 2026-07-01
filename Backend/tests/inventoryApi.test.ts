@@ -14,6 +14,10 @@ type ApiError = { error: { code: string; message: string } };
 type InventoryItem = {
   id: string;
   masterSku: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
+  unitOfMeasure: string;
   quantityOnHand: number;
   isBelowReorderPoint: boolean;
 };
@@ -32,6 +36,11 @@ describe("Inventory API (Session 2)", () => {
     expect(response.status).toBe(200);
     expect(body.data).toHaveLength(5);
     expect(body.data.some((item) => item.masterSku === "VRV-GLV-001")).toBe(true);
+    const gloves = body.data.find((item) => item.masterSku === "VRV-GLV-001");
+    expect(gloves?.stockUnit).toBe("Box");
+    expect(gloves?.receivingUnit).toBe("Carton");
+    expect(gloves?.unitsPerReceivingUnit).toBe(10);
+    expect(gloves?.unitOfMeasure).toBe("Box");
   });
 
   it("returns a single inventory item by id", async () => {

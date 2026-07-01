@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  RECEIVING_UNIT_OPTIONS,
+  STOCK_UNIT_OPTIONS,
+} from "../../constants/inventoryUnits.js";
 import type { BarcodeFormat, InventoryItem, ScanMode } from "../../types/inventory.js";
 import type { Supplier } from "../../types/supplier.js";
 
@@ -9,7 +13,9 @@ type SmartScanProductInput = {
   name: string;
   supplierId: string;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
   minimumStock: number;
   reorderQuantity: number;
 };
@@ -49,7 +55,9 @@ type CreateProductFormValues = {
   name: string;
   supplierId: string;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: string;
   minimumStock: string;
   reorderQuantity: string;
 };
@@ -90,7 +98,9 @@ export function ScanForm({
     name: "",
     supplierId: "",
     category: "",
-    unitOfMeasure: "unit",
+    stockUnit: "Unit",
+    receivingUnit: "Box",
+    unitsPerReceivingUnit: "1",
     minimumStock: "0",
     reorderQuantity: "0",
   });
@@ -135,11 +145,6 @@ export function ScanForm({
     () => suppliers.filter((supplier) => supplier.active).sort((a, b) => a.supplierName.localeCompare(b.supplierName)),
     [suppliers],
   );
-  const unitOptions = useMemo(
-    () => [...new Set(inventoryItems.map((item) => item.unitOfMeasure).filter(Boolean))].sort(),
-    [inventoryItems],
-  );
-
   useEffect(() => {
     setScanMode(initialMode === "receive" && allowReceive ? "receive" : "deduct");
   }, [allowReceive, initialMode]);
@@ -166,9 +171,10 @@ export function ScanForm({
     setCreateProductValues((current) => ({
       ...current,
       category: current.category || categoryOptions[0] || "General",
-      unitOfMeasure: current.unitOfMeasure || unitOptions[0] || "unit",
+      stockUnit: current.stockUnit || STOCK_UNIT_OPTIONS[0],
+      receivingUnit: current.receivingUnit || RECEIVING_UNIT_OPTIONS[0],
     }));
-  }, [categoryOptions, hasUnknownBarcode, unitOptions]);
+  }, [categoryOptions, hasUnknownBarcode]);
 
   const stopCamera = useCallback((): void => {
     isCameraActiveRef.current = false;
@@ -217,7 +223,9 @@ export function ScanForm({
       name: "",
       supplierId: "",
       category: "",
-      unitOfMeasure: unitOptions[0] || "unit",
+      stockUnit: STOCK_UNIT_OPTIONS[0],
+      receivingUnit: RECEIVING_UNIT_OPTIONS[0],
+      unitsPerReceivingUnit: "1",
       minimumStock: "0",
       reorderQuantity: "0",
     });
@@ -244,6 +252,7 @@ export function ScanForm({
     const errors: CreateProductFieldErrors = {};
     const minimumStock = Number(createProductValues.minimumStock);
     const reorderQuantity = Number(createProductValues.reorderQuantity);
+    const unitsPerReceivingUnit = Number(createProductValues.unitsPerReceivingUnit);
 
     if (!trimmedBarcode) {
       errors.barcode = "Barcode is required.";
@@ -264,8 +273,15 @@ export function ScanForm({
     if (!createProductValues.category.trim()) {
       errors.category = "Category is required.";
     }
-    if (!createProductValues.unitOfMeasure.trim()) {
-      errors.unitOfMeasure = "Unit of measure is required.";
+    if (!STOCK_UNIT_OPTIONS.some((unit) => unit === createProductValues.stockUnit)) {
+      errors.stockUnit = "Select a valid stock unit.";
+    }
+    if (!RECEIVING_UNIT_OPTIONS.some((unit) => unit === createProductValues.receivingUnit)) {
+      errors.receivingUnit = "Select a valid receiving unit.";
+    }
+    if (!Number.isInteger(unitsPerReceivingUnit) || unitsPerReceivingUnit <= 0) {
+      errors.unitsPerReceivingUnit =
+        "Units per receiving unit must be a positive whole number.";
     }
     if (!Number.isInteger(minimumStock) || minimumStock < 0) {
       errors.minimumStock = "Minimum stock must be zero or a positive whole number.";
@@ -296,13 +312,16 @@ export function ScanForm({
     try {
       const minimumStock = Number(createProductValues.minimumStock);
       const reorderQuantity = Number(createProductValues.reorderQuantity);
+      const unitsPerReceivingUnit = Number(createProductValues.unitsPerReceivingUnit);
       const product = await onCreateProduct({
         barcodeValue: trimmedBarcode,
         barcodeFormat: barcodeFormat || undefined,
         name: createProductValues.name.trim(),
         supplierId: createProductValues.supplierId,
         category: createProductValues.category.trim(),
-        unitOfMeasure: createProductValues.unitOfMeasure.trim(),
+        stockUnit: createProductValues.stockUnit,
+        receivingUnit: createProductValues.receivingUnit,
+        unitsPerReceivingUnit,
         minimumStock,
         reorderQuantity,
       });
@@ -312,7 +331,9 @@ export function ScanForm({
         name: "",
         supplierId: "",
         category: "",
-        unitOfMeasure: unitOptions[0] || "unit",
+        stockUnit: STOCK_UNIT_OPTIONS[0],
+        receivingUnit: RECEIVING_UNIT_OPTIONS[0],
+        unitsPerReceivingUnit: "1",
         minimumStock: "0",
         reorderQuantity: "0",
       });
@@ -813,23 +834,64 @@ export function ScanForm({
               </label>
 
               <label className="scan-form__field">
-                Unit of Measure
-                <input
-                  value={createProductValues.unitOfMeasure}
+                Stock Unit
+                <select
+                  value={createProductValues.stockUnit}
                   onChange={(event) => {
-                    updateCreateProductField("unitOfMeasure", event.target.value);
+                    updateCreateProductField("stockUnit", event.target.value);
                   }}
-                  list="scan-unit-options"
-                  aria-invalid={createProductErrors.unitOfMeasure ? true : undefined}
-                />
-                <datalist id="scan-unit-options">
-                  {unitOptions.map((unit) => (
-                    <option key={unit} value={unit} />
+                  aria-invalid={createProductErrors.stockUnit ? true : undefined}
+                >
+                  {STOCK_UNIT_OPTIONS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
                   ))}
-                </datalist>
-                {createProductErrors.unitOfMeasure ? (
+                </select>
+                {createProductErrors.stockUnit ? (
                   <span className="product-form__field-error" role="alert">
-                    {createProductErrors.unitOfMeasure}
+                    {createProductErrors.stockUnit}
+                  </span>
+                ) : null}
+              </label>
+
+              <label className="scan-form__field">
+                Receiving Unit
+                <select
+                  value={createProductValues.receivingUnit}
+                  onChange={(event) => {
+                    updateCreateProductField("receivingUnit", event.target.value);
+                  }}
+                  aria-invalid={createProductErrors.receivingUnit ? true : undefined}
+                >
+                  {RECEIVING_UNIT_OPTIONS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ))}
+                </select>
+                {createProductErrors.receivingUnit ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.receivingUnit}
+                  </span>
+                ) : null}
+              </label>
+
+              <label className="scan-form__field">
+                Units Per Receiving Unit
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={createProductValues.unitsPerReceivingUnit}
+                  onChange={(event) => {
+                    updateCreateProductField("unitsPerReceivingUnit", event.target.value);
+                  }}
+                  aria-invalid={createProductErrors.unitsPerReceivingUnit ? true : undefined}
+                />
+                {createProductErrors.unitsPerReceivingUnit ? (
+                  <span className="product-form__field-error" role="alert">
+                    {createProductErrors.unitsPerReceivingUnit}
                   </span>
                 ) : null}
               </label>

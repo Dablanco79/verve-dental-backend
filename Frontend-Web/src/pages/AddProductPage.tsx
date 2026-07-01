@@ -5,6 +5,10 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
+import {
+  RECEIVING_UNIT_OPTIONS,
+  STOCK_UNIT_OPTIONS,
+} from "../constants/inventoryUnits.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
@@ -24,7 +28,9 @@ type FieldErrors = Partial<{
   sku: string;
   name: string;
   category: string;
-  unitOfMeasure: string;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: string;
   defaultUnitCost: string;
   barcodeValue: string;
   initialQuantity: string;
@@ -57,7 +63,9 @@ export function AddProductPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("");
-  const [unitOfMeasure, setUnitOfMeasure] = useState("box");
+  const [stockUnit, setStockUnit] = useState("Box");
+  const [receivingUnit, setReceivingUnit] = useState("Carton");
+  const [unitsPerReceivingUnit, setUnitsPerReceivingUnit] = useState("1");
   const [defaultUnitCost, setDefaultUnitCost] = useState("");
   const [barcodeValue, setBarcodeValue] = useState("");
   const [barcodeFormat, setBarcodeFormat] = useState<BarcodeFormat>("ean13");
@@ -170,8 +178,11 @@ export function AddProductPage() {
     if (!category.trim()) {
       errors.category = "Category is required.";
     }
-    if (!unitOfMeasure.trim()) {
-      errors.unitOfMeasure = "Unit of measure is required.";
+    if (!STOCK_UNIT_OPTIONS.some((unit) => unit === stockUnit)) {
+      errors.stockUnit = "Select a valid stock unit.";
+    }
+    if (!RECEIVING_UNIT_OPTIONS.some((unit) => unit === receivingUnit)) {
+      errors.receivingUnit = "Select a valid receiving unit.";
     }
     if (!barcodeValue.trim()) {
       errors.barcodeValue = "Barcode value is required.";
@@ -201,6 +212,12 @@ export function AddProductPage() {
       errors.reorderPoint = "Reorder point must be a non-negative whole number.";
     }
 
+    const parsedUnitsPerReceivingUnit = Number(unitsPerReceivingUnit);
+    if (!Number.isInteger(parsedUnitsPerReceivingUnit) || parsedUnitsPerReceivingUnit <= 0) {
+      errors.unitsPerReceivingUnit =
+        "Units per receiving unit must be a positive whole number.";
+    }
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -224,7 +241,9 @@ export function AddProductPage() {
         name: name.trim(),
         description: description.trim() || undefined,
         category: category.trim(),
-        unitOfMeasure: unitOfMeasure.trim(),
+        stockUnit,
+        receivingUnit,
+        unitsPerReceivingUnit: parsedUnitsPerReceivingUnit,
         defaultUnitCostCents,
         barcodeValue: barcodeValue.trim(),
         barcodeFormat,
@@ -341,17 +360,61 @@ export function AddProductPage() {
 
               <div className="product-form__field">
                 <label>
-                  Unit of measure
+                  Stock Unit
+                  <select
+                    value={stockUnit}
+                    onChange={(event) => { setStockUnit(event.target.value); }}
+                    aria-invalid={fieldErrors.stockUnit ? true : undefined}
+                    required
+                  >
+                    {STOCK_UNIT_OPTIONS.map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {fieldErrors.stockUnit ? (
+                  <p className="product-form__field-error" role="alert">{fieldErrors.stockUnit}</p>
+                ) : null}
+              </div>
+
+              <div className="product-form__field">
+                <label>
+                  Receiving Unit
+                  <select
+                    value={receivingUnit}
+                    onChange={(event) => { setReceivingUnit(event.target.value); }}
+                    aria-invalid={fieldErrors.receivingUnit ? true : undefined}
+                    required
+                  >
+                    {RECEIVING_UNIT_OPTIONS.map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {fieldErrors.receivingUnit ? (
+                  <p className="product-form__field-error" role="alert">{fieldErrors.receivingUnit}</p>
+                ) : null}
+              </div>
+
+              <div className="product-form__field">
+                <label>
+                  Units Per Receiving Unit
                   <input
-                    value={unitOfMeasure}
-                    onChange={(event) => { setUnitOfMeasure(event.target.value); }}
-                    placeholder="box"
-                    aria-invalid={fieldErrors.unitOfMeasure ? true : undefined}
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={unitsPerReceivingUnit}
+                    onChange={(event) => { setUnitsPerReceivingUnit(event.target.value); }}
+                    aria-invalid={fieldErrors.unitsPerReceivingUnit ? true : undefined}
                     required
                   />
                 </label>
-                {fieldErrors.unitOfMeasure ? (
-                  <p className="product-form__field-error" role="alert">{fieldErrors.unitOfMeasure}</p>
+                {fieldErrors.unitsPerReceivingUnit ? (
+                  <p className="product-form__field-error" role="alert">{fieldErrors.unitsPerReceivingUnit}</p>
                 ) : null}
               </div>
 

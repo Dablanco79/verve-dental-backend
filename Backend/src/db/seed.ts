@@ -341,9 +341,10 @@ export async function seedInventory(
   for (const item of masterItems) {
     await pool.query(
       `INSERT INTO master_catalog_items
-         (id, sku, name, description, category, unit_of_measure,
-          default_unit_cost_cents, is_active, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (id, sku, name, description, category, stock_unit, receiving_unit,
+          units_per_receiving_unit, unit_of_measure, default_unit_cost_cents,
+          is_active, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $6, $9, $10, $11, $12)
        ON CONFLICT (id) DO NOTHING`,
       [
         item.id,
@@ -351,7 +352,9 @@ export async function seedInventory(
         item.name,
         item.description ?? null,
         item.category,
-        item.unitOfMeasure,
+        item.stockUnit,
+        item.receivingUnit,
+        item.unitsPerReceivingUnit,
         item.defaultUnitCostCents,
         item.isActive,
         item.createdAt,
