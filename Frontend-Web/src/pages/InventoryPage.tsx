@@ -380,6 +380,11 @@ export function InventoryPage() {
             <p className="inventory-page__subtitle">{scannerSubtitle}</p>
           </div>
           <div className="inventory-page__actions">
+            {canReceiveStock ? (
+              <Link to="/inventory/receiving" className="button-link">
+                Receive Stock
+              </Link>
+            ) : null}
             {user && canManageInventory(user.role) ? (
               <Link to="/inventory/adjust" className="button-link">
                 Adjust stock
@@ -639,11 +644,18 @@ export function InventoryPage() {
               Search and filter loaded products without reloading inventory.
             </p>
           </div>
-          {user && canManageProducts(user.role) ? (
-            <Link to="/inventory/products/new" className="button-link">
-              Add Product
-            </Link>
-          ) : null}
+          <div className="inventory-page__actions">
+            {canReceiveStock ? (
+              <Link to="/inventory/receiving" className="button-link">
+                Receive Stock
+              </Link>
+            ) : null}
+            {user && canManageProducts(user.role) ? (
+              <Link to="/inventory/products/new" className="button-link">
+                Add Product
+              </Link>
+            ) : null}
+          </div>
         </div>
 
         {isLoading ? <p className="loading-message">Loading inventory…</p> : null}

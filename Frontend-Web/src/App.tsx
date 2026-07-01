@@ -9,6 +9,7 @@ import { AddProductPage } from "./pages/AddProductPage.js";
 import { AdjustmentHistoryPage } from "./pages/AdjustmentHistoryPage.js";
 import { InventoryAdjustPage } from "./pages/InventoryAdjustPage.js";
 import { InventoryPage } from "./pages/InventoryPage.js";
+import { InventoryReceivingPage } from "./pages/InventoryReceivingPage.js";
 import { PilotSetupPage } from "./pages/PilotSetupPage.js";
 import { ProductDetailPage } from "./pages/ProductDetailPage.js";
 import { ProductManagementPage } from "./pages/ProductManagementPage.js";
@@ -47,6 +48,7 @@ export function App() {
               <Route path="/inventory/products" element={<ProductManagementPage />} />
               <Route path="/inventory/products/new" element={<AddProductPage />} />
               <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
+              <Route path="/inventory/receiving" element={<InventoryReceivingPage />} />
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
               <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
               <Route path="/users" element={<ManageUsersPage />} />

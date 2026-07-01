@@ -676,6 +676,10 @@ describe("InventoryPage", () => {
     renderInventoryPage("/inventory?mode=receive&reference=po-123");
 
     expect(await screen.findByRole("heading", { name: "Receiving workflow" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Receive Stock" })[0]).toHaveAttribute(
+      "href",
+      "/inventory/receiving",
+    );
     expect(screen.getByRole("button", { name: "Receive" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("po-123")).toBeInTheDocument();
 
