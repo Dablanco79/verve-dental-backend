@@ -4,6 +4,9 @@ import type { InventoryItem } from "../../types/inventory.js";
 
 type InventoryTableProps = {
   items: InventoryItem[];
+  allItemsCount?: number;
+  hasActiveFilters?: boolean;
+  productDetailHrefForItem?: (item: InventoryItem) => string | undefined;
   purchaseOrderHrefForItem?: (item: InventoryItem) => string;
 };
 
@@ -15,6 +18,12 @@ function formatCurrency(cents: number): string {
 }
 
 function compareItems(a: InventoryItem, b: InventoryItem): number {
+  const aOut = a.quantityOnHand === 0;
+  const bOut = b.quantityOnHand === 0;
+  if (aOut !== bOut) {
+    return aOut ? -1 : 1;
+  }
+
   if (a.isBelowReorderPoint !== b.isBelowReorderPoint) {
     return a.isBelowReorderPoint ? -1 : 1;
   }
@@ -22,26 +31,78 @@ function compareItems(a: InventoryItem, b: InventoryItem): number {
   return a.name.localeCompare(b.name);
 }
 
-export function InventoryTable({ items, purchaseOrderHrefForItem }: InventoryTableProps) {
+function getInventoryBarcode(item: InventoryItem): string {
+  return item.barcodeValue ?? item.primaryBarcode ?? item.masterSku;
+}
+
+function getSupplierName(item: InventoryItem): string {
+  return item.preferredSupplierName ?? item.supplierPreference ?? "No supplier set";
+}
+
+function getStockStatus(item: InventoryItem): {
+  label: "Healthy" | "Low Stock" | "Out of Stock";
+  className: string;
+} {
+  if (item.quantityOnHand === 0) {
+    return { label: "Out of Stock", className: "inventory-badge inventory-badge--out" };
+  }
+
+  if (item.isBelowReorderPoint) {
+    return { label: "Low Stock", className: "inventory-badge inventory-badge--low" };
+  }
+
+  return { label: "Healthy", className: "inventory-badge inventory-badge--ok" };
+}
+
+export function InventoryTable({
+  items,
+  allItemsCount = items.length,
+  hasActiveFilters = false,
+  productDetailHrefForItem,
+  purchaseOrderHrefForItem,
+}: InventoryTableProps) {
   const sortedItems = [...items].sort(compareItems);
   const lowStockCount = items.filter((item) => item.isBelowReorderPoint).length;
+  const outOfStockCount = items.filter((item) => item.quantityOnHand === 0).length;
   const showPurchaseActions = Boolean(purchaseOrderHrefForItem);
 
   if (items.length === 0) {
-    return <p className="inventory-empty">No inventory items found for this clinic.</p>;
+    if (allItemsCount === 0) {
+      return (
+        <div className="inventory-empty">
+          <p>No products have been added yet.</p>
+          <Link to="/inventory/products/new" className="button-link">
+            Add Product
+          </Link>
+        </div>
+      );
+    }
+
+    if (hasActiveFilters) {
+      return <p className="inventory-empty">No products match your search.</p>;
+    }
+
+    return <p className="inventory-empty">No products have been added yet.</p>;
   }
 
   return (
     <div className="inventory-table-wrap">
       <div className="inventory-summary">
-        <span>{items.length} products tracked</span>
+        <span>
+          {items.length} of {allItemsCount} products shown
+        </span>
+        {outOfStockCount > 0 ? (
+          <span className="inventory-summary__alert">
+            {outOfStockCount} out of stock
+          </span>
+        ) : null}
         {lowStockCount > 0 ? (
           <span className="inventory-summary__alert">
-            {lowStockCount} below reorder point
+            {lowStockCount} low stock
           </span>
-        ) : (
+        ) : outOfStockCount === 0 ? (
           <span className="inventory-summary__ok">All stock levels healthy</span>
-        )}
+        ) : null}
       </div>
 
       <table className="inventory-table">
@@ -49,8 +110,10 @@ export function InventoryTable({ items, purchaseOrderHrefForItem }: InventoryTab
           <tr>
             <th scope="col">Product</th>
             <th scope="col">SKU</th>
+            <th scope="col">Barcode</th>
+            <th scope="col">Supplier</th>
             <th scope="col">Category</th>
-            <th scope="col">On hand</th>
+            <th scope="col">Current Quantity</th>
             <th scope="col">Reorder</th>
             <th scope="col">Unit cost</th>
             <th scope="col">Status</th>
@@ -60,28 +123,42 @@ export function InventoryTable({ items, purchaseOrderHrefForItem }: InventoryTab
         <tbody>
           {sortedItems.map((item) => {
             const purchaseHref = purchaseOrderHrefForItem?.(item);
+            const detailHref = productDetailHrefForItem?.(item);
+            const stockStatus = getStockStatus(item);
             return (
               <tr
                 key={item.id}
-                className={item.isBelowReorderPoint ? "inventory-table__row--low" : undefined}
+                className={
+                  item.quantityOnHand === 0
+                    ? "inventory-table__row--out"
+                    : item.isBelowReorderPoint
+                      ? "inventory-table__row--low"
+                      : undefined
+                }
               >
                 <td>
-                  <span className="inventory-table__name">{item.name}</span>
+                  {detailHref ? (
+                    <Link to={detailHref} className="inventory-table__name inventory-table__name-link">
+                      {item.name}
+                    </Link>
+                  ) : (
+                    <span className="inventory-table__name">{item.name}</span>
+                  )}
                   <span className="inventory-table__meta">{item.unitOfMeasure}</span>
                 </td>
                 <td>
                   <code>{item.masterSku}</code>
                 </td>
+                <td>
+                  <code>{getInventoryBarcode(item)}</code>
+                </td>
+                <td>{getSupplierName(item)}</td>
                 <td>{item.category}</td>
                 <td className="inventory-table__numeric">{item.quantityOnHand}</td>
                 <td className="inventory-table__numeric">{item.reorderPoint}</td>
                 <td className="inventory-table__numeric">{formatCurrency(item.unitCostCents)}</td>
                 <td>
-                  {item.isBelowReorderPoint ? (
-                    <span className="inventory-badge inventory-badge--low">Low stock</span>
-                  ) : (
-                    <span className="inventory-badge inventory-badge--ok">OK</span>
-                  )}
+                  <span className={stockStatus.className}>{stockStatus.label}</span>
                 </td>
                 {showPurchaseActions ? (
                   <td>

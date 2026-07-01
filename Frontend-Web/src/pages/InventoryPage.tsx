@@ -60,6 +60,14 @@ function buildScanNotice(result: ScanResponse): ScanNotice {
   };
 }
 
+function getInventoryBarcode(item: InventoryItem): string {
+  return item.barcodeValue ?? item.primaryBarcode ?? item.masterSku;
+}
+
+function getInventorySupplierName(item: InventoryItem): string {
+  return item.preferredSupplierName ?? item.supplierPreference ?? "";
+}
+
 export function InventoryPage() {
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
@@ -73,6 +81,9 @@ export function InventoryPage() {
   const requestedReference = searchParams.get("reference") ?? "";
   const shouldFocusLowStock = searchParams.get("focus") === "low-stock";
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [workspaceSearch, setWorkspaceSearch] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recentAdjustments, setRecentAdjustments] = useState<InventoryAdjustment[]>([]);
   const [purchaseOrderLines, setPurchaseOrderLines] = useState<PurchaseOrderLine[]>([]);
@@ -302,6 +313,42 @@ export function InventoryPage() {
     () => items.filter((item) => item.isBelowReorderPoint),
     [items],
   );
+  const supplierFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((item) => getInventorySupplierName(item))
+            .filter((supplierName): supplierName is string => supplierName.length > 0),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [items],
+  );
+  const categoryFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(items.map((item) => item.category).filter((category) => category.length > 0)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [items],
+  );
+  const filteredItems = useMemo(() => {
+    const search = workspaceSearch.trim().toLowerCase();
+
+    return items.filter((item) => {
+      const supplierName = getInventorySupplierName(item);
+      const matchesSearch =
+        search.length === 0 ||
+        item.name.toLowerCase().includes(search) ||
+        item.masterSku.toLowerCase().includes(search) ||
+        getInventoryBarcode(item).toLowerCase().includes(search);
+      const matchesSupplier = !supplierFilter || supplierName === supplierFilter;
+      const matchesCategory = !categoryFilter || item.category === categoryFilter;
+
+      return matchesSearch && matchesSupplier && matchesCategory;
+    });
+  }, [categoryFilter, items, supplierFilter, workspaceSearch]);
+  const hasActiveWorkspaceFilters =
+    workspaceSearch.trim().length > 0 || supplierFilter.length > 0 || categoryFilter.length > 0;
   const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
   const itemNameById = useMemo(
     () => new Map(items.map((item) => [item.id, item.name])),
@@ -589,7 +636,19 @@ export function InventoryPage() {
       ) : null}
 
       <section className="status-card inventory-page__section">
-        <h2>Stock on hand</h2>
+        <div className="status-card__header inventory-workspace__header">
+          <div>
+            <h2>Inventory workspace</h2>
+            <p className="inventory-page__subtitle">
+              Search and filter loaded products without reloading inventory.
+            </p>
+          </div>
+          {user && canManageProducts(user.role) ? (
+            <Link to="/inventory/products/new" className="button-link">
+              Add Product
+            </Link>
+          ) : null}
+        </div>
 
         {isLoading ? <p className="loading-message">Loading inventory…</p> : null}
         {error ? <p className="status-card__error">{error}</p> : null}
@@ -598,15 +657,79 @@ export function InventoryPage() {
             Select a clinic to view stock on hand.
           </p>
         ) : !isLoading && !error ? (
-          <InventoryTable
-            items={items}
-            purchaseOrderHrefForItem={
-              canReviewPurchaseOrders
-                ? (item) =>
-                    `/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`
-                : undefined
-            }
-          />
+          <>
+            <div className="inventory-workspace__controls" aria-label="Inventory filters">
+              <label className="inventory-workspace__field inventory-workspace__field--search">
+                Search products
+                <input
+                  type="search"
+                  value={workspaceSearch}
+                  onChange={(event) => {
+                    setWorkspaceSearch(event.target.value);
+                  }}
+                  placeholder="Search name, barcode, or SKU"
+                />
+              </label>
+              <label className="inventory-workspace__field">
+                Supplier
+                <select
+                  value={supplierFilter}
+                  onChange={(event) => {
+                    setSupplierFilter(event.target.value);
+                  }}
+                >
+                  <option value="">All suppliers</option>
+                  {supplierFilterOptions.map((supplierName) => (
+                    <option key={supplierName} value={supplierName}>
+                      {supplierName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inventory-workspace__field">
+                Category
+                <select
+                  value={categoryFilter}
+                  onChange={(event) => {
+                    setCategoryFilter(event.target.value);
+                  }}
+                >
+                  <option value="">All categories</option>
+                  {categoryFilterOptions.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {hasActiveWorkspaceFilters ? (
+                <button
+                  type="button"
+                  className="link-button inventory-workspace__clear"
+                  onClick={() => {
+                    setWorkspaceSearch("");
+                    setSupplierFilter("");
+                    setCategoryFilter("");
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+
+            <InventoryTable
+              items={filteredItems}
+              allItemsCount={items.length}
+              hasActiveFilters={hasActiveWorkspaceFilters}
+              // TODO: Wire productDetailHrefForItem when a product detail route exists.
+              purchaseOrderHrefForItem={
+                canReviewPurchaseOrders
+                  ? (item) =>
+                      `/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`
+                  : undefined
+              }
+            />
+          </>
         ) : null}
       </section>
     </AppShell>

@@ -800,6 +800,49 @@ body {
   font-weight: 600;
 }
 
+.inventory-workspace__header {
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.inventory-workspace__controls {
+  display: grid;
+  grid-template-columns: minmax(16rem, 2fr) minmax(10rem, 1fr) minmax(10rem, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+
+.inventory-workspace__field {
+  display: grid;
+  gap: 0.35rem;
+  color: #334e68;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.inventory-workspace__field input,
+.inventory-workspace__field select {
+  width: 100%;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  background: #ffffff;
+  color: #102a43;
+  font: inherit;
+  font-weight: 400;
+}
+
+.inventory-workspace__field input:focus,
+.inventory-workspace__field select:focus {
+  outline: 3px solid rgba(23, 115, 176, 0.18);
+  border-color: #1773b0;
+}
+
+.inventory-workspace__clear {
+  justify-self: start;
+}
+
 .inventory-table-wrap {
   overflow-x: auto;
 }
@@ -830,9 +873,24 @@ body {
   background: #fff5f5;
 }
 
+.inventory-table__row--out {
+  background: #fff1f2;
+}
+
 .inventory-table__name {
   display: block;
   font-weight: 600;
+}
+
+.inventory-table__name-link {
+  color: #102a43;
+  text-decoration: none;
+}
+
+.inventory-table__name-link:hover,
+.inventory-table__name-link:focus {
+  color: #1773b0;
+  text-decoration: underline;
 }
 
 .inventory-table__meta {
@@ -857,8 +915,8 @@ body {
 }
 
 .inventory-badge--low {
-  background: #fde2e2;
-  color: #9b1c1c;
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .inventory-badge--ok {
@@ -866,9 +924,34 @@ body {
   color: #0f5132;
 }
 
+.inventory-badge--out {
+  background: #fde2e2;
+  color: #9b1c1c;
+}
+
 .inventory-empty {
-  margin: 0;
+  margin: 1rem 0 0;
   color: #627d98;
+}
+
+.inventory-empty p {
+  margin: 0 0 0.75rem;
+}
+
+@media (max-width: 900px) {
+  .inventory-workspace__controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .inventory-workspace__field--search {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .inventory-workspace__controls {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Account page */
@@ -6120,6 +6203,16 @@ textarea:focus-visible {
 .supplier-detection__badge--new {
   background: var(--vds-colour-warning-bg);
   color: var(--vds-colour-warning);
+}
+
+.inventory-badge--low {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+.inventory-badge--out {
+  background: var(--vds-colour-danger-bg);
+  color: var(--vds-colour-danger);
 }
 
 .analytics-cards-grid,

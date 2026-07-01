@@ -107,6 +107,7 @@ const sampleInventory: InventoryItem[] = [
     clinicId: TEST_CLINIC_ID,
     masterCatalogItemId: "d1111111-1111-4111-8111-111111111111",
     masterSku: "VRV-GLV-001",
+    barcodeValue: "9301234567890",
     name: "Nitrile Examination Gloves (Box 100)",
     category: "PPE",
     unitOfMeasure: "box",
@@ -124,6 +125,7 @@ const sampleInventory: InventoryItem[] = [
     clinicId: TEST_CLINIC_ID,
     masterCatalogItemId: "d2222222-2222-4222-8222-222222222222",
     masterSku: "VRV-BUR-001",
+    barcodeValue: "9301234567891",
     name: "Diamond Burs FG Round #2 (Pack 5)",
     category: "Rotary",
     unitOfMeasure: "pack",
@@ -132,6 +134,24 @@ const sampleInventory: InventoryItem[] = [
     unitCostCents: 4599,
     unitCostOverrideCents: null,
     supplierPreference: "BurDirect",
+    isBelowReorderPoint: false,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+  },
+  {
+    id: "e1111111-1111-4111-8111-111111111113",
+    clinicId: TEST_CLINIC_ID,
+    masterCatalogItemId: "d3333333-3333-4333-8333-333333333333",
+    masterSku: "VRV-CMP-001",
+    barcodeValue: "CMP-BARCODE-001",
+    name: "Universal Composite Resin A2 (4g syringe)",
+    category: "Restorative",
+    unitOfMeasure: "syringe",
+    quantityOnHand: 0,
+    reorderPoint: 0,
+    unitCostCents: 3299,
+    unitCostOverrideCents: null,
+    supplierPreference: null,
     isBelowReorderPoint: false,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -198,6 +218,13 @@ function renderInventoryPage(initialPath = "/inventory") {
   );
 }
 
+function getInventoryWorkspace() {
+  const heading = screen.getByRole("heading", { name: "Inventory workspace" });
+  const section = heading.closest("section");
+  expect(section).not.toBeNull();
+  return section as HTMLElement;
+}
+
 describe("InventoryPage", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
@@ -257,16 +284,112 @@ describe("InventoryPage", () => {
     expect(
       screen.getByText(`${authUser.homeClinicName} — scan to deduct stock`),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Stock on hand" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Inventory workspace" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deduct" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan product with camera" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Receive stock" })).not.toBeInTheDocument();
     expect(await screen.findByText("VRV-GLV-001")).toBeInTheDocument();
-    expect(screen.getByText("1 below reorder point")).toBeInTheDocument();
-    expect(screen.getAllByText("Low stock")).toHaveLength(1);
+    const workspace = getInventoryWorkspace();
+    expect(within(workspace).getByText("1 low stock")).toBeInTheDocument();
+    expect(within(workspace).getByText("1 out of stock")).toBeInTheDocument();
+    expect(within(workspace).getByText("Low Stock")).toBeInTheDocument();
+    expect(within(workspace).getByText("Healthy")).toBeInTheDocument();
+    expect(within(workspace).getByText("Out of Stock")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Review PO" })).not.toBeInTheDocument();
 
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
+  });
+
+  it("filters the inventory workspace by product name without reloading inventory", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Search products"), {
+      target: { value: "composite" },
+    });
+
+    expect(within(workspace).getByText("Universal Composite Resin A2 (4g syringe)")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Diamond Burs FG Round #2 (Pack 5)")).not.toBeInTheDocument();
+    expect(mockListInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters the inventory workspace by barcode", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Search products"), {
+      target: { value: "9301234567891" },
+    });
+
+    expect(within(workspace).getByText("Diamond Burs FG Round #2 (Pack 5)")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Nitrile Examination Gloves (Box 100)")).not.toBeInTheDocument();
+  });
+
+  it("filters the inventory workspace by SKU", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Search products"), {
+      target: { value: "VRV-GLV-001" },
+    });
+
+    expect(within(workspace).getByText("Nitrile Examination Gloves (Box 100)")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Diamond Burs FG Round #2 (Pack 5)")).not.toBeInTheDocument();
+  });
+
+  it("filters the inventory workspace by supplier", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Supplier"), {
+      target: { value: "BurDirect" },
+    });
+
+    expect(within(workspace).getByText("Diamond Burs FG Round #2 (Pack 5)")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Nitrile Examination Gloves (Box 100)")).not.toBeInTheDocument();
+  });
+
+  it("filters the inventory workspace by category", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Category"), {
+      target: { value: "Restorative" },
+    });
+
+    expect(within(workspace).getByText("Universal Composite Resin A2 (4g syringe)")).toBeInTheDocument();
+    expect(within(workspace).queryByText("Diamond Burs FG Round #2 (Pack 5)")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty inventory workspace state when no products exist", async () => {
+    mockListInventory.mockResolvedValue([]);
+
+    renderInventoryPage();
+
+    const workspace = await screen.findByRole("heading", { name: "Inventory workspace" });
+    expect(workspace).toBeInTheDocument();
+    expect(screen.getByText("No products have been added yet.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add Product" })).toHaveAttribute(
+      "href",
+      "/inventory/products/new",
+    );
+  });
+
+  it("shows the empty search result state when filters match no products", async () => {
+    renderInventoryPage();
+    await screen.findByText("VRV-BUR-001");
+
+    const workspace = getInventoryWorkspace();
+    fireEvent.change(within(workspace).getByLabelText("Search products"), {
+      target: { value: "does not exist" },
+    });
+
+    expect(within(workspace).getByText("No products match your search.")).toBeInTheDocument();
   });
 
   it("shows a product summary card when the barcode field matches a known SKU", async () => {

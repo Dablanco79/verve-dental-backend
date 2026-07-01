@@ -7,6 +7,8 @@ export type InventoryItem = {
   clinicId: string;
   masterCatalogItemId: string;
   masterSku: string;
+  barcodeValue?: string | null;
+  primaryBarcode?: string | null;
   name: string;
   category: string;
   unitOfMeasure: string;
