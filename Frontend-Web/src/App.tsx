@@ -10,6 +10,7 @@ import { AdjustmentHistoryPage } from "./pages/AdjustmentHistoryPage.js";
 import { InventoryAdjustPage } from "./pages/InventoryAdjustPage.js";
 import { InventoryPage } from "./pages/InventoryPage.js";
 import { PilotSetupPage } from "./pages/PilotSetupPage.js";
+import { ProductDetailPage } from "./pages/ProductDetailPage.js";
 import { ProductManagementPage } from "./pages/ProductManagementPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { ManageUsersPage } from "./pages/ManageUsersPage.js";
@@ -45,6 +46,7 @@ export function App() {
               <Route path="/inventory" element={<InventoryPage />} />
               <Route path="/inventory/products" element={<ProductManagementPage />} />
               <Route path="/inventory/products/new" element={<AddProductPage />} />
+              <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
               <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
               <Route path="/users" element={<ManageUsersPage />} />

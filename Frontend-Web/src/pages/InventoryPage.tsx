@@ -19,6 +19,10 @@ import type {
 } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
 import {
+  getInventoryBarcode,
+  getInventorySupplierName,
+} from "../utils/inventoryDisplay.js";
+import {
   canManageInventory,
   canManageProducts,
   canManageUsers,
@@ -58,14 +62,6 @@ function buildScanNotice(result: ScanResponse): ScanNotice {
     tone: "success",
     message: `Deducted ${item.masterSku} — ${stockLabel}.`,
   };
-}
-
-function getInventoryBarcode(item: InventoryItem): string {
-  return item.barcodeValue ?? item.primaryBarcode ?? item.masterSku;
-}
-
-function getInventorySupplierName(item: InventoryItem): string {
-  return item.preferredSupplierName ?? item.supplierPreference ?? "";
 }
 
 export function InventoryPage() {
@@ -721,7 +717,8 @@ export function InventoryPage() {
               items={filteredItems}
               allItemsCount={items.length}
               hasActiveFilters={hasActiveWorkspaceFilters}
-              // TODO: Wire productDetailHrefForItem when a product detail route exists.
+              productDetailHrefForItem={(item) =>
+                `/inventory/products/${encodeURIComponent(item.id)}`}
               purchaseOrderHrefForItem={
                 canReviewPurchaseOrders
                   ? (item) =>

@@ -1,6 +1,12 @@
 import { Link } from "react-router-dom";
 
 import type { InventoryItem } from "../../types/inventory.js";
+import {
+  formatInventoryCurrency,
+  getInventoryBarcode,
+  getInventoryStockStatus,
+  getInventorySupplierDisplay,
+} from "../../utils/inventoryDisplay.js";
 
 type InventoryTableProps = {
   items: InventoryItem[];
@@ -9,13 +15,6 @@ type InventoryTableProps = {
   productDetailHrefForItem?: (item: InventoryItem) => string | undefined;
   purchaseOrderHrefForItem?: (item: InventoryItem) => string;
 };
-
-function formatCurrency(cents: number): string {
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency: "AUD",
-  }).format(cents / 100);
-}
 
 function compareItems(a: InventoryItem, b: InventoryItem): number {
   const aOut = a.quantityOnHand === 0;
@@ -29,29 +28,6 @@ function compareItems(a: InventoryItem, b: InventoryItem): number {
   }
 
   return a.name.localeCompare(b.name);
-}
-
-function getInventoryBarcode(item: InventoryItem): string {
-  return item.barcodeValue ?? item.primaryBarcode ?? item.masterSku;
-}
-
-function getSupplierName(item: InventoryItem): string {
-  return item.preferredSupplierName ?? item.supplierPreference ?? "No supplier set";
-}
-
-function getStockStatus(item: InventoryItem): {
-  label: "Healthy" | "Low Stock" | "Out of Stock";
-  className: string;
-} {
-  if (item.quantityOnHand === 0) {
-    return { label: "Out of Stock", className: "inventory-badge inventory-badge--out" };
-  }
-
-  if (item.isBelowReorderPoint) {
-    return { label: "Low Stock", className: "inventory-badge inventory-badge--low" };
-  }
-
-  return { label: "Healthy", className: "inventory-badge inventory-badge--ok" };
 }
 
 export function InventoryTable({
@@ -124,7 +100,7 @@ export function InventoryTable({
           {sortedItems.map((item) => {
             const purchaseHref = purchaseOrderHrefForItem?.(item);
             const detailHref = productDetailHrefForItem?.(item);
-            const stockStatus = getStockStatus(item);
+            const stockStatus = getInventoryStockStatus(item);
             return (
               <tr
                 key={item.id}
@@ -152,11 +128,11 @@ export function InventoryTable({
                 <td>
                   <code>{getInventoryBarcode(item)}</code>
                 </td>
-                <td>{getSupplierName(item)}</td>
+                <td>{getInventorySupplierDisplay(item)}</td>
                 <td>{item.category}</td>
                 <td className="inventory-table__numeric">{item.quantityOnHand}</td>
                 <td className="inventory-table__numeric">{item.reorderPoint}</td>
-                <td className="inventory-table__numeric">{formatCurrency(item.unitCostCents)}</td>
+                <td className="inventory-table__numeric">{formatInventoryCurrency(item.unitCostCents)}</td>
                 <td>
                   <span className={stockStatus.className}>{stockStatus.label}</span>
                 </td>

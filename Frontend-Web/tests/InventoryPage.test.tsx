@@ -296,6 +296,12 @@ describe("InventoryPage", () => {
     expect(within(workspace).getByText("Healthy")).toBeInTheDocument();
     expect(within(workspace).getByText("Out of Stock")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Review PO" })).not.toBeInTheDocument();
+    expect(
+      within(workspace).getByRole("link", { name: "Nitrile Examination Gloves (Box 100)" }),
+    ).toHaveAttribute(
+      "href",
+      "/inventory/products/e1111111-1111-4111-8111-111111111111",
+    );
 
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_ID);
   });
