@@ -407,9 +407,9 @@ describe("RLS — supplier_invoices", () => {
       c.query(
         `INSERT INTO supplier_invoices (
            id, clinic_id, original_filename, file_mime_type,
-           imported_by_user_id, imported_by_email
+           ocr_provider, imported_by_user_id, imported_by_email
          )
-         VALUES ($1, $2, 'rls-test.pdf', 'application/pdf', $3, 'admin@clinic-a.au')
+         VALUES ($1, $2, 'rls-test.pdf', 'application/pdf', 'rls_test', $3, 'admin@clinic-a.au')
          RETURNING id, clinic_id`,
         [FX.supplierInvoiceA, SEED_CLINIC_A_ID, SEED_USER_IDS.clinicAAdmin],
       ),
@@ -426,9 +426,9 @@ describe("RLS — supplier_invoices", () => {
         c.query(
           `INSERT INTO supplier_invoices (
              clinic_id, original_filename, file_mime_type,
-             imported_by_user_id, imported_by_email
+             ocr_provider, imported_by_user_id, imported_by_email
            )
-           VALUES ($1, 'rls-cross-tenant.pdf', 'application/pdf', $2, 'admin@clinic-a.au')`,
+           VALUES ($1, 'rls-cross-tenant.pdf', 'application/pdf', 'rls_test', $2, 'admin@clinic-a.au')`,
           [SEED_CLINIC_B_ID, SEED_USER_IDS.clinicAAdmin],
         ),
       ),
