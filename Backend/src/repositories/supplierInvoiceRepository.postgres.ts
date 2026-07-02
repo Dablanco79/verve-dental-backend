@@ -9,6 +9,7 @@
  */
 
 import type { DatabasePool } from "../db/pool.js";
+import { withTenantContext } from "../db/tenantContext.js";
 import { AppError } from "../types/errors.js";
 import type {
   AddSupplierInvoiceLineInput,
@@ -182,34 +183,39 @@ export function createPostgresSupplierInvoiceRepository(
     async createSupplierInvoice(
       input: CreateSupplierInvoiceInput,
     ): Promise<SupplierInvoice> {
-      const { rows } = await pool.query<InvoiceRow>(
-        `INSERT INTO supplier_invoices (
-           clinic_id, supplier_id, supplier_name_raw, invoice_number,
-           invoice_date, due_date, subtotal_cents, tax_cents, total_cents,
-           ocr_provider, ocr_confidence, ocr_raw_response,
-           original_filename, file_mime_type, file_sha256,
-           imported_by_user_id, imported_by_email
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-         RETURNING *`,
-        [
-          input.clinicId,
-          input.supplierId,
-          input.supplierNameRaw,
-          input.invoiceNumber,
-          input.invoiceDate,
-          input.dueDate,
-          input.subtotalCents,
-          input.taxCents,
-          input.totalCents,
-          input.ocrProvider,
-          input.ocrConfidence,
-          JSON.stringify(input.ocrRawResponse),
-          input.originalFilename,
-          input.fileMimeType,
-          input.fileSha256,
-          input.importedByUserId,
-          input.importedByEmail,
-        ],
+      const { rows } = await withTenantContext(
+        pool,
+        input.clinicId,
+        (client) =>
+          client.query<InvoiceRow>(
+            `INSERT INTO supplier_invoices (
+               clinic_id, supplier_id, supplier_name_raw, invoice_number,
+               invoice_date, due_date, subtotal_cents, tax_cents, total_cents,
+               ocr_provider, ocr_confidence, ocr_raw_response,
+               original_filename, file_mime_type, file_sha256,
+               imported_by_user_id, imported_by_email
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+             RETURNING *`,
+            [
+              input.clinicId,
+              input.supplierId,
+              input.supplierNameRaw,
+              input.invoiceNumber,
+              input.invoiceDate,
+              input.dueDate,
+              input.subtotalCents,
+              input.taxCents,
+              input.totalCents,
+              input.ocrProvider,
+              input.ocrConfidence,
+              JSON.stringify(input.ocrRawResponse),
+              input.originalFilename,
+              input.fileMimeType,
+              input.fileSha256,
+              input.importedByUserId,
+              input.importedByEmail,
+            ],
+          ),
       );
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create supplier invoice");
@@ -393,34 +399,39 @@ export function createPostgresSupplierInvoiceRepository(
       );
       const totalCents = subtotalCents + taxCents;
 
-      const { rows } = await pool.query<LineRow>(
-        `INSERT INTO supplier_invoice_lines (
-           clinic_id, supplier_invoice_id,
-           master_catalog_item_id, supplier_catalogue_id,
-           ocr_description, ocr_sku, ocr_confidence,
-           quantity, unit_price_cents, subtotal_cents,
-           tax_rate_basis_points, tax_cents, total_cents,
-           sort_order, is_matched, match_method
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-         RETURNING *`,
-        [
-          input.clinicId,
-          input.supplierInvoiceId,
-          input.masterCatalogItemId,
-          input.supplierCatalogueId,
-          input.ocrDescription,
-          input.ocrSku,
-          input.ocrConfidence,
-          input.quantity,
-          input.unitPriceCents,
-          subtotalCents,
-          input.taxRateBasisPoints,
-          taxCents,
-          totalCents,
-          input.sortOrder,
-          input.isMatched,
-          input.matchMethod,
-        ],
+      const { rows } = await withTenantContext(
+        pool,
+        input.clinicId,
+        (client) =>
+          client.query<LineRow>(
+            `INSERT INTO supplier_invoice_lines (
+               clinic_id, supplier_invoice_id,
+               master_catalog_item_id, supplier_catalogue_id,
+               ocr_description, ocr_sku, ocr_confidence,
+               quantity, unit_price_cents, subtotal_cents,
+               tax_rate_basis_points, tax_cents, total_cents,
+               sort_order, is_matched, match_method
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             RETURNING *`,
+            [
+              input.clinicId,
+              input.supplierInvoiceId,
+              input.masterCatalogItemId,
+              input.supplierCatalogueId,
+              input.ocrDescription,
+              input.ocrSku,
+              input.ocrConfidence,
+              input.quantity,
+              input.unitPriceCents,
+              subtotalCents,
+              input.taxRateBasisPoints,
+              taxCents,
+              totalCents,
+              input.sortOrder,
+              input.isMatched,
+              input.matchMethod,
+            ],
+          ),
       );
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to add supplier invoice line");

@@ -85,6 +85,8 @@ const FX = {
   // invoices
   invA: "f7777777-f777-4777-8777-f77777777777",
   invB: "f8888888-f888-4888-8888-f88888888888",
+  // supplier_invoices
+  supplierInvoiceA: "fb333333-fb33-4b33-8b33-fb3333333333",
   // leave_requests
   leaveA: "f9999999-f999-4999-8999-f99999999999",
   leaveB: "fa000000-fa00-4a00-8a00-fa0000000000",
@@ -252,6 +254,7 @@ afterAll(async () => {
   await asOwnerAdmin(async (client) => {
     await client.query(`DELETE FROM audit_events WHERE id IN ($1, $2)`, [FX.auditA, FX.auditB]);
     await client.query(`DELETE FROM leave_requests WHERE id IN ($1, $2)`, [FX.leaveA, FX.leaveB]);
+    await client.query(`DELETE FROM supplier_invoices WHERE id = $1`, [FX.supplierInvoiceA]);
     await client.query(`DELETE FROM invoices WHERE id IN ($1, $2)`, [FX.invA, FX.invB]);
     await client.query(`DELETE FROM timesheet_entries WHERE id IN ($1, $2)`, [FX.tsA, FX.tsB]);
     // Delete roster_entries after timesheet_entries (FK: timesheet_entries.roster_entry_id)
@@ -389,6 +392,47 @@ describe("RLS — invoices (billing data)", () => {
     );
     expect(rows.every((r: { clinic_id: string }) => r.clinic_id === SEED_CLINIC_A_ID)).toBe(true);
     expect(rows.find((r: { clinic_id: string }) => r.clinic_id === SEED_CLINIC_B_ID)).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — SUPPLIER INVOICES
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("RLS — supplier_invoices", () => {
+  it("allows insert when supplier invoice clinic_id matches the active tenant context", async () => {
+    if (SKIP) return;
+
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
+      c.query(
+        `INSERT INTO supplier_invoices (
+           id, clinic_id, original_filename, file_mime_type,
+           imported_by_user_id, imported_by_email
+         )
+         VALUES ($1, $2, 'rls-test.pdf', 'application/pdf', $3, 'admin@clinic-a.au')
+         RETURNING id, clinic_id`,
+        [FX.supplierInvoiceA, SEED_CLINIC_A_ID, SEED_USER_IDS.clinicAAdmin],
+      ),
+    );
+
+    expect(rows).toEqual([{ id: FX.supplierInvoiceA, clinic_id: SEED_CLINIC_A_ID }]);
+  });
+
+  it("rejects insert when supplier invoice clinic_id does not match the active tenant context", async () => {
+    if (SKIP) return;
+
+    await expect(
+      withRlsCtx(SEED_CLINIC_A_ID, (c) =>
+        c.query(
+          `INSERT INTO supplier_invoices (
+             clinic_id, original_filename, file_mime_type,
+             imported_by_user_id, imported_by_email
+           )
+           VALUES ($1, 'rls-cross-tenant.pdf', 'application/pdf', $2, 'admin@clinic-a.au')`,
+          [SEED_CLINIC_B_ID, SEED_USER_IDS.clinicAAdmin],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security|violates row-level security/i);
   });
 });
 
