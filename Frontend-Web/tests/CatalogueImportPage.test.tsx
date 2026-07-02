@@ -360,8 +360,8 @@ describe("CatalogueImportPage", () => {
     await waitFor(() => {
       expect(mockCancelSupplierInvoiceImport).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
     });
-    expect(await screen.findByRole("heading", { name: "Catalogue Import" })).toBeInTheDocument();
     expect(await screen.findByText("Import cancelled.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload & Process" })).toBeInTheDocument();
   });
 
   it("renders line actions and allows approving a line locally", async () => {

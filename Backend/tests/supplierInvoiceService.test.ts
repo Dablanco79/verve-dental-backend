@@ -148,6 +148,10 @@ function makeService(ocrProvider?: OcrProvider) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("SupplierInvoiceService", () => {
+  beforeEach(() => {
+    FAKE_AUDIT.logEvent.mockClear();
+    FAKE_AUDIT.recordClinicEvent.mockClear();
+  });
 
   // ── 1. uploadAndExtract — success ──────────────────────────────────────────
   it("creates invoice + lines from OCR result", async () => {
@@ -157,7 +161,7 @@ describe("SupplierInvoiceService", () => {
     const result = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
 
     expect(result.invoice.clinicId).toBe(CLINIC_A);
-    expect(result.invoice.status).toBe("pending_review");
+    expect(result.invoice.status).toBe("ready_for_review");
     expect(result.invoice.supplierNameRaw).toBe("Acme Dental Supplies");
     expect(result.invoice.invoiceNumber).toBe("INV-2026-001");
     expect(result.invoice.ocrConfidence).toBe(95);
@@ -435,7 +439,7 @@ describe("SupplierInvoiceService", () => {
 
     const result = await service.confirmImport(caller, CLINIC_A, invoice.id);
 
-    expect(result.invoice.status).toBe("confirmed");
+    expect(result.invoice.status).toBe("imported");
     expect(result.invoice.confirmedByUserId).toBe(caller.id);
     expect(result.invoice.confirmedAt).toBeInstanceOf(Date);
     // No matched lines (no master_catalog_item_id linked), so priceUpdates = 0
@@ -465,7 +469,99 @@ describe("SupplierInvoiceService", () => {
     } satisfies Partial<AppError>);
   });
 
-  // ── 18. voidInvoice — success ────────────────────────────────────────────
+  // ── 18. cancelImport — success and cleanup ───────────────────────────────
+  it("cancelImport cancels a ready_for_review import and removes temporary review data", async () => {
+    const { service, repo } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+
+    const cancelled = await service.cancelImport(caller, CLINIC_A, invoice.id);
+
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.ocrConfidence).toBeNull();
+    expect(cancelled.ocrRawResponse).toEqual({});
+    await expect(repo.listLines(CLINIC_A, invoice.id)).resolves.toHaveLength(0);
+    expect(FAKE_AUDIT.logEvent).toHaveBeenCalledWith("supplier_invoice.cancelled", {
+      userId: caller.id,
+      email: caller.email,
+      clinicId: CLINIC_A,
+      resourceId: invoice.id,
+    });
+  });
+
+  it("cancelImport allows uploaded imports", async () => {
+    const { service, repo } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    await repo.setStatus(CLINIC_A, invoice.id, "uploaded");
+
+    const cancelled = await service.cancelImport(caller, CLINIC_A, invoice.id);
+
+    expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("cancelImport allows processing imports", async () => {
+    const { service, repo } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    await repo.setStatus(CLINIC_A, invoice.id, "processing");
+
+    const cancelled = await service.cancelImport(caller, CLINIC_A, invoice.id);
+
+    expect(cancelled.status).toBe("cancelled");
+  });
+
+  it("cancelImport rejects an imported invoice", async () => {
+    const { service } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    await service.updateInvoice(caller, CLINIC_A, invoice.id, {
+      supplierId: "00000000-0000-0000-0000-000000000010",
+      invoiceNumber: "ACME-CANCEL-IMPORTED",
+      invoiceDate: "2026-06-01",
+    });
+    await service.confirmImport(caller, CLINIC_A, invoice.id);
+
+    await expect(
+      service.cancelImport(caller, CLINIC_A, invoice.id),
+    ).rejects.toMatchObject({
+      code: "IMPORT_ALREADY_IMPORTED",
+      statusCode: 409,
+    } satisfies Partial<AppError>);
+  });
+
+  it("cancelImport rejects a failed import", async () => {
+    const { service, repo } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    await repo.setStatus(CLINIC_A, invoice.id, "failed");
+
+    await expect(
+      service.cancelImport(caller, CLINIC_A, invoice.id),
+    ).rejects.toMatchObject({
+      code: "IMPORT_ALREADY_FAILED",
+      statusCode: 409,
+    } satisfies Partial<AppError>);
+  });
+
+  it("cancelImport is idempotent when called twice", async () => {
+    const { service } = makeService();
+    const caller = makeManager();
+
+    const { invoice } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    const first = await service.cancelImport(caller, CLINIC_A, invoice.id);
+    const second = await service.cancelImport(caller, CLINIC_A, invoice.id);
+
+    expect(first.status).toBe("cancelled");
+    expect(second.status).toBe("cancelled");
+  });
+
+  // ── 19. voidInvoice — success ────────────────────────────────────────────
   it("voids a pending_review invoice", async () => {
     const { service } = makeService();
     const caller = makeManager();
@@ -479,7 +575,7 @@ describe("SupplierInvoiceService", () => {
     expect(voided.voidedAt).toBeInstanceOf(Date);
   });
 
-  // ── 19. voidInvoice — rejects on confirmed ────────────────────────────────
+  // ── 20. voidInvoice — rejects on confirmed ────────────────────────────────
   it("voidInvoice rejects a confirmed invoice", async () => {
     const { service } = makeService();
     const caller = makeManager();

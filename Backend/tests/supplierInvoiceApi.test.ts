@@ -90,7 +90,7 @@ describe("Supplier Invoice API", () => {
       invoice: { id: string; status: string; ocrConfidence: number };
       lines: { id: string; ocrDescription: string }[];
     }>;
-    expect(body.data.invoice.status).toBe("pending_review");
+    expect(body.data.invoice.status).toBe("ready_for_review");
     expect(body.data.invoice.ocrConfidence).toBe(99);
     expect(body.data.lines).toHaveLength(1);
     expect(body.data.lines[0]?.ocrDescription).toContain("Stub item");
@@ -326,6 +326,59 @@ describe("Supplier Invoice API", () => {
   });
 
   // ── 16. POST /void — voids a pending_review invoice ───────────────────────
+  it("cancel transitions invoice to cancelled and is idempotent", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const uploadRes = await uploadInvoice(app, token);
+    const invoiceId = (uploadRes.body as ApiData<{ invoice: { id: string } }>).data.invoice.id;
+
+    const cancelRes = await request(app)
+      .post(`${BASE}/${invoiceId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(cancelRes.status).toBe(200);
+    expect((cancelRes.body as ApiData<{ status: string }>).data.status).toBe("cancelled");
+
+    const secondCancelRes = await request(app)
+      .post(`${BASE}/${invoiceId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(secondCancelRes.status).toBe(200);
+    expect((secondCancelRes.body as ApiData<{ status: string }>).data.status).toBe("cancelled");
+  });
+
+  it("cancel returns 409 when invoice is already imported", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const uploadRes = await uploadInvoice(app, token);
+    const invoiceId = (uploadRes.body as ApiData<{ invoice: { id: string } }>).data.invoice.id;
+
+    const supplierRes = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Cancel Imported Supplier" });
+    const supplierId = (supplierRes.body as ApiData<{ id: string }>).data.id;
+
+    await request(app)
+      .patch(`${BASE}/${invoiceId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierId, invoiceNumber: "INV-CANCEL-IMPORTED", invoiceDate: "2026-06-01" });
+
+    await request(app)
+      .post(`${BASE}/${invoiceId}/confirm`)
+      .set("Authorization", `Bearer ${token}`);
+
+    const cancelRes = await request(app)
+      .post(`${BASE}/${invoiceId}/cancel`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(cancelRes.status).toBe(409);
+    expect((cancelRes.body as { error: { code: string } }).error.code).toBe("IMPORT_ALREADY_IMPORTED");
+  });
+
+  // ── 18. POST /void — voids a pending_review invoice ───────────────────────
   it("void transitions invoice to voided status", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
@@ -412,7 +465,7 @@ describe("Supplier Invoice API", () => {
       invoice: { status: string; confirmedAt: string };
       priceUpdates: number;
     }>;
-    expect(confirmBody.data.invoice.status).toBe("confirmed");
+    expect(confirmBody.data.invoice.status).toBe("imported");
     expect(confirmBody.data.invoice.confirmedAt).toBeTruthy();
     expect(typeof confirmBody.data.priceUpdates).toBe("number");
   });
