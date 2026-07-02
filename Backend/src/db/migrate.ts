@@ -46,43 +46,6 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
   },
   {
     /**
-     * Sprint C1.5 unit model — inventory is counted in stock units, while
-     * product-level receiving units convert to stock-unit deltas.
-     */
-    id: "005a_inventory_unit_model",
-    sql: `
-      ALTER TABLE master_catalog_items
-        ADD COLUMN IF NOT EXISTS stock_unit varchar(32),
-        ADD COLUMN IF NOT EXISTS receiving_unit varchar(32),
-        ADD COLUMN IF NOT EXISTS units_per_receiving_unit integer;
-
-      UPDATE master_catalog_items
-      SET
-        stock_unit = COALESCE(NULLIF(stock_unit, ''), unit_of_measure),
-        receiving_unit = COALESCE(NULLIF(receiving_unit, ''), unit_of_measure),
-        units_per_receiving_unit = COALESCE(units_per_receiving_unit, 1)
-      WHERE stock_unit IS NULL
-         OR receiving_unit IS NULL
-         OR units_per_receiving_unit IS NULL;
-
-      ALTER TABLE master_catalog_items
-        ALTER COLUMN stock_unit SET NOT NULL,
-        ALTER COLUMN receiving_unit SET NOT NULL,
-        ALTER COLUMN units_per_receiving_unit SET NOT NULL;
-
-      DO $$
-      BEGIN
-        ALTER TABLE master_catalog_items
-          ADD CONSTRAINT master_catalog_items_units_per_receiving_unit_positive
-            CHECK (units_per_receiving_unit > 0);
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      UPDATE master_catalog_items
-      SET unit_of_measure = stock_unit;
-    `,
-  },
-  {
-    /**
      * Renames clinic_id → home_clinic_id and clinic_name → home_clinic_name on
      * existing databases that ran the original 003_users_schema migration.
      * Idempotent: column_name check guards against re-running.
@@ -220,6 +183,46 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_draft_po_lines_order
         ON draft_po_lines (draft_purchase_order_id);
+    `,
+  },
+  {
+    /**
+     * Sprint C1.5 unit model — inventory is counted in stock units, while
+     * product-level receiving units convert to stock-unit deltas.
+     *
+     * Must run after 005_inventory_schema because it backfills
+     * master_catalog_items on existing databases that predate the unit model.
+     */
+    id: "005a_inventory_unit_model",
+    sql: `
+      ALTER TABLE master_catalog_items
+        ADD COLUMN IF NOT EXISTS stock_unit varchar(32),
+        ADD COLUMN IF NOT EXISTS receiving_unit varchar(32),
+        ADD COLUMN IF NOT EXISTS units_per_receiving_unit integer;
+
+      UPDATE master_catalog_items
+      SET
+        stock_unit = COALESCE(NULLIF(stock_unit, ''), unit_of_measure),
+        receiving_unit = COALESCE(NULLIF(receiving_unit, ''), unit_of_measure),
+        units_per_receiving_unit = COALESCE(units_per_receiving_unit, 1)
+      WHERE stock_unit IS NULL
+         OR receiving_unit IS NULL
+         OR units_per_receiving_unit IS NULL;
+
+      ALTER TABLE master_catalog_items
+        ALTER COLUMN stock_unit SET NOT NULL,
+        ALTER COLUMN receiving_unit SET NOT NULL,
+        ALTER COLUMN units_per_receiving_unit SET NOT NULL;
+
+      DO $$
+      BEGIN
+        ALTER TABLE master_catalog_items
+          ADD CONSTRAINT master_catalog_items_units_per_receiving_unit_positive
+            CHECK (units_per_receiving_unit > 0);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      UPDATE master_catalog_items
+      SET unit_of_measure = stock_unit;
     `,
   },
   {
