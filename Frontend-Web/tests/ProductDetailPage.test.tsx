@@ -3,8 +3,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProductDetailPage } from "../src/pages/ProductDetailPage.js";
-import type { InventoryItem } from "../src/types/inventory.js";
+import type { InventoryAdjustment, InventoryItem } from "../src/types/inventory.js";
 import {
+  createManagerUser,
   createStaffUser,
   TEST_CLINIC_ID,
   TEST_CLINIC_NAME,
@@ -19,6 +20,7 @@ const {
   authTestState,
   selectedClinicState,
   mockGetInventoryItem,
+  mockListAdjustments,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -41,6 +43,7 @@ const {
     authTestState,
     selectedClinicState,
     mockGetInventoryItem: vi.fn(),
+    mockListAdjustments: vi.fn(),
   };
 });
 
@@ -57,6 +60,7 @@ vi.mock("../src/auth/useAuth.js", () => ({
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     getInventoryItem: mockGetInventoryItem,
+    listAdjustments: mockListAdjustments,
   }),
 }));
 
@@ -83,6 +87,9 @@ const productWithSupplier: InventoryItem = {
   barcodeValue: "9301234567890",
   name: "Nitrile Examination Gloves (Box 100)",
   category: "PPE",
+  stockUnit: "box",
+  receivingUnit: "carton",
+  unitsPerReceivingUnit: 10,
   unitOfMeasure: "box",
   quantityOnHand: 3,
   reorderPoint: 5,
@@ -94,6 +101,38 @@ const productWithSupplier: InventoryItem = {
   isBelowReorderPoint: true,
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
+};
+
+const stockReceivedAdjustment: InventoryAdjustment = {
+  id: "a1111111-1111-4111-8111-111111111111",
+  clinicId: TEST_CLINIC_ID,
+  clinicInventoryItemId: productWithSupplier.id,
+  masterCatalogItemId: productWithSupplier.masterCatalogItemId,
+  adjustmentType: "receive",
+  quantityDelta: 20,
+  quantityBefore: 3,
+  quantityAfter: 23,
+  reason: "Stock received",
+  performedByUserId: "user-1",
+  performedByEmail: "daniel@example.com",
+  referenceId: null,
+  createdAt: "2026-06-30T01:00:00.000Z",
+};
+
+const stockAdjustment: InventoryAdjustment = {
+  id: "a2222222-2222-4222-8222-222222222222",
+  clinicId: TEST_CLINIC_ID,
+  clinicInventoryItemId: productWithSupplier.id,
+  masterCatalogItemId: productWithSupplier.masterCatalogItemId,
+  adjustmentType: "manual_adjust",
+  quantityDelta: -2,
+  quantityBefore: 23,
+  quantityAfter: 21,
+  reason: "Expired stock",
+  performedByUserId: "user-1",
+  performedByEmail: "daniel@example.com",
+  referenceId: null,
+  createdAt: "2026-07-01T01:00:00.000Z",
 };
 
 function renderProductDetail(productId = productWithSupplier.id) {
@@ -109,7 +148,7 @@ function renderProductDetail(productId = productWithSupplier.id) {
 describe("ProductDetailPage", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
-    setAuthenticatedUser(authTestState, createStaffUser());
+    setAuthenticatedUser(authTestState, createManagerUser());
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
     selectedClinicState.selectedDashboardScope = {
       type: "clinic",
@@ -117,6 +156,13 @@ describe("ProductDetailPage", () => {
     };
     mockGetInventoryItem.mockReset();
     mockGetInventoryItem.mockResolvedValue(productWithSupplier);
+    mockListAdjustments.mockReset();
+    mockListAdjustments.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    });
   });
 
   it("loads product detail successfully from the existing inventory API", async () => {
@@ -124,6 +170,11 @@ describe("ProductDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: productWithSupplier.name })).toBeInTheDocument();
     expect(mockGetInventoryItem).toHaveBeenCalledWith(TEST_CLINIC_ID, productWithSupplier.id);
+    expect(mockListAdjustments).toHaveBeenCalledWith(TEST_CLINIC_ID, {
+      itemId: productWithSupplier.id,
+      limit: 100,
+      offset: 0,
+    });
     expect(screen.getAllByText("VRV-GLV-001")).not.toHaveLength(0);
     expect(screen.getAllByText("9301234567890")).not.toHaveLength(0);
     expect(screen.getAllByText("PPE")).not.toHaveLength(0);
@@ -137,6 +188,60 @@ describe("ProductDetailPage", () => {
 
     expect(await screen.findByText("Product not found.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Return to Inventory" })).toHaveAttribute("href", "/inventory");
+  });
+
+  it("renders the Product Created timeline event from the product record", async () => {
+    renderProductDetail();
+
+    const timelineHeading = await screen.findByRole("heading", { name: "Product Timeline" });
+    const timeline = timelineHeading.closest("section");
+    expect(timeline).not.toBeNull();
+    expect(within(timeline as HTMLElement).getByRole("heading", { name: "Product Created" })).toBeInTheDocument();
+  });
+
+  it("loads product-created timeline activity for clinical staff without adjustment history access", async () => {
+    setAuthenticatedUser(authTestState, createStaffUser());
+
+    renderProductDetail();
+
+    const timelineHeading = await screen.findByRole("heading", { name: "Product Timeline" });
+    const timeline = timelineHeading.closest("section");
+    expect(timeline).not.toBeNull();
+    expect(mockListAdjustments).not.toHaveBeenCalled();
+    expect(within(timeline as HTMLElement).getByRole("heading", { name: "Product Created" })).toBeInTheDocument();
+  });
+
+  it("renders stock received and adjustment events from adjustment history", async () => {
+    mockListAdjustments.mockResolvedValue({
+      items: [stockAdjustment, stockReceivedAdjustment],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    });
+
+    renderProductDetail();
+
+    const timelineHeading = await screen.findByRole("heading", { name: "Product Timeline" });
+    const timeline = timelineHeading.closest("section");
+    expect(timeline).not.toBeNull();
+    expect(within(timeline as HTMLElement).getByRole("heading", { name: "Stock Received" })).toBeInTheDocument();
+    expect(within(timeline as HTMLElement).getByText("+20 boxes")).toBeInTheDocument();
+    expect(within(timeline as HTMLElement).getByRole("heading", { name: "Inventory Adjustment" })).toBeInTheDocument();
+    expect(within(timeline as HTMLElement).getByText("-2 boxes")).toBeInTheDocument();
+    expect(within(timeline as HTMLElement).getByText("Expired stock")).toBeInTheDocument();
+  });
+
+  it("shows the empty timeline state when no activity exists", async () => {
+    mockGetInventoryItem.mockResolvedValue({
+      ...productWithSupplier,
+      createdAt: "",
+    });
+
+    renderProductDetail();
+
+    expect(
+      await screen.findByText("No activity has been recorded for this product."),
+    ).toBeInTheDocument();
   });
 
   it("displays the preferred supplier when available", async () => {
@@ -167,17 +272,16 @@ describe("ProductDetailPage", () => {
     expect(await screen.findAllByText("Low Stock")).not.toHaveLength(0);
   });
 
-  it("renders future feature cards without fabricated data", async () => {
+  it("renders future timeline event placeholders without fabricated data", async () => {
     renderProductDetail();
 
-    expect(await screen.findByRole("heading", { name: "Future Features" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Future Timeline Events" })).toBeInTheDocument();
     for (const feature of [
       "Purchase Orders",
-      "Price History",
-      "Forecast",
       "OCR",
-      "Stock Activity",
-      "AI Insights",
+      "Forecast",
+      "Transfers",
+      "Cycle Counts",
     ]) {
       const heading = screen.getByRole("heading", { name: feature });
       const card = heading.closest("article");

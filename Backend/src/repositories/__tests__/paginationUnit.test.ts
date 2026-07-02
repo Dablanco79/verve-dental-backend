@@ -174,6 +174,41 @@ describe("InMemoryInventoryRepository.listAdjustmentsPage", () => {
     expect(pageA.total).toBe(0);
     expect(pageB.total).toBe(0);
   });
+
+  it("filters adjustments by clinic inventory item when itemId is provided", async () => {
+    const repo = createInMemoryInventoryRepository(makeNullCatalog());
+    await repo.recordAdjustment({
+      clinicId: CLINIC_A,
+      clinicInventoryItemId: "item-a",
+      masterCatalogItemId: "master-a",
+      adjustmentType: "manual_adjust",
+      quantityDelta: 2,
+      quantityBefore: 1,
+      quantityAfter: 3,
+      reason: "Stock correction",
+      performedByUserId: STAFF_ID,
+      performedByEmail: "s@a.com",
+      referenceId: null,
+    });
+    await repo.recordAdjustment({
+      clinicId: CLINIC_A,
+      clinicInventoryItemId: "item-b",
+      masterCatalogItemId: "master-b",
+      adjustmentType: "manual_adjust",
+      quantityDelta: -1,
+      quantityBefore: 3,
+      quantityAfter: 2,
+      reason: "Expired stock",
+      performedByUserId: STAFF_ID,
+      performedByEmail: "s@a.com",
+      referenceId: null,
+    });
+
+    const page = await repo.listAdjustmentsPage(CLINIC_A, { itemId: "item-a" });
+
+    expect(page.total).toBe(1);
+    expect(page.items[0]?.clinicInventoryItemId).toBe("item-a");
+  });
 });
 
 // ── Roster ────────────────────────────────────────────────────────────────────
@@ -505,6 +540,29 @@ describe("PostgresInventoryRepository.listAdjustmentsPage", () => {
     expect(dataParams[1]).toBe(5);
     expect(dataParams[2]).toBe(10);
     expect(page.total).toBe(3);
+  });
+
+  it("adds itemId to COUNT and data query scopes when provided", async () => {
+    const { pool, query } = makeMockPool([
+      { rows: [{ count: "1" }] },
+      { rows: [] },
+    ]);
+    const repo = createPostgresInventoryRepository(pool);
+    const page = await repo.listAdjustmentsPage(CLINIC_A, {
+      itemId: "item-a",
+      limit: 5,
+      offset: 10,
+    });
+
+    const [countSql, countParams] = nthCall(query, 0);
+    expect(countSql).toMatch(/clinic_inventory_item_id = \$2/i);
+    expect(countParams).toEqual([CLINIC_A, "item-a"]);
+
+    const [dataSql, dataParams] = nthCall(query, 1);
+    expect(dataSql).toMatch(/clinic_inventory_item_id = \$2/i);
+    expect(dataSql).toMatch(/LIMIT \$3 OFFSET \$4/i);
+    expect(dataParams).toEqual([CLINIC_A, "item-a", 5, 10]);
+    expect(page.total).toBe(1);
   });
 });
 

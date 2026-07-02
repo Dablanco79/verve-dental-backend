@@ -352,38 +352,52 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
 
     async listAdjustments(
       clinicId: string,
-      options?: { limit?: number },
+      options?: { limit?: number; itemId?: string },
     ): Promise<InventoryAdjustment[]> {
       const limit = options?.limit ?? 50;
+      const params: Array<string | number> = [clinicId];
+      const itemFilter = options?.itemId
+        ? ` AND clinic_inventory_item_id = $${String(params.push(options.itemId))}`
+        : "";
+      const limitParam = params.push(limit);
       const { rows } = await pool.query<AdjustmentRow>(
         `SELECT * FROM inventory_adjustments
          WHERE clinic_id = $1
+         ${itemFilter}
          ORDER BY created_at DESC
-         LIMIT $2`,
-        [clinicId, limit],
+         LIMIT $${String(limitParam)}`,
+        params,
       );
       return rows.map(rowToAdjustment);
     },
 
     async listAdjustmentsPage(
       clinicId: string,
-      options?: { limit?: number; offset?: number },
+      options?: { limit?: number; offset?: number; itemId?: string },
     ): Promise<AdjustmentsPage> {
       const limit = Math.min(options?.limit ?? 50, 100);
       const offset = options?.offset ?? 0;
+      const whereParams: string[] = [clinicId];
+      const itemFilter = options?.itemId
+        ? ` AND clinic_inventory_item_id = $${String(whereParams.push(options.itemId))}`
+        : "";
 
       const countResult = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM inventory_adjustments WHERE clinic_id = $1`,
-        [clinicId],
+        `SELECT COUNT(*) AS count FROM inventory_adjustments WHERE clinic_id = $1${itemFilter}`,
+        whereParams,
       );
       const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
 
+      const dataParams: Array<string | number> = [...whereParams];
+      const limitParam = dataParams.push(limit);
+      const offsetParam = dataParams.push(offset);
       const { rows } = await pool.query<AdjustmentRow>(
         `SELECT * FROM inventory_adjustments
          WHERE clinic_id = $1
+         ${itemFilter}
          ORDER BY created_at DESC
-         LIMIT $2 OFFSET $3`,
-        [clinicId, limit, offset],
+         LIMIT $${String(limitParam)} OFFSET $${String(offsetParam)}`,
+        dataParams,
       );
 
       return { items: rows.map(rowToAdjustment), total, limit, offset };

@@ -276,6 +276,7 @@ export function createApiClient(config: AppConfig) {
     const query = new URLSearchParams();
     if (filters.limit !== undefined) query.set("limit", String(filters.limit));
     if (filters.offset !== undefined) query.set("offset", String(filters.offset));
+    if (filters.itemId !== undefined) query.set("itemId", filters.itemId);
     const qs = query.toString() ? `?${query.toString()}` : "";
     const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
     const accessToken = requireAccessToken();
@@ -298,12 +299,12 @@ export function createApiClient(config: AppConfig) {
     }
 
     type RawEnvelope = {
-      data: InventoryItem[];
+      data: AdjustmentsPage["items"];
       pagination: { total: number; limit: number; offset: number };
     };
     const envelope = await response.json() as RawEnvelope;
     return {
-      items: envelope.data as unknown as AdjustmentsPage["items"],
+      items: envelope.data,
       total: envelope.pagination.total,
       limit: envelope.pagination.limit,
       offset: envelope.pagination.offset,

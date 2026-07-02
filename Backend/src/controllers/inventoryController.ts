@@ -32,6 +32,9 @@ const paginationQuerySchema = z.object({
 });
 
 const adjustmentsQuerySchema = paginationQuerySchema;
+const timelineAdjustmentsQuerySchema = adjustmentsQuerySchema.extend({
+  itemId: z.string().uuid().optional(),
+});
 
 function serializeInventoryItem(item: ClinicInventoryItemView) {
   return {
@@ -152,7 +155,7 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
 
     async listAdjustments(req: Request, res: Response): Promise<void> {
       const clinicId = routeParam(req.params.clinicId);
-      const parsed = adjustmentsQuerySchema.safeParse(req.query);
+      const parsed = timelineAdjustmentsQuerySchema.safeParse(req.query);
       if (!parsed.success) {
         throw new AppError(
           400,
@@ -165,6 +168,7 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
       const page = await inventoryService.listAdjustmentsPage(clinicId, {
         limit: parsed.data.limit,
         offset: parsed.data.offset,
+        itemId: parsed.data.itemId,
       });
 
       res.status(200).json({

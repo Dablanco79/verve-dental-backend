@@ -42,11 +42,11 @@ export interface InventoryRepository {
   ): Promise<InventoryAdjustment>;
   listAdjustments(
     clinicId: string,
-    options?: { limit?: number },
+    options?: { limit?: number; itemId?: string },
   ): Promise<InventoryAdjustment[]>;
   listAdjustmentsPage(
     clinicId: string,
-    options?: { limit?: number; offset?: number },
+    options?: { limit?: number; offset?: number; itemId?: string },
   ): Promise<AdjustmentsPage>;
   /**
    * Returns a Map of masterCatalogItemId → total absolute units consumed for
@@ -228,11 +228,15 @@ export function createInMemoryInventoryRepository(
 
     listAdjustments(
       clinicId: string,
-      options?: { limit?: number },
+      options?: { limit?: number; itemId?: string },
     ): Promise<InventoryAdjustment[]> {
       const limit = options?.limit ?? 50;
       const clinicAdjustments = adjustments
-        .filter((entry) => entry.clinicId === clinicId)
+        .filter(
+          (entry) =>
+            entry.clinicId === clinicId &&
+            (!options?.itemId || entry.clinicInventoryItemId === options.itemId),
+        )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
         .slice(0, limit)
         .map((entry) => ({ ...entry }));
@@ -242,12 +246,16 @@ export function createInMemoryInventoryRepository(
 
     listAdjustmentsPage(
       clinicId: string,
-      options?: { limit?: number; offset?: number },
+      options?: { limit?: number; offset?: number; itemId?: string },
     ): Promise<AdjustmentsPage> {
       const limit = Math.min(options?.limit ?? 50, 100);
       const offset = options?.offset ?? 0;
       const all = adjustments
-        .filter((entry) => entry.clinicId === clinicId)
+        .filter(
+          (entry) =>
+            entry.clinicId === clinicId &&
+            (!options?.itemId || entry.clinicInventoryItemId === options.itemId),
+        )
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       const total = all.length;
       const page = all.slice(offset, offset + limit).map((entry) => ({ ...entry }));

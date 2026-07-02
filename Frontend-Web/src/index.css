@@ -958,7 +958,11 @@ body {
 .product-detail__hero-content h2,
 .product-detail__card h3,
 .product-detail__future h3,
-.product-detail__future-card h4 {
+.product-detail__timeline h3,
+.product-detail__timeline-item h4,
+.product-detail__timeline-future h4,
+.product-detail__future-card h4,
+.product-detail__future-card h5 {
   margin: 0;
 }
 
@@ -1007,6 +1011,99 @@ body {
 
 .product-detail__future {
   margin-top: 1rem;
+}
+
+.product-detail__timeline {
+  margin-top: 1rem;
+}
+
+.product-detail__timeline-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-detail__timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1rem 1fr;
+  gap: 0.85rem;
+  padding: 0 0 1rem;
+}
+
+.product-detail__timeline-item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 0.9rem;
+  bottom: 0;
+  left: 0.35rem;
+  width: 1px;
+  background: #d9e2ec;
+}
+
+.product-detail__timeline-marker {
+  position: relative;
+  z-index: 1;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.2rem;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: var(--vds-colour-purple);
+  box-shadow: 0 0 0 2px #d9e2ec;
+}
+
+.product-detail__timeline-body {
+  display: grid;
+  gap: 0.45rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.product-detail__timeline-body time {
+  color: #627d98;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.product-detail__timeline-details {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.product-detail__timeline-details div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.product-detail__timeline-details dt {
+  color: #627d98;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.product-detail__timeline-details dd {
+  margin: 0;
+  color: #102a43;
+  font-weight: 700;
+}
+
+.product-detail__timeline-empty {
+  margin: 0;
+  color: #627d98;
+}
+
+.product-detail__timeline-future {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #d9e2ec;
 }
 
 .product-detail__future-grid {

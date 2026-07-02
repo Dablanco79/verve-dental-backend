@@ -120,8 +120,9 @@ export function createInventoryService(
     listAdjustments(
       clinicId: string,
       limit?: number,
+      itemId?: string,
     ): Promise<InventoryAdjustment[]> {
-      return inventoryRepository.listAdjustments(clinicId, { limit });
+      return inventoryRepository.listAdjustments(clinicId, { limit, itemId });
     },
 
     listInventoryPage(
@@ -133,7 +134,7 @@ export function createInventoryService(
 
     listAdjustmentsPage(
       clinicId: string,
-      options?: { limit?: number; offset?: number },
+      options?: { limit?: number; offset?: number; itemId?: string },
     ): Promise<AdjustmentsPage> {
       return inventoryRepository.listAdjustmentsPage(clinicId, options);
     },

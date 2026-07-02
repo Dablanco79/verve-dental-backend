@@ -174,4 +174,5 @@ export type AdjustmentsPage = {
 export type AdjustmentsFilters = {
   limit?: number;
   offset?: number;
+  itemId?: string;
 };
