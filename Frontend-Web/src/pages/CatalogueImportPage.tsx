@@ -606,6 +606,7 @@ export function CatalogueImportPage() {
                   <th>Supplier</th>
                   <th>Upload date</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -618,6 +619,19 @@ export function CatalogueImportPage() {
                       <span className={`catalogue-status catalogue-status--${item.status.toLowerCase().replace(/\s+/g, "-")}`}>
                         {item.status}
                       </span>
+                    </td>
+                    <td>
+                      {item.status === "Review Required" ? (
+                        <Link
+                          to={`/inventory/catalogue-import/${encodeURIComponent(item.id)}/review`}
+                          className="link-button"
+                        >
+                          Review
+                          <span className="visually-hidden"> {item.fileName}</span>
+                        </Link>
+                      ) : (
+                        <span className="inventory-table__meta">No action</span>
+                      )}
                     </td>
                   </tr>
                 ))}

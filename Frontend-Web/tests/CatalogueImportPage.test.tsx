@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogueImportPage } from "../src/pages/CatalogueImportPage.js";
-import type { Supplier, SupplierInvoice } from "../src/types/supplier.js";
+import { CatalogueImportReviewPage } from "../src/pages/CatalogueImportReviewPage.js";
+import type { ConfirmImportResult, Supplier, SupplierInvoice, SupplierInvoiceLine } from "../src/types/supplier.js";
 import { createManagerUser, TEST_CLINIC_ID, TEST_CLINIC_NAME } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
@@ -19,6 +20,8 @@ const {
   mockPreviewSupplierCatalogueImport,
   mockConfirmSupplierCatalogueImport,
   mockUploadSupplierInvoice,
+  mockGetSupplierInvoice,
+  mockConfirmSupplierInvoice,
   mockAdjustInventory,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -45,6 +48,8 @@ const {
     mockPreviewSupplierCatalogueImport: vi.fn(),
     mockConfirmSupplierCatalogueImport: vi.fn(),
     mockUploadSupplierInvoice: vi.fn(),
+    mockGetSupplierInvoice: vi.fn(),
+    mockConfirmSupplierInvoice: vi.fn(),
     mockAdjustInventory: vi.fn(),
   };
 });
@@ -66,6 +71,8 @@ vi.mock("../src/api/client.js", () => ({
     previewSupplierCatalogueImport: mockPreviewSupplierCatalogueImport,
     confirmSupplierCatalogueImport: mockConfirmSupplierCatalogueImport,
     uploadSupplierInvoice: mockUploadSupplierInvoice,
+    getSupplierInvoice: mockGetSupplierInvoice,
+    confirmSupplierInvoice: mockConfirmSupplierInvoice,
     adjustInventory: mockAdjustInventory,
   }),
 }));
@@ -121,10 +128,43 @@ const invoiceImport = {
   updatedAt: "2026-07-01T02:30:00.000Z",
 } as SupplierInvoice;
 
+const matchedLine = {
+  id: "line-1",
+  invoiceId: invoiceImport.id,
+  lineNumber: 1,
+  ocrDescription: "Nitrile Examination Gloves Box 100",
+  ocrSku: "GLV-100",
+  quantity: 2,
+  unitPriceCents: 1250,
+  lineTotalCents: 2500,
+  taxRateBasisPoints: 1000,
+  taxCents: 250,
+  masterCatalogItemId: "master-gloves",
+  supplierCatalogueId: "catalogue-gloves",
+  isMatched: true,
+  matchMethod: "exact_sku",
+  createdAt: "2026-07-01T02:30:00.000Z",
+  updatedAt: "2026-07-01T02:30:00.000Z",
+} as SupplierInvoiceLine;
+
 function renderCatalogueImportPage() {
   return render(
     <MemoryRouter initialEntries={["/inventory/catalogue-import"]}>
       <CatalogueImportPage />
+    </MemoryRouter>,
+  );
+}
+
+function renderCatalogueImportRoutes(initialEntry = "/inventory/catalogue-import") {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
+        <Route
+          path="/inventory/catalogue-import/:importId/review"
+          element={<CatalogueImportReviewPage />}
+        />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -151,9 +191,16 @@ describe("CatalogueImportPage", () => {
     mockPreviewSupplierCatalogueImport.mockReset();
     mockConfirmSupplierCatalogueImport.mockReset();
     mockUploadSupplierInvoice.mockReset();
+    mockGetSupplierInvoice.mockReset();
+    mockConfirmSupplierInvoice.mockReset();
     mockAdjustInventory.mockReset();
     mockListSuppliers.mockResolvedValue([supplier]);
     mockListClinicSupplierInvoices.mockResolvedValue([invoiceImport]);
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [] });
+    mockConfirmSupplierInvoice.mockResolvedValue({
+      invoice: { ...invoiceImport, status: "confirmed", confirmedAt: "2026-07-01T03:00:00.000Z" },
+      priceUpdates: 1,
+    } satisfies ConfirmImportResult);
     mockPreviewSupplierCatalogueImport.mockResolvedValue({
       supplierId: supplier.id,
       totalRows: 2,
@@ -184,15 +231,19 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByRole("radio", { name: /Supplier API/ })).toBeDisabled();
     expect(screen.getAllByText("Available in a future release")).toHaveLength(5);
 
-    expect(await screen.findByText("invoice-100.pdf")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /Review invoice-100\.pdf/ })).toBeInTheDocument();
     expect(screen.getByText("DentalCo AU")).toBeInTheDocument();
     expect(screen.getByText("Review Required")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Review invoice-100\.pdf/ })).toHaveAttribute(
+      "href",
+      "/inventory/catalogue-import/invoice-1/review",
+    );
   });
 
   it("imports structured catalogue files without adjusting inventory", async () => {
     const { container } = renderCatalogueImportPage();
 
-    await screen.findByText("invoice-100.pdf");
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
     fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
     expect(await screen.findByLabelText("Supplier *")).toBeInTheDocument();
 
@@ -209,5 +260,54 @@ describe("CatalogueImportPage", () => {
     expect(mockUploadSupplierInvoice).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(await screen.findByText(/2 imported, 0 updated/)).toBeInTheDocument();
+  });
+
+  it("routes Review Required imports to the catalogue review workspace", async () => {
+    renderCatalogueImportRoutes();
+
+    fireEvent.click(await screen.findByRole("link", { name: /Review invoice-100\.pdf/ }));
+
+    expect(await screen.findByText("Inventory / Catalogue Import / Review")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to Catalogue Import" })).toHaveAttribute(
+      "href",
+      "/inventory/catalogue-import",
+    );
+    expect(mockGetSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
+  });
+
+  it("renders the review safety banner and inventory quantity changes as 0", async () => {
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(
+      await screen.findByText("Catalogue Import does not change stock quantities."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Inventory quantity changes")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+  });
+
+  it("renders the empty extracted line item state when no lines are available", async () => {
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(
+      await screen.findByText("No extracted line items are available for review yet."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import Catalogue" })).toBeDisabled();
+    expect(
+      screen.getByText("Import confirmation will be available after matching rules are completed."),
+    ).toBeInTheDocument();
+  });
+
+  it("imports catalogue knowledge without calling inventory adjustment APIs", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [matchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(await screen.findByText("Nitrile Examination Gloves Box 100")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Import Catalogue" }));
+
+    await waitFor(() => {
+      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
+    });
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(await screen.findByText("Catalogue imported. 1 price updates applied.")).toBeInTheDocument();
   });
 });
