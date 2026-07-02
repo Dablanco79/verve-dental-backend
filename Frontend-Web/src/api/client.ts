@@ -77,6 +77,8 @@ import type {
 } from "../types/payroll.js";
 import type {
   ConfirmImportResult,
+  CatalogueImportConfirmResult,
+  CatalogueImportPreviewResult,
   CreateSupplierRequest,
   ListSupplierInvoicesParams,
   ListSuppliersParams,
@@ -1048,6 +1050,62 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function previewSupplierCatalogueImport(
+    supplierId: string,
+    file: File,
+  ): Promise<CatalogueImportPreviewResult> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(
+      `${baseUrl}/api/v1/suppliers/${encodeURIComponent(supplierId)}/catalogue/import/preview`,
+      {
+        method: "POST",
+        body: formData,
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(errorBody?.error.message ?? `Request failed (${String(response.status)})`);
+    }
+
+    const envelope = await response.json() as { data: CatalogueImportPreviewResult };
+    return envelope.data;
+  }
+
+  async function confirmSupplierCatalogueImport(
+    supplierId: string,
+    file: File,
+  ): Promise<CatalogueImportConfirmResult> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(
+      `${baseUrl}/api/v1/suppliers/${encodeURIComponent(supplierId)}/catalogue/import/confirm`,
+      {
+        method: "POST",
+        body: formData,
+        headers: { Authorization: `Bearer ${accessToken}` },
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(errorBody?.error.message ?? `Request failed (${String(response.status)})`);
+    }
+
+    const envelope = await response.json() as { data: CatalogueImportConfirmResult };
+    return envelope.data;
+  }
+
   async function listClinicSupplierInvoices(
     clinicId: string,
     params?: ListSupplierInvoicesParams,
@@ -1677,6 +1735,8 @@ export function createApiClient(config: AppConfig) {
     createSupplier,
     updateSupplier,
     getSupplierCatalogue,
+    previewSupplierCatalogueImport,
+    confirmSupplierCatalogueImport,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,
     getSupplierInvoice,

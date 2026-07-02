@@ -7509,6 +7509,189 @@ textarea:focus-visible {
   justify-content: flex-end;
 }
 
+/* Catalogue Import workspace */
+
+.catalogue-import-page {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.catalogue-import-page__header {
+  align-items: flex-start;
+}
+
+.catalogue-import-page__eyebrow {
+  margin: 0 0 0.25rem;
+  color: var(--vds-colour-purple);
+  font-size: var(--vds-font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.catalogue-import-page__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(260px, 0.8fr);
+  gap: 1rem;
+}
+
+.catalogue-import-page__panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: var(--vds-card-border);
+  border-radius: var(--vds-card-radius);
+  background: var(--vds-colour-panel-subtle);
+}
+
+.catalogue-import-page__section-heading h3,
+.catalogue-future-card h4 {
+  margin: 0 0 0.25rem;
+  color: var(--vds-colour-heading);
+}
+
+.catalogue-import-page__section-heading p,
+.catalogue-future-card p,
+.catalogue-import-page__safety-note {
+  margin: 0;
+  color: var(--vds-colour-muted);
+  font-size: var(--vds-font-size-sm);
+}
+
+.catalogue-source-grid,
+.catalogue-future-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.catalogue-source-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.catalogue-source-card,
+.catalogue-future-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 6rem;
+  padding: 0.9rem;
+  border: 1px solid var(--vds-colour-border);
+  border-radius: var(--vds-radius-md);
+  background: #ffffff;
+  text-align: left;
+}
+
+.catalogue-source-card {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.catalogue-source-card:hover,
+.catalogue-source-card:focus {
+  border-color: var(--vds-colour-teal);
+  box-shadow: 0 0 0 3px rgba(0, 142, 170, 0.12);
+}
+
+.catalogue-source-card--active {
+  border-color: var(--vds-colour-purple);
+  background: #fbf4ff;
+  box-shadow: 0 0 0 3px var(--vds-colour-focus);
+}
+
+.catalogue-source-card--disabled,
+.catalogue-future-card {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.catalogue-source-card__title {
+  color: var(--vds-colour-heading);
+  font-weight: 800;
+}
+
+.catalogue-source-card__description {
+  color: var(--vds-colour-muted);
+  font-size: var(--vds-font-size-sm);
+}
+
+.catalogue-import-page__supplier {
+  max-width: 24rem;
+}
+
+.catalogue-import-page__dropzone {
+  min-height: 11rem;
+}
+
+.catalogue-import-page__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--vds-colour-info);
+  border-radius: var(--vds-radius-md);
+  background: var(--vds-colour-info-bg);
+  color: var(--vds-colour-info);
+  font-size: var(--vds-font-size-sm);
+}
+
+.catalogue-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--vds-radius-pill);
+  font-size: var(--vds-font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.catalogue-status--pending {
+  background: #e0e7ef;
+  color: #334e68;
+}
+
+.catalogue-status--processing {
+  background: var(--vds-colour-info-bg);
+  color: var(--vds-colour-info);
+}
+
+.catalogue-status--review-required {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+.catalogue-status--imported {
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+.catalogue-status--failed {
+  background: var(--vds-colour-danger-bg);
+  color: var(--vds-colour-danger);
+}
+
+.catalogue-import-table td:first-child {
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+}
+
+@media (max-width: 980px) {
+  .catalogue-import-page__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .catalogue-import-page__header {
+    align-items: stretch;
+  }
+
+  .catalogue-source-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 640px) {
   .receiving-page__add-grid {
     grid-template-columns: 1fr;

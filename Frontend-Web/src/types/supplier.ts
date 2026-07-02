@@ -105,6 +105,40 @@ export type SupplierProduct = {
   updatedAt: string;
 };
 
+export type CatalogueImportMatchStatus = "barcode" | "sku" | "name" | "manual" | "unmatched";
+
+export type CatalogueImportRow = {
+  rowNumber: number;
+  supplierSku: string | null;
+  description: string | null;
+  rawUnitCost: string | null;
+  unitCostCents: number | null;
+  unitOfMeasure: string | null;
+  matchedProductId: string | null;
+  matchedProductName: string | null;
+  matchedProductSku: string | null;
+  matchStatus: CatalogueImportMatchStatus;
+  error: string | null;
+};
+
+export type CatalogueImportPreviewResult = {
+  supplierId: string;
+  totalRows: number;
+  matchedRows: number;
+  unmatchedRows: number;
+  errorRows: number;
+  rows: CatalogueImportRow[];
+};
+
+export type CatalogueImportConfirmResult = {
+  supplierId: string;
+  imported: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  rows: CatalogueImportRow[];
+};
+
 export type SupplierInvoiceStatus = "pending_review" | "confirmed" | "voided";
 
 export type SupplierInvoice = {

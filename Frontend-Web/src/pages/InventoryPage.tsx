@@ -402,6 +402,9 @@ export function InventoryPage() {
             ) : null}
             {user && canManageProducts(user.role) ? (
               <>
+                <Link to="/inventory/catalogue-import" className="button-link">
+                  Catalogue Import
+                </Link>
                 <Link to="/inventory/products" className="link-button">
                   Products
                 </Link>
@@ -658,6 +661,11 @@ export function InventoryPage() {
             {user && canManageProducts(user.role) ? (
               <Link to="/inventory/products/new" className="button-link">
                 Add Product
+              </Link>
+            ) : null}
+            {user && canManageProducts(user.role) ? (
+              <Link to="/inventory/catalogue-import" className="link-button">
+                Catalogue Import
               </Link>
             ) : null}
           </div>

@@ -25,6 +25,7 @@ import { ClinicsListPage } from "./pages/ClinicsListPage.js";
 import { CreateClinicPage } from "./pages/CreateClinicPage.js";
 import { SecurityPage } from "./pages/SecurityPage.js";
 import { BillingLedgerPage } from "./pages/BillingLedgerPage.js";
+import { CatalogueImportPage } from "./pages/CatalogueImportPage.js";
 import { AnalyticsDashboardPage } from "./pages/AnalyticsDashboardPage.js";
 import { AuditTrailPage } from "./pages/AuditTrailPage.js";
 import { TimesheetsPage } from "./pages/TimesheetsPage.js";
@@ -45,6 +46,7 @@ export function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/pilot-setup" element={<PilotSetupPage />} />
               <Route path="/inventory" element={<InventoryPage />} />
+              <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
               <Route path="/inventory/products" element={<ProductManagementPage />} />
               <Route path="/inventory/products/new" element={<AddProductPage />} />
               <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
