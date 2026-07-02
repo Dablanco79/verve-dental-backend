@@ -23,6 +23,7 @@ const {
   mockGetSupplierInvoice,
   mockConfirmSupplierInvoice,
   mockAdjustInventory,
+  mockHandleScan,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -51,6 +52,7 @@ const {
     mockGetSupplierInvoice: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
     mockAdjustInventory: vi.fn(),
+    mockHandleScan: vi.fn(),
   };
 });
 
@@ -74,6 +76,7 @@ vi.mock("../src/api/client.js", () => ({
     getSupplierInvoice: mockGetSupplierInvoice,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
     adjustInventory: mockAdjustInventory,
+    handleScan: mockHandleScan,
   }),
 }));
 
@@ -147,6 +150,18 @@ const matchedLine = {
   updatedAt: "2026-07-01T02:30:00.000Z",
 } as SupplierInvoiceLine;
 
+const unmatchedLine = {
+  ...matchedLine,
+  id: "line-unmatched",
+  ocrDescription: "Unknown bonding agent",
+  ocrSku: null,
+  lineTotalCents: Number.NaN,
+  masterCatalogItemId: null,
+  supplierCatalogueId: null,
+  isMatched: false,
+  matchMethod: null,
+} as SupplierInvoiceLine;
+
 function renderCatalogueImportPage() {
   return render(
     <MemoryRouter initialEntries={["/inventory/catalogue-import"]}>
@@ -194,6 +209,7 @@ describe("CatalogueImportPage", () => {
     mockGetSupplierInvoice.mockReset();
     mockConfirmSupplierInvoice.mockReset();
     mockAdjustInventory.mockReset();
+    mockHandleScan.mockReset();
     mockListSuppliers.mockResolvedValue([supplier]);
     mockListClinicSupplierInvoices.mockResolvedValue([invoiceImport]);
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [] });
@@ -308,6 +324,51 @@ describe("CatalogueImportPage", () => {
       expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
     });
     expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
     expect(await screen.findByText("Catalogue imported. 1 price updates applied.")).toBeInTheDocument();
+  });
+
+  it("renders line actions and allows approving a line locally", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(await screen.findByText("Actions")).toBeInTheDocument();
+    expect(screen.getAllByText("Review Required").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+  });
+
+  it("allows skipping a line locally", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    fireEvent.click(screen.getByRole("button", { name: "Reject / Skip" }));
+
+    expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
+  });
+
+  it("never renders $NaN and calculates total when safe", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(await screen.findByText("$27.50")).toBeInTheDocument();
+    expect(screen.queryByText("$NaN")).not.toBeInTheDocument();
+  });
+
+  it("keeps Import Catalogue guarded for unpersisted line decisions", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(screen.getByRole("button", { name: "Import Catalogue" })).toBeDisabled();
+    expect(mockConfirmSupplierInvoice).not.toHaveBeenCalled();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+    expect(screen.getByText("Inventory quantity changes")).toBeInTheDocument();
+    expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
 });

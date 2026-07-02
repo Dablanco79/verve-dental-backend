@@ -11,8 +11,28 @@ import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
-function centsToDollars(cents: number | null): string {
-  if (cents === null) return "Not available yet";
+type LineReviewState =
+  | "Review Required"
+  | "Approved"
+  | "Skipped"
+  | "Edited"
+  | "Matched"
+  | "Create Product Pending";
+
+type LineEditDraft = {
+  description: string;
+  supplierSku: string;
+  quantity: string;
+  unitPriceCents: string;
+  taxCents: string;
+};
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function centsToDollars(cents: unknown, unavailableLabel = "Not available yet"): string {
+  if (!isFiniteNumber(cents)) return unavailableLabel;
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
     currency: "AUD",
@@ -47,8 +67,71 @@ function formatMatchStatus(line: SupplierInvoiceLine): string {
 }
 
 function formatTax(line: SupplierInvoiceLine): string {
-  const rate = `${(line.taxRateBasisPoints / 100).toFixed(2)}%`;
-  return `${centsToDollars(line.taxCents)} (${rate})`;
+  if (!isFiniteNumber(line.taxCents)) return "Not available";
+  const rate = isFiniteNumber(line.taxRateBasisPoints)
+    ? ` (${(line.taxRateBasisPoints / 100).toFixed(2)}%)`
+    : "";
+  return `${centsToDollars(line.taxCents, "Not available")}${rate}`;
+}
+
+function calculateLineTotalCents(line: SupplierInvoiceLine): number | null {
+  if (isFiniteNumber(line.lineTotalCents)) return line.lineTotalCents;
+  if (!isFiniteNumber(line.quantity) || !isFiniteNumber(line.unitPriceCents)) return null;
+
+  const baseTotal = line.quantity * line.unitPriceCents;
+  const tax = isFiniteNumber(line.taxCents) ? line.taxCents : 0;
+  const total = baseTotal + tax;
+  return Number.isFinite(total) ? Math.round(total) : null;
+}
+
+function formatLineTotal(line: SupplierInvoiceLine): string {
+  const total = calculateLineTotalCents(line);
+  return total === null ? "Not available" : centsToDollars(total, "Not available");
+}
+
+function initialReviewStateForLine(line: SupplierInvoiceLine): LineReviewState {
+  return line.isMatched ? "Matched" : "Review Required";
+}
+
+function isImportReadyState(state: LineReviewState): boolean {
+  return (
+    state === "Approved" ||
+    state === "Skipped" ||
+    state === "Matched" ||
+    state === "Create Product Pending"
+  );
+}
+
+function buildEditDraft(line: SupplierInvoiceLine): LineEditDraft {
+  return {
+    description: line.ocrDescription ?? "",
+    supplierSku: line.ocrSku ?? "",
+    quantity: isFiniteNumber(line.quantity) ? String(line.quantity) : "",
+    unitPriceCents: isFiniteNumber(line.unitPriceCents) ? String(line.unitPriceCents) : "",
+    taxCents: isFiniteNumber(line.taxCents) ? String(line.taxCents) : "",
+  };
+}
+
+function applyDraftToLine(line: SupplierInvoiceLine, draft: LineEditDraft): SupplierInvoiceLine {
+  const quantity = Number(draft.quantity);
+  const unitPriceCents = Number(draft.unitPriceCents);
+  const taxCents = Number(draft.taxCents);
+  const hasQuantity = Number.isFinite(quantity);
+  const hasUnitPrice = Number.isFinite(unitPriceCents);
+  const hasTax = Number.isFinite(taxCents);
+  const recalculatedTotal = hasQuantity && hasUnitPrice
+    ? Math.round(quantity * unitPriceCents + (hasTax ? taxCents : 0))
+    : line.lineTotalCents;
+
+  return {
+    ...line,
+    ocrDescription: draft.description.trim() || null,
+    ocrSku: draft.supplierSku.trim() || null,
+    quantity: hasQuantity ? quantity : line.quantity,
+    unitPriceCents: hasUnitPrice ? Math.round(unitPriceCents) : line.unitPriceCents,
+    taxCents: hasTax ? Math.round(taxCents) : line.taxCents,
+    lineTotalCents: recalculatedTotal,
+  };
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
@@ -78,17 +161,32 @@ export function CatalogueImportReviewPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [lineReviewStates, setLineReviewStates] = useState<Record<string, LineReviewState>>({});
+  const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<LineEditDraft | null>(null);
 
   const matchedSupplier = useMemo(
     () => suppliers.find((supplier) => supplier.id === invoice?.supplierId) ?? null,
     [invoice?.supplierId, suppliers],
   );
-  const matchedLines = lines.filter((line) => line.isMatched).length;
   const hasLineData = lines.length > 0;
+  const reviewStates = useMemo(
+    () => lines.map((line) => lineReviewStates[line.id] ?? initialReviewStateForLine(line)),
+    [lineReviewStates, lines],
+  );
+  const matchedLineCount = reviewStates.filter((state) => state === "Matched").length;
+  const approvedLines = reviewStates.filter((state) => state === "Approved" || state === "Matched").length;
+  const skippedLines = reviewStates.filter((state) => state === "Skipped").length;
+  const stillRequiringReview = reviewStates.filter((state) => !isImportReadyState(state)).length;
+  const hasOnlySafelyImportableStates = reviewStates.every(
+    (state) => state === "Approved" || state === "Matched",
+  );
   const canConfirmImport =
     !!invoice &&
     invoice.status === "pending_review" &&
     hasLineData &&
+    stillRequiringReview === 0 &&
+    hasOnlySafelyImportableStates &&
     lines.every((line) => line.isMatched);
   const importDisabledReason = canConfirmImport
     ? null
@@ -110,6 +208,11 @@ export function CatalogueImportReviewPage() {
       setSuppliers(supplierList);
       setInvoice(importData.invoice);
       setLines(importData.lines);
+      setLineReviewStates(
+        Object.fromEntries(importData.lines.map((line) => [line.id, initialReviewStateForLine(line)])),
+      );
+      setEditingLineId(null);
+      setEditDraft(null);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Catalogue import review could not be loaded.");
       setInvoice(null);
@@ -139,6 +242,31 @@ export function CatalogueImportReviewPage() {
     } finally {
       setIsImporting(false);
     }
+  }
+
+  function setLineState(lineId: string, state: LineReviewState): void {
+    setLineReviewStates((current) => ({ ...current, [lineId]: state }));
+    if (editingLineId === lineId) {
+      setEditingLineId(null);
+      setEditDraft(null);
+    }
+  }
+
+  function startEditingLine(line: SupplierInvoiceLine): void {
+    setEditingLineId(line.id);
+    setEditDraft(buildEditDraft(line));
+  }
+
+  function updateEditDraft(field: keyof LineEditDraft, value: string): void {
+    setEditDraft((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function saveLineEdit(lineId: string): void {
+    if (!editDraft) return;
+    setLines((current) =>
+      current.map((line) => (line.id === lineId ? applyDraftToLine(line, editDraft) : line)),
+    );
+    setLineState(lineId, "Edited");
   }
 
   if (!user) return null;
@@ -254,20 +382,174 @@ export function CatalogueImportReviewPage() {
                         <th>GST / tax</th>
                         <th>Total</th>
                         <th>Match status</th>
+                        <th>Review state</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {lines.map((line) => (
-                        <tr key={line.id}>
-                          <td>{line.ocrDescription ?? "Not available yet"}</td>
-                          <td>{line.ocrSku ?? "Not available yet"}</td>
-                          <td>{String(line.quantity)}</td>
-                          <td>{centsToDollars(line.unitPriceCents)}</td>
-                          <td>{formatTax(line)}</td>
-                          <td>{centsToDollars(line.lineTotalCents)}</td>
-                          <td>{formatMatchStatus(line)}</td>
-                        </tr>
-                      ))}
+                      {lines.map((line) => {
+                        const reviewState = lineReviewStates[line.id] ?? initialReviewStateForLine(line);
+                        const isEditing = editingLineId === line.id && editDraft;
+
+                        return (
+                          <tr key={line.id}>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={editDraft.description}
+                                  onChange={(event) => {
+                                    updateEditDraft("description", event.target.value);
+                                  }}
+                                  aria-label={`Description for line ${String(line.lineNumber)}`}
+                                />
+                              ) : (
+                                line.ocrDescription ?? "Not available yet"
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={editDraft.supplierSku}
+                                  onChange={(event) => {
+                                    updateEditDraft("supplierSku", event.target.value);
+                                  }}
+                                  aria-label={`Supplier SKU for line ${String(line.lineNumber)}`}
+                                />
+                              ) : (
+                                line.ocrSku ?? "Not available yet"
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input catalogue-review__edit-input--numeric"
+                                  value={editDraft.quantity}
+                                  onChange={(event) => {
+                                    updateEditDraft("quantity", event.target.value);
+                                  }}
+                                  aria-label={`Quantity for line ${String(line.lineNumber)}`}
+                                />
+                              ) : isFiniteNumber(line.quantity) ? (
+                                String(line.quantity)
+                              ) : (
+                                "Not available"
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input catalogue-review__edit-input--numeric"
+                                  value={editDraft.unitPriceCents}
+                                  onChange={(event) => {
+                                    updateEditDraft("unitPriceCents", event.target.value);
+                                  }}
+                                  aria-label={`Unit price cents for line ${String(line.lineNumber)}`}
+                                />
+                              ) : (
+                                centsToDollars(line.unitPriceCents, "Not available")
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input catalogue-review__edit-input--numeric"
+                                  value={editDraft.taxCents}
+                                  onChange={(event) => {
+                                    updateEditDraft("taxCents", event.target.value);
+                                  }}
+                                  aria-label={`GST cents for line ${String(line.lineNumber)}`}
+                                />
+                              ) : (
+                                formatTax(line)
+                              )}
+                            </td>
+                            <td>{formatLineTotal(line)}</td>
+                            <td>{formatMatchStatus(line)}</td>
+                            <td>
+                              <span className={`catalogue-line-state catalogue-line-state--${reviewState.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {reviewState}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="catalogue-review__line-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        saveLineEdit(line.id);
+                                      }}
+                                    >
+                                      Save edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setEditingLineId(null);
+                                        setEditDraft(null);
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, "Approved");
+                                      }}
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        startEditingLine(line);
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, "Skipped");
+                                      }}
+                                    >
+                                      Reject / Skip
+                                    </button>
+                                    <button type="button" className="link-button" disabled>
+                                      Match existing product
+                                    </button>
+                                    <span className="catalogue-review__future-note">
+                                      Matching persistence available in a future release
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, "Create Product Pending");
+                                      }}
+                                    >
+                                      Create new product
+                                    </button>
+                                    <span className="catalogue-review__future-note">
+                                      Product creation queued for future matching review
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -291,9 +573,13 @@ export function CatalogueImportReviewPage() {
                 </div>
               </div>
               <dl className="po-summary__stats catalogue-review__summary-grid">
+                <SummaryMetric label="Total lines" value={hasLineData ? String(lines.length) : "Not available yet"} />
+                <SummaryMetric label="Approved" value={hasLineData ? String(approvedLines) : "Not available yet"} />
+                <SummaryMetric label="Skipped" value={hasLineData ? String(skippedLines) : "Not available yet"} />
+                <SummaryMetric label="Still requiring review" value={hasLineData ? String(stillRequiringReview) : "Not available yet"} />
                 <SummaryMetric label="Products detected" value={hasLineData ? String(lines.length) : "Not available yet"} />
                 <SummaryMetric label="New products" value="Not available yet" />
-                <SummaryMetric label="Possible matches" value={hasLineData ? String(matchedLines) : "Not available yet"} />
+                <SummaryMetric label="Possible matches" value={hasLineData ? String(matchedLineCount) : "Not available yet"} />
                 <SummaryMetric label="Price updates" value="Not available yet" />
                 <SummaryMetric label="Pack-size changes" value="Not available yet" />
                 <SummaryMetric label="Inventory quantity changes" value="0" />
