@@ -139,7 +139,16 @@ export type CatalogueImportConfirmResult = {
   rows: CatalogueImportRow[];
 };
 
-export type SupplierInvoiceStatus = "pending_review" | "confirmed" | "voided";
+export type SupplierInvoiceStatus =
+  | "uploaded"
+  | "processing"
+  | "ready_for_review"
+  | "imported"
+  | "cancelled"
+  | "failed"
+  | "pending_review"
+  | "confirmed"
+  | "voided";
 
 export type SupplierInvoice = {
   id: string;

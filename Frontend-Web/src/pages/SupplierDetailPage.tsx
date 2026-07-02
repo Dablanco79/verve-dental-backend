@@ -50,6 +50,12 @@ function ActiveBadge({ active }: { active: boolean }) {
 }
 
 const INVOICE_STATUS_LABELS: Record<SupplierInvoiceStatus, string> = {
+  uploaded: "Uploaded",
+  processing: "Processing",
+  ready_for_review: "Ready for Review",
+  imported: "Imported",
+  cancelled: "Cancelled",
+  failed: "Failed",
   pending_review: "Pending Review",
   confirmed: "Confirmed",
   voided: "Voided",

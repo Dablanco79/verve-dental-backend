@@ -56,6 +56,11 @@ export interface SupplierInvoiceRepository {
     },
   ): Promise<SupplierInvoice | null>;
 
+  clearTemporaryExtractionData(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<void>;
+
   // ── Duplicate detection ────────────────────────────────────────────────────
 
   findDuplicateFile(
@@ -92,6 +97,8 @@ export interface SupplierInvoiceRepository {
   ): Promise<SupplierInvoiceLine | null>;
 
   removeLine(clinicId: string, lineId: string): Promise<void>;
+
+  removeLinesForInvoice(clinicId: string, invoiceId: string): Promise<void>;
 
   // ── Supplier catalogue pricing upsert ─────────────────────────────────────
 
@@ -137,7 +144,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         invoiceNumber: input.invoiceNumber,
         invoiceDate: input.invoiceDate,
         dueDate: input.dueDate,
-        status: "pending_review",
+        status: "ready_for_review",
         subtotalCents: input.subtotalCents,
         taxCents: input.taxCents,
         totalCents: input.totalCents,
@@ -278,6 +285,28 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       return Promise.resolve({ ...updated });
     },
 
+    clearTemporaryExtractionData(
+      clinicId: string,
+      invoiceId: string,
+    ): Promise<void> {
+      const idx = invoices.findIndex(
+        (inv) => inv.id === invoiceId && inv.clinicId === clinicId,
+      );
+      if (idx !== -1) {
+        const existing = invoices[idx];
+        if (existing) {
+          invoices[idx] = {
+            ...existing,
+            ocrConfidence: null,
+            ocrRawResponse: {},
+            storageKey: null,
+            updatedAt: new Date(),
+          };
+        }
+      }
+      return Promise.resolve();
+    },
+
     // ── Duplicate detection ──────────────────────────────────────────────────
 
     findDuplicateFile(
@@ -307,6 +336,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
           inv.supplierId === supplierId &&
           inv.invoiceNumber === invoiceNumber &&
           inv.status !== "voided" &&
+          inv.status !== "cancelled" &&
           inv.id !== excludeId,
       );
       if (!found) return Promise.resolve(null);
@@ -441,6 +471,16 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         (l) => l.id === lineId && l.clinicId === clinicId,
       );
       if (idx !== -1) lines.splice(idx, 1);
+      return Promise.resolve();
+    },
+
+    removeLinesForInvoice(clinicId: string, invoiceId: string): Promise<void> {
+      for (let idx = lines.length - 1; idx >= 0; idx--) {
+        const line = lines[idx];
+        if (line?.clinicId === clinicId && line.supplierInvoiceId === invoiceId) {
+          lines.splice(idx, 1);
+        }
+      }
       return Promise.resolve();
     },
 

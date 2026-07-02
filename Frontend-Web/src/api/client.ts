@@ -1262,6 +1262,18 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function cancelSupplierInvoiceImport(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<SupplierInvoice> {
+    return request<SupplierInvoice>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/cancel`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   async function voidSupplierInvoice(
     clinicId: string,
     invoiceId: string,
@@ -1743,6 +1755,7 @@ export function createApiClient(config: AppConfig) {
     updateSupplierInvoice,
     updateSupplierInvoiceLine,
     confirmSupplierInvoice,
+    cancelSupplierInvoiceImport,
     voidSupplierInvoice,
     getSupplierIntelligence,
     listOrganisations,

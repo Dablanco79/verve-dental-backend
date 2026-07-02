@@ -8,7 +8,8 @@
  *   4. updateInvoice      — edit header during pending_review
  *   5. updateLine         — edit a line item during pending_review
  *   6. confirmImport      — Amendment 3 validation + upsert pricing + history
- *   7. voidInvoice        — terminal state for pending_review invoices
+ *   7. cancelImport       — discard a review session without deleting catalogue data
+ *   8. voidInvoice        — legacy terminal state for review invoices
  *
  * Amendments implemented:
  *   1B  — SHA256 duplicate-file detection (informational warning)
@@ -75,13 +76,43 @@ export function createSupplierInvoiceService(
   }
 
   function assertPendingReview(invoice: SupplierInvoice): void {
-    if (invoice.status !== "pending_review") {
+    if (invoice.status !== "ready_for_review" && invoice.status !== "pending_review") {
       throw new AppError(
         409,
         "SUPPLIER_INVOICE_INVALID_STATUS",
-        `This action requires status 'pending_review'. Current status: ${invoice.status}`,
+        `This action requires status 'ready_for_review'. Current status: ${invoice.status}`,
       );
     }
+  }
+
+  function assertCancellableImport(invoice: SupplierInvoice): void {
+    switch (invoice.status) {
+      case "cancelled":
+      case "voided":
+      case "uploaded":
+      case "processing":
+      case "ready_for_review":
+      case "pending_review":
+        return;
+      case "imported":
+      case "confirmed":
+        throw new AppError(
+          409,
+          "IMPORT_ALREADY_IMPORTED",
+          "Imported catalogue jobs cannot be cancelled.",
+        );
+      case "failed":
+        throw new AppError(
+          409,
+          "IMPORT_ALREADY_FAILED",
+          "Failed catalogue jobs cannot be cancelled after processing has completed.",
+        );
+    }
+    throw new AppError(
+      409,
+      "IMPORT_CANNOT_CANCEL",
+      "Catalogue import cannot be cancelled from the current status.",
+    );
   }
 
   // ── Supplier matching ──────────────────────────────────────────────────────
@@ -286,6 +317,7 @@ export function createSupplierInvoiceService(
         (inv) =>
           inv.invoiceNumber === ocrResult.invoiceNumber &&
           inv.status !== "voided" &&
+          inv.status !== "cancelled" &&
           inv.id !== invoice.id,
       );
       if (dup) {
@@ -494,7 +526,7 @@ export function createSupplierInvoiceService(
     );
 
     const now = new Date();
-    const confirmed = await repo.setStatus(clinicId, invoiceId, "confirmed", {
+    const confirmed = await repo.setStatus(clinicId, invoiceId, "imported", {
       confirmedByUserId: caller.id,
       confirmedAt: now,
     });
@@ -515,7 +547,55 @@ export function createSupplierInvoiceService(
     };
   }
 
-  // ── 7. Void ───────────────────────────────────────────────────────────────
+  // ── 7. Cancel Import ──────────────────────────────────────────────────────
+
+  async function cancelImport(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<SupplierInvoice> {
+    assertTenantAccess(caller, clinicId);
+    assertWriteAccess(caller);
+
+    const invoice = await repo.findById(clinicId, invoiceId);
+    if (!invoice) {
+      throw new AppError(404, "NOT_FOUND", "Supplier invoice not found");
+    }
+
+    assertCancellableImport(invoice);
+
+    if (invoice.status === "cancelled" || invoice.status === "voided") {
+      return invoice;
+    }
+
+    const cancelled = await repo.setStatus(clinicId, invoiceId, "cancelled", {
+      voidedByUserId: caller.id,
+      voidedAt: new Date(),
+    });
+
+    if (!cancelled) {
+      throw new AppError(500, "INTERNAL_ERROR", "Failed to cancel catalogue import");
+    }
+
+    await repo.removeLinesForInvoice(clinicId, invoiceId);
+    await repo.clearTemporaryExtractionData(clinicId, invoiceId);
+
+    const cleaned = await repo.findById(clinicId, invoiceId);
+    if (!cleaned) {
+      throw new AppError(500, "INTERNAL_ERROR", "Failed to reload cancelled catalogue import");
+    }
+
+    auditService.logEvent("supplier_invoice.cancelled", {
+      userId: caller.id,
+      email: caller.email,
+      clinicId,
+      resourceId: invoiceId,
+    });
+
+    return cleaned;
+  }
+
+  // ── 8. Void ───────────────────────────────────────────────────────────────
 
   async function voidInvoice(
     caller: AuthenticatedUser,
@@ -555,6 +635,7 @@ export function createSupplierInvoiceService(
     updateInvoice,
     updateLine,
     confirmImport,
+    cancelImport,
     voidInvoice,
   };
 }

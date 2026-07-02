@@ -1,5 +1,6 @@
 import { AUTH_BYPASS_CLINIC_ID } from "../db/tenantContext.js";
 import type { AnalyticsRepository } from "../repositories/analyticsRepository.js";
+import type { AuditEntityType } from "../types/analytics.js";
 import type { Logger } from "../utils/logger.js";
 
 export type AuthAuditEvent =
@@ -39,6 +40,7 @@ export type SupplierAuditEvent =
 export type SupplierInvoiceAuditEvent =
   | "supplier_invoice.uploaded"
   | "supplier_invoice.confirmed"
+  | "supplier_invoice.cancelled"
   | "supplier_invoice.voided";
 
 export type AuditEvent =
@@ -81,6 +83,14 @@ function buildSafeMetadata(context: AuditContext): Record<string, unknown> {
   if (context.reason) meta.reason = context.reason;
   if (context.resourceId) meta.resourceId = context.resourceId;
   return meta;
+}
+
+function entityTypeForEvent(event: AuditEvent): AuditEntityType {
+  if (event.startsWith("supplier_invoice.")) return "invoice";
+  if (event.startsWith("supplier_") || event.startsWith("catalogue.")) return "product";
+  if (event.startsWith("purchase_order.")) return "purchase_order";
+  if (event.startsWith("user.")) return "user";
+  return "auth";
 }
 
 export function createAuditService(
@@ -143,11 +153,25 @@ export function createAuditService(
         },
         `Audit: ${event}`,
       );
-      // Only persist auth/user-management events through this path.
-      // Domain events (purchase orders, etc.) are recorded via analyticsRepository
-      // directly by their own service layers.
       if (event.startsWith("auth.") || event.startsWith("user.")) {
         persistAuthAuditEvent(event, context);
+        return;
+      }
+
+      if (analyticsRepository && context.clinicId && context.resourceId) {
+        analyticsRepository
+          .recordEventAdmin({
+            clinicId: context.clinicId,
+            entityType: entityTypeForEvent(event),
+            entityId: context.resourceId,
+            action: event,
+            actorId: context.userId ?? SYSTEM_ACTOR_ID,
+            actorEmail: context.email ?? "system",
+            metadata: buildSafeMetadata(context),
+          })
+          .catch((err: unknown) => {
+            logger.error({ err, event }, "audit_events persistence failed (non-fatal)");
+          });
       }
     },
 

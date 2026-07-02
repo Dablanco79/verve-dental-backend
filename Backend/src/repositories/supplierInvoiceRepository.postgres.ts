@@ -193,8 +193,9 @@ export function createPostgresSupplierInvoiceRepository(
                invoice_date, due_date, subtotal_cents, tax_cents, total_cents,
                ocr_provider, ocr_confidence, ocr_raw_response,
                original_filename, file_mime_type, file_sha256,
-               imported_by_user_id, imported_by_email
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+               imported_by_user_id, imported_by_email,
+               status
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
              RETURNING *`,
             [
               input.clinicId,
@@ -214,6 +215,7 @@ export function createPostgresSupplierInvoiceRepository(
               input.fileSha256,
               input.importedByUserId,
               input.importedByEmail,
+              "ready_for_review",
             ],
           ),
       );
@@ -337,6 +339,21 @@ export function createPostgresSupplierInvoiceRepository(
       return rows[0] ? mapInvoice(rows[0]) : null;
     },
 
+    async clearTemporaryExtractionData(
+      clinicId: string,
+      invoiceId: string,
+    ): Promise<void> {
+      await pool.query(
+        `UPDATE supplier_invoices
+         SET ocr_confidence = NULL,
+             ocr_raw_response = '{}'::jsonb,
+             storage_key = NULL,
+             updated_at = now()
+         WHERE id = $1 AND clinic_id = $2`,
+        [invoiceId, clinicId],
+      );
+    },
+
     // ── Duplicate detection ────────────────────────────────────────────────
 
     async findDuplicateFile(
@@ -377,7 +394,7 @@ export function createPostgresSupplierInvoiceRepository(
       const { rows } = await pool.query<{ id: string; status: string }>(
         `SELECT id, status FROM supplier_invoices
          WHERE clinic_id = $1 AND supplier_id = $2 AND invoice_number = $3
-           AND status <> 'voided'${excludeClause}
+           AND status NOT IN ('voided', 'cancelled')${excludeClause}
          ORDER BY created_at DESC LIMIT 1`,
         params,
       );
@@ -537,6 +554,13 @@ export function createPostgresSupplierInvoiceRepository(
       await pool.query(
         "DELETE FROM supplier_invoice_lines WHERE id = $1 AND clinic_id = $2",
         [lineId, clinicId],
+      );
+    },
+
+    async removeLinesForInvoice(clinicId: string, invoiceId: string): Promise<void> {
+      await pool.query(
+        "DELETE FROM supplier_invoice_lines WHERE supplier_invoice_id = $1 AND clinic_id = $2",
+        [invoiceId, clinicId],
       );
     },
 

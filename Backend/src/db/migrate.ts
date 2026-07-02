@@ -1468,6 +1468,8 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       -- ── ENUM: supplier_invoice_status ──────────────────────────────────────
       DO $$ BEGIN
         CREATE TYPE supplier_invoice_status AS ENUM (
+          'uploaded', 'processing', 'ready_for_review',
+          'imported', 'cancelled', 'failed',
           'pending_review', 'confirmed', 'voided'
         );
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -2357,6 +2359,23 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       CREATE POLICY rls_product_suppliers_tenant ON product_suppliers FOR ALL
         USING (app_is_owner_admin() OR clinic_id = app_current_clinic_id())
         WITH CHECK (app_is_owner_admin() OR clinic_id = app_current_clinic_id());
+    `,
+  },
+  {
+    /**
+     * Beta 1C — Import Job Cancellation & Lifecycle.
+     *
+     * Extends the existing supplier invoice OCR enum so catalogue imports can
+     * expose the requested lifecycle without overloading the legacy void state.
+     */
+    id: "033_import_job_lifecycle",
+    sql: `
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'uploaded';
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'processing';
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'ready_for_review';
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'imported';
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'cancelled';
+      ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'failed';
     `,
   },
 ];

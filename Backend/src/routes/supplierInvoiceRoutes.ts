@@ -4,7 +4,7 @@
  * Mounted at /api/v1/clinics/:clinicId/supplier-invoices
  *
  * Auth:   All routes require a valid JWT (authenticate middleware from parent).
- * Roles:  Write operations (upload, patch, confirm, void) require
+ * Roles:  Write operations (upload, patch, confirm, cancel, void) require
  *         owner_admin or group_practice_manager.
  *         Read operations (list, get) are available to all authenticated users.
  *
@@ -97,6 +97,14 @@ export function createSupplierInvoiceRouter(
     "/:invoiceId/confirm",
     requireWriteAccess,
     asyncHandler((req, res) => handlers.confirm(req, res)),
+  );
+
+  // ── POST /:invoiceId/cancel ───────────────────────────────────────────────
+  // Cancel a catalogue import review session and remove temporary OCR review data.
+  router.post(
+    "/:invoiceId/cancel",
+    requireWriteAccess,
+    asyncHandler((req, res) => handlers.cancel(req, res)),
   );
 
   // ── POST /:invoiceId/void ──────────────────────────────────────────────────

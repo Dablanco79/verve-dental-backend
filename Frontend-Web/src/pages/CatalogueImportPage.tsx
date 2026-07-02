@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -27,10 +27,12 @@ type ImportSourceId =
   | "supplier_api";
 
 type CatalogueImportStatus =
+  | "Uploaded"
   | "Pending"
   | "Processing"
   | "Review Required"
   | "Imported"
+  | "Cancelled"
   | "Failed";
 
 type ImportSource = {
@@ -128,9 +130,23 @@ function getFileExtension(fileName: string): string {
 }
 
 function mapInvoiceStatus(invoice: SupplierInvoice): CatalogueImportStatus {
-  if (invoice.status === "confirmed") return "Imported";
-  if (invoice.status === "voided") return "Failed";
-  return "Review Required";
+  switch (invoice.status) {
+    case "uploaded":
+      return "Uploaded";
+    case "processing":
+      return "Processing";
+    case "ready_for_review":
+    case "pending_review":
+      return "Review Required";
+    case "imported":
+    case "confirmed":
+      return "Imported";
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+    case "voided":
+      return "Failed";
+  }
 }
 
 function validateFile(file: File, source: ImportSource): string | null {
@@ -176,6 +192,8 @@ function sourceProcessingCopy(sourceId: ImportSourceId): string {
 }
 
 export function CatalogueImportPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
   const selectedClinicId = selectedClinic?.id;
@@ -195,6 +213,7 @@ export function CatalogueImportPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<CatalogueImportStatus>("Pending");
   const [processingSummary, setProcessingSummary] = useState<string | null>(null);
+  const [pageToast, setPageToast] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -251,6 +270,13 @@ export function CatalogueImportPage() {
   useEffect(() => {
     void loadImportWorkspace();
   }, [loadImportWorkspace]);
+
+  useEffect(() => {
+    const state = location.state as { toast?: string } | null;
+    if (!state?.toast) return;
+    setPageToast(state.toast);
+    void navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   function applyFile(file: File): void {
     const error = validateFile(file, selectedSource);
@@ -415,6 +441,8 @@ export function CatalogueImportPage() {
             <p>OCR invoice history is clinic-scoped. Choose a clinic before uploading files.</p>
           </div>
         ) : null}
+
+        {pageToast ? <p className="inventory-notice--inline" role="status">{pageToast}</p> : null}
 
         <section className="catalogue-import-page__grid" aria-label="Catalogue import workspace">
           <div className="catalogue-import-page__panel">

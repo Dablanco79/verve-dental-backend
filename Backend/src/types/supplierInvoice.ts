@@ -14,6 +14,13 @@
 // ── Status ENUM ──────────────────────────────────────────────────────────────
 
 export const SUPPLIER_INVOICE_STATUSES = [
+  "uploaded",
+  "processing",
+  "ready_for_review",
+  "imported",
+  "cancelled",
+  "failed",
+  // Legacy statuses retained for existing rows/API compatibility.
   "pending_review",
   "confirmed",
   "voided",

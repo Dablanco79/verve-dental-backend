@@ -43,6 +43,12 @@ function formatConfidence(confidence: number | null): string | null {
 // ── Invoice status badge ───────────────────────────────────────────────────────
 
 const STATUS_LABELS: Record<SupplierInvoiceStatus, string> = {
+  uploaded: "Uploaded",
+  processing: "Processing",
+  ready_for_review: "Ready for Review",
+  imported: "Imported",
+  cancelled: "Cancelled",
+  failed: "Failed",
   pending_review: "Pending Review",
   confirmed: "Confirmed",
   voided: "Voided",

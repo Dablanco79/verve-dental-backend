@@ -52,7 +52,19 @@ const updateLineSchema = z.object({
 });
 
 const listQuerySchema = z.object({
-  status: z.enum(["pending_review", "confirmed", "voided"]).optional(),
+  status: z
+    .enum([
+      "uploaded",
+      "processing",
+      "ready_for_review",
+      "imported",
+      "cancelled",
+      "failed",
+      "pending_review",
+      "confirmed",
+      "voided",
+    ])
+    .optional(),
   supplierId: z.string().uuid().optional(),
   from: z
     .string()
@@ -226,6 +238,21 @@ export function createSupplierInvoiceHandlers(
 
       const result = await service.confirmImport(caller, clinicId, invoiceId.data);
       res.status(200).json({ data: result });
+    },
+
+    // ── POST /:invoiceId/cancel ───────────────────────────────────────────────
+
+    async cancel(req: Request, res: Response): Promise<void> {
+      const caller = getCaller(req);
+      const clinicId = getClinicId(req);
+
+      const invoiceId = uuidSchema.safeParse(req.params.invoiceId);
+      if (!invoiceId.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Invalid invoiceId");
+      }
+
+      const invoice = await service.cancelImport(caller, clinicId, invoiceId.data);
+      res.status(200).json({ data: invoice });
     },
 
     // ── POST /:invoiceId/void ─────────────────────────────────────────────────

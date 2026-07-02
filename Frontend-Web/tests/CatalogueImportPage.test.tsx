@@ -22,6 +22,7 @@ const {
   mockUploadSupplierInvoice,
   mockGetSupplierInvoice,
   mockConfirmSupplierInvoice,
+  mockCancelSupplierInvoiceImport,
   mockAdjustInventory,
   mockHandleScan,
 } = vi.hoisted(() => {
@@ -51,6 +52,7 @@ const {
     mockUploadSupplierInvoice: vi.fn(),
     mockGetSupplierInvoice: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
+    mockCancelSupplierInvoiceImport: vi.fn(),
     mockAdjustInventory: vi.fn(),
     mockHandleScan: vi.fn(),
   };
@@ -75,6 +77,7 @@ vi.mock("../src/api/client.js", () => ({
     uploadSupplierInvoice: mockUploadSupplierInvoice,
     getSupplierInvoice: mockGetSupplierInvoice,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
+    cancelSupplierInvoiceImport: mockCancelSupplierInvoiceImport,
     adjustInventory: mockAdjustInventory,
     handleScan: mockHandleScan,
   }),
@@ -208,6 +211,7 @@ describe("CatalogueImportPage", () => {
     mockUploadSupplierInvoice.mockReset();
     mockGetSupplierInvoice.mockReset();
     mockConfirmSupplierInvoice.mockReset();
+    mockCancelSupplierInvoiceImport.mockReset();
     mockAdjustInventory.mockReset();
     mockHandleScan.mockReset();
     mockListSuppliers.mockResolvedValue([supplier]);
@@ -217,6 +221,12 @@ describe("CatalogueImportPage", () => {
       invoice: { ...invoiceImport, status: "confirmed", confirmedAt: "2026-07-01T03:00:00.000Z" },
       priceUpdates: 1,
     } satisfies ConfirmImportResult);
+    mockCancelSupplierInvoiceImport.mockResolvedValue({
+      ...invoiceImport,
+      status: "cancelled",
+      voidedByUserId: "user-1",
+      voidedAt: "2026-07-01T03:00:00.000Z",
+    });
     mockPreviewSupplierCatalogueImport.mockResolvedValue({
       supplierId: supplier.id,
       totalRows: 2,
@@ -326,6 +336,32 @@ describe("CatalogueImportPage", () => {
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(mockHandleScan).not.toHaveBeenCalled();
     expect(await screen.findByText("Catalogue imported. 1 price updates applied.")).toBeInTheDocument();
+  });
+
+  it("cancels an import after confirmation and returns to the import page", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [matchedLine] });
+    mockListClinicSupplierInvoices
+      .mockResolvedValueOnce([invoiceImport])
+      .mockResolvedValueOnce([]);
+
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(await screen.findByText("Nitrile Examination Gloves Box 100")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Import" }));
+
+    expect(screen.getByRole("dialog", { name: "Cancel Import?" })).toBeInTheDocument();
+    expect(
+      screen.getByText("This will discard the uploaded invoice and all extracted catalogue review data. No products, pricing or inventory changes will be saved."),
+    ).toBeInTheDocument();
+
+    const cancelImportButtons = screen.getAllByRole("button", { name: "Cancel Import" });
+    fireEvent.click(cancelImportButtons[cancelImportButtons.length - 1] as HTMLElement);
+
+    await waitFor(() => {
+      expect(mockCancelSupplierInvoiceImport).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
+    });
+    expect(await screen.findByRole("heading", { name: "Catalogue Import" })).toBeInTheDocument();
+    expect(await screen.findByText("Import cancelled.")).toBeInTheDocument();
   });
 
   it("renders line actions and allows approving a line locally", async () => {

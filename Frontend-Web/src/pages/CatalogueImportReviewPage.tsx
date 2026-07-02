@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
 import type { Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/supplier.js";
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
@@ -53,9 +54,23 @@ function formatUploadDate(value: string | null | undefined): string {
 
 function formatInvoiceStatus(invoice: SupplierInvoice | null): string {
   if (!invoice) return "Not available yet";
-  if (invoice.status === "pending_review") return "Review Required";
-  if (invoice.status === "confirmed") return "Imported";
-  return "Failed";
+  switch (invoice.status) {
+    case "uploaded":
+      return "Uploaded";
+    case "processing":
+      return "Processing";
+    case "ready_for_review":
+    case "pending_review":
+      return "Review Required";
+    case "imported":
+    case "confirmed":
+      return "Imported";
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+    case "voided":
+      return "Failed";
+  }
 }
 
 function formatMatchStatus(line: SupplierInvoiceLine): string {
@@ -145,6 +160,7 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
 
 export function CatalogueImportReviewPage() {
   const { importId } = useParams<{ importId: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
   const clinicId = selectedClinic?.id ?? user?.homeClinicId;
@@ -159,6 +175,8 @@ export function CatalogueImportReviewPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [lineReviewStates, setLineReviewStates] = useState<Record<string, LineReviewState>>({});
@@ -188,6 +206,12 @@ export function CatalogueImportReviewPage() {
     stillRequiringReview === 0 &&
     hasOnlySafelyImportableStates &&
     lines.every((line) => line.isMatched);
+  const canCancelImport =
+    !!invoice &&
+    (invoice.status === "uploaded" ||
+      invoice.status === "processing" ||
+      invoice.status === "ready_for_review" ||
+      invoice.status === "pending_review");
   const importDisabledReason = canConfirmImport
     ? null
     : "Import confirmation will be available after matching rules are completed.";
@@ -241,6 +265,24 @@ export function CatalogueImportReviewPage() {
       setImportError(err instanceof Error ? err.message : "Catalogue import could not be confirmed.");
     } finally {
       setIsImporting(false);
+    }
+  }
+
+  async function handleCancelImport(): Promise<void> {
+    if (!invoice || !clinicId || !canCancelImport) return;
+
+    setIsCancelling(true);
+    setImportError(null);
+    try {
+      await apiClient.cancelSupplierInvoiceImport(clinicId, invoice.id);
+      setIsCancelModalOpen(false);
+      void navigate("/inventory/catalogue-import", {
+        state: { toast: "Import cancelled." },
+      });
+    } catch (err: unknown) {
+      setImportError(err instanceof Error ? err.message : "Catalogue import could not be cancelled.");
+      setIsCancelling(false);
+      throw err;
     }
   }
 
@@ -595,21 +637,46 @@ export function CatalogueImportReviewPage() {
               </div>
               {importError ? <p className="status-card__error" role="alert">{importError}</p> : null}
               {importMessage ? <p className="inventory-notice--inline" role="status">{importMessage}</p> : null}
-              <button
-                type="button"
-                className="button-link"
-                disabled={!canConfirmImport || isImporting}
-                onClick={() => {
-                  void handleImportCatalogue();
-                }}
-              >
-                {isImporting ? "Importing..." : "Import Catalogue"}
-              </button>
+              <div className="inventory-page__actions">
+                <button
+                  type="button"
+                  className="link-button catalogue-review__cancel-button"
+                  disabled={!canCancelImport || isImporting || isCancelling}
+                  onClick={() => {
+                    setIsCancelModalOpen(true);
+                  }}
+                >
+                  Cancel Import
+                </button>
+                <button
+                  type="button"
+                  className="button-link"
+                  disabled={!canConfirmImport || isImporting || isCancelling}
+                  onClick={() => {
+                    void handleImportCatalogue();
+                  }}
+                >
+                  {isImporting ? "Importing..." : "Import Catalogue"}
+                </button>
+              </div>
               {importDisabledReason ? (
                 <p className="catalogue-import-page__safety-note">{importDisabledReason}</p>
               ) : null}
             </section>
           </>
+        ) : null}
+        {isCancelModalOpen ? (
+          <ConfirmModal
+            title="Cancel Import?"
+            message="This will discard the uploaded invoice and all extracted catalogue review data. No products, pricing or inventory changes will be saved."
+            cancelLabel="Keep Reviewing"
+            confirmLabel={isCancelling ? "Cancelling..." : "Cancel Import"}
+            confirmVariant="danger"
+            onClose={() => {
+              if (!isCancelling) setIsCancelModalOpen(false);
+            }}
+            onConfirm={handleCancelImport}
+          />
         ) : null}
       </div>
     </AppShell>

@@ -3,6 +3,7 @@ import { useState } from "react";
 type ConfirmModalProps = {
   title: string;
   message: string;
+  cancelLabel?: string;
   confirmLabel: string;
   /** Controls confirm button colour: "warning" (amber) or "danger" (red). */
   confirmVariant?: "warning" | "danger";
@@ -14,6 +15,7 @@ type ConfirmModalProps = {
 export function ConfirmModal({
   title,
   message,
+  cancelLabel = "Cancel",
   confirmLabel,
   confirmVariant = "warning",
   onClose,
@@ -77,7 +79,7 @@ export function ConfirmModal({
             onClick={onClose}
             disabled={loading}
           >
-            Cancel
+            {cancelLabel}
           </button>
           <button
             type="button"
