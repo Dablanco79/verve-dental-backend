@@ -7687,6 +7687,30 @@ textarea:focus-visible {
   gap: 0.5rem;
 }
 
+.catalogue-structured-review {
+  display: grid;
+  gap: 1rem;
+}
+
+.catalogue-structured-review__group {
+  border: 1px solid var(--vds-colour-border);
+  border-radius: var(--vds-radius-lg);
+  padding: 1rem;
+  background: var(--vds-colour-surface);
+}
+
+.catalogue-structured-review__supplier-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin: 1rem 0;
+}
+
+.catalogue-structured-review__match-field {
+  min-width: 240px;
+}
+
 .catalogue-review {
   display: grid;
   gap: 1.25rem;

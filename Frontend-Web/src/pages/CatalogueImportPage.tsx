@@ -10,9 +10,17 @@ import { loadConfig } from "../config/index.js";
 import type {
   CatalogueImportConfirmResult,
   CatalogueImportPreviewResult,
+  CatalogueImportRow,
   Supplier,
   SupplierInvoice,
 } from "../types/supplier.js";
+import {
+  analyseStructuredImportFile,
+  buildSupplierSubsetFile,
+  type StructuredImportAnalysis,
+  type StructuredImportRow,
+  type StructuredSupplierGroup,
+} from "../utils/catalogueStructuredImport.js";
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -50,6 +58,15 @@ type ImportHistoryRow = {
   supplierName: string;
   uploadedAt: string;
   status: CatalogueImportStatus;
+  reviewPath: string | null;
+};
+
+type StructuredReviewGroup = {
+  supplierName: string;
+  matchedSupplier: Supplier | null;
+  rows: StructuredImportRow[];
+  preview: CatalogueImportPreviewResult | null;
+  error: string | null;
 };
 
 function canCancelImportStatus(status: CatalogueImportStatus): boolean {
@@ -183,7 +200,12 @@ function buildHistoryFromInvoices(
       invoice.supplierId ? supplierNameById.get(invoice.supplierId) ?? "Recognised supplier" : "Not recognised",
     uploadedAt: invoice.createdAt,
     status: mapInvoiceStatus(invoice),
+    reviewPath: `/inventory/catalogue-import/${encodeURIComponent(invoice.id)}/review`,
   }));
+}
+
+function isCataloguePreviewRow(row: CatalogueImportRow | StructuredImportRow): row is CatalogueImportRow {
+  return "matchStatus" in row;
 }
 
 function sourceProcessingCopy(sourceId: ImportSourceId): string {
@@ -219,6 +241,10 @@ export function CatalogueImportPage() {
   const [uploadStatus, setUploadStatus] = useState<CatalogueImportStatus>("Pending");
   const [processingSummary, setProcessingSummary] = useState<string | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
+  const [structuredAnalysis, setStructuredAnalysis] = useState<StructuredImportAnalysis | null>(null);
+  const [structuredReviewGroups, setStructuredReviewGroups] = useState<StructuredReviewGroup[]>([]);
+  const [supplierSelections, setSupplierSelections] = useState<Record<string, string>>({});
+  const [isAnalysingFile, setIsAnalysingFile] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<ImportHistoryRow | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -231,11 +257,12 @@ export function CatalogueImportPage() {
     [suppliers],
   );
   const selectedSupplier = activeSuppliers.find((supplier) => supplier.id === supplierId) ?? null;
-  const requiresSupplier = isStructuredSource(selectedSourceId);
+  const requiresSupplier = isStructuredSource(selectedSourceId) && !structuredAnalysis?.hasSupplierColumn;
   const canUpload =
     canUseCatalogueImport &&
     !!selectedFile &&
     !fileError &&
+    !isAnalysingFile &&
     !isUploading &&
     !isAllClinicsScope &&
     selectedSourceId !== "supplier_api" &&
@@ -253,9 +280,6 @@ export function CatalogueImportPage() {
     try {
       const supplierList = await apiClient.listSuppliers({ active: true });
       setSuppliers(supplierList);
-      if (!supplierId && supplierList[0]) {
-        setSupplierId(supplierList[0].id);
-      }
 
       if (!selectedClinicId || isAllClinicsScope) {
         setImports([]);
@@ -272,7 +296,7 @@ export function CatalogueImportPage() {
     } finally {
       setIsLoadingImports(false);
     }
-  }, [canUseCatalogueImport, isAllClinicsScope, selectedClinicId, supplierId, user]);
+  }, [canUseCatalogueImport, isAllClinicsScope, selectedClinicId, user]);
 
   useEffect(() => {
     void loadImportWorkspace();
@@ -285,20 +309,38 @@ export function CatalogueImportPage() {
     void navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate]);
 
-  function applyFile(file: File): void {
+  async function applyFile(file: File): Promise<void> {
     const error = validateFile(file, selectedSource);
     setSelectedFile(file);
     setFileError(error);
     setUploadError(null);
     setProcessingSummary(null);
     setUploadStatus("Pending");
+    setStructuredAnalysis(null);
+    setStructuredReviewGroups([]);
+    setSupplierSelections({});
+
+    if (error || !isStructuredSource(selectedSourceId)) return;
+
+    setIsAnalysingFile(true);
+    try {
+      const analysis = await analyseStructuredImportFile(file);
+      setStructuredAnalysis(analysis);
+      if (analysis.hasSupplierColumn && analysis.supplierGroups.length === 0) {
+        setFileError("The Supplier column is present, but no supplier names were found in the data rows.");
+      }
+    } catch (err: unknown) {
+      setFileError(err instanceof Error ? err.message : "The structured catalogue file could not be read.");
+    } finally {
+      setIsAnalysingFile(false);
+    }
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>): void {
     event.preventDefault();
     setIsDragging(false);
     const file = event.dataTransfer.files[0];
-    if (file) applyFile(file);
+    if (file) void applyFile(file);
   }
 
   function handleSourceChange(sourceId: ImportSourceId): void {
@@ -311,10 +353,40 @@ export function CatalogueImportPage() {
     setUploadError(null);
     setProcessingSummary(null);
     setUploadStatus("Pending");
+    setStructuredAnalysis(null);
+    setStructuredReviewGroups([]);
+    setSupplierSelections({});
+    setSupplierId("");
   }
 
   function addLocalImport(row: ImportHistoryRow): void {
     setImports((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+  }
+
+  function findSupplierByImportedName(supplierName: string): Supplier | null {
+    const normalized = supplierName.trim().toLowerCase();
+    return activeSuppliers.find((supplier) => supplier.supplierName.trim().toLowerCase() === normalized) ?? null;
+  }
+
+  function buildStructuredReviewGroup(
+    group: StructuredSupplierGroup,
+    preview: CatalogueImportPreviewResult | null,
+    error: string | null,
+    supplierOverride?: Supplier | null,
+  ): StructuredReviewGroup {
+    return {
+      supplierName: group.supplierName,
+      matchedSupplier: supplierOverride ?? findSupplierByImportedName(group.supplierName),
+      rows: group.rows,
+      preview,
+      error,
+    };
+  }
+
+  function upsertStructuredReviewGroup(nextGroup: StructuredReviewGroup): void {
+    setStructuredReviewGroups((current) =>
+      current.map((group) => (group.supplierName === nextGroup.supplierName ? nextGroup : group)),
+    );
   }
 
   async function handleCancelImport(): Promise<void> {
@@ -346,6 +418,94 @@ export function CatalogueImportPage() {
     return `${String(confirm.imported)} imported, ${String(confirm.updated)} updated, ${String(confirm.skipped)} skipped, ${String(confirm.errors)} failed.`;
   }
 
+  async function previewStructuredSupplierGroup(
+    analysis: StructuredImportAnalysis,
+    group: StructuredSupplierGroup,
+    supplier: Supplier,
+  ): Promise<CatalogueImportPreviewResult> {
+    if (!selectedFile) throw new Error("Select a structured catalogue file before previewing suppliers.");
+    const supplierFile = buildSupplierSubsetFile(selectedFile.name, analysis, group);
+    return apiClient.previewSupplierCatalogueImport(supplier.id, supplierFile);
+  }
+
+  async function handleStructuredSupplierFile(analysis: StructuredImportAnalysis): Promise<void> {
+    if (!selectedFile) return;
+
+    const reviewGroups: StructuredReviewGroup[] = [];
+    let matchedSupplierCount = 0;
+    let previewedRowCount = 0;
+
+    for (const group of analysis.supplierGroups) {
+      const matchedSupplier = findSupplierByImportedName(group.supplierName);
+      if (!matchedSupplier) {
+        reviewGroups.push(buildStructuredReviewGroup(group, null, null, null));
+        continue;
+      }
+
+      matchedSupplierCount++;
+      try {
+        const preview = await previewStructuredSupplierGroup(analysis, group, matchedSupplier);
+        previewedRowCount += preview.totalRows;
+        reviewGroups.push(buildStructuredReviewGroup(group, preview, null, matchedSupplier));
+      } catch (err: unknown) {
+        reviewGroups.push(
+          buildStructuredReviewGroup(
+            group,
+            null,
+            err instanceof Error ? err.message : "Catalogue preview failed for this supplier.",
+            matchedSupplier,
+          ),
+        );
+      }
+    }
+
+    setStructuredReviewGroups(reviewGroups);
+    addLocalImport({
+      id: `structured-${String(Date.now())}`,
+      fileName: selectedFile.name,
+      supplierName: `${String(analysis.supplierGroups.length)} suppliers detected`,
+      uploadedAt: new Date().toISOString(),
+      status: "Review Required",
+      reviewPath: null,
+    });
+    setUploadStatus("Review Required");
+    setProcessingSummary(
+      `${String(analysis.supplierGroups.length)} suppliers detected; ${String(matchedSupplierCount)} matched existing suppliers. ${String(previewedRowCount)} rows are ready for supplier-group review.`,
+    );
+  }
+
+  async function handleAssignSupplier(group: StructuredReviewGroup, supplier: Supplier): Promise<void> {
+    if (!structuredAnalysis) return;
+
+    const sourceGroup = structuredAnalysis.supplierGroups.find((candidate) => candidate.supplierName === group.supplierName);
+    if (!sourceGroup) return;
+
+    try {
+      const preview = await previewStructuredSupplierGroup(structuredAnalysis, sourceGroup, supplier);
+      upsertStructuredReviewGroup({
+        supplierName: group.supplierName,
+        matchedSupplier: supplier,
+        rows: group.rows,
+        preview,
+        error: null,
+      });
+    } catch (err: unknown) {
+      upsertStructuredReviewGroup({
+        supplierName: group.supplierName,
+        matchedSupplier: supplier,
+        rows: group.rows,
+        preview: null,
+        error: err instanceof Error ? err.message : "Catalogue preview failed for this supplier.",
+      });
+    }
+  }
+
+  async function handleCreateSupplierForGroup(group: StructuredReviewGroup): Promise<void> {
+    const created = await apiClient.createSupplier({ supplierName: group.supplierName });
+    setSuppliers((current) => [...current, created]);
+    await handleAssignSupplier(group, created);
+  }
+
   async function handleUpload(): Promise<void> {
     if (!selectedFile || !selectedClinicId) return;
 
@@ -373,21 +533,37 @@ export function CatalogueImportPage() {
           supplierName: selectedSupplier?.supplierName ?? "Not recognised",
           uploadedAt: new Date().toISOString(),
           status: "Review Required",
+          reviewPath: null,
         });
         setUploadStatus("Review Required");
         setProcessingSummary("Catalogue PDF uploaded for manual review. Automated catalogue PDF extraction is not available yet.");
         return;
       }
 
+      if (isStructuredSource(selectedSourceId) && structuredAnalysis?.hasSupplierColumn) {
+        await handleStructuredSupplierFile(structuredAnalysis);
+        return;
+      }
+
       if (isStructuredSource(selectedSourceId) && selectedSupplier) {
         const preview = await apiClient.previewSupplierCatalogueImport(selectedSupplier.id, selectedFile);
         if (preview.unmatchedRows > 0 || preview.errorRows > 0) {
+          setStructuredReviewGroups([
+            {
+              supplierName: selectedSupplier.supplierName,
+              matchedSupplier: selectedSupplier,
+              rows: [],
+              preview,
+              error: null,
+            },
+          ]);
           addLocalImport({
             id: `preview-${String(Date.now())}`,
             fileName: selectedFile.name,
             supplierName: selectedSupplier.supplierName,
             uploadedAt: new Date().toISOString(),
             status: "Review Required",
+            reviewPath: null,
           });
           setUploadStatus("Review Required");
           setProcessingSummary(`${summarizePreview(preview)} Review required before catalogue knowledge can be imported.`);
@@ -401,6 +577,7 @@ export function CatalogueImportPage() {
           supplierName: selectedSupplier.supplierName,
           uploadedAt: new Date().toISOString(),
           status: confirm.errors > 0 || confirm.skipped > 0 ? "Review Required" : "Imported",
+          reviewPath: null,
         });
         setUploadStatus(confirm.errors > 0 || confirm.skipped > 0 ? "Review Required" : "Imported");
         setProcessingSummary(`${summarizePreview(preview)} ${summarizeConfirm(confirm)}`);
@@ -423,6 +600,7 @@ export function CatalogueImportPage() {
         supplierName,
         uploadedAt: result.invoice.createdAt,
         status: "Review Required",
+        reviewPath: `/inventory/catalogue-import/${encodeURIComponent(result.invoice.id)}/review`,
       });
       setUploadStatus("Review Required");
       setProcessingSummary(
@@ -519,7 +697,18 @@ export function CatalogueImportPage() {
                     </option>
                   ))}
                 </select>
+                <span className="catalogue-import-page__safety-note">
+                  Required when a CSV or Excel file does not include a Supplier column.
+                </span>
               </label>
+            ) : null}
+            {isStructuredSource(selectedSourceId) && structuredAnalysis?.hasSupplierColumn ? (
+              <div className="inventory-receiving-callout" role="status">
+                <h3>Supplier column detected</h3>
+                <p>
+                  Supplier preselection is not required. Rows will be grouped by supplier for review.
+                </p>
+              </div>
             ) : null}
 
             <div
@@ -558,7 +747,7 @@ export function CatalogueImportPage() {
                 className="upload-dropzone__input"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  if (file) applyFile(file);
+                  if (file) void applyFile(file);
                 }}
                 aria-hidden="true"
                 tabIndex={-1}
@@ -581,6 +770,7 @@ export function CatalogueImportPage() {
             </div>
 
             {fileError ? <p className="status-card__error" role="alert">{fileError}</p> : null}
+            {isAnalysingFile ? <p className="loading-message">Checking structured file columns...</p> : null}
             {uploadError ? <p className="status-card__error" role="alert">{uploadError}</p> : null}
             {processingSummary ? (
               <div className="catalogue-import-page__summary" role="status">
@@ -622,6 +812,115 @@ export function CatalogueImportPage() {
           </aside>
         </section>
       </section>
+
+      {structuredReviewGroups.length > 0 ? (
+        <section className="status-card inventory-page__section">
+          <div className="status-card__header">
+            <div>
+              <h2>Structured Supplier Review</h2>
+              <p className="inventory-page__subtitle">
+                CSV and Excel catalogue rows are grouped by supplier. This workflow reviews catalogue data only and does not change stock quantities.
+              </p>
+            </div>
+          </div>
+          <div className="catalogue-structured-review">
+            {structuredReviewGroups.map((group) => (
+              <article key={group.supplierName} className="catalogue-structured-review__group">
+                <div className="status-card__header">
+                  <div>
+                    <h3>{group.supplierName}</h3>
+                    <p className="inventory-page__subtitle">
+                      {group.matchedSupplier
+                        ? `Matched existing supplier: ${group.matchedSupplier.supplierName}`
+                        : "No existing supplier match found."}
+                    </p>
+                  </div>
+                  <span className={`catalogue-status catalogue-status--${group.matchedSupplier ? "imported" : "review-required"}`}>
+                    {group.matchedSupplier ? "Supplier Matched" : "Supplier Review Required"}
+                  </span>
+                </div>
+
+                {!group.matchedSupplier ? (
+                  <div className="catalogue-structured-review__supplier-actions">
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => {
+                        void handleCreateSupplierForGroup(group);
+                      }}
+                    >
+                      Create Supplier
+                    </button>
+                    <label className="scan-form__field catalogue-structured-review__match-field">
+                      Match Existing
+                      <select
+                        value={supplierSelections[group.supplierName] ?? ""}
+                        onChange={(event) => {
+                          setSupplierSelections((current) => ({
+                            ...current,
+                            [group.supplierName]: event.target.value,
+                          }));
+                        }}
+                      >
+                        <option value="">Select supplier...</option>
+                        {activeSuppliers.map((supplier) => (
+                          <option key={supplier.id} value={supplier.id}>
+                            {supplier.supplierName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="link-button"
+                      disabled={!supplierSelections[group.supplierName]}
+                      onClick={() => {
+                        const supplier = activeSuppliers.find((candidate) => candidate.id === supplierSelections[group.supplierName]);
+                        if (supplier) void handleAssignSupplier(group, supplier);
+                      }}
+                    >
+                      Apply Match
+                    </button>
+                  </div>
+                ) : null}
+
+                {group.error ? <p className="status-card__error" role="alert">{group.error}</p> : null}
+
+                <div className="inventory-table-wrap">
+                  <table className="inventory-table catalogue-import-table">
+                    <thead>
+                      <tr>
+                        <th>Row</th>
+                        <th>Product</th>
+                        <th>Quantity</th>
+                        <th>Unit Price</th>
+                        <th>GST</th>
+                        <th>Match status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(group.preview?.rows ?? group.rows).map((row) => (
+                        <tr key={row.rowNumber}>
+                          <td>{row.rowNumber}</td>
+                          <td>{isCataloguePreviewRow(row) ? row.description ?? "Not available" : row.productName ?? "Not available"}</td>
+                          <td>{isCataloguePreviewRow(row) ? "Not imported" : row.quantity ?? "Not available"}</td>
+                          <td>{isCataloguePreviewRow(row) ? row.rawUnitCost ?? "Not available" : row.unitPrice ?? "Not available"}</td>
+                          <td>{isCataloguePreviewRow(row) ? "Not imported" : row.gst ?? "Not available"}</td>
+                          <td>
+                            {isCataloguePreviewRow(row)
+                              ? row.error ?? (row.matchStatus === "unmatched" ? "Unmatched product" : `Matched by ${row.matchStatus}`)
+                              : "Pending supplier match"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="status-card inventory-page__section">
         <div className="status-card__header">
@@ -667,7 +966,6 @@ export function CatalogueImportPage() {
               </thead>
               <tbody>
                 {imports.map((item) => {
-                  const reviewPath = `/inventory/catalogue-import/${encodeURIComponent(item.id)}/review`;
                   const canCancel = canCancelImportStatus(item.status);
                   const primaryActionLabel = item.status === "Review Required" ? "Review" : "View";
 
@@ -683,13 +981,19 @@ export function CatalogueImportPage() {
                       </td>
                       <td>
                         <div className="catalogue-import-table__actions">
-                          <Link
-                            to={reviewPath}
-                            className="link-button"
-                          >
-                            {primaryActionLabel}
-                            <span className="visually-hidden"> {item.fileName}</span>
-                          </Link>
+                          {item.reviewPath ? (
+                            <Link
+                              to={item.reviewPath}
+                              className="link-button"
+                            >
+                              {primaryActionLabel}
+                              <span className="visually-hidden"> {item.fileName}</span>
+                            </Link>
+                          ) : (
+                            <span className="inventory-table__meta">
+                              {item.status === "Review Required" ? "Review on page" : "No invoice review"}
+                            </span>
+                          )}
                           {canCancel ? (
                             <button
                               type="button"

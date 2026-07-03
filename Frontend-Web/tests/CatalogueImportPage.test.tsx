@@ -106,6 +106,18 @@ const supplier = {
   updatedAt: "2026-06-01T00:00:00.000Z",
 } as Supplier;
 
+const adamDentalSupplier = {
+  ...supplier,
+  id: "44444444-4444-4444-8444-444444444444",
+  supplierName: "Adam Dental",
+};
+
+const dentavisionSupplier = {
+  ...supplier,
+  id: "55555555-5555-4555-8555-555555555555",
+  supplierName: "Dentavision",
+};
+
 const invoiceImport = {
   id: "invoice-1",
   clinicId: TEST_CLINIC_ID,
@@ -206,6 +218,10 @@ function getFileInput(container: HTMLElement): HTMLInputElement {
     throw new Error("Expected file input");
   }
   return input;
+}
+
+function selectSupplier(supplierId: string): void {
+  fireEvent.change(screen.getByLabelText(/Supplier \*/), { target: { value: supplierId } });
 }
 
 describe("CatalogueImportPage", () => {
@@ -342,17 +358,26 @@ describe("CatalogueImportPage", () => {
     expect(screen.queryByRole("button", { name: /Cancel invoice-100\.pdf/ })).not.toBeInTheDocument();
   });
 
-  it("imports structured catalogue files without adjusting inventory", async () => {
+  it("requires supplier selection for structured catalogue files without a Supplier column", async () => {
     const { container } = renderCatalogueImportPage();
 
     await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
     fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
-    expect(await screen.findByLabelText("Supplier *")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Supplier \*/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Supplier \*/)).toHaveValue("");
 
     const file = new File(["description,unit_cost\nGloves,12.50"], "catalogue.csv", {
       type: "text/csv",
     });
     fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Upload & Process" })).toBeDisabled();
+    });
+
+    selectSupplier(supplier.id);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Upload & Process" })).toBeEnabled();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
 
     await waitFor(() => {
@@ -362,6 +387,109 @@ describe("CatalogueImportPage", () => {
     expect(mockUploadSupplierInvoice).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(await screen.findByText(/2 imported, 0 updated/)).toBeInTheDocument();
+  });
+
+  it("groups multi-supplier CSV files without supplier preselection or invoice review routing", async () => {
+    mockListSuppliers.mockResolvedValue([adamDentalSupplier, dentavisionSupplier]);
+    mockPreviewSupplierCatalogueImport.mockImplementation((supplierId: string) =>
+      Promise.resolve({
+        supplierId,
+        totalRows: 1,
+        matchedRows: 1,
+        unmatchedRows: 0,
+        errorRows: 0,
+        rows: [
+          {
+            rowNumber: 2,
+            supplierSku: null,
+            description: supplierId === adamDentalSupplier.id ? "Gloves" : "Masks",
+            rawUnitCost: supplierId === adamDentalSupplier.id ? "12.50" : "8.00",
+            unitCostCents: supplierId === adamDentalSupplier.id ? 1250 : 800,
+            unitOfMeasure: null,
+            matchedProductId: "product-1",
+            matchedProductName: supplierId === adamDentalSupplier.id ? "Gloves" : "Masks",
+            matchedProductSku: "SKU-1",
+            matchStatus: "name",
+            error: null,
+          },
+        ],
+      }),
+    );
+
+    const { container } = renderCatalogueImportPage();
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+    fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+    expect(await screen.findByLabelText(/Supplier \*/)).toBeInTheDocument();
+
+    const file = new File(
+      [[
+        "Supplier,Product,Quantity,Unit Price,GST",
+        "Adam Dental,Gloves,2,12.50,1.25",
+        "Dentavision,Masks,5,8.00,0.80",
+      ].join("\n")],
+      "multi-supplier.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+
+    expect(await screen.findByText("Supplier column detected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Supplier *")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Upload & Process" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByRole("heading", { name: "Structured Supplier Review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Adam Dental" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dentavision" })).toBeInTheDocument();
+    expect(screen.getAllByText("Supplier Matched")).toHaveLength(2);
+    expect(screen.getByText(/2 suppliers detected; 2 matched existing suppliers/)).toBeInTheDocument();
+    expect(screen.getByText("Review on page")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockPreviewSupplierCatalogueImport).toHaveBeenCalledTimes(2);
+    });
+    expect(mockPreviewSupplierCatalogueImport).toHaveBeenCalledWith(
+      adamDentalSupplier.id,
+      expect.objectContaining({ name: "multi-supplier-adam-dental.csv" }),
+    );
+    expect(mockPreviewSupplierCatalogueImport).toHaveBeenCalledWith(
+      dentavisionSupplier.id,
+      expect.objectContaining({ name: "multi-supplier-dentavision.csv" }),
+    );
+    expect(mockConfirmSupplierCatalogueImport).not.toHaveBeenCalled();
+    expect(mockUploadSupplierInvoice).not.toHaveBeenCalled();
+    expect(mockGetSupplierInvoice).not.toHaveBeenCalled();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+  });
+
+  it("shows supplier creation and match options for unmatched suppliers in structured files", async () => {
+    mockListSuppliers.mockResolvedValue([adamDentalSupplier]);
+
+    const { container } = renderCatalogueImportPage();
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+    fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+    expect(await screen.findByLabelText(/Supplier \*/)).toBeInTheDocument();
+
+    const file = new File([
+      "Supplier,Product,Quantity,Unit Price,GST\nDentavision,Masks,5,8.00,0.80",
+    ],
+      "unmatched-supplier.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    await screen.findByText("Supplier column detected");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Upload & Process" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByRole("heading", { name: "Dentavision" })).toBeInTheDocument();
+    expect(screen.getByText("Supplier Review Required")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Supplier" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Match Existing")).toBeInTheDocument();
+    expect(mockPreviewSupplierCatalogueImport).not.toHaveBeenCalled();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
   });
 
   it("routes Review Required imports to the catalogue review workspace", async () => {
