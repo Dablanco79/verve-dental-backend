@@ -70,12 +70,11 @@ type StructuredReviewGroup = {
 };
 
 type StructuredRowReviewState =
-  | "Review Required"
+  | "Needs Review"
   | "Approved"
-  | "Edited"
   | "Skipped"
-  | "Create Product Pending"
-  | "Unmatched Product";
+  | "Ready to Create"
+  | "Matched Existing Product";
 
 type StructuredRowDraft = {
   productName: string;
@@ -95,7 +94,7 @@ type StructuredSupplierSummary = {
   totalRows: number;
   approved: number;
   skipped: number;
-  createProductPending: number;
+  readyToCreate: number;
   stillRequiringReview: number;
 };
 
@@ -253,13 +252,18 @@ function buildStructuredDisplayRows(group: StructuredReviewGroup): StructuredRev
 
 function defaultStructuredRowState(row: StructuredReviewDisplayRow): StructuredRowReviewState {
   if (row.previewRow?.matchStatus === "unmatched" || row.previewRow?.error) {
-    return "Unmatched Product";
+    return "Needs Review";
   }
-  return "Review Required";
+  return row.previewRow ? "Matched Existing Product" : "Needs Review";
 }
 
 function isStructuredTerminalState(state: StructuredRowReviewState): boolean {
-  return state === "Approved" || state === "Skipped" || state === "Create Product Pending";
+  return (
+    state === "Approved" ||
+    state === "Skipped" ||
+    state === "Ready to Create" ||
+    state === "Matched Existing Product"
+  );
 }
 
 function buildStructuredRowDraft(row: StructuredReviewDisplayRow): StructuredRowDraft {
@@ -509,7 +513,7 @@ export function CatalogueImportPage() {
   }
 
   function saveStructuredRowEdit(group: StructuredReviewGroup, row: StructuredReviewDisplayRow): void {
-    setStructuredRowState(group, row, "Edited");
+    setStructuredRowState(group, row, "Needs Review");
   }
 
   function setAllStructuredGroupRows(group: StructuredReviewGroup, state: StructuredRowReviewState): void {
@@ -523,14 +527,14 @@ export function CatalogueImportPage() {
 
   function markUnmatchedStructuredGroupRowsForCreate(group: StructuredReviewGroup): void {
     const unmatchedRows = buildStructuredDisplayRows(group).filter(
-      (row) => getStructuredRowState(group, row) === "Unmatched Product",
+      (row) => row.previewRow?.matchStatus === "unmatched" || row.previewRow?.error,
     );
     setStructuredRowStates((current) => ({
       ...current,
       ...Object.fromEntries(
         unmatchedRows.map((row) => [
           structuredRowKey(group.supplierName, row.rowNumber),
-          "Create Product Pending" satisfies StructuredRowReviewState,
+          "Ready to Create" satisfies StructuredRowReviewState,
         ]),
       ),
     }));
@@ -544,7 +548,7 @@ export function CatalogueImportPage() {
       totalRows: rows.length,
       approved: states.filter((state) => state === "Approved").length,
       skipped: states.filter((state) => state === "Skipped").length,
-      createProductPending: states.filter((state) => state === "Create Product Pending").length,
+      readyToCreate: states.filter((state) => state === "Ready to Create").length,
       stillRequiringReview: states.filter((state) => !isStructuredTerminalState(state)).length,
     };
   }
@@ -668,7 +672,7 @@ export function CatalogueImportPage() {
 
   function handleProcessStructuredReview(): void {
     if (!canProcessStructuredReview) {
-      setUploadError("Review all structured rows before processing. Rows must be approved, skipped, or marked Create Product Pending.");
+      setUploadError("Review all structured rows before processing. Rows must be approved, skipped, matched to an existing product, or marked ready to create.");
       return;
     }
 
@@ -1082,8 +1086,8 @@ export function CatalogueImportPage() {
                           <dd>{summary.skipped}</dd>
                         </div>
                         <div>
-                          <dt>Create product pending</dt>
-                          <dd>{summary.createProductPending}</dd>
+                          <dt>Ready to create</dt>
+                          <dd>{summary.readyToCreate}</dd>
                         </div>
                         <div>
                           <dt>Still requiring review</dt>
@@ -1116,7 +1120,7 @@ export function CatalogueImportPage() {
                             markUnmatchedStructuredGroupRowsForCreate(group);
                           }}
                         >
-                          Mark all unmatched as Create Product Pending
+                          Mark all unmatched as Ready to Create
                         </button>
                       </div>
                     </>
@@ -1231,7 +1235,7 @@ export function CatalogueImportPage() {
                               <span className={`catalogue-line-state catalogue-line-state--${state.toLowerCase().replace(/\s+/g, "-")}`}>
                                 {state}
                               </span>
-                              {state === "Create Product Pending" ? (
+                              {state === "Ready to Create" ? (
                                 <span className="catalogue-structured-review__create-note">
                                   Creates catalogue product only. Does not change stock.
                                 </span>
@@ -1289,15 +1293,27 @@ export function CatalogueImportPage() {
                                     >
                                       Skip
                                     </button>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setStructuredRowState(group, row, "Create Product Pending");
-                                      }}
-                                    >
-                                      Create Product
-                                    </button>
+                                    {state === "Ready to Create" ? (
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setStructuredRowState(group, row, defaultStructuredRowState(row));
+                                        }}
+                                      >
+                                        Undo
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setStructuredRowState(group, row, "Ready to Create");
+                                        }}
+                                      >
+                                        Create Product
+                                      </button>
+                                    )}
                                   </>
                                 )}
                               </div>

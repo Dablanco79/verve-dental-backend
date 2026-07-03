@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -566,7 +566,7 @@ describe("CatalogueImportPage", () => {
     expect(screen.queryByText("Not imported")).not.toBeInTheDocument();
   });
 
-  it("allows approving, skipping, and marking structured rows as create-product pending", async () => {
+  it("allows approving, skipping, and marking structured rows as ready to create", async () => {
     await renderStructuredProductReview();
 
     expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
@@ -577,8 +577,16 @@ describe("CatalogueImportPage", () => {
     expect(screen.getAllByText("Skipped").length).toBeGreaterThan(1);
     expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
-    expect(screen.getByText("Create Product Pending")).toBeInTheDocument();
+    const createProductButton = screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement;
+    const selectedRow = createProductButton.closest("tr");
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(createProductButton);
+
+    const selectedRowQueries = within(selectedRow as HTMLElement);
+    expect(selectedRowQueries.getByText("Ready to Create")).toBeInTheDocument();
+    expect(selectedRowQueries.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(selectedRowQueries.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(selectedRowQueries.queryByRole("button", { name: "Create Product" })).not.toBeInTheDocument();
     expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
   });
 
@@ -594,7 +602,7 @@ describe("CatalogueImportPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
 
-    expect(screen.getByText("Edited")).toBeInTheDocument();
+    expect(screen.getAllByText("Needs Review").length).toBeGreaterThan(0);
     expect(screen.getByText("Edited Gloves")).toBeInTheDocument();
     expect(screen.getByText("3 cartons")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
@@ -618,13 +626,13 @@ describe("CatalogueImportPage", () => {
     expect(mockHandleScan).not.toHaveBeenCalled();
   });
 
-  it("bulk marks unmatched structured rows as create-product pending", async () => {
+  it("bulk marks unmatched structured rows as ready to create", async () => {
     await renderStructuredProductReview();
 
-    expect(screen.getByText("Unmatched Product")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Mark all unmatched as Create Product Pending" }));
+    expect(screen.getByText("Unmatched product")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark all unmatched as Ready to Create" }));
 
-    expect(screen.getByText("Create Product Pending")).toBeInTheDocument();
+    expect(screen.getByText("Ready to Create")).toBeInTheDocument();
     expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
   });
 
@@ -708,10 +716,27 @@ describe("CatalogueImportPage", () => {
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     expect(await screen.findByText("Actions")).toBeInTheDocument();
-    expect(screen.getAllByText("Review Required").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Needs Review").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+  });
+
+  it("replaces invoice line create-product action with undo after selection", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    const createProductButton = screen.getByRole("button", { name: "Create new product" });
+    const selectedRow = createProductButton.closest("tr");
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(createProductButton);
+
+    const selectedRowQueries = within(selectedRow as HTMLElement);
+    expect(selectedRowQueries.getByText("Ready to Create")).toBeInTheDocument();
+    expect(selectedRowQueries.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(selectedRowQueries.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(selectedRowQueries.queryByRole("button", { name: "Create new product" })).not.toBeInTheDocument();
   });
 
   it("allows skipping a line locally", async () => {

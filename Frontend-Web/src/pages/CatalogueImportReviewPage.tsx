@@ -13,12 +13,11 @@ import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 const apiClient = createApiClient(loadConfig());
 
 type LineReviewState =
-  | "Review Required"
+  | "Needs Review"
   | "Approved"
   | "Skipped"
-  | "Edited"
-  | "Matched"
-  | "Create Product Pending";
+  | "Ready to Create"
+  | "Matched Existing Product";
 
 type LineEditDraft = {
   description: string;
@@ -74,7 +73,7 @@ function formatInvoiceStatus(invoice: SupplierInvoice | null): string {
 }
 
 function formatMatchStatus(line: SupplierInvoiceLine): string {
-  if (!line.isMatched) return "Review Required";
+  if (!line.isMatched) return "Needs Review";
   if (line.matchMethod === "exact_sku") return "Matched by SKU";
   if (line.matchMethod === "name_match") return "Possible name match";
   if (line.matchMethod === "manual") return "Matched manually";
@@ -105,15 +104,15 @@ function formatLineTotal(line: SupplierInvoiceLine): string {
 }
 
 function initialReviewStateForLine(line: SupplierInvoiceLine): LineReviewState {
-  return line.isMatched ? "Matched" : "Review Required";
+  return line.isMatched ? "Matched Existing Product" : "Needs Review";
 }
 
 function isImportReadyState(state: LineReviewState): boolean {
   return (
     state === "Approved" ||
     state === "Skipped" ||
-    state === "Matched" ||
-    state === "Create Product Pending"
+    state === "Ready to Create" ||
+    state === "Matched Existing Product"
   );
 }
 
@@ -192,12 +191,12 @@ export function CatalogueImportReviewPage() {
     () => lines.map((line) => lineReviewStates[line.id] ?? initialReviewStateForLine(line)),
     [lineReviewStates, lines],
   );
-  const matchedLineCount = reviewStates.filter((state) => state === "Matched").length;
-  const approvedLines = reviewStates.filter((state) => state === "Approved" || state === "Matched").length;
+  const matchedLineCount = reviewStates.filter((state) => state === "Matched Existing Product").length;
+  const approvedLines = reviewStates.filter((state) => state === "Approved" || state === "Matched Existing Product").length;
   const skippedLines = reviewStates.filter((state) => state === "Skipped").length;
   const stillRequiringReview = reviewStates.filter((state) => !isImportReadyState(state)).length;
   const hasOnlySafelyImportableStates = reviewStates.every(
-    (state) => state === "Approved" || state === "Matched",
+    (state) => state === "Approved" || state === "Matched Existing Product",
   );
   const canConfirmImport =
     !!invoice &&
@@ -308,7 +307,7 @@ export function CatalogueImportReviewPage() {
     setLines((current) =>
       current.map((line) => (line.id === lineId ? applyDraftToLine(line, editDraft) : line)),
     );
-    setLineState(lineId, "Edited");
+    setLineState(lineId, "Needs Review");
   }
 
   if (!user) return null;
@@ -573,15 +572,27 @@ export function CatalogueImportReviewPage() {
                                     <span className="catalogue-review__future-note">
                                       Matching persistence available in a future release
                                     </span>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setLineState(line.id, "Create Product Pending");
-                                      }}
-                                    >
-                                      Create new product
-                                    </button>
+                                    {reviewState === "Ready to Create" ? (
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setLineState(line.id, initialReviewStateForLine(line));
+                                        }}
+                                      >
+                                        Undo
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setLineState(line.id, "Ready to Create");
+                                        }}
+                                      >
+                                        Create new product
+                                      </button>
+                                    )}
                                     <span className="catalogue-review__future-note">
                                       Product creation queued for future matching review
                                     </span>

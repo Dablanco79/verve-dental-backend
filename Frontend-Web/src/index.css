@@ -7809,7 +7809,7 @@ textarea:focus-visible {
 }
 
 .catalogue-line-state--approved,
-.catalogue-line-state--matched {
+.catalogue-line-state--matched-existing-product {
   background: var(--vds-colour-success-bg);
   color: var(--vds-colour-success);
 }
@@ -7819,8 +7819,8 @@ textarea:focus-visible {
   color: var(--vds-colour-danger);
 }
 
-.catalogue-line-state--edited,
-.catalogue-line-state--create-product-pending {
+.catalogue-line-state--needs-review,
+.catalogue-line-state--ready-to-create {
   background: var(--vds-colour-warning-bg);
   color: var(--vds-colour-warning);
 }
