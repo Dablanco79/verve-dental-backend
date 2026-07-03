@@ -731,7 +731,7 @@ describe("CatalogueImportPage", () => {
     expect(
       await screen.findByText("Catalogue Import does not change stock quantities."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Inventory quantity changes")).toBeInTheDocument();
+    expect(await screen.findByText("Inventory quantity changes")).toBeInTheDocument();
     expect(screen.getByText("0")).toBeInTheDocument();
   });
 
