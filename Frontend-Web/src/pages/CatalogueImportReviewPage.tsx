@@ -45,6 +45,18 @@ function centsToDecimalString(cents: unknown): string {
   return (cents / 100).toFixed(2);
 }
 
+function calculateUnitGstCents(line: SupplierInvoiceLine): number | null {
+  if (!isFiniteNumber(line.taxCents) || !isFiniteNumber(line.quantity) || line.quantity <= 0) {
+    return null;
+  }
+  return Math.round(line.taxCents / line.quantity);
+}
+
+function formatUnitGstForEdit(line: SupplierInvoiceLine): string {
+  const unitGstCents = calculateUnitGstCents(line);
+  return unitGstCents === null ? "" : centsToDecimalString(unitGstCents);
+}
+
 function parseCurrencyToCents(value: string): number | null {
   const cleaned = value.replace(/[$,\s]/g, "");
   if (!cleaned) return null;
@@ -101,6 +113,11 @@ function formatTax(line: SupplierInvoiceLine): string {
   return `${centsToDollars(line.taxCents, "Missing")}${rate}`;
 }
 
+function formatUnitGst(line: SupplierInvoiceLine): string {
+  const unitGstCents = calculateUnitGstCents(line);
+  return unitGstCents === null ? "Unable to normalise" : centsToDollars(unitGstCents, "Missing");
+}
+
 function calculateLineTotalCents(line: SupplierInvoiceLine): number | null {
   if (isFiniteNumber(line.lineTotalCents)) return line.lineTotalCents;
   if (!isFiniteNumber(line.quantity) || !isFiniteNumber(line.unitPriceCents)) return null;
@@ -135,19 +152,27 @@ function buildEditDraft(line: SupplierInvoiceLine): LineEditDraft {
     supplierSku: line.ocrSku ?? "",
     quantity: isFiniteNumber(line.quantity) ? String(line.quantity) : "",
     unitPriceCents: centsToDecimalString(line.unitPriceCents),
-    taxCents: centsToDecimalString(line.taxCents),
+    taxCents: formatUnitGstForEdit(line),
   };
 }
 
 function applyDraftToLine(line: SupplierInvoiceLine, draft: LineEditDraft): SupplierInvoiceLine {
   const quantity = Number(draft.quantity);
   const unitPriceCents = parseCurrencyToCents(draft.unitPriceCents);
-  const taxCents = parseCurrencyToCents(draft.taxCents);
+  const unitGstCents = parseCurrencyToCents(draft.taxCents);
   const hasQuantity = Number.isFinite(quantity);
   const hasUnitPrice = unitPriceCents !== null;
-  const hasTax = taxCents !== null;
+  const hasUnitGst = unitGstCents !== null;
+  const originalUnitGst = formatUnitGstForEdit(line);
+  const quantityChanged = hasQuantity && quantity !== line.quantity;
+  const taxCents =
+    hasQuantity && hasUnitGst
+      ? draft.taxCents === originalUnitGst && !quantityChanged
+        ? line.taxCents
+        : Math.round(unitGstCents * quantity)
+      : line.taxCents;
   const recalculatedTotal = hasQuantity && hasUnitPrice
-    ? Math.round(quantity * unitPriceCents + (hasTax ? taxCents : 0))
+    ? Math.round(quantity * unitPriceCents + taxCents)
     : line.lineTotalCents;
 
   return {
@@ -156,7 +181,7 @@ function applyDraftToLine(line: SupplierInvoiceLine, draft: LineEditDraft): Supp
     ocrSku: draft.supplierSku.trim() || null,
     quantity: hasQuantity ? quantity : line.quantity,
     unitPriceCents: hasUnitPrice ? unitPriceCents : line.unitPriceCents,
-    taxCents: hasTax ? taxCents : line.taxCents,
+    taxCents,
     lineTotalCents: recalculatedTotal,
   };
 }
@@ -463,7 +488,7 @@ export function CatalogueImportReviewPage() {
                         <th>Supplier SKU</th>
                         <th>Quantity / pack text</th>
                         <th>Unit price</th>
-                        <th>GST / tax</th>
+                        <th>Line GST from source</th>
                         <th>Total</th>
                         <th>Match status</th>
                         <th>Review state</th>
@@ -537,16 +562,31 @@ export function CatalogueImportReviewPage() {
                             </td>
                             <td>
                               {isEditing ? (
-                                <input
-                                  className="catalogue-review__edit-input catalogue-review__edit-input--numeric"
-                                  value={editDraft.taxCents}
-                                  onChange={(event) => {
-                                    updateEditDraft("taxCents", event.target.value);
-                                  }}
-                                  aria-label={`GST for line ${String(line.lineNumber)}`}
-                                />
+                                <>
+                                  <input
+                                    className="catalogue-review__edit-input catalogue-review__edit-input--numeric"
+                                    value={editDraft.taxCents}
+                                    onChange={(event) => {
+                                      updateEditDraft("taxCents", event.target.value);
+                                    }}
+                                    aria-label={`Unit GST for line ${String(line.lineNumber)}`}
+                                  />
+                                  <span className="catalogue-review__future-note">
+                                    Line GST from source: {formatTax(line)}
+                                  </span>
+                                  {editDraft.taxCents ? null : (
+                                    <span className="catalogue-review__future-note">
+                                      Unable to normalise Unit GST because quantity is invalid.
+                                    </span>
+                                  )}
+                                </>
                               ) : (
-                                formatTax(line)
+                                <>
+                                  <span>{formatTax(line)}</span>
+                                  <span className="catalogue-review__future-note">
+                                    Unit GST for catalogue: {formatUnitGst(line)}
+                                  </span>
+                                </>
                               )}
                             </td>
                             <td>{formatLineTotal(line)}</td>

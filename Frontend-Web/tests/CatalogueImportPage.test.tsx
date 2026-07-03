@@ -860,7 +860,58 @@ describe("CatalogueImportPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
     expect(screen.getByLabelText("Unit price for line 1")).toHaveValue("16.70");
-    expect(screen.getByLabelText("GST for line 1")).toHaveValue("1.67");
+    expect(screen.getByLabelText("Unit GST for line 1")).toHaveValue("0.84");
+    expect(screen.getByText(/Line GST from source:/)).toHaveTextContent("$1.67");
+  });
+
+  it.each([
+    { quantity: 2, lineGstCents: 477, expectedUnitGst: "2.39" },
+    { quantity: 4, lineGstCents: 400, expectedUnitGst: "1.00" },
+    { quantity: 1, lineGstCents: 123, expectedUnitGst: "1.23" },
+  ])(
+    "shows Unit GST $expectedUnitGst when quantity is $quantity and Line GST is $lineGstCents cents",
+    async ({ quantity, lineGstCents, expectedUnitGst }) => {
+      const line = {
+        ...unmatchedLine,
+        quantity,
+        taxCents: lineGstCents,
+        lineTotalCents: quantity * unmatchedLine.unitPriceCents + lineGstCents,
+      };
+      mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [line] });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+      await screen.findByText("Unknown bonding agent");
+      expect(screen.getByText("Line GST from source")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+      expect(screen.getByLabelText("Unit GST for line 1")).toHaveValue(expectedUnitGst);
+      expect(screen.getByText(/Line GST from source:/)).toHaveTextContent(
+        new Intl.NumberFormat("en-AU", {
+          style: "currency",
+          currency: "AUD",
+          minimumFractionDigits: 2,
+        }).format(lineGstCents / 100),
+      );
+    },
+  );
+
+  it("does not crash or show NaN when Unit GST cannot be normalised", async () => {
+    const line = {
+      ...unmatchedLine,
+      quantity: Number.NaN,
+      taxCents: 477,
+      lineTotalCents: Number.NaN,
+    };
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [line] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    expect(screen.getByText("Unit GST for catalogue: Unable to normalise")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByLabelText("Unit GST for line 1")).toHaveValue("");
+    expect(screen.getByText("Unable to normalise Unit GST because quantity is invalid.")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
   });
 
   it("allows skipping a line locally", async () => {
