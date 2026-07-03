@@ -379,7 +379,7 @@ describe("InventoryPage", () => {
 
     const workspace = await screen.findByRole("heading", { name: "Inventory workspace" });
     expect(workspace).toBeInTheDocument();
-    expect(screen.getByText("No products have been added yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No products have been added yet.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Add Product" })).toHaveAttribute(
       "href",
       "/inventory/products/new",

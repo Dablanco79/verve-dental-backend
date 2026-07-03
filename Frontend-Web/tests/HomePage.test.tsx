@@ -406,7 +406,7 @@ describe("HomePage role dashboards", () => {
       "href",
       "/inventory?mode=receive",
     );
-    expect(screen.getByRole("link", { name: "Low Stock 1 items requiring stock review" }))
+    expect(await screen.findByRole("link", { name: "Low Stock 1 items requiring stock review" }))
       .toHaveAttribute("href", "/inventory?focus=low-stock");
     expect(screen.queryByText("Executive KPIs")).not.toBeInTheDocument();
   });
