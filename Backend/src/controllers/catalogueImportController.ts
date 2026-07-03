@@ -149,15 +149,17 @@ function resolveFormat(
   }
   if (
     lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
     mimetype ===
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimetype === "application/vnd.ms-excel"
   ) {
     return "xlsx";
   }
   throw new AppError(
     400,
     "UNSUPPORTED_FORMAT",
-    `Unsupported file format "${filename}". Only CSV (.csv) and Excel (.xlsx) files are accepted.`,
+    `Unsupported file format "${filename}". Only CSV (.csv) and Excel (.xlsx/.xls) files are accepted.`,
   );
 }
 

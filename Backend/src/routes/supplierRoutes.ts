@@ -28,13 +28,14 @@ const upload = multer({
     const allowed = [
       "text/csv",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
     ];
-    const allowed_ext = [".csv", ".xlsx"];
+    const allowed_ext = [".csv", ".xlsx", ".xls"];
     const ext = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf("."));
     if (allowed.includes(file.mimetype) || allowed_ext.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error("Only CSV and XLSX files are accepted"));
+      cb(new Error("Only CSV, XLSX and XLS files are accepted"));
     }
   },
 });

@@ -59,6 +59,7 @@ type ImportHistoryRow = {
   uploadedAt: string;
   status: CatalogueImportStatus;
   reviewPath: string | null;
+  isLocalSession?: boolean;
 };
 
 type StructuredReviewGroup = {
@@ -91,11 +92,38 @@ type StructuredReviewDisplayRow = {
 };
 
 type StructuredSupplierSummary = {
+  supplierName: string;
   totalRows: number;
   approved: number;
   skipped: number;
   readyToCreate: number;
+  matched: number;
+  needsReview: number;
+  estimatedNewProducts: number;
+  estimatedPriceUpdates: number;
   stillRequiringReview: number;
+};
+
+type StructuredSessionMetadata = {
+  id: string;
+  fileName: string;
+  uploadedAt: string;
+};
+
+type PersistedStructuredReviewSession = {
+  version: 1;
+  clinicId: string;
+  userId: string;
+  selectedSourceId: ImportSourceId;
+  selectedSupplierId: string;
+  metadata: StructuredSessionMetadata;
+  uploadStatus: CatalogueImportStatus;
+  processingSummary: string | null;
+  structuredAnalysis: StructuredImportAnalysis | null;
+  structuredReviewGroups: StructuredReviewGroup[];
+  structuredRowStates: Record<string, StructuredRowReviewState>;
+  structuredRowDrafts: Record<string, StructuredRowDraft>;
+  supplierSelections: Record<string, string>;
 };
 
 function canCancelImportStatus(status: CatalogueImportStatus): boolean {
@@ -117,9 +145,9 @@ const IMPORT_SOURCES: ImportSource[] = [
   },
   {
     id: "xlsx",
-    label: "Excel (.xlsx)",
+    label: "Excel (.xlsx/.xls)",
     description: "Import structured supplier catalogue rows and pricing.",
-    accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    accept: ".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
   },
   {
     id: "csv",
@@ -156,6 +184,45 @@ const FUTURE_FEATURES = [
   "Smart Matching",
 ] as const;
 
+const STRUCTURED_SESSION_STORAGE_PREFIX = "verve.catalogueImport.structuredSession";
+
+function getStructuredSessionStorageKey(clinicId: string, userId: string): string {
+  return `${STRUCTURED_SESSION_STORAGE_PREFIX}.${clinicId}.${userId}`;
+}
+
+function isBrowserStorageAvailable(): boolean {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function loadPersistedStructuredSession(
+  clinicId: string,
+  userId: string,
+): PersistedStructuredReviewSession | null {
+  if (!isBrowserStorageAvailable()) return null;
+  const raw = window.localStorage.getItem(getStructuredSessionStorageKey(clinicId, userId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { version?: number; clinicId?: string; userId?: string };
+    if (parsed.version !== 1 || parsed.clinicId !== clinicId || parsed.userId !== userId) return null;
+    return parsed as PersistedStructuredReviewSession;
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedStructuredSession(session: PersistedStructuredReviewSession): void {
+  if (!isBrowserStorageAvailable()) return;
+  window.localStorage.setItem(
+    getStructuredSessionStorageKey(session.clinicId, session.userId),
+    JSON.stringify(session),
+  );
+}
+
+function clearPersistedStructuredSession(clinicId: string | undefined, userId: string | undefined): void {
+  if (!clinicId || !userId || !isBrowserStorageAvailable()) return;
+  window.localStorage.removeItem(getStructuredSessionStorageKey(clinicId, userId));
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -170,6 +237,10 @@ function formatUploadDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function displayImportValue(value: string | null | undefined): string {
+  return value && value.trim().length > 0 ? value : "Missing";
 }
 
 function isStructuredSource(sourceId: ImportSourceId): boolean {
@@ -272,7 +343,7 @@ function buildStructuredRowDraft(row: StructuredReviewDisplayRow): StructuredRow
     quantity: row.sourceRow?.quantity ?? "",
     unitPrice: row.sourceRow?.unitPrice ?? row.previewRow?.rawUnitCost ?? "",
     gst: row.sourceRow?.gst ?? "",
-    supplierSku: row.previewRow?.supplierSku ?? "",
+    supplierSku: row.sourceRow?.supplierSku ?? row.previewRow?.supplierSku ?? "",
   };
 }
 
@@ -314,6 +385,7 @@ export function CatalogueImportPage() {
   const [structuredRowStates, setStructuredRowStates] = useState<Record<string, StructuredRowReviewState>>({});
   const [structuredRowDrafts, setStructuredRowDrafts] = useState<Record<string, StructuredRowDraft>>({});
   const [editingStructuredRowKey, setEditingStructuredRowKey] = useState<string | null>(null);
+  const [structuredSessionMetadata, setStructuredSessionMetadata] = useState<StructuredSessionMetadata | null>(null);
   const [supplierSelections, setSupplierSelections] = useState<Record<string, string>>({});
   const [isAnalysingFile, setIsAnalysingFile] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<ImportHistoryRow | null>(null);
@@ -321,6 +393,8 @@ export function CatalogueImportPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const restoredStructuredSessionRef = useRef(false);
+  const shouldPersistStructuredSessionRef = useRef(true);
 
   const selectedSource = IMPORT_SOURCES.find((source) => source.id === selectedSourceId) ?? DEFAULT_IMPORT_SOURCE;
   const activeSuppliers = useMemo(
@@ -370,7 +444,20 @@ export function CatalogueImportPage() {
 
       const invoiceImports = await apiClient.listClinicSupplierInvoices(selectedClinicId, { limit: 25 });
       const supplierNameById = new Map(supplierList.map((supplier) => [supplier.id, supplier.supplierName]));
-      setImports(buildHistoryFromInvoices(invoiceImports, supplierNameById));
+      const invoiceHistory = buildHistoryFromInvoices(invoiceImports, supplierNameById);
+      const persistedSession = loadPersistedStructuredSession(selectedClinicId, user.id);
+      const localSessionRow: ImportHistoryRow | null = persistedSession
+        ? {
+            id: persistedSession.metadata.id,
+            fileName: persistedSession.metadata.fileName,
+            supplierName: `${String(persistedSession.structuredReviewGroups.length)} supplier review session`,
+            uploadedAt: persistedSession.metadata.uploadedAt,
+            status: persistedSession.uploadStatus,
+            reviewPath: null,
+            isLocalSession: true,
+          }
+        : null;
+      setImports(localSessionRow ? [localSessionRow, ...invoiceHistory] : invoiceHistory);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Catalogue import workspace could not be loaded.");
       setSuppliers([]);
@@ -385,6 +472,80 @@ export function CatalogueImportPage() {
   }, [loadImportWorkspace]);
 
   useEffect(() => {
+    if (
+      restoredStructuredSessionRef.current ||
+      !user ||
+      !selectedClinicId ||
+      isAllClinicsScope ||
+      isLoadingImports ||
+      selectedFile ||
+      hasStructuredReview
+    ) {
+      return;
+    }
+
+    const persistedSession = loadPersistedStructuredSession(selectedClinicId, user.id);
+    if (!persistedSession) {
+      restoredStructuredSessionRef.current = true;
+      return;
+    }
+
+    restoredStructuredSessionRef.current = true;
+    shouldPersistStructuredSessionRef.current = true;
+    setSelectedSourceId(persistedSession.selectedSourceId);
+    setSupplierId(persistedSession.selectedSupplierId);
+    setStructuredSessionMetadata(persistedSession.metadata);
+    setStructuredAnalysis(persistedSession.structuredAnalysis);
+    setStructuredReviewGroups(persistedSession.structuredReviewGroups);
+    setStructuredRowStates(persistedSession.structuredRowStates);
+    setStructuredRowDrafts(persistedSession.structuredRowDrafts);
+    setSupplierSelections(persistedSession.supplierSelections);
+    setUploadStatus(persistedSession.uploadStatus);
+    setProcessingSummary(persistedSession.processingSummary);
+    setPageToast("Restored your in-progress catalogue review.");
+  }, [
+    hasStructuredReview,
+    isAllClinicsScope,
+    isLoadingImports,
+    selectedClinicId,
+    selectedFile,
+    user,
+  ]);
+
+  useEffect(() => {
+    if (!shouldPersistStructuredSessionRef.current) return;
+    if (!user || !selectedClinicId || !structuredSessionMetadata || structuredReviewGroups.length === 0) return;
+    savePersistedStructuredSession({
+      version: 1,
+      clinicId: selectedClinicId,
+      userId: user.id,
+      selectedSourceId,
+      selectedSupplierId: supplierId,
+      metadata: structuredSessionMetadata,
+      uploadStatus,
+      processingSummary,
+      structuredAnalysis,
+      structuredReviewGroups,
+      structuredRowStates,
+      structuredRowDrafts,
+      supplierSelections,
+    });
+  }, [
+    processingSummary,
+    selectedClinicId,
+    selectedSourceId,
+    structuredAnalysis,
+    structuredReviewGroups,
+    structuredRowDrafts,
+    structuredRowStates,
+    structuredSessionMetadata,
+    supplierId,
+    supplierSelections,
+    uploadStatus,
+    user,
+  ]);
+
+  useEffect(() => {
     const state = location.state as { toast?: string } | null;
     if (!state?.toast) return;
     setPageToast(state.toast);
@@ -392,6 +553,7 @@ export function CatalogueImportPage() {
   }, [location.pathname, location.state, navigate]);
 
   async function applyFile(file: File): Promise<void> {
+    shouldPersistStructuredSessionRef.current = true;
     const error = validateFile(file, selectedSource);
     setSelectedFile(file);
     setFileError(error);
@@ -402,6 +564,7 @@ export function CatalogueImportPage() {
     setStructuredReviewGroups([]);
     setStructuredRowStates({});
     setStructuredRowDrafts({});
+    setStructuredSessionMetadata(null);
     setEditingStructuredRowKey(null);
     setSupplierSelections({});
 
@@ -410,6 +573,11 @@ export function CatalogueImportPage() {
     setIsAnalysingFile(true);
     try {
       const analysis = await analyseStructuredImportFile(file);
+      setStructuredSessionMetadata({
+        id: `structured-${String(Date.now())}`,
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+      });
       setStructuredAnalysis(analysis);
       if (analysis.hasSupplierColumn && analysis.supplierGroups.length === 0) {
         setFileError("The Supplier column is present, but no supplier names were found in the data rows.");
@@ -432,6 +600,7 @@ export function CatalogueImportPage() {
     const nextSource = IMPORT_SOURCES.find((source) => source.id === sourceId);
     if (!nextSource || nextSource.disabled) return;
 
+    shouldPersistStructuredSessionRef.current = false;
     setSelectedSourceId(sourceId);
     setSelectedFile(null);
     setFileError(null);
@@ -442,13 +611,38 @@ export function CatalogueImportPage() {
     setStructuredReviewGroups([]);
     setStructuredRowStates({});
     setStructuredRowDrafts({});
+    setStructuredSessionMetadata(null);
     setEditingStructuredRowKey(null);
     setSupplierSelections({});
     setSupplierId("");
+    clearPersistedStructuredSession(selectedClinicId, user?.id);
   }
 
   function addLocalImport(row: ImportHistoryRow): void {
     setImports((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+  }
+
+  function resetStructuredReviewSession(options: { clearStorage?: boolean } = {}): void {
+    shouldPersistStructuredSessionRef.current = false;
+    if (options.clearStorage) {
+      clearPersistedStructuredSession(selectedClinicId, user?.id);
+    }
+    setSelectedFile(null);
+    setFileError(null);
+    setUploadError(null);
+    setProcessingSummary(null);
+    setUploadStatus("Pending");
+    setStructuredAnalysis(null);
+    setStructuredReviewGroups([]);
+    setStructuredRowStates({});
+    setStructuredRowDrafts({});
+    setStructuredSessionMetadata(null);
+    setEditingStructuredRowKey(null);
+    setSupplierSelections({});
+    setSupplierId("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   function findSupplierByImportedName(supplierName: string): Supplier | null {
@@ -544,17 +738,34 @@ export function CatalogueImportPage() {
   function getStructuredSupplierSummary(group: StructuredReviewGroup): StructuredSupplierSummary {
     const rows = buildStructuredDisplayRows(group);
     const states = rows.map((row) => getStructuredRowState(group, row));
+    const estimatedPriceUpdates = rows.filter((row) => {
+      const state = getStructuredRowState(group, row);
+      return !!row.previewRow?.matchedProductId && (state === "Approved" || state === "Matched Existing Product");
+    }).length;
     return {
+      supplierName: group.supplierName,
       totalRows: rows.length,
       approved: states.filter((state) => state === "Approved").length,
       skipped: states.filter((state) => state === "Skipped").length,
       readyToCreate: states.filter((state) => state === "Ready to Create").length,
+      matched: states.filter((state) => state === "Matched Existing Product").length,
+      needsReview: states.filter((state) => state === "Needs Review").length,
+      estimatedNewProducts: states.filter((state) => state === "Ready to Create").length,
+      estimatedPriceUpdates,
       stillRequiringReview: states.filter((state) => !isStructuredTerminalState(state)).length,
     };
   }
 
   async function handleCancelImport(): Promise<void> {
     if (!cancelTarget || !selectedClinicId || !canCancelImportStatus(cancelTarget.status)) return;
+
+    if (cancelTarget.isLocalSession) {
+      resetStructuredReviewSession({ clearStorage: true });
+      setImports((current) => current.filter((item) => item.id !== cancelTarget.id));
+      setPageToast("Import cancelled.");
+      setCancelTarget(null);
+      return;
+    }
 
     setIsCancelling(true);
     setLoadError(null);
@@ -587,8 +798,9 @@ export function CatalogueImportPage() {
     group: StructuredSupplierGroup,
     supplier: Supplier,
   ): Promise<CatalogueImportPreviewResult> {
-    if (!selectedFile) throw new Error("Select a structured catalogue file before previewing suppliers.");
-    const supplierFile = buildSupplierSubsetFile(selectedFile.name, analysis, group);
+    const originalFileName = selectedFile?.name ?? structuredSessionMetadata?.fileName;
+    if (!originalFileName) throw new Error("Select a structured catalogue file before previewing suppliers.");
+    const supplierFile = buildSupplierSubsetFile(originalFileName, analysis, group);
     return apiClient.previewSupplierCatalogueImport(supplier.id, supplierFile);
   }
 
@@ -624,13 +836,20 @@ export function CatalogueImportPage() {
     }
 
     setStructuredReviewGroups(reviewGroups);
-    addLocalImport({
+    const metadata = structuredSessionMetadata ?? {
       id: `structured-${String(Date.now())}`,
       fileName: selectedFile.name,
-      supplierName: `${String(analysis.supplierGroups.length)} suppliers detected`,
       uploadedAt: new Date().toISOString(),
+    };
+    setStructuredSessionMetadata(metadata);
+    addLocalImport({
+      id: metadata.id,
+      fileName: metadata.fileName,
+      supplierName: `${String(analysis.supplierGroups.length)} suppliers detected`,
+      uploadedAt: metadata.uploadedAt,
       status: "Review Required",
       reviewPath: null,
+      isLocalSession: true,
     });
     setUploadStatus("Review Required");
     setProcessingSummary(
@@ -731,6 +950,12 @@ export function CatalogueImportPage() {
       if (isStructuredSource(selectedSourceId) && selectedSupplier) {
         const preview = await apiClient.previewSupplierCatalogueImport(selectedSupplier.id, selectedFile);
         if (preview.unmatchedRows > 0 || preview.errorRows > 0) {
+          const metadata = structuredSessionMetadata ?? {
+            id: `preview-${String(Date.now())}`,
+            fileName: selectedFile.name,
+            uploadedAt: new Date().toISOString(),
+          };
+          setStructuredSessionMetadata(metadata);
           setStructuredReviewGroups([
             {
               supplierName: selectedSupplier.supplierName,
@@ -741,12 +966,13 @@ export function CatalogueImportPage() {
             },
           ]);
           addLocalImport({
-            id: `preview-${String(Date.now())}`,
-            fileName: selectedFile.name,
+            id: metadata.id,
+            fileName: metadata.fileName,
             supplierName: selectedSupplier.supplierName,
-            uploadedAt: new Date().toISOString(),
+            uploadedAt: metadata.uploadedAt,
             status: "Review Required",
             reviewPath: null,
+            isLocalSession: true,
           });
           setUploadStatus("Review Required");
           setProcessingSummary(`${summarizePreview(preview)} Review required before catalogue knowledge can be imported.`);
@@ -812,9 +1038,23 @@ export function CatalogueImportPage() {
               Build supplier master data, products, prices, and pack-size knowledge without changing inventory quantities.
             </p>
           </div>
-          <Link to="/inventory" className="link-button">
-            Back to Inventory
-          </Link>
+          <div className="catalogue-import-table__actions">
+            {hasStructuredReview || selectedFile ? (
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  resetStructuredReviewSession({ clearStorage: true });
+                  setPageToast("Started a new catalogue import.");
+                }}
+              >
+                New Import
+              </button>
+            ) : null}
+            <Link to="/inventory" className="link-button">
+              Back to Inventory
+            </Link>
+          </div>
         </div>
 
         {!canUseCatalogueImport ? (
@@ -1074,7 +1314,11 @@ export function CatalogueImportPage() {
                     <>
                       <dl className="po-summary__stats catalogue-structured-review__summary">
                         <div>
-                          <dt>Total rows</dt>
+                          <dt>Supplier</dt>
+                          <dd>{summary.supplierName}</dd>
+                        </div>
+                        <div>
+                          <dt>Rows</dt>
                           <dd>{summary.totalRows}</dd>
                         </div>
                         <div>
@@ -1090,8 +1334,20 @@ export function CatalogueImportPage() {
                           <dd>{summary.readyToCreate}</dd>
                         </div>
                         <div>
-                          <dt>Still requiring review</dt>
-                          <dd>{summary.stillRequiringReview}</dd>
+                          <dt>Matched</dt>
+                          <dd>{summary.matched}</dd>
+                        </div>
+                        <div>
+                          <dt>Needs review</dt>
+                          <dd>{summary.needsReview}</dd>
+                        </div>
+                        <div>
+                          <dt>Estimated new products</dt>
+                          <dd>{summary.estimatedNewProducts}</dd>
+                        </div>
+                        <div>
+                          <dt>Estimated price updates</dt>
+                          <dd>{summary.estimatedPriceUpdates}</dd>
                         </div>
                       </dl>
                       <div className="catalogue-structured-review__bulk-actions">
@@ -1148,11 +1404,11 @@ export function CatalogueImportPage() {
                         const state = getStructuredRowState(group, row);
                         const isEditing = editingStructuredRowKey === key;
                         const draft = structuredRowDrafts[key] ?? buildStructuredRowDraft(row);
-                        const supplierSku = draft.supplierSku || "Not available";
-                        const productName = draft.productName || "Not available";
-                        const quantity = draft.quantity || "Not available";
-                        const unitPrice = draft.unitPrice || "Not available";
-                        const gst = draft.gst || "Not available";
+                        const supplierSku = displayImportValue(draft.supplierSku);
+                        const productName = displayImportValue(draft.productName);
+                        const quantity = displayImportValue(draft.quantity);
+                        const unitPrice = displayImportValue(draft.unitPrice);
+                        const gst = displayImportValue(draft.gst);
                         const matchStatus = row.previewRow
                           ? row.previewRow.error ?? (row.previewRow.matchStatus === "unmatched" ? "Unmatched product" : `Matched by ${row.previewRow.matchStatus}`)
                           : "Pending supplier match";

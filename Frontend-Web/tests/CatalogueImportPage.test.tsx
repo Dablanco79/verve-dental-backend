@@ -285,6 +285,7 @@ async function renderStructuredProductReview() {
 
 describe("CatalogueImportPage", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     clearAuthenticatedUser(authTestState);
     setAuthenticatedUser(authTestState, createManagerUser());
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
@@ -339,7 +340,7 @@ describe("CatalogueImportPage", () => {
     expect(await screen.findByRole("heading", { name: "Catalogue Import" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Supplier Invoice \(PDF\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Supplier Catalogue \(PDF\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Excel \(\.xlsx\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Excel \(\.xlsx\/\.xls\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /^CSV/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Image \(PNG\/JPG\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Supplier API/ })).toBeDisabled();
@@ -551,6 +552,50 @@ describe("CatalogueImportPage", () => {
     expect(mockAdjustInventory).not.toHaveBeenCalled();
   });
 
+  it("normalises structured rows and extracts supplier SKU from product descriptions", async () => {
+    mockListSuppliers.mockResolvedValue([adamDentalSupplier]);
+    mockPreviewSupplierCatalogueImport.mockResolvedValue({
+      supplierId: adamDentalSupplier.id,
+      totalRows: 1,
+      matchedRows: 0,
+      unmatchedRows: 1,
+      errorRows: 0,
+      rows: [
+        {
+          rowNumber: 2,
+          supplierSku: null,
+          description: "Ozbibs Dental Bibs Blue",
+          rawUnitCost: "12.50",
+          unitCostCents: 1250,
+          unitOfMeasure: null,
+          matchedProductId: null,
+          matchedProductName: null,
+          matchedProductSku: null,
+          matchStatus: "unmatched",
+          error: null,
+        },
+      ],
+    });
+
+    const { container } = renderCatalogueImportPage();
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+    fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+
+    const file = new File(
+      ["Supplier,Product,Quantity,Unit Price,GST\nAdam Dental,ADA201 - Ozbibs   Dental   Bibs Blue,1 box,12.50,1.25"],
+      "embedded-sku.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    await screen.findByText("Supplier column detected");
+    fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByRole("heading", { name: "Structured Supplier Review" })).toBeInTheDocument();
+    expect(screen.getByText("ADA201")).toBeInTheDocument();
+    expect(screen.getByText("Ozbibs Dental Bibs Blue")).toBeInTheDocument();
+    expect(screen.queryByText("ADA201 - Ozbibs Dental Bibs Blue")).not.toBeInTheDocument();
+  });
+
   it("renders structured row actions and actual quantity and GST values", async () => {
     await renderStructuredProductReview();
 
@@ -615,7 +660,7 @@ describe("CatalogueImportPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve all visible rows" }));
 
     expect(screen.getAllByText("Approved").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("Still requiring review")).toBeInTheDocument();
+    expect(screen.getByText("Needs review")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Process Reviewed Rows" }));
 
@@ -634,6 +679,32 @@ describe("CatalogueImportPage", () => {
 
     expect(screen.getByText("Ready to Create")).toBeInTheDocument();
     expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
+  });
+
+  it("restores structured review sessions after navigation and clears them for a new import", async () => {
+    const rendered = await renderStructuredProductReview();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
+    await waitFor(() => {
+      expect(window.localStorage.length).toBeGreaterThan(0);
+      expect(window.localStorage.getItem(window.localStorage.key(0) ?? "")).toContain("Ready to Create");
+    });
+
+    rendered.unmount();
+    renderCatalogueImportPage();
+
+    expect(await screen.findByText("Restored your in-progress catalogue review.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Structured Supplier Review" })).toBeInTheDocument();
+    expect(screen.getByText("Ready to Create")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New Import" }));
+    await waitFor(() => {
+      expect(
+        Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+          .some((key) => key?.startsWith("verve.catalogueImport.structuredSession")),
+      ).toBe(false);
+    });
+    expect(screen.queryByRole("heading", { name: "Structured Supplier Review" })).not.toBeInTheDocument();
   });
 
   it("routes Review Required imports to the catalogue review workspace", async () => {

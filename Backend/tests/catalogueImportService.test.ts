@@ -97,6 +97,28 @@ describe("CatalogueImportService — CSV preview", () => {
     expect(result.unmatchedRows).toBe(1);
   });
 
+  it("extracts supplier SKU from product descriptions when supplier_sku is missing", async () => {
+    const { importService, supplierRepo } = buildService();
+    const supplierId = await createActiveSupplier(supplierRepo);
+
+    const csv = "description,unit_cost\nADA201 - Ozbibs   Dental   Bibs Blue,9.99\n";
+    const result = await importService.preview(supplierId, Buffer.from(csv), "csv");
+
+    expect(result.rows[0]?.supplierSku).toBe("ADA201");
+    expect(result.rows[0]?.description).toBe("Ozbibs Dental Bibs Blue");
+  });
+
+  it("does not overwrite an explicit supplier_sku column", async () => {
+    const { importService, supplierRepo } = buildService();
+    const supplierId = await createActiveSupplier(supplierRepo);
+
+    const csv = "supplier_sku,description,unit_cost\nEXISTING-1,ADA201 - Ozbibs Dental Bibs Blue,9.99\n";
+    const result = await importService.preview(supplierId, Buffer.from(csv), "csv");
+
+    expect(result.rows[0]?.supplierSku).toBe("EXISTING-1");
+    expect(result.rows[0]?.description).toBe("ADA201 - Ozbibs Dental Bibs Blue");
+  });
+
   it("marks row as error when unit_cost is invalid", async () => {
     const { importService, supplierRepo } = buildService();
     const supplierId = await createActiveSupplier(supplierRepo);

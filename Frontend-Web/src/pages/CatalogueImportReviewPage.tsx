@@ -31,7 +31,7 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function centsToDollars(cents: unknown, unavailableLabel = "Not available yet"): string {
+function centsToDollars(cents: unknown, unavailableLabel = "Missing"): string {
   if (!isFiniteNumber(cents)) return unavailableLabel;
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
@@ -41,7 +41,7 @@ function centsToDollars(cents: unknown, unavailableLabel = "Not available yet"):
 }
 
 function formatUploadDate(value: string | null | undefined): string {
-  if (!value) return "Not available yet";
+  if (!value) return "Missing";
   return new Date(value).toLocaleString("en-AU", {
     day: "2-digit",
     month: "short",
@@ -52,7 +52,7 @@ function formatUploadDate(value: string | null | undefined): string {
 }
 
 function formatInvoiceStatus(invoice: SupplierInvoice | null): string {
-  if (!invoice) return "Not available yet";
+  if (!invoice) return "Missing";
   switch (invoice.status) {
     case "uploaded":
       return "Uploaded";
@@ -81,11 +81,11 @@ function formatMatchStatus(line: SupplierInvoiceLine): string {
 }
 
 function formatTax(line: SupplierInvoiceLine): string {
-  if (!isFiniteNumber(line.taxCents)) return "Not available";
+  if (!isFiniteNumber(line.taxCents)) return "Missing";
   const rate = isFiniteNumber(line.taxRateBasisPoints)
     ? ` (${(line.taxRateBasisPoints / 100).toFixed(2)}%)`
     : "";
-  return `${centsToDollars(line.taxCents, "Not available")}${rate}`;
+  return `${centsToDollars(line.taxCents, "Missing")}${rate}`;
 }
 
 function calculateLineTotalCents(line: SupplierInvoiceLine): number | null {
@@ -100,7 +100,7 @@ function calculateLineTotalCents(line: SupplierInvoiceLine): number | null {
 
 function formatLineTotal(line: SupplierInvoiceLine): string {
   const total = calculateLineTotalCents(line);
-  return total === null ? "Not available" : centsToDollars(total, "Not available");
+  return total === null ? "Missing" : centsToDollars(total, "Missing");
 }
 
 function initialReviewStateForLine(line: SupplierInvoiceLine): LineReviewState {
@@ -338,7 +338,7 @@ export function CatalogueImportReviewPage() {
           <dl className="invoice-review__summary-grid catalogue-review__header-grid">
             <div className="invoice-review__summary-item">
               <dt>File name</dt>
-              <dd>{invoice?.originalFilename ?? "Not available yet"}</dd>
+              <dd>{invoice?.originalFilename ?? "Missing"}</dd>
             </div>
             <div className="invoice-review__summary-item">
               <dt>Supplier recognition</dt>
@@ -445,7 +445,7 @@ export function CatalogueImportReviewPage() {
                                   aria-label={`Description for line ${String(line.lineNumber)}`}
                                 />
                               ) : (
-                                line.ocrDescription ?? "Not available yet"
+                                line.ocrDescription ?? "Missing"
                               )}
                             </td>
                             <td>
@@ -459,7 +459,7 @@ export function CatalogueImportReviewPage() {
                                   aria-label={`Supplier SKU for line ${String(line.lineNumber)}`}
                                 />
                               ) : (
-                                line.ocrSku ?? "Not available yet"
+                                line.ocrSku ?? "Missing"
                               )}
                             </td>
                             <td>
@@ -475,7 +475,7 @@ export function CatalogueImportReviewPage() {
                               ) : isFiniteNumber(line.quantity) ? (
                                 String(line.quantity)
                               ) : (
-                                "Not available"
+                                "Missing"
                               )}
                             </td>
                             <td>
@@ -489,7 +489,7 @@ export function CatalogueImportReviewPage() {
                                   aria-label={`Unit price cents for line ${String(line.lineNumber)}`}
                                 />
                               ) : (
-                                centsToDollars(line.unitPriceCents, "Not available")
+                                centsToDollars(line.unitPriceCents, "Missing")
                               )}
                             </td>
                             <td>
@@ -626,15 +626,15 @@ export function CatalogueImportReviewPage() {
                 </div>
               </div>
               <dl className="po-summary__stats catalogue-review__summary-grid">
-                <SummaryMetric label="Total lines" value={hasLineData ? String(lines.length) : "Not available yet"} />
-                <SummaryMetric label="Approved" value={hasLineData ? String(approvedLines) : "Not available yet"} />
-                <SummaryMetric label="Skipped" value={hasLineData ? String(skippedLines) : "Not available yet"} />
-                <SummaryMetric label="Still requiring review" value={hasLineData ? String(stillRequiringReview) : "Not available yet"} />
-                <SummaryMetric label="Products detected" value={hasLineData ? String(lines.length) : "Not available yet"} />
-                <SummaryMetric label="New products" value="Not available yet" />
-                <SummaryMetric label="Possible matches" value={hasLineData ? String(matchedLineCount) : "Not available yet"} />
-                <SummaryMetric label="Price updates" value="Not available yet" />
-                <SummaryMetric label="Pack-size changes" value="Not available yet" />
+                <SummaryMetric label="Total lines" value={hasLineData ? String(lines.length) : "Missing"} />
+                <SummaryMetric label="Approved" value={hasLineData ? String(approvedLines) : "Missing"} />
+                <SummaryMetric label="Skipped" value={hasLineData ? String(skippedLines) : "Missing"} />
+                <SummaryMetric label="Still requiring review" value={hasLineData ? String(stillRequiringReview) : "Missing"} />
+                <SummaryMetric label="Products detected" value={hasLineData ? String(lines.length) : "Missing"} />
+                <SummaryMetric label="New products" value="Missing" />
+                <SummaryMetric label="Possible matches" value={hasLineData ? String(matchedLineCount) : "Missing"} />
+                <SummaryMetric label="Price updates" value="Missing" />
+                <SummaryMetric label="Pack-size changes" value="Missing" />
                 <SummaryMetric label="Inventory quantity changes" value="0" />
               </dl>
             </section>

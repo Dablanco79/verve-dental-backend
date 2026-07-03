@@ -1,13 +1,18 @@
+import { cleanImportText, normaliseImportRow } from "./catalogueImportNormalisation.js";
+
 export type StructuredImportFormat = "csv" | "xlsx";
 
 export type StructuredImportRow = {
   rowNumber: number;
   values: string[];
   supplierName: string | null;
+  supplierSku: string | null;
+  barcode: string | null;
   productName: string | null;
   quantity: string | null;
   unitPrice: string | null;
   gst: string | null;
+  manufacturer: string | null;
 };
 
 export type StructuredSupplierGroup = {
@@ -27,19 +32,25 @@ export type StructuredImportAnalysis = {
 type ColumnLookup = {
   supplier: number | null;
   product: number | null;
+  supplierSku: number | null;
+  barcode: number | null;
   quantity: number | null;
   unitPrice: number | null;
   gst: number | null;
+  manufacturer: number | null;
 };
 
-const SUPPLIER_ALIASES = ["supplier", "supplier_name", "vendor", "vendor_name"];
-const PRODUCT_ALIASES = ["product", "product_name", "description", "name"];
-const QUANTITY_ALIASES = ["quantity", "qty"];
+const SUPPLIER_ALIASES = ["supplier", "supplier_name", "vendor", "vendor_name", "manufacturer_supplier"];
+const PRODUCT_ALIASES = ["product", "product_name", "description", "name", "item", "item_description"];
+const SUPPLIER_SKU_ALIASES = ["supplier_sku", "sku", "supplier_code", "item_code", "code", "product_code"];
+const BARCODE_ALIASES = ["barcode", "barcode_value", "ean", "gtin", "upc"];
+const QUANTITY_ALIASES = ["quantity", "qty", "pack", "pack_text", "pack_size", "unit_of_measure", "uom"];
 const UNIT_PRICE_ALIASES = ["unit_price", "unit_cost", "price", "cost", "unit_cost_(aud)", "unit_cost_(incl._gst)"];
 const GST_ALIASES = ["gst", "tax", "tax_amount", "gst_amount"];
+const MANUFACTURER_ALIASES = ["manufacturer", "brand", "maker"];
 
 function normalizeHeader(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, "_");
+  return (cleanImportText(value) ?? "").toLowerCase().replace(/\s+/g, "_");
 }
 
 function findColumn(headers: string[], aliases: string[]): number | null {
@@ -136,9 +147,12 @@ function resolveColumns(headers: string[]): ColumnLookup {
   return {
     supplier: findColumn(headers, SUPPLIER_ALIASES),
     product: findColumn(headers, PRODUCT_ALIASES),
+    supplierSku: findColumn(headers, SUPPLIER_SKU_ALIASES),
+    barcode: findColumn(headers, BARCODE_ALIASES),
     quantity: findColumn(headers, QUANTITY_ALIASES),
     unitPrice: findColumn(headers, UNIT_PRICE_ALIASES),
     gst: findColumn(headers, GST_ALIASES),
+    manufacturer: findColumn(headers, MANUFACTURER_ALIASES),
   };
 }
 
@@ -164,23 +178,40 @@ function groupRows(rows: StructuredImportRow[]): StructuredSupplierGroup[] {
 }
 
 export async function analyseStructuredImportFile(file: File): Promise<StructuredImportAnalysis> {
-  const format: StructuredImportFormat = file.name.toLowerCase().endsWith(".xlsx") ? "xlsx" : "csv";
+  const lowerFileName = file.name.toLowerCase();
+  const format: StructuredImportFormat = lowerFileName.endsWith(".xlsx") || lowerFileName.endsWith(".xls") ? "xlsx" : "csv";
   const table = format === "xlsx" ? await readXlsx(file) : await readCsv(file);
-  const headers = table[0] ?? [];
+  const headers = (table[0] ?? []).map((header) => cleanImportText(header) ?? "");
   if (headers.length === 0) {
     throw new Error("The selected structured catalogue file has no header row.");
   }
 
   const columns = resolveColumns(headers);
-  const rows = table.slice(1).map((values, index) => ({
-    rowNumber: index + 2,
-    values,
-    supplierName: getCell(values, columns.supplier),
-    productName: getCell(values, columns.product),
-    quantity: getCell(values, columns.quantity),
-    unitPrice: getCell(values, columns.unitPrice),
-    gst: getCell(values, columns.gst),
-  }));
+  const rows = table.slice(1).map((values, index) => {
+    const normalized = normaliseImportRow({
+      supplierName: getCell(values, columns.supplier),
+      supplierSku: getCell(values, columns.supplierSku),
+      barcode: getCell(values, columns.barcode),
+      productName: getCell(values, columns.product),
+      quantityText: getCell(values, columns.quantity),
+      unitPrice: getCell(values, columns.unitPrice),
+      gst: getCell(values, columns.gst),
+      manufacturer: getCell(values, columns.manufacturer),
+    });
+
+    return {
+      rowNumber: index + 2,
+      values: values.map((value) => cleanImportText(value) ?? ""),
+      supplierName: normalized.supplierName,
+      supplierSku: normalized.supplierSku,
+      barcode: normalized.barcode,
+      productName: normalized.productName,
+      quantity: normalized.quantityText,
+      unitPrice: normalized.unitPrice,
+      gst: normalized.gst,
+      manufacturer: normalized.manufacturer,
+    };
+  });
 
   return {
     format,

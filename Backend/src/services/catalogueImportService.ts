@@ -23,6 +23,7 @@ import type {
   ImportPreviewResult,
   ImportRow,
 } from "../types/supplier.js";
+import { normaliseImportRow } from "./catalogueImportNormalisation.js";
 
 // ─── Supported file formats ───────────────────────────────────────────────────
 
@@ -218,8 +219,15 @@ function extractRawRow(
     return val.length > 0 ? val : null;
   };
 
-  const description = get(colIdx.description);
-  const rawUnitCost = get(colIdx.unitCost);
+  const normalized = normaliseImportRow({
+    supplierSku: get(colIdx.supplierSku),
+    barcode: get(colIdx.barcode),
+    productName: get(colIdx.description),
+    unitPrice: get(colIdx.unitCost),
+    quantityText: get(colIdx.unitOfMeasure),
+  });
+  const description = normalized.productName;
+  const rawUnitCost = normalized.unitPrice;
 
   let unitCostCents: number | null = null;
   let parseError: string | null = null;
@@ -256,12 +264,12 @@ function extractRawRow(
 
   return {
     rowNumber,
-    supplierSku: get(colIdx.supplierSku),
+    supplierSku: normalized.supplierSku,
     description,
     rawUnitCost,
     unitCostCents,
-    unitOfMeasure: get(colIdx.unitOfMeasure),
-    barcodeValue: get(colIdx.barcode),
+    unitOfMeasure: normalized.quantityText,
+    barcodeValue: normalized.barcode,
     parseError,
   };
 }

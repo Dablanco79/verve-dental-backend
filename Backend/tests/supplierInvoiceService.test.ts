@@ -177,6 +177,27 @@ describe("SupplierInvoiceService", () => {
     expect(result.duplicateInvoiceNumberWarning).toBeNull();
   });
 
+  it("normalises OCR invoice lines and extracts embedded supplier SKUs", async () => {
+    const baseLine = MOCK_OCR_RESULT.lines[0];
+    if (!baseLine) throw new Error("Expected mock OCR line");
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      lines: [
+        {
+          ...baseLine,
+          description: "ADA201 - Ozbibs   Dental   Bibs Blue",
+          sku: null,
+        },
+      ],
+    };
+    const { service } = makeService(makeMockOcrProvider(ocrResult));
+
+    const result = await service.uploadAndExtract(makeManager(), CLINIC_A, FAKE_FILE);
+
+    expect(result.lines[0]?.ocrSku).toBe("ADA201");
+    expect(result.lines[0]?.ocrDescription).toBe("Ozbibs Dental Bibs Blue");
+  });
+
   // ── 2. uploadAndExtract — duplicate-file warning (Amendment 1B) ────────────
   it("returns duplicateFileWarning when same SHA256 exists for clinic", async () => {
     const { service } = makeService();

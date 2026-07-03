@@ -41,6 +41,7 @@ import type {
   UploadAndExtractResult,
 } from "../types/supplierInvoice.js";
 import type { OcrInvoiceResult } from "../types/supplierInvoice.js";
+import { normaliseImportRow } from "./catalogueImportNormalisation.js";
 
 export function createSupplierInvoiceService(
   repo: SupplierInvoiceRepository,
@@ -226,13 +227,17 @@ export function createSupplierInvoiceService(
     // The first pass attempts exact SKU matching; unmatched lines remain unmatched.
     const matchedLines = await Promise.all(
       ocrResult.lines.map(async (ocrLine, idx) => {
+        const normalizedLine = normaliseImportRow({
+          productName: ocrLine.description,
+          supplierSku: ocrLine.sku,
+        });
         let masterCatalogItemId: string | null = null;
         let supplierCatalogueId: string | null = null;
         let isMatched = false;
         let matchMethod: "exact_sku" | "name_match" | "manual" | null = null;
 
-        if (ocrLine.sku) {
-          const sku = ocrLine.sku;
+        if (normalizedLine.supplierSku) {
+          const sku = normalizedLine.supplierSku;
           const catalogueEntries = await supplierCatalogueRepo.listSupplierProducts({
             active: true,
           });
@@ -250,6 +255,8 @@ export function createSupplierInvoiceService(
 
         return {
           ocrLine,
+          normalizedDescription: normalizedLine.productName,
+          normalizedSku: normalizedLine.supplierSku,
           masterCatalogItemId,
           supplierCatalogueId,
           isMatched,
@@ -288,8 +295,8 @@ export function createSupplierInvoiceService(
           supplierInvoiceId: invoice.id,
           masterCatalogItemId: m.masterCatalogItemId,
           supplierCatalogueId: m.supplierCatalogueId,
-          ocrDescription: m.ocrLine.description,
-          ocrSku: m.ocrLine.sku,
+          ocrDescription: m.normalizedDescription ?? "",
+          ocrSku: m.normalizedSku,
           ocrConfidence: m.ocrLine.confidence,
           quantity: m.ocrLine.quantity,
           unitPriceCents: m.ocrLine.unitPriceCents,

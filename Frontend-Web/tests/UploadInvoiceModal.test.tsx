@@ -321,12 +321,11 @@ describe("UploadInvoiceModal", () => {
   });
 
   it("10. shows file size error for files exceeding 20 MB", async () => {
-    const user = userEvent.setup();
     renderModal();
-    const bigContent = "x".repeat(21 * 1024 * 1024);
-    const bigFile = new File([bigContent], "huge.pdf", { type: "application/pdf" });
+    const bigFile = new File(["x"], "huge.pdf", { type: "application/pdf" });
+    Object.defineProperty(bigFile, "size", { value: 21 * 1024 * 1024 });
     const input = document.querySelector("input[type=file]") as HTMLInputElement;
-    await user.upload(input, bigFile);
+    fireEvent.change(input, { target: { files: [bigFile] } });
     expect(await screen.findByText(/too large/i)).toBeInTheDocument();
   });
 
