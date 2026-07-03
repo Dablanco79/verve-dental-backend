@@ -307,4 +307,10 @@ export type ConfirmImportResult = {
   invoice: SupplierInvoice;
   priceUpdates: number;
   priceHistory: SupplierPriceHistory[];
+  createdProducts: number;
+};
+
+export type ConfirmImportOptions = {
+  readyToCreateLineIds?: string[];
+  skippedLineIds?: string[];
 };

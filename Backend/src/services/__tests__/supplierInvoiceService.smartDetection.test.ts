@@ -21,6 +21,8 @@ import { jest } from "@jest/globals";
 import { createInMemorySupplierInvoiceRepository } from "../../repositories/supplierInvoiceRepository.js";
 import { createInMemorySupplierCatalogueRepository } from "../../repositories/supplierCatalogueRepository.js";
 import { createInMemorySupplierRepository } from "../../repositories/supplierRepository.js";
+import { createInMemoryCatalogRepository } from "../../repositories/catalogRepository.js";
+import { createInMemoryInventoryRepository } from "../../repositories/inventoryRepository.js";
 import { createSupplierInvoiceService } from "../supplierInvoiceService.js";
 import type { SupplierRepository } from "../../repositories/supplierRepository.js";
 import type { OcrProvider } from "../ocr/OcrProvider.js";
@@ -136,6 +138,8 @@ function makeService(opts: {
   const ocrResult = makeOcrResult(opts.ocrResult);
   const invoiceRepo = createInMemorySupplierInvoiceRepository();
   const catalogueRepo = createInMemorySupplierCatalogueRepository();
+  const catalogRepo = createInMemoryCatalogRepository();
+  const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
 
   const findSupplierByAbn = jest.fn<SupplierRepository["findSupplierByAbn"]>()
     .mockResolvedValue(opts.existingSupplierByAbn ?? null);
@@ -158,6 +162,9 @@ function makeService(opts: {
     catalogueRepo,
     fakeAudit,
     supplierRepo,
+    undefined,
+    catalogRepo,
+    inventoryRepo,
   );
 
   return { service, invoiceRepo, supplierRepo, findSupplierByAbn, findSupplierByName, createSupplier };

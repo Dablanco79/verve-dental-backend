@@ -40,6 +40,19 @@ function centsToDollars(cents: unknown, unavailableLabel = "Missing"): string {
   }).format(cents / 100);
 }
 
+function centsToDecimalString(cents: unknown): string {
+  if (!isFiniteNumber(cents)) return "";
+  return (cents / 100).toFixed(2);
+}
+
+function parseCurrencyToCents(value: string): number | null {
+  const cleaned = value.replace(/[$,\s]/g, "");
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
 function formatUploadDate(value: string | null | undefined): string {
   if (!value) return "Missing";
   return new Date(value).toLocaleString("en-AU", {
@@ -121,18 +134,18 @@ function buildEditDraft(line: SupplierInvoiceLine): LineEditDraft {
     description: line.ocrDescription ?? "",
     supplierSku: line.ocrSku ?? "",
     quantity: isFiniteNumber(line.quantity) ? String(line.quantity) : "",
-    unitPriceCents: isFiniteNumber(line.unitPriceCents) ? String(line.unitPriceCents) : "",
-    taxCents: isFiniteNumber(line.taxCents) ? String(line.taxCents) : "",
+    unitPriceCents: centsToDecimalString(line.unitPriceCents),
+    taxCents: centsToDecimalString(line.taxCents),
   };
 }
 
 function applyDraftToLine(line: SupplierInvoiceLine, draft: LineEditDraft): SupplierInvoiceLine {
   const quantity = Number(draft.quantity);
-  const unitPriceCents = Number(draft.unitPriceCents);
-  const taxCents = Number(draft.taxCents);
+  const unitPriceCents = parseCurrencyToCents(draft.unitPriceCents);
+  const taxCents = parseCurrencyToCents(draft.taxCents);
   const hasQuantity = Number.isFinite(quantity);
-  const hasUnitPrice = Number.isFinite(unitPriceCents);
-  const hasTax = Number.isFinite(taxCents);
+  const hasUnitPrice = unitPriceCents !== null;
+  const hasTax = taxCents !== null;
   const recalculatedTotal = hasQuantity && hasUnitPrice
     ? Math.round(quantity * unitPriceCents + (hasTax ? taxCents : 0))
     : line.lineTotalCents;
@@ -142,10 +155,16 @@ function applyDraftToLine(line: SupplierInvoiceLine, draft: LineEditDraft): Supp
     ocrDescription: draft.description.trim() || null,
     ocrSku: draft.supplierSku.trim() || null,
     quantity: hasQuantity ? quantity : line.quantity,
-    unitPriceCents: hasUnitPrice ? Math.round(unitPriceCents) : line.unitPriceCents,
-    taxCents: hasTax ? Math.round(taxCents) : line.taxCents,
+    unitPriceCents: hasUnitPrice ? unitPriceCents : line.unitPriceCents,
+    taxCents: hasTax ? taxCents : line.taxCents,
     lineTotalCents: recalculatedTotal,
   };
+}
+
+function calculateTaxRateBasisPoints(quantity: number, unitPriceCents: number, taxCents: number): number {
+  const subtotalCents = quantity * unitPriceCents;
+  if (!Number.isFinite(subtotalCents) || subtotalCents <= 0) return 0;
+  return Math.max(0, Math.min(10_000, Math.round((taxCents * 10_000) / subtotalCents)));
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
@@ -196,15 +215,14 @@ export function CatalogueImportReviewPage() {
   const skippedLines = reviewStates.filter((state) => state === "Skipped").length;
   const stillRequiringReview = reviewStates.filter((state) => !isImportReadyState(state)).length;
   const hasOnlySafelyImportableStates = reviewStates.every(
-    (state) => state === "Approved" || state === "Matched Existing Product",
+    (state) => isImportReadyState(state),
   );
   const canConfirmImport =
     !!invoice &&
     invoice.status === "pending_review" &&
     hasLineData &&
     stillRequiringReview === 0 &&
-    hasOnlySafelyImportableStates &&
-    lines.every((line) => line.isMatched);
+    hasOnlySafelyImportableStates;
   const canCancelImport =
     !!invoice &&
     (invoice.status === "uploaded" ||
@@ -213,7 +231,7 @@ export function CatalogueImportReviewPage() {
       invoice.status === "pending_review");
   const importDisabledReason = canConfirmImport
     ? null
-    : "Import confirmation will be available after matching rules are completed.";
+    : "Import Reviewed Products becomes available after every row is Approved, Skipped, Matched, or Ready to Create.";
 
   const loadReview = useCallback(async () => {
     if (!user || !canUseCatalogueImport || !clinicId || isAllClinicsScope || !importId) {
@@ -257,9 +275,21 @@ export function CatalogueImportReviewPage() {
     setImportError(null);
     setImportMessage(null);
     try {
-      const result = await apiClient.confirmSupplierInvoice(clinicId, invoice.id);
+      const readyToCreateLineIds = lines
+        .filter((line) => (lineReviewStates[line.id] ?? initialReviewStateForLine(line)) === "Ready to Create")
+        .map((line) => line.id);
+      const skippedLineIds = lines
+        .filter((line) => (lineReviewStates[line.id] ?? initialReviewStateForLine(line)) === "Skipped")
+        .map((line) => line.id);
+      const result = await apiClient.confirmSupplierInvoice(clinicId, invoice.id, {
+        readyToCreateLineIds,
+        skippedLineIds,
+      });
       setInvoice(result.invoice);
-      setImportMessage(`Catalogue imported. ${String(result.priceUpdates)} price updates applied.`);
+      setLineReviewStates({});
+      setImportMessage(
+        `Catalogue imported. ${String(result.createdProducts)} products created and ${String(result.priceUpdates)} price updates applied.`,
+      );
     } catch (err: unknown) {
       setImportError(err instanceof Error ? err.message : "Catalogue import could not be confirmed.");
     } finally {
@@ -302,11 +332,24 @@ export function CatalogueImportReviewPage() {
     setEditDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
-  function saveLineEdit(lineId: string): void {
+  async function saveLineEdit(lineId: string): Promise<void> {
     if (!editDraft) return;
-    setLines((current) =>
-      current.map((line) => (line.id === lineId ? applyDraftToLine(line, editDraft) : line)),
+    const existingLine = lines.find((line) => line.id === lineId);
+    if (!existingLine || !clinicId || !invoice) return;
+    const nextLine = applyDraftToLine(existingLine, editDraft);
+    const taxRateBasisPoints = calculateTaxRateBasisPoints(
+      nextLine.quantity,
+      nextLine.unitPriceCents,
+      nextLine.taxCents,
     );
+    const persisted = await apiClient.updateSupplierInvoiceLine(clinicId, invoice.id, lineId, {
+      ocrDescription: nextLine.ocrDescription ?? "",
+      ocrSku: nextLine.ocrSku,
+      quantity: nextLine.quantity,
+      unitPriceCents: nextLine.unitPriceCents,
+      taxRateBasisPoints,
+    });
+    setLines((current) => current.map((line) => (line.id === lineId ? persisted : line)));
     setLineState(lineId, "Needs Review");
   }
 
@@ -486,7 +529,7 @@ export function CatalogueImportReviewPage() {
                                   onChange={(event) => {
                                     updateEditDraft("unitPriceCents", event.target.value);
                                   }}
-                                  aria-label={`Unit price cents for line ${String(line.lineNumber)}`}
+                                  aria-label={`Unit price for line ${String(line.lineNumber)}`}
                                 />
                               ) : (
                                 centsToDollars(line.unitPriceCents, "Missing")
@@ -500,7 +543,7 @@ export function CatalogueImportReviewPage() {
                                   onChange={(event) => {
                                     updateEditDraft("taxCents", event.target.value);
                                   }}
-                                  aria-label={`GST cents for line ${String(line.lineNumber)}`}
+                                  aria-label={`GST for line ${String(line.lineNumber)}`}
                                 />
                               ) : (
                                 formatTax(line)
@@ -521,7 +564,7 @@ export function CatalogueImportReviewPage() {
                                       type="button"
                                       className="link-button"
                                       onClick={() => {
-                                        saveLineEdit(line.id);
+                                        void saveLineEdit(line.id);
                                       }}
                                     >
                                       Save edit
@@ -594,7 +637,7 @@ export function CatalogueImportReviewPage() {
                                       </button>
                                     )}
                                     <span className="catalogue-review__future-note">
-                                      Product creation queued for future matching review
+                                      Creates catalogue product only. Does not change stock.
                                     </span>
                                   </>
                                 )}
@@ -667,7 +710,7 @@ export function CatalogueImportReviewPage() {
                     void handleImportCatalogue();
                   }}
                 >
-                  {isImporting ? "Importing..." : "Import Catalogue"}
+                  {isImporting ? "Importing..." : "Import Reviewed Products"}
                 </button>
               </div>
               {importDisabledReason ? (

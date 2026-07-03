@@ -1,5 +1,5 @@
 import { useState, type SubmitEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
 import { MfaEnrollmentPanel } from "../components/MfaEnrollmentPanel.js";
@@ -19,6 +19,7 @@ type LoginStep =
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function LoginPage() {
+  const location = useLocation();
   const { user, login, verifyMfa, setupMfa, confirmMfaEnrollment } = useAuth();
   const [loginStep, setLoginStep] = useState<LoginStep>({ step: "credentials" });
   const [email, setEmail] = useState("");
@@ -26,9 +27,12 @@ export function LoginPage() {
   const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const locationState = location.state as { from?: string; message?: string } | null;
+  const returnTo = locationState?.from?.startsWith("/") ? locationState.from : "/";
+  const sessionMessage = locationState?.message ?? null;
 
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={returnTo} replace />;
   }
 
   // ── Credentials step ───────────────────────────────────────────────────────
@@ -188,6 +192,7 @@ export function LoginPage() {
     <AppShell>
       <section className="auth-card">
         <h2>Sign in</h2>
+        {sessionMessage ? <p className="inventory-notice--inline" role="status">{sessionMessage}</p> : null}
         <form className="auth-form" onSubmit={(event) => { void handleLoginSubmit(event); }}>
           <label>
             Email

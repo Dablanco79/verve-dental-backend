@@ -25,10 +25,13 @@ import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceR
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierRelationshipRepository } from "../repositories/supplierRelationshipRepository.js";
+import type { CatalogRepository } from "../repositories/catalogRepository.js";
+import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import { AppError } from "../types/errors.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type { Supplier } from "../types/supplier.js";
 import type {
+  ConfirmImportOptions,
   ConfirmImportResult,
   DetectedSupplierInfo,
   ListSupplierInvoicesOptions,
@@ -50,6 +53,8 @@ export function createSupplierInvoiceService(
   auditService: AuditService,
   supplierRepo: SupplierRepository,
   supplierRelationshipRepo?: SupplierRelationshipRepository,
+  catalogRepository?: CatalogRepository,
+  inventoryRepository?: InventoryRepository,
 ) {
   // ── Tenant + role guards ─────────────────────────────────────────────────
 
@@ -64,6 +69,77 @@ export function createSupplierInvoiceService(
         "Access denied: you do not belong to this clinic",
       );
     }
+  }
+
+  function slugSku(value: string): string {
+    const normalized = value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return normalized.slice(0, 32) || "IMPORTED";
+  }
+
+  async function buildUniqueImportedSku(line: SupplierInvoiceLine): Promise<string> {
+    if (!catalogRepository) {
+      throw new AppError(500, "INTERNAL_ERROR", "Catalogue product creation is not configured");
+    }
+
+    const base = slugSku(line.ocrSku ?? line.ocrDescription);
+    const candidates = [
+      base,
+      `${base}-${String(line.sortOrder + 1)}`,
+      `${base}-${line.id.slice(0, 8)}`,
+    ];
+
+    for (const candidate of candidates) {
+      const existing = await catalogRepository.findMasterItemBySku(candidate);
+      if (!existing) return candidate;
+    }
+
+    return `${base.slice(0, 23)}-${line.id.slice(0, 8)}`;
+  }
+
+  async function createCatalogueProductFromLine(
+    clinicId: string,
+    supplierId: string,
+    line: SupplierInvoiceLine,
+  ): Promise<string> {
+    if (!catalogRepository || !inventoryRepository) {
+      throw new AppError(500, "INTERNAL_ERROR", "Catalogue product creation is not configured");
+    }
+
+    const sku = await buildUniqueImportedSku(line);
+    const masterItem = await catalogRepository.createMasterItem({
+      sku,
+      name: line.ocrDescription.trim() || sku,
+      description: line.ocrDescription.trim() || null,
+      category: "Imported Catalogue",
+      stockUnit: "unit",
+      receivingUnit: "unit",
+      unitsPerReceivingUnit: 1,
+      defaultUnitCostCents: line.unitPriceCents,
+    });
+
+    await inventoryRepository.createClinicInventoryItem({
+      clinicId,
+      masterCatalogItemId: masterItem.id,
+      quantityOnHand: 0,
+      reorderPoint: 0,
+      unitCostOverrideCents: null,
+      supplierPreference: null,
+    });
+
+    await supplierCatalogueRepo.upsertSupplierProduct({
+      supplierId,
+      productId: masterItem.id,
+      supplierSku: line.ocrSku,
+      supplierDescription: line.ocrDescription,
+      unitCostCents: line.unitPriceCents,
+      unitOfMeasure: "unit",
+    });
+
+    return masterItem.id;
   }
 
   function assertWriteAccess(caller: AuthenticatedUser): void {
@@ -463,6 +539,7 @@ export function createSupplierInvoiceService(
     caller: AuthenticatedUser,
     clinicId: string,
     invoiceId: string,
+    options: ConfirmImportOptions = {},
   ): Promise<ConfirmImportResult> {
     assertTenantAccess(caller, clinicId);
     assertWriteAccess(caller);
@@ -501,7 +578,35 @@ export function createSupplierInvoiceService(
     const confirmedInvoiceDate = invoice.invoiceDate;
 
     const lines = await repo.listLines(clinicId, invoiceId);
-    const matchedLines = lines.filter(
+    const skippedLineIds = new Set(options.skippedLineIds ?? []);
+    const readyToCreateLineIds = new Set(options.readyToCreateLineIds ?? []);
+
+    const createdProductPairs = await Promise.all(
+      lines
+        .filter((line) => readyToCreateLineIds.has(line.id) && !skippedLineIds.has(line.id))
+        .map(async (line) => ({
+          line,
+          masterCatalogItemId: await createCatalogueProductFromLine(
+            clinicId,
+            confirmedSupplierId,
+            line,
+          ),
+        })),
+    );
+
+    const createdProductIdByLineId = new Map(
+      createdProductPairs.map((entry) => [entry.line.id, entry.masterCatalogItemId]),
+    );
+
+    const importableLines = lines
+      .filter((line) => !skippedLineIds.has(line.id))
+      .map((line) => ({
+        ...line,
+        masterCatalogItemId: createdProductIdByLineId.get(line.id) ?? line.masterCatalogItemId,
+        isMatched: line.isMatched || createdProductIdByLineId.has(line.id),
+      }));
+
+    const matchedLines = importableLines.filter(
       (l): l is SupplierInvoiceLine & { masterCatalogItemId: string } =>
         l.isMatched && l.masterCatalogItemId !== null,
     );
@@ -551,6 +656,7 @@ export function createSupplierInvoiceService(
       invoice: confirmed,
       priceUpdates: priceHistoryRecords.length,
       priceHistory: priceHistoryRecords,
+      createdProducts: createdProductPairs.length,
     };
   }
 

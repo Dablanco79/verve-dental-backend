@@ -250,6 +250,12 @@ export type UploadAndExtractResult = {
 export type ConfirmImportResult = {
   invoice: SupplierInvoice;
   priceUpdates: number;
+  createdProducts: number;
+};
+
+export type ConfirmImportRequest = {
+  readyToCreateLineIds?: string[];
+  skippedLineIds?: string[];
 };
 
 // ── Supplier Intelligence (Sprint 3) ─────────────────────────────────────────

@@ -462,6 +462,8 @@ export async function createAppDependencies(
     auditService,
     supplierRepository,
     supplierRelationshipRepository,
+    catalogRepository,
+    inventoryRepository,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,

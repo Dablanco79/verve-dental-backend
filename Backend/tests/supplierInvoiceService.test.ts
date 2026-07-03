@@ -29,6 +29,8 @@ import { jest } from "@jest/globals";
 import { createInMemorySupplierInvoiceRepository } from "../src/repositories/supplierInvoiceRepository.js";
 import { createInMemorySupplierCatalogueRepository } from "../src/repositories/supplierCatalogueRepository.js";
 import { createInMemorySupplierRepository } from "../src/repositories/supplierRepository.js";
+import { createInMemoryCatalogRepository } from "../src/repositories/catalogRepository.js";
+import { createInMemoryInventoryRepository } from "../src/repositories/inventoryRepository.js";
 import { createSupplierInvoiceService } from "../src/services/supplierInvoiceService.js";
 import { AppError } from "../src/types/errors.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
@@ -134,6 +136,8 @@ function makeService(ocrProvider?: OcrProvider) {
   const repo = createInMemorySupplierInvoiceRepository();
   const catalogueRepo = createInMemorySupplierCatalogueRepository();
   const supplierRepo = createInMemorySupplierRepository();
+  const catalogRepo = createInMemoryCatalogRepository();
+  const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
   const provider = ocrProvider ?? makeMockOcrProvider();
   const service = createSupplierInvoiceService(
     repo,
@@ -141,8 +145,11 @@ function makeService(ocrProvider?: OcrProvider) {
     catalogueRepo,
     FAKE_AUDIT as never,
     supplierRepo,
+    undefined,
+    catalogRepo,
+    inventoryRepo,
   );
-  return { repo, catalogueRepo, supplierRepo, service, provider };
+  return { repo, catalogueRepo, supplierRepo, catalogRepo, inventoryRepo, service, provider };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -465,6 +472,63 @@ describe("SupplierInvoiceService", () => {
     expect(result.invoice.confirmedAt).toBeInstanceOf(Date);
     // No matched lines (no master_catalog_item_id linked), so priceUpdates = 0
     expect(result.priceUpdates).toBe(0);
+    expect(result.createdProducts).toBe(0);
+  });
+
+  it("creates Ready to Create catalogue products with unit price, unit GST, and zero stock", async () => {
+    const baseLine = MOCK_OCR_RESULT.lines[0];
+    if (!baseLine) throw new Error("Expected mock OCR line");
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      subtotalCents: 4_000,
+      taxCents: 400,
+      totalCents: 4_400,
+      lines: [
+        {
+          ...baseLine,
+          description: "Imported Bonding Agent",
+          sku: "BOND-4",
+          quantity: 4,
+          unitPriceCents: 1_000,
+          subtotalCents: 4_000,
+          taxRateBasisPoints: 1_000,
+          taxCents: 400,
+          totalCents: 4_400,
+        },
+      ],
+    };
+    const { service, catalogRepo, inventoryRepo } = makeService(makeMockOcrProvider(ocrResult));
+    const caller = makeManager();
+    const { invoice, lines } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    const line = lines[0];
+    if (!line) throw new Error("Expected imported line");
+
+    const supplierId = "00000000-0000-0000-0000-000000000010";
+    await service.updateInvoice(caller, CLINIC_A, invoice.id, {
+      supplierId,
+      invoiceNumber: "ACME-READY-001",
+      invoiceDate: "2026-06-01",
+    });
+
+    const result = await service.confirmImport(caller, CLINIC_A, invoice.id, {
+      readyToCreateLineIds: [line.id],
+    });
+
+    expect(result.createdProducts).toBe(1);
+    expect(result.priceUpdates).toBe(1);
+    expect(result.priceHistory[0]?.newUnitCostCents).toBe(1_000);
+    expect(line.taxCents / line.quantity).toBe(100);
+
+    const createdItem = (await catalogRepo.listMasterItems()).find(
+      (item) => item.name === "Imported Bonding Agent",
+    );
+    expect(createdItem?.defaultUnitCostCents).toBe(1_000);
+
+    const inventoryItems = await inventoryRepo.listClinicInventory(CLINIC_A);
+    const createdInventoryItem = inventoryItems.find(
+      (item) => item.masterCatalogItemId === createdItem?.id,
+    );
+    expect(createdInventoryItem?.quantityOnHand).toBe(0);
   });
 
   // ── 17. confirmImport — rejects already-confirmed ─────────────────────────

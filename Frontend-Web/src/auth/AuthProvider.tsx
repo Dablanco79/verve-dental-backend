@@ -14,6 +14,7 @@ import { AuthContext } from "./AuthContext.js";
 import type { AuthContextValue } from "./AuthContext.js";
 
 const apiClient = createApiClient(loadConfig());
+const SESSION_EXPIRED_EVENT = "verve:session-expired";
 
 function persistSession(
   accessToken: string,
@@ -38,11 +39,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         if (accessToken) {
-          const currentUser = await apiClient.getMe(accessToken);
-          if (!cancelled) {
-            setUser(currentUser);
+          try {
+            const currentUser = await apiClient.getMe(accessToken);
+            if (!cancelled) {
+              setUser(currentUser);
+            }
+            return;
+          } catch {
+            tokenStorage.clearAccessToken();
+            const session = await apiClient.refresh();
+            if (!cancelled) {
+              persistSession(session.accessToken, session.user, setUser);
+            }
+            return;
           }
-          return;
         }
 
         // No stored access token — attempt silent refresh via HttpOnly cookie.
@@ -64,6 +74,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleSessionExpired(): void {
+      setUser(null);
+      setEnrollmentToken(null);
+    }
+
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
     };
   }, []);
 

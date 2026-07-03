@@ -21,6 +21,7 @@ const {
   mockConfirmSupplierCatalogueImport,
   mockUploadSupplierInvoice,
   mockGetSupplierInvoice,
+  mockUpdateSupplierInvoiceLine,
   mockConfirmSupplierInvoice,
   mockCancelSupplierInvoiceImport,
   mockAdjustInventory,
@@ -51,6 +52,7 @@ const {
     mockConfirmSupplierCatalogueImport: vi.fn(),
     mockUploadSupplierInvoice: vi.fn(),
     mockGetSupplierInvoice: vi.fn(),
+    mockUpdateSupplierInvoiceLine: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
     mockCancelSupplierInvoiceImport: vi.fn(),
     mockAdjustInventory: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock("../src/api/client.js", () => ({
     confirmSupplierCatalogueImport: mockConfirmSupplierCatalogueImport,
     uploadSupplierInvoice: mockUploadSupplierInvoice,
     getSupplierInvoice: mockGetSupplierInvoice,
+    updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
     cancelSupplierInvoiceImport: mockCancelSupplierInvoiceImport,
     adjustInventory: mockAdjustInventory,
@@ -299,6 +302,7 @@ describe("CatalogueImportPage", () => {
     mockConfirmSupplierCatalogueImport.mockReset();
     mockUploadSupplierInvoice.mockReset();
     mockGetSupplierInvoice.mockReset();
+    mockUpdateSupplierInvoiceLine.mockReset();
     mockConfirmSupplierInvoice.mockReset();
     mockCancelSupplierInvoiceImport.mockReset();
     mockAdjustInventory.mockReset();
@@ -309,6 +313,7 @@ describe("CatalogueImportPage", () => {
     mockConfirmSupplierInvoice.mockResolvedValue({
       invoice: { ...invoiceImport, status: "confirmed", confirmedAt: "2026-07-01T03:00:00.000Z" },
       priceUpdates: 1,
+      createdProducts: 0,
     } satisfies ConfirmImportResult);
     mockCancelSupplierInvoiceImport.mockResolvedValue({
       ...invoiceImport,
@@ -736,9 +741,9 @@ describe("CatalogueImportPage", () => {
     expect(
       await screen.findByText("No extracted line items are available for review yet."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Import Catalogue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
     expect(
-      screen.getByText("Import confirmation will be available after matching rules are completed."),
+      screen.getByText("Import Reviewed Products becomes available after every row is Approved, Skipped, Matched, or Ready to Create."),
     ).toBeInTheDocument();
   });
 
@@ -747,14 +752,17 @@ describe("CatalogueImportPage", () => {
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     expect(await screen.findByText("Nitrile Examination Gloves Box 100")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Import Catalogue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
 
     await waitFor(() => {
-      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
+      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id, {
+        readyToCreateLineIds: [],
+        skippedLineIds: [],
+      });
     });
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(mockHandleScan).not.toHaveBeenCalled();
-    expect(await screen.findByText("Catalogue imported. 1 price updates applied.")).toBeInTheDocument();
+    expect(await screen.findByText("Catalogue imported. 0 products created and 1 price updates applied.")).toBeInTheDocument();
   });
 
   it("cancels an import after confirmation and returns to the import page", async () => {
@@ -810,6 +818,51 @@ describe("CatalogueImportPage", () => {
     expect(selectedRowQueries.queryByRole("button", { name: "Create new product" })).not.toBeInTheDocument();
   });
 
+  it("enables final import for Ready to Create rows and sends reviewed decisions", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    mockConfirmSupplierInvoice.mockResolvedValue({
+      invoice: { ...invoiceImport, status: "imported", confirmedAt: "2026-07-01T03:00:00.000Z" },
+      priceUpdates: 1,
+      createdProducts: 1,
+    } satisfies ConfirmImportResult);
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    const finalButton = screen.getByRole("button", { name: "Import Reviewed Products" });
+    expect(finalButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+    expect(finalButton).toBeEnabled();
+    fireEvent.click(finalButton);
+
+    await waitFor(() => {
+      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id, {
+        readyToCreateLineIds: [unmatchedLine.id],
+        skippedLineIds: [],
+      });
+    });
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+    expect(await screen.findByText("Catalogue imported. 1 products created and 1 price updates applied.")).toBeInTheDocument();
+  });
+
+  it("preserves decimal currency values when editing invoice import lines", async () => {
+    const line = {
+      ...unmatchedLine,
+      unitPriceCents: 1670,
+      taxCents: 167,
+      lineTotalCents: 1837,
+    };
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [line] });
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByLabelText("Unit price for line 1")).toHaveValue("16.70");
+    expect(screen.getByLabelText("GST for line 1")).toHaveValue("1.67");
+  });
+
   it("allows skipping a line locally", async () => {
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
@@ -828,14 +881,14 @@ describe("CatalogueImportPage", () => {
     expect(screen.queryByText("$NaN")).not.toBeInTheDocument();
   });
 
-  it("keeps Import Catalogue guarded for unpersisted line decisions", async () => {
+  it("enables final import after all invoice rows are reviewed", async () => {
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     await screen.findByText("Unknown bonding agent");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
 
-    expect(screen.getByRole("button", { name: "Import Catalogue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
     expect(mockConfirmSupplierInvoice).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(mockHandleScan).not.toHaveBeenCalled();

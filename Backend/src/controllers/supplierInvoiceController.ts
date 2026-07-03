@@ -51,6 +51,11 @@ const updateLineSchema = z.object({
     .optional(),
 });
 
+const confirmImportSchema = z.object({
+  readyToCreateLineIds: z.array(z.string().uuid()).optional(),
+  skippedLineIds: z.array(z.string().uuid()).optional(),
+});
+
 const listQuerySchema = z.object({
   status: z
     .enum([
@@ -236,7 +241,12 @@ export function createSupplierInvoiceHandlers(
         throw new AppError(400, "VALIDATION_ERROR", "Invalid invoiceId");
       }
 
-      const result = await service.confirmImport(caller, clinicId, invoiceId.data);
+      const body = confirmImportSchema.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new AppError(400, "VALIDATION_ERROR", body.error.errors[0]?.message ?? "Invalid request body");
+      }
+
+      const result = await service.confirmImport(caller, clinicId, invoiceId.data, body.data);
       res.status(200).json({ data: result });
     },
 

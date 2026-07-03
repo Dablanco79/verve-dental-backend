@@ -215,6 +215,21 @@ describe("Sprint 4B — Cookie Migration", () => {
       expect(mockSetAccessToken).not.toHaveBeenCalled();
       expect(ctx().user).toBeNull();
     });
+
+    it("silently refreshes when the stored access token is expired but the refresh cookie is valid", async () => {
+      mockGetAccessToken.mockReturnValue("expired-access-token");
+      mockGetMe.mockRejectedValue(new Error("Invalid or expired access token"));
+      mockRefresh.mockResolvedValue(SESSION);
+
+      renderWithAuth();
+      await waitFor(() => { expect(ctx().isLoading).toBe(false); });
+
+      expect(mockGetMe).toHaveBeenCalledWith("expired-access-token");
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+      expect(mockSetAccessToken).toHaveBeenCalledWith(SESSION.accessToken);
+      expect(mockClearAccessToken).toHaveBeenCalledTimes(1);
+      expect(ctx().user).toEqual(ADMIN_USER);
+    });
   });
 
   describe("logout flow", () => {

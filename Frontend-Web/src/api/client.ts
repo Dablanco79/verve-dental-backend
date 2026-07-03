@@ -77,6 +77,7 @@ import type {
 } from "../types/payroll.js";
 import type {
   ConfirmImportResult,
+  ConfirmImportRequest,
   CatalogueImportConfirmResult,
   CatalogueImportPreviewResult,
   CreateSupplierRequest,
@@ -121,9 +122,44 @@ type ApiEnvelope<T> = { data: T };
 
 /** Default request timeout in milliseconds (30 s). */
 const REQUEST_TIMEOUT_MS = 30_000;
+const SESSION_EXPIRED_EVENT = "verve:session-expired";
+
+class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+let refreshPromise: Promise<AuthSession> | null = null;
 
 async function parseJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
+}
+
+function dispatchSessionExpired(): void {
+  tokenStorage.clearAccessToken();
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem("verve.sessionExpired", "1");
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+}
+
+async function refreshAccessToken(config: AppConfig): Promise<AuthSession> {
+  refreshPromise ??= request<AuthSession>(
+    config,
+    "/api/v1/auth/refresh",
+    { method: "POST" },
+    null,
+    { skipAuthRetry: true },
+  ).finally(() => {
+    refreshPromise = null;
+  });
+  return await refreshPromise;
 }
 
 async function request<T>(
@@ -131,6 +167,7 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
   accessToken?: string | null,
+  options: { skipAuthRetry?: boolean } = {},
 ): Promise<T> {
   const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
   const headers = new Headers(init.headers);
@@ -169,7 +206,20 @@ async function request<T>(
   if (!response.ok) {
     const errorBody = await parseJson<ApiErrorBody>(response).catch(() => null);
     const message = errorBody?.error.message ?? `Request failed (${String(response.status)})`;
-    throw new Error(message);
+    const code = errorBody?.error.code ?? null;
+
+    if (response.status === 401 && accessToken && !options.skipAuthRetry) {
+      try {
+        const session = await refreshAccessToken(config);
+        tokenStorage.setAccessToken(session.accessToken);
+        return await request<T>(config, path, init, session.accessToken, { skipAuthRetry: true });
+      } catch {
+        dispatchSessionExpired();
+        throw new Error("Your session expired. Please log in again.");
+      }
+    }
+
+    throw new ApiRequestError(message, response.status, code);
   }
 
   if (response.status === 204) {
@@ -1253,11 +1303,12 @@ export function createApiClient(config: AppConfig) {
   async function confirmSupplierInvoice(
     clinicId: string,
     invoiceId: string,
+    body: ConfirmImportRequest = {},
   ): Promise<ConfirmImportResult> {
     return request<ConfirmImportResult>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/confirm`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify(body) },
       requireAccessToken(),
     );
   }
