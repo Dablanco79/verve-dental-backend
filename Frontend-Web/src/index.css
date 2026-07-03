@@ -7707,8 +7707,26 @@ textarea:focus-visible {
   margin: 1rem 0;
 }
 
+.catalogue-structured-review__summary {
+  margin: 1rem 0;
+}
+
+.catalogue-structured-review__bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1rem;
+}
+
 .catalogue-structured-review__match-field {
   min-width: 240px;
+}
+
+.catalogue-structured-review__create-note {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--vds-colour-muted);
+  font-size: 0.8rem;
 }
 
 .catalogue-review {

@@ -224,6 +224,65 @@ function selectSupplier(supplierId: string): void {
   fireEvent.change(screen.getByLabelText(/Supplier \*/), { target: { value: supplierId } });
 }
 
+async function renderStructuredProductReview() {
+  mockListSuppliers.mockResolvedValue([adamDentalSupplier]);
+  mockPreviewSupplierCatalogueImport.mockResolvedValue({
+    supplierId: adamDentalSupplier.id,
+    totalRows: 2,
+    matchedRows: 1,
+    unmatchedRows: 1,
+    errorRows: 0,
+    rows: [
+      {
+        rowNumber: 2,
+        supplierSku: "GLV-100",
+        description: "Gloves",
+        rawUnitCost: "12.50",
+        unitCostCents: 1250,
+        unitOfMeasure: null,
+        matchedProductId: "product-gloves",
+        matchedProductName: "Gloves",
+        matchedProductSku: "GLV",
+        matchStatus: "name",
+        error: null,
+      },
+      {
+        rowNumber: 3,
+        supplierSku: "MASK-5",
+        description: "Masks",
+        rawUnitCost: "8.00",
+        unitCostCents: 800,
+        unitOfMeasure: null,
+        matchedProductId: null,
+        matchedProductName: null,
+        matchedProductSku: null,
+        matchStatus: "unmatched",
+        error: null,
+      },
+    ],
+  });
+
+  const rendered = renderCatalogueImportPage();
+  await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+  fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+  await screen.findByLabelText(/Supplier \*/);
+
+  const file = new File(
+    [[
+      "Supplier,Product,Quantity,Unit Price,GST,supplier_sku",
+      "Adam Dental,Gloves,2 boxes,12.50,1.25,GLV-100",
+      "Adam Dental,Masks,5 packs,8.00,0.80,MASK-5",
+    ].join("\n")],
+    "structured-actions.csv",
+    { type: "text/csv" },
+  );
+  fireEvent.change(getFileInput(rendered.container), { target: { files: [file] } });
+  await screen.findByText("Supplier column detected");
+  fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+  await screen.findByRole("heading", { name: "Structured Supplier Review" });
+  return rendered;
+}
+
 describe("CatalogueImportPage", () => {
   beforeEach(() => {
     clearAuthenticatedUser(authTestState);
@@ -490,6 +549,83 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByLabelText("Match Existing")).toBeInTheDocument();
     expect(mockPreviewSupplierCatalogueImport).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
+  });
+
+  it("renders structured row actions and actual quantity and GST values", async () => {
+    await renderStructuredProductReview();
+
+    expect(screen.getAllByText("Actions").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Approve" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Edit" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Skip" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Create Product" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("2 boxes")).toBeInTheDocument();
+    expect(screen.getByText("5 packs")).toBeInTheDocument();
+    expect(screen.getByText("1.25")).toBeInTheDocument();
+    expect(screen.getByText("0.80")).toBeInTheDocument();
+    expect(screen.queryByText("Not imported")).not.toBeInTheDocument();
+  });
+
+  it("allows approving, skipping, and marking structured rows as create-product pending", async () => {
+    await renderStructuredProductReview();
+
+    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(1);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[1] as HTMLElement);
+    expect(screen.getAllByText("Skipped").length).toBeGreaterThan(1);
+    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
+    expect(screen.getByText("Create Product Pending")).toBeInTheDocument();
+    expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
+  });
+
+  it("supports editing structured rows locally", async () => {
+    await renderStructuredProductReview();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
+    fireEvent.change(screen.getByLabelText("Product name for structured row 2"), {
+      target: { value: "Edited Gloves" },
+    });
+    fireEvent.change(screen.getByLabelText("Quantity for structured row 2"), {
+      target: { value: "3 cartons" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
+
+    expect(screen.getByText("Edited")).toBeInTheDocument();
+    expect(screen.getByText("Edited Gloves")).toBeInTheDocument();
+    expect(screen.getByText("3 cartons")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
+  });
+
+  it("bulk approves structured rows and keeps processing local to catalogue review", async () => {
+    await renderStructuredProductReview();
+
+    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Approve all visible rows" }));
+
+    expect(screen.getAllByText("Approved").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Still requiring review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Process Reviewed Rows" }));
+
+    expect(screen.getByText(/2 structured catalogue rows prepared for catalogue import/)).toBeInTheDocument();
+    expect(mockConfirmSupplierCatalogueImport).not.toHaveBeenCalled();
+    expect(mockUploadSupplierInvoice).not.toHaveBeenCalled();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+  });
+
+  it("bulk marks unmatched structured rows as create-product pending", async () => {
+    await renderStructuredProductReview();
+
+    expect(screen.getByText("Unmatched Product")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark all unmatched as Create Product Pending" }));
+
+    expect(screen.getByText("Create Product Pending")).toBeInTheDocument();
+    expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
   });
 
   it("routes Review Required imports to the catalogue review workspace", async () => {

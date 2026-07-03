@@ -69,6 +69,36 @@ type StructuredReviewGroup = {
   error: string | null;
 };
 
+type StructuredRowReviewState =
+  | "Review Required"
+  | "Approved"
+  | "Edited"
+  | "Skipped"
+  | "Create Product Pending"
+  | "Unmatched Product";
+
+type StructuredRowDraft = {
+  productName: string;
+  quantity: string;
+  unitPrice: string;
+  gst: string;
+  supplierSku: string;
+};
+
+type StructuredReviewDisplayRow = {
+  rowNumber: number;
+  sourceRow: StructuredImportRow | null;
+  previewRow: CatalogueImportRow | null;
+};
+
+type StructuredSupplierSummary = {
+  totalRows: number;
+  approved: number;
+  skipped: number;
+  createProductPending: number;
+  stillRequiringReview: number;
+};
+
 function canCancelImportStatus(status: CatalogueImportStatus): boolean {
   return status === "Uploaded" || status === "Processing" || status === "Review Required";
 }
@@ -204,8 +234,42 @@ function buildHistoryFromInvoices(
   }));
 }
 
-function isCataloguePreviewRow(row: CatalogueImportRow | StructuredImportRow): row is CatalogueImportRow {
-  return "matchStatus" in row;
+function structuredRowKey(supplierName: string, rowNumber: number): string {
+  return `${supplierName}::${String(rowNumber)}`;
+}
+
+function buildStructuredDisplayRows(group: StructuredReviewGroup): StructuredReviewDisplayRow[] {
+  const sourceByRow = new Map(group.rows.map((row) => [row.rowNumber, row]));
+  const previewByRow = new Map((group.preview?.rows ?? []).map((row) => [row.rowNumber, row]));
+  const rowNumbers = new Set([...sourceByRow.keys(), ...previewByRow.keys()]);
+  return Array.from(rowNumbers)
+    .sort((a, b) => a - b)
+    .map((rowNumber) => ({
+      rowNumber,
+      sourceRow: sourceByRow.get(rowNumber) ?? null,
+      previewRow: previewByRow.get(rowNumber) ?? null,
+    }));
+}
+
+function defaultStructuredRowState(row: StructuredReviewDisplayRow): StructuredRowReviewState {
+  if (row.previewRow?.matchStatus === "unmatched" || row.previewRow?.error) {
+    return "Unmatched Product";
+  }
+  return "Review Required";
+}
+
+function isStructuredTerminalState(state: StructuredRowReviewState): boolean {
+  return state === "Approved" || state === "Skipped" || state === "Create Product Pending";
+}
+
+function buildStructuredRowDraft(row: StructuredReviewDisplayRow): StructuredRowDraft {
+  return {
+    productName: row.sourceRow?.productName ?? row.previewRow?.description ?? "",
+    quantity: row.sourceRow?.quantity ?? "",
+    unitPrice: row.sourceRow?.unitPrice ?? row.previewRow?.rawUnitCost ?? "",
+    gst: row.sourceRow?.gst ?? "",
+    supplierSku: row.previewRow?.supplierSku ?? "",
+  };
 }
 
 function sourceProcessingCopy(sourceId: ImportSourceId): string {
@@ -243,6 +307,9 @@ export function CatalogueImportPage() {
   const [pageToast, setPageToast] = useState<string | null>(null);
   const [structuredAnalysis, setStructuredAnalysis] = useState<StructuredImportAnalysis | null>(null);
   const [structuredReviewGroups, setStructuredReviewGroups] = useState<StructuredReviewGroup[]>([]);
+  const [structuredRowStates, setStructuredRowStates] = useState<Record<string, StructuredRowReviewState>>({});
+  const [structuredRowDrafts, setStructuredRowDrafts] = useState<Record<string, StructuredRowDraft>>({});
+  const [editingStructuredRowKey, setEditingStructuredRowKey] = useState<string | null>(null);
   const [supplierSelections, setSupplierSelections] = useState<Record<string, string>>({});
   const [isAnalysingFile, setIsAnalysingFile] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<ImportHistoryRow | null>(null);
@@ -258,15 +325,26 @@ export function CatalogueImportPage() {
   );
   const selectedSupplier = activeSuppliers.find((supplier) => supplier.id === supplierId) ?? null;
   const requiresSupplier = isStructuredSource(selectedSourceId) && !structuredAnalysis?.hasSupplierColumn;
+  const hasStructuredReview = structuredReviewGroups.length > 0;
+  const canProcessStructuredReview =
+    hasStructuredReview &&
+    structuredReviewGroups.every((group) =>
+      buildStructuredDisplayRows(group).every((row) => {
+        const state = structuredRowStates[structuredRowKey(group.supplierName, row.rowNumber)] ?? defaultStructuredRowState(row);
+        return isStructuredTerminalState(state);
+      }),
+    );
   const canUpload =
-    canUseCatalogueImport &&
-    !!selectedFile &&
-    !fileError &&
-    !isAnalysingFile &&
-    !isUploading &&
-    !isAllClinicsScope &&
-    selectedSourceId !== "supplier_api" &&
-    (!requiresSupplier || !!supplierId);
+    hasStructuredReview
+      ? canUseCatalogueImport && canProcessStructuredReview && !isUploading && !isAllClinicsScope
+      : canUseCatalogueImport &&
+        !!selectedFile &&
+        !fileError &&
+        !isAnalysingFile &&
+        !isUploading &&
+        !isAllClinicsScope &&
+        selectedSourceId !== "supplier_api" &&
+        (!requiresSupplier || !!supplierId);
 
   const loadImportWorkspace = useCallback(async () => {
     if (!user || !canUseCatalogueImport) {
@@ -318,6 +396,9 @@ export function CatalogueImportPage() {
     setUploadStatus("Pending");
     setStructuredAnalysis(null);
     setStructuredReviewGroups([]);
+    setStructuredRowStates({});
+    setStructuredRowDrafts({});
+    setEditingStructuredRowKey(null);
     setSupplierSelections({});
 
     if (error || !isStructuredSource(selectedSourceId)) return;
@@ -355,6 +436,9 @@ export function CatalogueImportPage() {
     setUploadStatus("Pending");
     setStructuredAnalysis(null);
     setStructuredReviewGroups([]);
+    setStructuredRowStates({});
+    setStructuredRowDrafts({});
+    setEditingStructuredRowKey(null);
     setSupplierSelections({});
     setSupplierId("");
   }
@@ -387,6 +471,82 @@ export function CatalogueImportPage() {
     setStructuredReviewGroups((current) =>
       current.map((group) => (group.supplierName === nextGroup.supplierName ? nextGroup : group)),
     );
+  }
+
+  function getStructuredRowState(group: StructuredReviewGroup, row: StructuredReviewDisplayRow): StructuredRowReviewState {
+    return structuredRowStates[structuredRowKey(group.supplierName, row.rowNumber)] ?? defaultStructuredRowState(row);
+  }
+
+  function setStructuredRowState(group: StructuredReviewGroup, row: StructuredReviewDisplayRow, state: StructuredRowReviewState): void {
+    const key = structuredRowKey(group.supplierName, row.rowNumber);
+    setStructuredRowStates((current) => ({ ...current, [key]: state }));
+    if (editingStructuredRowKey === key) {
+      setEditingStructuredRowKey(null);
+    }
+  }
+
+  function startEditingStructuredRow(group: StructuredReviewGroup, row: StructuredReviewDisplayRow): void {
+    const key = structuredRowKey(group.supplierName, row.rowNumber);
+    setStructuredRowDrafts((current) => ({
+      ...current,
+      [key]: current[key] ?? buildStructuredRowDraft(row),
+    }));
+    setEditingStructuredRowKey(key);
+  }
+
+  function updateStructuredRowDraft(
+    key: string,
+    field: keyof StructuredRowDraft,
+    value: string,
+  ): void {
+    setStructuredRowDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? { productName: "", quantity: "", unitPrice: "", gst: "", supplierSku: "" }),
+        [field]: value,
+      },
+    }));
+  }
+
+  function saveStructuredRowEdit(group: StructuredReviewGroup, row: StructuredReviewDisplayRow): void {
+    setStructuredRowState(group, row, "Edited");
+  }
+
+  function setAllStructuredGroupRows(group: StructuredReviewGroup, state: StructuredRowReviewState): void {
+    const rows = buildStructuredDisplayRows(group);
+    setStructuredRowStates((current) => ({
+      ...current,
+      ...Object.fromEntries(rows.map((row) => [structuredRowKey(group.supplierName, row.rowNumber), state])),
+    }));
+    setEditingStructuredRowKey(null);
+  }
+
+  function markUnmatchedStructuredGroupRowsForCreate(group: StructuredReviewGroup): void {
+    const unmatchedRows = buildStructuredDisplayRows(group).filter(
+      (row) => getStructuredRowState(group, row) === "Unmatched Product",
+    );
+    setStructuredRowStates((current) => ({
+      ...current,
+      ...Object.fromEntries(
+        unmatchedRows.map((row) => [
+          structuredRowKey(group.supplierName, row.rowNumber),
+          "Create Product Pending" satisfies StructuredRowReviewState,
+        ]),
+      ),
+    }));
+    setEditingStructuredRowKey(null);
+  }
+
+  function getStructuredSupplierSummary(group: StructuredReviewGroup): StructuredSupplierSummary {
+    const rows = buildStructuredDisplayRows(group);
+    const states = rows.map((row) => getStructuredRowState(group, row));
+    return {
+      totalRows: rows.length,
+      approved: states.filter((state) => state === "Approved").length,
+      skipped: states.filter((state) => state === "Skipped").length,
+      createProductPending: states.filter((state) => state === "Create Product Pending").length,
+      stillRequiringReview: states.filter((state) => !isStructuredTerminalState(state)).length,
+    };
   }
 
   async function handleCancelImport(): Promise<void> {
@@ -506,7 +666,26 @@ export function CatalogueImportPage() {
     await handleAssignSupplier(group, created);
   }
 
+  function handleProcessStructuredReview(): void {
+    if (!canProcessStructuredReview) {
+      setUploadError("Review all structured rows before processing. Rows must be approved, skipped, or marked Create Product Pending.");
+      return;
+    }
+
+    const totalRows = structuredReviewGroups.reduce((sum, group) => sum + buildStructuredDisplayRows(group).length, 0);
+    setUploadError(null);
+    setUploadStatus("Review Required");
+    setProcessingSummary(
+      `${String(totalRows)} structured catalogue rows prepared for catalogue import. No stock quantities, receiving events, or scan records were changed.`,
+    );
+  }
+
   async function handleUpload(): Promise<void> {
+    if (hasStructuredReview) {
+      handleProcessStructuredReview();
+      return;
+    }
+
     if (!selectedFile || !selectedClinicId) return;
 
     const validationError = validateFile(selectedFile, selectedSource);
@@ -788,7 +967,7 @@ export function CatalogueImportPage() {
                   void handleUpload();
                 }}
               >
-                {isUploading ? "Processing..." : "Upload & Process"}
+                {hasStructuredReview ? "Process Reviewed Rows" : isUploading ? "Processing..." : "Upload & Process"}
               </button>
               <span className="catalogue-import-page__safety-note">
                 No inventory adjustments, stock quantity changes, or receiving timeline events are created.
@@ -885,34 +1064,247 @@ export function CatalogueImportPage() {
                 ) : null}
 
                 {group.error ? <p className="status-card__error" role="alert">{group.error}</p> : null}
+                {(() => {
+                  const summary = getStructuredSupplierSummary(group);
+                  return (
+                    <>
+                      <dl className="po-summary__stats catalogue-structured-review__summary">
+                        <div>
+                          <dt>Total rows</dt>
+                          <dd>{summary.totalRows}</dd>
+                        </div>
+                        <div>
+                          <dt>Approved</dt>
+                          <dd>{summary.approved}</dd>
+                        </div>
+                        <div>
+                          <dt>Skipped</dt>
+                          <dd>{summary.skipped}</dd>
+                        </div>
+                        <div>
+                          <dt>Create product pending</dt>
+                          <dd>{summary.createProductPending}</dd>
+                        </div>
+                        <div>
+                          <dt>Still requiring review</dt>
+                          <dd>{summary.stillRequiringReview}</dd>
+                        </div>
+                      </dl>
+                      <div className="catalogue-structured-review__bulk-actions">
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            setAllStructuredGroupRows(group, "Approved");
+                          }}
+                        >
+                          Approve all visible rows
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            setAllStructuredGroupRows(group, "Skipped");
+                          }}
+                        >
+                          Skip all visible rows
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            markUnmatchedStructuredGroupRowsForCreate(group);
+                          }}
+                        >
+                          Mark all unmatched as Create Product Pending
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
 
                 <div className="inventory-table-wrap">
                   <table className="inventory-table catalogue-import-table">
                     <thead>
                       <tr>
                         <th>Row</th>
+                        <th>Supplier SKU</th>
                         <th>Product</th>
                         <th>Quantity</th>
                         <th>Unit Price</th>
                         <th>GST</th>
                         <th>Match status</th>
+                        <th>Review state</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(group.preview?.rows ?? group.rows).map((row) => (
-                        <tr key={row.rowNumber}>
-                          <td>{row.rowNumber}</td>
-                          <td>{isCataloguePreviewRow(row) ? row.description ?? "Not available" : row.productName ?? "Not available"}</td>
-                          <td>{isCataloguePreviewRow(row) ? "Not imported" : row.quantity ?? "Not available"}</td>
-                          <td>{isCataloguePreviewRow(row) ? row.rawUnitCost ?? "Not available" : row.unitPrice ?? "Not available"}</td>
-                          <td>{isCataloguePreviewRow(row) ? "Not imported" : row.gst ?? "Not available"}</td>
-                          <td>
-                            {isCataloguePreviewRow(row)
-                              ? row.error ?? (row.matchStatus === "unmatched" ? "Unmatched product" : `Matched by ${row.matchStatus}`)
-                              : "Pending supplier match"}
-                          </td>
-                        </tr>
-                      ))}
+                      {buildStructuredDisplayRows(group).map((row) => {
+                        const key = structuredRowKey(group.supplierName, row.rowNumber);
+                        const state = getStructuredRowState(group, row);
+                        const isEditing = editingStructuredRowKey === key;
+                        const draft = structuredRowDrafts[key] ?? buildStructuredRowDraft(row);
+                        const supplierSku = draft.supplierSku || "Not available";
+                        const productName = draft.productName || "Not available";
+                        const quantity = draft.quantity || "Not available";
+                        const unitPrice = draft.unitPrice || "Not available";
+                        const gst = draft.gst || "Not available";
+                        const matchStatus = row.previewRow
+                          ? row.previewRow.error ?? (row.previewRow.matchStatus === "unmatched" ? "Unmatched product" : `Matched by ${row.previewRow.matchStatus}`)
+                          : "Pending supplier match";
+
+                        return (
+                          <tr key={row.rowNumber}>
+                            <td>{row.rowNumber}</td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={draft.supplierSku}
+                                  onChange={(event) => {
+                                    updateStructuredRowDraft(key, "supplierSku", event.target.value);
+                                  }}
+                                  aria-label={`Supplier SKU for structured row ${String(row.rowNumber)}`}
+                                />
+                              ) : (
+                                supplierSku
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={draft.productName}
+                                  onChange={(event) => {
+                                    updateStructuredRowDraft(key, "productName", event.target.value);
+                                  }}
+                                  aria-label={`Product name for structured row ${String(row.rowNumber)}`}
+                                />
+                              ) : (
+                                productName
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={draft.quantity}
+                                  onChange={(event) => {
+                                    updateStructuredRowDraft(key, "quantity", event.target.value);
+                                  }}
+                                  aria-label={`Quantity for structured row ${String(row.rowNumber)}`}
+                                />
+                              ) : (
+                                quantity
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={draft.unitPrice}
+                                  onChange={(event) => {
+                                    updateStructuredRowDraft(key, "unitPrice", event.target.value);
+                                  }}
+                                  aria-label={`Unit price for structured row ${String(row.rowNumber)}`}
+                                />
+                              ) : (
+                                unitPrice
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="catalogue-review__edit-input"
+                                  value={draft.gst}
+                                  onChange={(event) => {
+                                    updateStructuredRowDraft(key, "gst", event.target.value);
+                                  }}
+                                  aria-label={`GST for structured row ${String(row.rowNumber)}`}
+                                />
+                              ) : (
+                                gst
+                              )}
+                            </td>
+                            <td>{matchStatus}</td>
+                            <td>
+                              <span className={`catalogue-line-state catalogue-line-state--${state.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {state}
+                              </span>
+                              {state === "Create Product Pending" ? (
+                                <span className="catalogue-structured-review__create-note">
+                                  Creates catalogue product only. Does not change stock.
+                                </span>
+                              ) : null}
+                            </td>
+                            <td>
+                              <div className="catalogue-review__line-actions">
+                                {isEditing ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        saveStructuredRowEdit(group, row);
+                                      }}
+                                    >
+                                      Save edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setEditingStructuredRowKey(null);
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setStructuredRowState(group, row, "Approved");
+                                      }}
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        startEditingStructuredRow(group, row);
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setStructuredRowState(group, row, "Skipped");
+                                      }}
+                                    >
+                                      Skip
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setStructuredRowState(group, row, "Create Product Pending");
+                                      }}
+                                    >
+                                      Create Product
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
