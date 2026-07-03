@@ -7681,6 +7681,12 @@ textarea:focus-visible {
   color: var(--vds-colour-heading);
 }
 
+.catalogue-import-table__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .catalogue-review {
   display: grid;
   gap: 1.25rem;

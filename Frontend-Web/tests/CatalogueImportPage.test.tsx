@@ -134,6 +134,19 @@ const invoiceImport = {
   updatedAt: "2026-07-01T02:30:00.000Z",
 } as SupplierInvoice;
 
+function buildInvoiceImport(
+  id: string,
+  originalFilename: string,
+  status: SupplierInvoice["status"],
+): SupplierInvoice {
+  return {
+    ...invoiceImport,
+    id,
+    originalFilename,
+    status,
+  };
+}
+
 const matchedLine = {
   id: "line-1",
   invoiceId: invoiceImport.id,
@@ -264,6 +277,69 @@ describe("CatalogueImportPage", () => {
       "href",
       "/inventory/catalogue-import/invoice-1/review",
     );
+    expect(screen.getByRole("button", { name: /Cancel invoice-100\.pdf/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Delete invoice-100\.pdf/ })).not.toBeInTheDocument();
+  });
+
+  it("renders lifecycle actions for each import status without delete", async () => {
+    mockListClinicSupplierInvoices.mockResolvedValue([
+      buildInvoiceImport("review-import", "review-required.pdf", "pending_review"),
+      buildInvoiceImport("processing-import", "processing.pdf", "processing"),
+      buildInvoiceImport("imported-import", "imported.pdf", "confirmed"),
+      buildInvoiceImport("cancelled-import", "cancelled.pdf", "cancelled"),
+      buildInvoiceImport("failed-import", "failed.pdf", "failed"),
+    ]);
+
+    renderCatalogueImportPage();
+
+    expect(await screen.findByRole("link", { name: /Review review-required\.pdf/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cancel review-required\.pdf/ })).toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: /View processing\.pdf/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cancel processing\.pdf/ })).toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: /View imported\.pdf/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel imported\.pdf/ })).not.toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: /View cancelled\.pdf/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel cancelled\.pdf/ })).not.toBeInTheDocument();
+
+    expect(screen.getByRole("link", { name: /View failed\.pdf/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry failed\.pdf/ })).toBeDisabled();
+
+    expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
+  });
+
+  it("cancels an import from the imported files list and refreshes to Cancelled", async () => {
+    const cancelledImport = buildInvoiceImport("invoice-1", "invoice-100.pdf", "cancelled");
+    let hasCancelled = false;
+    mockListClinicSupplierInvoices.mockImplementation(() => Promise.resolve(hasCancelled ? [cancelledImport] : [invoiceImport]));
+    mockCancelSupplierInvoiceImport.mockImplementation(() => {
+      hasCancelled = true;
+      return Promise.resolve(cancelledImport);
+    });
+
+    renderCatalogueImportPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Cancel invoice-100\.pdf/ }));
+
+    expect(screen.getByRole("dialog", { name: "Cancel Import?" })).toBeInTheDocument();
+    expect(
+      screen.getByText("This will discard invoice-100.pdf and all extracted catalogue review data. No products, pricing or inventory changes will be saved."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Import" }));
+
+    await waitFor(() => {
+      expect(mockCancelSupplierInvoiceImport).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
+    });
+    await waitFor(() => {
+      expect(mockListClinicSupplierInvoices.mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(await screen.findByText("Import cancelled.")).toBeInTheDocument();
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /View invoice-100\.pdf/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel invoice-100\.pdf/ })).not.toBeInTheDocument();
   });
 
   it("imports structured catalogue files without adjusting inventory", async () => {
@@ -360,8 +436,7 @@ describe("CatalogueImportPage", () => {
     await waitFor(() => {
       expect(mockCancelSupplierInvoiceImport).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
     });
-    expect(await screen.findByText("Import cancelled.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upload & Process" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Upload & Process" })).toBeInTheDocument();
   });
 
   it("renders line actions and allows approving a line locally", async () => {

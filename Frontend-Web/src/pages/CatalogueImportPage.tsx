@@ -5,6 +5,7 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
 import type {
   CatalogueImportConfirmResult,
@@ -50,6 +51,10 @@ type ImportHistoryRow = {
   uploadedAt: string;
   status: CatalogueImportStatus;
 };
+
+function canCancelImportStatus(status: CatalogueImportStatus): boolean {
+  return status === "Uploaded" || status === "Processing" || status === "Review Required";
+}
 
 const IMPORT_SOURCES: ImportSource[] = [
   {
@@ -214,6 +219,8 @@ export function CatalogueImportPage() {
   const [uploadStatus, setUploadStatus] = useState<CatalogueImportStatus>("Pending");
   const [processingSummary, setProcessingSummary] = useState<string | null>(null);
   const [pageToast, setPageToast] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<ImportHistoryRow | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -308,6 +315,27 @@ export function CatalogueImportPage() {
 
   function addLocalImport(row: ImportHistoryRow): void {
     setImports((current) => [row, ...current.filter((item) => item.id !== row.id)]);
+  }
+
+  async function handleCancelImport(): Promise<void> {
+    if (!cancelTarget || !selectedClinicId || !canCancelImportStatus(cancelTarget.status)) return;
+
+    setIsCancelling(true);
+    setLoadError(null);
+    try {
+      await apiClient.cancelSupplierInvoiceImport(selectedClinicId, cancelTarget.id);
+      setImports((current) =>
+        current.map((item) => (item.id === cancelTarget.id ? { ...item, status: "Cancelled" } : item)),
+      );
+      setPageToast("Import cancelled.");
+      setCancelTarget(null);
+      await loadImportWorkspace();
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : "Catalogue import could not be cancelled.");
+      throw err;
+    } finally {
+      setIsCancelling(false);
+    }
   }
 
   function summarizePreview(preview: CatalogueImportPreviewResult): string {
@@ -638,36 +666,77 @@ export function CatalogueImportPage() {
                 </tr>
               </thead>
               <tbody>
-                {imports.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.fileName}</td>
-                    <td>{item.supplierName}</td>
-                    <td>{formatUploadDate(item.uploadedAt)}</td>
-                    <td>
-                      <span className={`catalogue-status catalogue-status--${item.status.toLowerCase().replace(/\s+/g, "-")}`}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td>
-                      {item.status === "Review Required" ? (
-                        <Link
-                          to={`/inventory/catalogue-import/${encodeURIComponent(item.id)}/review`}
-                          className="link-button"
-                        >
-                          Review
-                          <span className="visually-hidden"> {item.fileName}</span>
-                        </Link>
-                      ) : (
-                        <span className="inventory-table__meta">No action</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {imports.map((item) => {
+                  const reviewPath = `/inventory/catalogue-import/${encodeURIComponent(item.id)}/review`;
+                  const canCancel = canCancelImportStatus(item.status);
+                  const primaryActionLabel = item.status === "Review Required" ? "Review" : "View";
+
+                  return (
+                    <tr key={item.id}>
+                      <td>{item.fileName}</td>
+                      <td>{item.supplierName}</td>
+                      <td>{formatUploadDate(item.uploadedAt)}</td>
+                      <td>
+                        <span className={`catalogue-status catalogue-status--${item.status.toLowerCase().replace(/\s+/g, "-")}`}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="catalogue-import-table__actions">
+                          <Link
+                            to={reviewPath}
+                            className="link-button"
+                          >
+                            {primaryActionLabel}
+                            <span className="visually-hidden"> {item.fileName}</span>
+                          </Link>
+                          {canCancel ? (
+                            <button
+                              type="button"
+                              className="link-button catalogue-review__cancel-button"
+                              onClick={() => {
+                                setCancelTarget(item);
+                              }}
+                              disabled={isCancelling}
+                            >
+                              Cancel
+                              <span className="visually-hidden"> {item.fileName}</span>
+                            </button>
+                          ) : null}
+                          {item.status === "Failed" ? (
+                            <button
+                              type="button"
+                              className="link-button"
+                              disabled
+                              title="Retry will be available when the backend exposes it."
+                            >
+                              Retry
+                              <span className="visually-hidden"> {item.fileName}</span>
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : null}
       </section>
+      {cancelTarget ? (
+        <ConfirmModal
+          title="Cancel Import?"
+          message={`This will discard ${cancelTarget.fileName} and all extracted catalogue review data. No products, pricing or inventory changes will be saved.`}
+          cancelLabel="Keep Import"
+          confirmLabel={isCancelling ? "Cancelling..." : "Cancel Import"}
+          confirmVariant="danger"
+          onClose={() => {
+            if (!isCancelling) setCancelTarget(null);
+          }}
+          onConfirm={handleCancelImport}
+        />
+      ) : null}
     </AppShell>
   );
 }
