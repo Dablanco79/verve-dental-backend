@@ -80,6 +80,8 @@ import type {
   ConfirmImportRequest,
   CatalogueImportConfirmResult,
   CatalogueImportPreviewResult,
+  ReviewedCatalogueImportRequest,
+  ReviewedCatalogueImportResult,
   CreateSupplierRequest,
   ListSupplierInvoicesParams,
   ListSuppliersParams,
@@ -1156,6 +1158,18 @@ export function createApiClient(config: AppConfig) {
     return envelope.data;
   }
 
+  async function confirmReviewedSupplierCatalogueImport(
+    supplierId: string,
+    body: ReviewedCatalogueImportRequest,
+  ): Promise<ReviewedCatalogueImportResult> {
+    return request<ReviewedCatalogueImportResult>(
+      config,
+      `/api/v1/suppliers/${encodeURIComponent(supplierId)}/catalogue/import/confirm-reviewed`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function listClinicSupplierInvoices(
     clinicId: string,
     params?: ListSupplierInvoicesParams,
@@ -1800,6 +1814,7 @@ export function createApiClient(config: AppConfig) {
     getSupplierCatalogue,
     previewSupplierCatalogueImport,
     confirmSupplierCatalogueImport,
+    confirmReviewedSupplierCatalogueImport,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,
     getSupplierInvoice,

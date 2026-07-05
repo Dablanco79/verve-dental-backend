@@ -449,6 +449,8 @@ export async function createAppDependencies(
     supplierCatalogueRepository,
     supplierRepository,
     productMatchingService,
+    catalogRepository,
+    inventoryRepository,
   );
 
   // Supplier Invoice OCR — Sprint OCR-1.

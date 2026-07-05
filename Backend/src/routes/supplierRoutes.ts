@@ -143,6 +143,13 @@ export function createSupplierRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => importHandlers.confirm(req, res)),
   );
 
+  router.post(
+    "/:supplierId/catalogue/import/confirm-reviewed",
+    authenticate,
+    requireWriteAccess,
+    asyncHandler((req, res) => importHandlers.confirmReviewed(req, res)),
+  );
+
   // ── Product pricing lookup (cross-supplier) ────────────────────────────────
   // GET /products/:productId/pricing — returns all supplier prices for a product
 

@@ -11,6 +11,7 @@ import type {
   CatalogueImportConfirmResult,
   CatalogueImportPreviewResult,
   CatalogueImportRow,
+  ReviewedCatalogueImportRow,
   Supplier,
   SupplierInvoice,
 } from "../types/supplier.js";
@@ -243,6 +244,14 @@ function displayImportValue(value: string | null | undefined): string {
   return value && value.trim().length > 0 ? value : "Missing";
 }
 
+function parseMoneyToCents(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[$,\s]/g, "");
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed * 100);
+}
+
 function isStructuredSource(sourceId: ImportSourceId): boolean {
   return sourceId === "csv" || sourceId === "xlsx";
 }
@@ -406,6 +415,7 @@ export function CatalogueImportPage() {
   const hasStructuredReview = structuredReviewGroups.length > 0;
   const canProcessStructuredReview =
     hasStructuredReview &&
+    structuredReviewGroups.every((group) => group.matchedSupplier !== null) &&
     structuredReviewGroups.every((group) =>
       buildStructuredDisplayRows(group).every((row) => {
         const state = structuredRowStates[structuredRowKey(group.supplierName, row.rowNumber)] ?? defaultStructuredRowState(row);
@@ -889,23 +899,86 @@ export function CatalogueImportPage() {
     await handleAssignSupplier(group, created);
   }
 
-  function handleProcessStructuredReview(): void {
+  function buildReviewedRowsForGroup(group: StructuredReviewGroup): ReviewedCatalogueImportRow[] {
+    return buildStructuredDisplayRows(group).map((row) => {
+      const key = structuredRowKey(group.supplierName, row.rowNumber);
+      const draft = structuredRowDrafts[key] ?? buildStructuredRowDraft(row);
+      const state = getStructuredRowState(group, row);
+      return {
+        rowNumber: row.rowNumber,
+        state: state === "Needs Review" ? "Skipped" : state,
+        supplierSku: draft.supplierSku.trim() || null,
+        description: draft.productName.trim() || null,
+        unitCostCents: parseMoneyToCents(draft.unitPrice) ?? row.previewRow?.unitCostCents ?? null,
+        unitOfMeasure: draft.quantity.trim() || (row.previewRow?.unitOfMeasure ?? null),
+        matchedProductId: row.previewRow?.matchedProductId ?? null,
+      };
+    });
+  }
+
+  async function handleProcessStructuredReview(): Promise<void> {
     if (!canProcessStructuredReview) {
-      setUploadError("Review all structured rows before processing. Rows must be approved, skipped, matched to an existing product, or marked ready to create.");
+      setUploadError("Review all structured rows and match every supplier before importing. Rows must be approved, skipped, matched to an existing product, or marked ready to create.");
       return;
     }
+    if (!selectedClinicId || !structuredSessionMetadata) return;
 
-    const totalRows = structuredReviewGroups.reduce((sum, group) => sum + buildStructuredDisplayRows(group).length, 0);
+    setIsUploading(true);
     setUploadError(null);
-    setUploadStatus("Review Required");
-    setProcessingSummary(
-      `${String(totalRows)} structured catalogue rows prepared for catalogue import. No stock quantities, receiving events, or scan records were changed.`,
-    );
+    setProcessingSummary(null);
+    setUploadStatus("Processing");
+
+    try {
+      let imported = 0;
+      let updated = 0;
+      let skipped = 0;
+      let errors = 0;
+      let createdProducts = 0;
+
+      for (const group of structuredReviewGroups) {
+        if (!group.matchedSupplier) continue;
+        const result = await apiClient.confirmReviewedSupplierCatalogueImport(group.matchedSupplier.id, {
+          clinicId: selectedClinicId,
+          rows: buildReviewedRowsForGroup(group),
+        });
+        imported += result.imported;
+        updated += result.updated;
+        skipped += result.skipped;
+        errors += result.errors;
+        createdProducts += result.createdProducts;
+      }
+
+      if (errors > 0) {
+        setUploadStatus("Review Required");
+        setUploadError(`${String(errors)} reviewed catalogue rows could not be imported. Please review the row data and try again.`);
+        setProcessingSummary(`${String(imported)} imported, ${String(updated)} updated, ${String(skipped)} skipped, ${String(createdProducts)} products created.`);
+        return;
+      }
+
+      const completedSessionId = structuredSessionMetadata.id;
+      resetStructuredReviewSession({ clearStorage: true });
+      setUploadStatus("Imported");
+      setPageToast(
+        `Catalogue import completed. ${String(createdProducts)} products created, ${String(imported)} imported, ${String(updated)} updated, ${String(skipped)} skipped.`,
+      );
+      setImports((current) =>
+        current.map((item) => (
+          item.id === completedSessionId
+            ? { ...item, status: "Imported", isLocalSession: false }
+            : item
+        )),
+      );
+    } catch (err: unknown) {
+      setUploadStatus("Failed");
+      setUploadError(err instanceof Error ? err.message : "Reviewed catalogue rows could not be imported.");
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   async function handleUpload(): Promise<void> {
     if (hasStructuredReview) {
-      handleProcessStructuredReview();
+      void handleProcessStructuredReview();
       return;
     }
 
@@ -1211,7 +1284,7 @@ export function CatalogueImportPage() {
                   void handleUpload();
                 }}
               >
-                {hasStructuredReview ? "Process Reviewed Rows" : isUploading ? "Processing..." : "Upload & Process"}
+                {hasStructuredReview ? (isUploading ? "Importing..." : "Import Reviewed Products") : isUploading ? "Processing..." : "Upload & Process"}
               </button>
               <span className="catalogue-import-page__safety-note">
                 No inventory adjustments, stock quantity changes, or receiving timeline events are created.
@@ -1521,35 +1594,17 @@ export function CatalogueImportPage() {
                                     </button>
                                   </>
                                 ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setStructuredRowState(group, row, "Approved");
-                                      }}
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        startEditingStructuredRow(group, row);
-                                      }}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setStructuredRowState(group, row, "Skipped");
-                                      }}
-                                    >
-                                      Skip
-                                    </button>
-                                    {state === "Ready to Create" ? (
+                                  state === "Ready to Create" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          startEditingStructuredRow(group, row);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
                                       <button
                                         type="button"
                                         className="link-button"
@@ -1559,7 +1614,36 @@ export function CatalogueImportPage() {
                                       >
                                         Undo
                                       </button>
-                                    ) : (
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setStructuredRowState(group, row, "Approved");
+                                        }}
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          startEditingStructuredRow(group, row);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setStructuredRowState(group, row, "Skipped");
+                                        }}
+                                      >
+                                        Skip
+                                      </button>
                                       <button
                                         type="button"
                                         className="link-button"
@@ -1569,8 +1653,8 @@ export function CatalogueImportPage() {
                                       >
                                         Create Product
                                       </button>
-                                    )}
-                                  </>
+                                    </>
+                                  )
                                 )}
                               </div>
                             </td>

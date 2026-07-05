@@ -19,6 +19,7 @@ const {
   mockListClinicSupplierInvoices,
   mockPreviewSupplierCatalogueImport,
   mockConfirmSupplierCatalogueImport,
+  mockConfirmReviewedSupplierCatalogueImport,
   mockUploadSupplierInvoice,
   mockGetSupplierInvoice,
   mockUpdateSupplierInvoiceLine,
@@ -50,6 +51,7 @@ const {
     mockListClinicSupplierInvoices: vi.fn(),
     mockPreviewSupplierCatalogueImport: vi.fn(),
     mockConfirmSupplierCatalogueImport: vi.fn(),
+    mockConfirmReviewedSupplierCatalogueImport: vi.fn(),
     mockUploadSupplierInvoice: vi.fn(),
     mockGetSupplierInvoice: vi.fn(),
     mockUpdateSupplierInvoiceLine: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock("../src/api/client.js", () => ({
     listClinicSupplierInvoices: mockListClinicSupplierInvoices,
     previewSupplierCatalogueImport: mockPreviewSupplierCatalogueImport,
     confirmSupplierCatalogueImport: mockConfirmSupplierCatalogueImport,
+    confirmReviewedSupplierCatalogueImport: mockConfirmReviewedSupplierCatalogueImport,
     uploadSupplierInvoice: mockUploadSupplierInvoice,
     getSupplierInvoice: mockGetSupplierInvoice,
     updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
@@ -300,6 +303,7 @@ describe("CatalogueImportPage", () => {
     mockListClinicSupplierInvoices.mockReset();
     mockPreviewSupplierCatalogueImport.mockReset();
     mockConfirmSupplierCatalogueImport.mockReset();
+    mockConfirmReviewedSupplierCatalogueImport.mockReset();
     mockUploadSupplierInvoice.mockReset();
     mockGetSupplierInvoice.mockReset();
     mockUpdateSupplierInvoiceLine.mockReset();
@@ -335,6 +339,15 @@ describe("CatalogueImportPage", () => {
       updated: 0,
       skipped: 0,
       errors: 0,
+      rows: [],
+    });
+    mockConfirmReviewedSupplierCatalogueImport.mockResolvedValue({
+      supplierId: adamDentalSupplier.id,
+      imported: 2,
+      updated: 0,
+      skipped: 0,
+      errors: 0,
+      createdProducts: 1,
       rows: [],
     });
   });
@@ -619,13 +632,13 @@ describe("CatalogueImportPage", () => {
   it("allows approving, skipping, and marking structured rows as ready to create", async () => {
     await renderStructuredProductReview();
 
-    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
     fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
     expect(screen.getAllByText("Approved").length).toBeGreaterThan(1);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[1] as HTMLElement);
     expect(screen.getAllByText("Skipped").length).toBeGreaterThan(1);
-    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
 
     const createProductButton = screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement;
     const selectedRow = createProductButton.closest("tr");
@@ -640,9 +653,10 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
   });
 
-  it("supports editing structured rows locally", async () => {
+  it("supports editing structured rows locally without losing the review state", async () => {
     await renderStructuredProductReview();
 
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
     fireEvent.change(screen.getByLabelText("Product name for structured row 2"), {
       target: { value: "Edited Gloves" },
@@ -652,28 +666,50 @@ describe("CatalogueImportPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
 
-    expect(screen.getAllByText("Needs Review").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
     expect(screen.getByText("Edited Gloves")).toBeInTheDocument();
     expect(screen.getByText("3 cartons")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
   });
 
-  it("bulk approves structured rows and keeps processing local to catalogue review", async () => {
+  it("imports reviewed structured rows and clears the persisted session", async () => {
     await renderStructuredProductReview();
 
-    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Approve all visible rows" }));
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
 
-    expect(screen.getAllByText("Approved").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("Needs review")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Process Reviewed Rows" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Process Reviewed Rows" }));
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
 
-    expect(screen.getByText(/2 structured catalogue rows prepared for catalogue import/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockConfirmReviewedSupplierCatalogueImport).toHaveBeenCalledWith(adamDentalSupplier.id, {
+        clinicId: TEST_CLINIC_ID,
+        rows: expect.arrayContaining([
+          expect.objectContaining({
+            rowNumber: 2,
+            state: "Approved",
+            matchedProductId: "product-gloves",
+            unitCostCents: 1250,
+          }),
+          expect.objectContaining({
+            rowNumber: 3,
+            state: "Ready to Create",
+            matchedProductId: null,
+            unitCostCents: 800,
+          }),
+        ]) as unknown,
+      });
+    });
+    expect(await screen.findByText(/Catalogue import completed/)).toBeInTheDocument();
     expect(mockConfirmSupplierCatalogueImport).not.toHaveBeenCalled();
     expect(mockUploadSupplierInvoice).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
     expect(mockHandleScan).not.toHaveBeenCalled();
+    expect(
+      Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+        .some((key) => key?.startsWith("verve.catalogueImport.structuredSession")),
+    ).toBe(false);
   });
 
   it("bulk marks unmatched structured rows as ready to create", async () => {
@@ -692,7 +728,11 @@ describe("CatalogueImportPage", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
     await waitFor(() => {
       expect(window.localStorage.length).toBeGreaterThan(0);
-      expect(window.localStorage.getItem(window.localStorage.key(0) ?? "")).toContain("Ready to Create");
+      expect(
+        Array.from({ length: window.localStorage.length }, (_, index) =>
+          window.localStorage.getItem(window.localStorage.key(index) ?? ""),
+        ).some((value) => value?.includes("Ready to Create")),
+      ).toBe(true);
     });
 
     rendered.unmount();
@@ -816,6 +856,30 @@ describe("CatalogueImportPage", () => {
     expect(selectedRowQueries.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(selectedRowQueries.getByRole("button", { name: "Undo" })).toBeInTheDocument();
     expect(selectedRowQueries.queryByRole("button", { name: "Create new product" })).not.toBeInTheDocument();
+  });
+
+  it("restores invoice review decisions after leaving and returning to the review page", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    const rendered = renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    await screen.findByText("Unknown bonding agent");
+    fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+    await waitFor(() => {
+      expect(window.localStorage.length).toBeGreaterThan(0);
+      expect(
+        Array.from({ length: window.localStorage.length }, (_, index) =>
+          window.localStorage.getItem(window.localStorage.key(index) ?? ""),
+        ).some((value) => value?.includes("Ready to Create")),
+      ).toBe(true);
+    });
+
+    rendered.unmount();
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+
+    expect(await screen.findByText("Unknown bonding agent")).toBeInTheDocument();
+    expect(screen.getByText("Ready to Create")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create new product" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
   it("enables final import for Ready to Create rows and sends reviewed decisions", async () => {

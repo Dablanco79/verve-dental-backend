@@ -139,6 +139,31 @@ export type CatalogueImportConfirmResult = {
   rows: CatalogueImportRow[];
 };
 
+export type ReviewedCatalogueRowState =
+  | "Approved"
+  | "Skipped"
+  | "Ready to Create"
+  | "Matched Existing Product";
+
+export type ReviewedCatalogueImportRow = {
+  rowNumber: number;
+  state: ReviewedCatalogueRowState;
+  supplierSku: string | null;
+  description: string | null;
+  unitCostCents: number | null;
+  unitOfMeasure: string | null;
+  matchedProductId: string | null;
+};
+
+export type ReviewedCatalogueImportRequest = {
+  clinicId: string;
+  rows: ReviewedCatalogueImportRow[];
+};
+
+export type ReviewedCatalogueImportResult = CatalogueImportConfirmResult & {
+  createdProducts: number;
+};
+
 export type SupplierInvoiceStatus =
   | "uploaded"
   | "processing"

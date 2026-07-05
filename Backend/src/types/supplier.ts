@@ -214,6 +214,26 @@ export type ImportConfirmResult = {
   rows: ImportRow[];
 };
 
+export type ReviewedCatalogueRowState =
+  | "Approved"
+  | "Skipped"
+  | "Ready to Create"
+  | "Matched Existing Product";
+
+export type ReviewedCatalogueImportRow = {
+  rowNumber: number;
+  state: ReviewedCatalogueRowState;
+  supplierSku: string | null;
+  description: string | null;
+  unitCostCents: number | null;
+  unitOfMeasure: string | null;
+  matchedProductId: string | null;
+};
+
+export type ReviewedCatalogueImportResult = ImportConfirmResult & {
+  createdProducts: number;
+};
+
 // ─── Purchase order cost estimation ──────────────────────────────────────────
 
 export type SupplierPricingEntry = {

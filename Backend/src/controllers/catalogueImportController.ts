@@ -22,6 +22,26 @@ const manualMappingsSchema = z
     return result;
   });
 
+const reviewedRowStateSchema = z.enum([
+  "Approved",
+  "Skipped",
+  "Ready to Create",
+  "Matched Existing Product",
+]);
+
+const reviewedRowsSchema = z.object({
+  clinicId: uuidSchema,
+  rows: z.array(z.object({
+    rowNumber: z.number().int().positive(),
+    state: reviewedRowStateSchema,
+    supplierSku: z.string().max(128).nullable(),
+    description: z.string().max(512).nullable(),
+    unitCostCents: z.number().int().nonnegative().nullable(),
+    unitOfMeasure: z.string().max(128).nullable(),
+    matchedProductId: z.string().uuid().nullable(),
+  })).min(1),
+});
+
 // ─── Handler factory ──────────────────────────────────────────────────────────
 
 export function createCatalogueImportHandlers(
@@ -130,6 +150,38 @@ export function createCatalogueImportHandlers(
         file.buffer,
         format,
         manualMappings,
+      );
+
+      res.status(200).json({ data: result });
+    },
+
+    async confirmReviewed(req: Request, res: Response): Promise<void> {
+      if (!req.user) {
+        throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      }
+
+      const supplierIdResult = uuidSchema.safeParse(req.params.supplierId);
+      if (!supplierIdResult.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          { field: "supplierId", message: "supplierId must be a valid UUID" },
+        ]);
+      }
+
+      const body = reviewedRowsSchema.safeParse(req.body);
+      if (!body.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(body.error),
+        );
+      }
+
+      const result = await service.confirmReviewedRows(
+        req.user,
+        supplierIdResult.data,
+        body.data.clinicId,
+        body.data.rows,
       );
 
       res.status(200).json({ data: result });

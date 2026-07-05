@@ -14,22 +14,40 @@ import { createCatalogueImportService } from "../src/services/catalogueImportSer
 import { createInMemoryCatalogRepository } from "../src/repositories/catalogRepository.js";
 import { createInMemorySupplierRepository } from "../src/repositories/supplierRepository.js";
 import { createInMemorySupplierCatalogueRepository } from "../src/repositories/supplierCatalogueRepository.js";
+import { createInMemoryInventoryRepository } from "../src/repositories/inventoryRepository.js";
 import { createProductMatchingService } from "../src/services/productMatchingService.js";
 import { buildMasterCatalogSeed } from "../src/repositories/seed/inventorySeed.js";
+import type { AuthenticatedUser } from "../src/types/auth.js";
+
+const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
+const CALLER: AuthenticatedUser = {
+  id: "user-manager-1",
+  email: "manager@clinic-a.au",
+  role: "group_practice_manager",
+  homeClinicId: CLINIC_ID,
+  homeClinicName: "Clinic A",
+  firstName: null,
+  lastName: null,
+  displayName: null,
+  permissions: [],
+};
 
 function buildService() {
   const catalogRepo = createInMemoryCatalogRepository();
   const supplierRepo = createInMemorySupplierRepository();
   const catalogueRepo = createInMemorySupplierCatalogueRepository();
+  const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
   const matchingService = createProductMatchingService(catalogRepo);
 
   const importService = createCatalogueImportService(
     catalogueRepo,
     supplierRepo,
     matchingService,
+    catalogRepo,
+    inventoryRepo,
   );
 
-  return { importService, supplierRepo, catalogueRepo, catalogRepo };
+  return { importService, supplierRepo, catalogueRepo, catalogRepo, inventoryRepo };
 }
 
 async function createActiveSupplier(
@@ -209,6 +227,53 @@ describe("CatalogueImportService — confirm", () => {
     const entries = await catalogueRepo.listSupplierProducts({ supplierId });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.unitCostCents).toBe(1250);
+  });
+
+  it("finalises reviewed Ready to Create rows with zero stock and supplier links", async () => {
+    const { importService, supplierRepo, catalogueRepo, catalogRepo, inventoryRepo } = buildService();
+    const supplierId = await createActiveSupplier(supplierRepo);
+
+    const result = await importService.confirmReviewedRows(CALLER, supplierId, CLINIC_ID, [
+      {
+        rowNumber: 2,
+        state: "Ready to Create",
+        supplierSku: "BOND-NEW",
+        description: "Bonding Agent New",
+        unitCostCents: 1670,
+        unitOfMeasure: "unit",
+        matchedProductId: null,
+      },
+      {
+        rowNumber: 3,
+        state: "Skipped",
+        supplierSku: "SKIP-1",
+        description: "Skipped Product",
+        unitCostCents: 1000,
+        unitOfMeasure: "unit",
+        matchedProductId: null,
+      },
+    ]);
+
+    expect(result.createdProducts).toBe(1);
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toBe(0);
+
+    const created = (await catalogRepo.listMasterItems()).find(
+      (item) => item.name === "Bonding Agent New",
+    );
+    expect(created?.defaultUnitCostCents).toBe(1670);
+
+    const inventoryItems = await inventoryRepo.listClinicInventory(CLINIC_ID);
+    const createdInventoryItem = inventoryItems.find(
+      (item) => item.masterCatalogItemId === created?.id,
+    );
+    expect(createdInventoryItem?.quantityOnHand).toBe(0);
+
+    const supplierProducts = await catalogueRepo.listSupplierProducts({ supplierId });
+    expect(supplierProducts).toHaveLength(1);
+    expect(supplierProducts[0]?.productId).toBe(created?.id);
+    expect(supplierProducts[0]?.unitCostCents).toBe(1670);
   });
 
   it("updates (not duplicates) an existing entry on re-import", async () => {

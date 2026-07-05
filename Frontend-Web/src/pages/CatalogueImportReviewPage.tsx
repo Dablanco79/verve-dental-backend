@@ -11,6 +11,7 @@ import type { Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/su
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
+const REVIEW_SESSION_STORAGE_PREFIX = "verve.catalogueImport.invoiceReview";
 
 type LineReviewState =
   | "Needs Review"
@@ -192,6 +193,49 @@ function calculateTaxRateBasisPoints(quantity: number, unitPriceCents: number, t
   return Math.max(0, Math.min(10_000, Math.round((taxCents * 10_000) / subtotalCents)));
 }
 
+function getReviewSessionStorageKey(clinicId: string, userId: string, importId: string): string {
+  return `${REVIEW_SESSION_STORAGE_PREFIX}.${clinicId}.${userId}.${importId}`;
+}
+
+function readPersistedLineReviewStates(
+  clinicId: string,
+  userId: string,
+  importId: string,
+): Record<string, LineReviewState> | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(getReviewSessionStorageKey(clinicId, userId, importId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { version?: number; lineReviewStates?: Record<string, LineReviewState> };
+    if (parsed.version !== 1 || !parsed.lineReviewStates) return null;
+    return parsed.lineReviewStates;
+  } catch {
+    return null;
+  }
+}
+
+function persistLineReviewStates(
+  clinicId: string | undefined,
+  userId: string | undefined,
+  importId: string | undefined,
+  lineReviewStates: Record<string, LineReviewState>,
+): void {
+  if (!clinicId || !userId || !importId || typeof window === "undefined") return;
+  window.localStorage.setItem(
+    getReviewSessionStorageKey(clinicId, userId, importId),
+    JSON.stringify({ version: 1, lineReviewStates }),
+  );
+}
+
+function clearPersistedLineReviewStates(
+  clinicId: string | undefined,
+  userId: string | undefined,
+  importId: string | undefined,
+): void {
+  if (!clinicId || !userId || !importId || typeof window === "undefined") return;
+  window.localStorage.removeItem(getReviewSessionStorageKey(clinicId, userId, importId));
+}
+
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="po-summary__stat catalogue-review__metric">
@@ -274,9 +318,14 @@ export function CatalogueImportReviewPage() {
       setSuppliers(supplierList);
       setInvoice(importData.invoice);
       setLines(importData.lines);
-      setLineReviewStates(
-        Object.fromEntries(importData.lines.map((line) => [line.id, initialReviewStateForLine(line)])),
+      const initialStates = Object.fromEntries(
+        importData.lines.map((line) => [line.id, initialReviewStateForLine(line)]),
       );
+      const persistedStates =
+        importData.invoice.status === "pending_review"
+          ? readPersistedLineReviewStates(clinicId, user.id, importId)
+          : null;
+      setLineReviewStates({ ...initialStates, ...(persistedStates ?? {}) });
       setEditingLineId(null);
       setEditDraft(null);
     } catch (err: unknown) {
@@ -312,6 +361,7 @@ export function CatalogueImportReviewPage() {
       });
       setInvoice(result.invoice);
       setLineReviewStates({});
+      clearPersistedLineReviewStates(clinicId, user?.id, invoice.id);
       setImportMessage(
         `Catalogue imported. ${String(result.createdProducts)} products created and ${String(result.priceUpdates)} price updates applied.`,
       );
@@ -329,6 +379,7 @@ export function CatalogueImportReviewPage() {
     setImportError(null);
     try {
       await apiClient.cancelSupplierInvoiceImport(clinicId, invoice.id);
+      clearPersistedLineReviewStates(clinicId, user?.id, invoice.id);
       setIsCancelModalOpen(false);
       void navigate("/inventory/catalogue-import", {
         state: { toast: "Import cancelled." },
@@ -341,7 +392,11 @@ export function CatalogueImportReviewPage() {
   }
 
   function setLineState(lineId: string, state: LineReviewState): void {
-    setLineReviewStates((current) => ({ ...current, [lineId]: state }));
+    setLineReviewStates((current) => {
+      const next = { ...current, [lineId]: state };
+      persistLineReviewStates(clinicId, user?.id, importId, next);
+      return next;
+    });
     if (editingLineId === lineId) {
       setEditingLineId(null);
       setEditDraft(null);
@@ -375,7 +430,8 @@ export function CatalogueImportReviewPage() {
       taxRateBasisPoints,
     });
     setLines((current) => current.map((line) => (line.id === lineId ? persisted : line)));
-    setLineState(lineId, "Needs Review");
+    setEditingLineId(null);
+    setEditDraft(null);
   }
 
   if (!user) return null;
@@ -621,41 +677,17 @@ export function CatalogueImportReviewPage() {
                                     </button>
                                   </>
                                 ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setLineState(line.id, "Approved");
-                                      }}
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        startEditingLine(line);
-                                      }}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="link-button"
-                                      onClick={() => {
-                                        setLineState(line.id, "Skipped");
-                                      }}
-                                    >
-                                      Reject / Skip
-                                    </button>
-                                    <button type="button" className="link-button" disabled>
-                                      Match existing product
-                                    </button>
-                                    <span className="catalogue-review__future-note">
-                                      Matching persistence available in a future release
-                                    </span>
-                                    {reviewState === "Ready to Create" ? (
+                                  reviewState === "Ready to Create" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          startEditingLine(line);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
                                       <button
                                         type="button"
                                         className="link-button"
@@ -665,7 +697,45 @@ export function CatalogueImportReviewPage() {
                                       >
                                         Undo
                                       </button>
-                                    ) : (
+                                      <span className="catalogue-review__future-note">
+                                        Creates catalogue product only. Does not change stock.
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setLineState(line.id, "Approved");
+                                        }}
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          startEditingLine(line);
+                                        }}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          setLineState(line.id, "Skipped");
+                                        }}
+                                      >
+                                        Reject / Skip
+                                      </button>
+                                      <button type="button" className="link-button" disabled>
+                                        Match existing product
+                                      </button>
+                                      <span className="catalogue-review__future-note">
+                                        Matching persistence available in a future release
+                                      </span>
                                       <button
                                         type="button"
                                         className="link-button"
@@ -675,11 +745,11 @@ export function CatalogueImportReviewPage() {
                                       >
                                         Create new product
                                       </button>
-                                    )}
-                                    <span className="catalogue-review__future-note">
-                                      Creates catalogue product only. Does not change stock.
-                                    </span>
-                                  </>
+                                      <span className="catalogue-review__future-note">
+                                        Creates catalogue product only. Does not change stock.
+                                      </span>
+                                    </>
+                                  )
                                 )}
                               </div>
                             </td>

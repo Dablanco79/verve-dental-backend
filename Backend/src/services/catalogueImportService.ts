@@ -16,12 +16,17 @@
 
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
+import type { CatalogRepository } from "../repositories/catalogRepository.js";
+import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import type { ProductMatchingService } from "./productMatchingService.js";
 import { AppError } from "../types/errors.js";
+import type { AuthenticatedUser } from "../types/auth.js";
 import type {
   ImportConfirmResult,
   ImportPreviewResult,
   ImportRow,
+  ReviewedCatalogueImportResult,
+  ReviewedCatalogueImportRow,
 } from "../types/supplier.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
 
@@ -280,6 +285,8 @@ export function createCatalogueImportService(
   supplierCatalogueRepository: SupplierCatalogueRepository,
   supplierRepository: SupplierRepository,
   productMatchingService: ProductMatchingService,
+  catalogRepository?: CatalogRepository,
+  inventoryRepository?: InventoryRepository,
 ) {
   async function parseFile(
     buffer: Buffer,
@@ -299,6 +306,91 @@ export function createCatalogueImportService(
     if (!supplier.active) {
       throw new AppError(422, "SUPPLIER_INACTIVE", "Supplier is not active");
     }
+  }
+
+  function assertClinicAccess(caller: AuthenticatedUser, clinicId: string): void {
+    if (caller.role !== "owner_admin" && caller.homeClinicId !== clinicId) {
+      throw new AppError(403, "CATALOGUE_IMPORT_FORBIDDEN", "Access denied for this clinic");
+    }
+  }
+
+  function slugSku(value: string): string {
+    const normalized = value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return normalized.slice(0, 48) || "IMPORTED";
+  }
+
+  async function buildUniqueImportedSku(row: ReviewedCatalogueImportRow): Promise<string> {
+    if (!catalogRepository) {
+      throw new AppError(500, "INTERNAL_ERROR", "Catalogue product creation is not configured");
+    }
+
+    const base = slugSku(row.supplierSku ?? row.description ?? `ROW-${String(row.rowNumber)}`);
+    const candidates = [
+      base,
+      `${base}-${String(row.rowNumber)}`,
+      `${base}-${String(Date.now()).slice(-6)}`,
+    ];
+
+    for (const candidate of candidates) {
+      const existing = await catalogRepository.findMasterItemBySku(candidate);
+      if (!existing) return candidate;
+    }
+
+    return `${base.slice(0, 39)}-${String(row.rowNumber)}-${String(Date.now()).slice(-6)}`;
+  }
+
+  async function createProductForReviewedRow(
+    clinicId: string,
+    supplierId: string,
+    row: ReviewedCatalogueImportRow,
+  ): Promise<string> {
+    if (!catalogRepository || !inventoryRepository) {
+      throw new AppError(500, "INTERNAL_ERROR", "Catalogue product creation is not configured");
+    }
+    if (!row.description?.trim()) {
+      throw new AppError(422, "VALIDATION_ERROR", "Product description is required to create a catalogue product");
+    }
+
+    const stockUnit = row.unitOfMeasure?.trim() || "unit";
+    const sku = await buildUniqueImportedSku(row);
+    const masterItem = await catalogRepository.createMasterItem({
+      sku,
+      name: row.description.trim(),
+      description: row.description.trim(),
+      category: "Imported Catalogue",
+      stockUnit,
+      receivingUnit: stockUnit,
+      unitsPerReceivingUnit: 1,
+      defaultUnitCostCents: row.unitCostCents ?? 0,
+    });
+
+    await inventoryRepository.createClinicInventoryItem({
+      clinicId,
+      masterCatalogItemId: masterItem.id,
+      quantityOnHand: 0,
+      reorderPoint: 0,
+      unitCostOverrideCents: null,
+      supplierPreference: null,
+    });
+
+    await inventoryRepository.createProductSupplier({
+      clinicId,
+      productId: masterItem.id,
+      supplierId,
+      supplierName: null,
+      supplierSku: row.supplierSku,
+      supplierBarcode: null,
+      unitCostCents: row.unitCostCents,
+      packSize: null,
+      isPreferred: true,
+      active: true,
+    });
+
+    return masterItem.id;
   }
 
   return {
@@ -523,6 +615,110 @@ export function createCatalogueImportService(
         skipped,
         errors,
         rows,
+      };
+    },
+
+    async confirmReviewedRows(
+      caller: AuthenticatedUser,
+      supplierId: string,
+      clinicId: string,
+      reviewedRows: ReviewedCatalogueImportRow[],
+    ): Promise<ReviewedCatalogueImportResult> {
+      assertClinicAccess(caller, clinicId);
+      await assertSupplierActive(supplierId);
+
+      let imported = 0;
+      let updated = 0;
+      let skipped = 0;
+      let errors = 0;
+      let createdProducts = 0;
+      const rows: ImportRow[] = [];
+
+      for (const row of reviewedRows) {
+        if (row.state === "Skipped") {
+          skipped++;
+          rows.push({
+            rowNumber: row.rowNumber,
+            supplierSku: row.supplierSku,
+            description: row.description,
+            rawUnitCost: row.unitCostCents === null ? null : (row.unitCostCents / 100).toFixed(2),
+            unitCostCents: row.unitCostCents,
+            unitOfMeasure: row.unitOfMeasure,
+            matchedProductId: row.matchedProductId,
+            matchedProductName: null,
+            matchedProductSku: null,
+            matchStatus: "unmatched",
+            error: "Skipped by reviewer",
+          });
+          continue;
+        }
+
+        try {
+          const productId = row.state === "Ready to Create"
+            ? await createProductForReviewedRow(clinicId, supplierId, row)
+            : row.matchedProductId;
+
+          if (!productId) {
+            throw new AppError(422, "VALIDATION_ERROR", "Reviewed row is not matched to a product");
+          }
+
+          const result = await supplierCatalogueRepository.upsertSupplierProduct({
+            supplierId,
+            productId,
+            supplierSku: row.supplierSku,
+            supplierDescription: row.description,
+            unitCostCents: row.unitCostCents ?? 0,
+            unitOfMeasure: row.unitOfMeasure,
+          });
+
+          if (row.state === "Ready to Create") {
+            createdProducts++;
+            imported++;
+          } else if (result.created) {
+            imported++;
+          } else {
+            updated++;
+          }
+
+          rows.push({
+            rowNumber: row.rowNumber,
+            supplierSku: row.supplierSku,
+            description: row.description,
+            rawUnitCost: row.unitCostCents === null ? null : (row.unitCostCents / 100).toFixed(2),
+            unitCostCents: row.unitCostCents,
+            unitOfMeasure: row.unitOfMeasure,
+            matchedProductId: productId,
+            matchedProductName: null,
+            matchedProductSku: null,
+            matchStatus: row.state === "Ready to Create" ? "manual" : "manual",
+            error: null,
+          });
+        } catch (err) {
+          errors++;
+          rows.push({
+            rowNumber: row.rowNumber,
+            supplierSku: row.supplierSku,
+            description: row.description,
+            rawUnitCost: row.unitCostCents === null ? null : (row.unitCostCents / 100).toFixed(2),
+            unitCostCents: row.unitCostCents,
+            unitOfMeasure: row.unitOfMeasure,
+            matchedProductId: row.matchedProductId,
+            matchedProductName: null,
+            matchedProductSku: null,
+            matchStatus: "unmatched",
+            error: err instanceof Error ? err.message : "Unknown import error",
+          });
+        }
+      }
+
+      return {
+        supplierId,
+        imported,
+        updated,
+        skipped,
+        errors,
+        rows,
+        createdProducts,
       };
     },
   };
