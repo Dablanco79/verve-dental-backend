@@ -176,3 +176,28 @@ export type AdjustmentsFilters = {
   offset?: number;
   itemId?: string;
 };
+
+// ── Master Product Library import ────────────────────────────────────────────
+
+export type MasterProductImportRowOutcome =
+  | "imported"
+  | "skipped_duplicate"
+  | "skipped_invalid";
+
+export type MasterProductImportRowResult = {
+  rowNumber: number;
+  displayName: string | null;
+  category: string | null;
+  outcome: MasterProductImportRowOutcome;
+  masterProductId: string | null;
+  errors: string[];
+};
+
+export type MasterProductImportResult = {
+  totalRows: number;
+  imported: number;
+  skippedDuplicates: number;
+  skippedInvalid: number;
+  clinicId: string | null;
+  rows: MasterProductImportRowResult[];
+};

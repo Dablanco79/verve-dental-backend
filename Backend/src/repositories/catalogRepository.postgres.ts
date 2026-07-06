@@ -34,6 +34,11 @@ type MasterCatalogRow = {
   unit_of_measure: string;
   default_unit_cost_cents: number;
   is_active: boolean;
+  subcategory?: string | null;
+  brand?: string | null;
+  variant_attributes?: string | null;
+  notes?: string | null;
+  status?: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -60,6 +65,11 @@ function rowToMasterItem(row: MasterCatalogRow): MasterCatalogItem {
     unitOfMeasure: row.stock_unit ?? row.unit_of_measure,
     defaultUnitCostCents: row.default_unit_cost_cents,
     isActive: row.is_active,
+    subcategory: row.subcategory ?? null,
+    brand: row.brand ?? null,
+    variantAttributes: row.variant_attributes ?? null,
+    notes: row.notes ?? null,
+    status: row.status ?? (row.is_active ? "active" : "inactive"),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -101,6 +111,20 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       return rows[0] ? rowToMasterItem(rows[0]) : null;
     },
 
+    async findMasterItemByNormalisedNameAndCategory(
+      name: string,
+      category: string,
+    ): Promise<MasterCatalogItem | null> {
+      const { rows } = await pool.query<MasterCatalogRow>(
+        `SELECT * FROM master_catalog_items
+         WHERE lower(regexp_replace(trim(name), '\\s+', ' ', 'g')) = lower(regexp_replace(trim($1), '\\s+', ' ', 'g'))
+           AND lower(regexp_replace(trim(category), '\\s+', ' ', 'g')) = lower(regexp_replace(trim($2), '\\s+', ' ', 'g'))
+         LIMIT 1`,
+        [name, category],
+      );
+      return rows[0] ? rowToMasterItem(rows[0]) : null;
+    },
+
     async findBarcodeMapping(barcodeValue: string): Promise<BarcodeMapping | null> {
       const { rows } = await pool.query<BarcodeMappingRow>(
         "SELECT * FROM barcode_mappings WHERE barcode_value = $1 LIMIT 1",
@@ -126,11 +150,13 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       const receivingUnit = "receivingUnit" in item ? item.receivingUnit : stockUnit;
       const unitsPerReceivingUnit =
         "unitsPerReceivingUnit" in item ? item.unitsPerReceivingUnit : 1;
+      const status = item.status ?? "active";
       const { rows } = await pool.query<MasterCatalogRow>(
         `INSERT INTO master_catalog_items
            (sku, name, description, category, stock_unit, receiving_unit,
-            units_per_receiving_unit, unit_of_measure, default_unit_cost_cents)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $5, $8)
+            units_per_receiving_unit, unit_of_measure, default_unit_cost_cents,
+            subcategory, brand, variant_attributes, notes, status, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $5, $8, $9, $10, $11, $12, $13, $14)
          RETURNING *`,
         [
           item.sku,
@@ -141,6 +167,12 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
           receivingUnit,
           unitsPerReceivingUnit,
           item.defaultUnitCostCents,
+          item.subcategory ?? null,
+          item.brand ?? null,
+          item.variantAttributes ?? null,
+          item.notes ?? null,
+          status,
+          status === "active",
         ],
       );
 

@@ -100,6 +100,7 @@ import { createPurchaseOrderService } from "../services/purchaseOrderService.js"
 import { createSupplierService } from "../services/supplierService.js";
 import { createSupplierCatalogueService } from "../services/supplierCatalogueService.js";
 import { createCatalogueImportService } from "../services/catalogueImportService.js";
+import { createMasterProductImportService } from "../services/masterProductImportService.js";
 import { createProductMatchingService } from "../services/productMatchingService.js";
 import { createTimesheetService } from "../services/timesheetService.js";
 import { createUserService } from "../services/userService.js";
@@ -135,6 +136,7 @@ import type { PurchaseOrderService } from "../services/purchaseOrderService.js";
 import type { SupplierService } from "../services/supplierService.js";
 import type { SupplierCatalogueService } from "../services/supplierCatalogueService.js";
 import type { CatalogueImportService } from "../services/catalogueImportService.js";
+import type { MasterProductImportService } from "../services/masterProductImportService.js";
 
 export type AppDependencies = {
   authService: ReturnType<typeof createAuthService>;
@@ -148,6 +150,7 @@ export type AppDependencies = {
   supplierService: SupplierService;
   supplierCatalogueService: SupplierCatalogueService;
   catalogueImportService: CatalogueImportService;
+  masterProductImportService: MasterProductImportService;
   supplierInvoiceService: SupplierInvoiceService;
   supplierIntelligenceService: SupplierIntelligenceService;
   healthService: HealthService;
@@ -453,6 +456,12 @@ export async function createAppDependencies(
     inventoryRepository,
   );
 
+  const masterProductImportService = createMasterProductImportService(
+    catalogRepository,
+    inventoryRepository,
+    auditService,
+  );
+
   // Supplier Invoice OCR — Sprint OCR-1.
   // createOcrProvider reads OCR_PROVIDER + ANTHROPIC_API_KEY from config.
   // Falls back to StubOcrProvider in development/test when API key is absent.
@@ -502,6 +511,7 @@ export async function createAppDependencies(
     supplierService,
     supplierCatalogueService,
     catalogueImportService,
+    masterProductImportService,
     supplierInvoiceService,
     supplierIntelligenceService,
     healthService,

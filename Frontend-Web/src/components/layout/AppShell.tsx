@@ -78,6 +78,15 @@ export function AppShell({ children }: AppShellProps) {
             ...(canManageProducts(user.role)
               ? [{ to: "/inventory/catalogue-import", label: "Catalogue Import", icon: "CI" }]
               : []),
+            ...(canManageProducts(user.role)
+              ? [
+                  {
+                    to: "/inventory/master-product-library-import",
+                    label: "Master Product Library",
+                    icon: "ML",
+                  },
+                ]
+              : []),
             ...(canViewMaterialsForecast(user.role)
               ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: "MF" }]
               : []),

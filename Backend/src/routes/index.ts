@@ -40,6 +40,7 @@ import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
 import { createPermissionRouter } from "./permissionRoutes.js";
 import { createSupplierRouter } from "./supplierRoutes.js";
+import { createMasterProductRouter } from "./masterProductRoutes.js";
 import { createSupplierInvoiceRouter } from "./supplierInvoiceRoutes.js";
 import { createSupplierIntelligenceRouter } from "./supplierIntelligenceRoutes.js";
 import { createOrganisationRouter } from "./organisationRoutes.js";
@@ -189,6 +190,10 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   // Procurement — supplier management, catalogue pricing, import (Sprint O).
   // Global scope (not clinic-scoped): mirrors master_catalog_items pattern.
   router.use("/suppliers", createSupplierRouter(deps));
+
+  // Master Product Library import — Master Product Library Import Foundation.
+  // Global scope: creates catalogue/master products only, never stock movements.
+  router.use("/master-products", createMasterProductRouter(deps));
 
   // Supplier Invoice OCR — AP invoice upload, review, confirm (Sprint OCR-1).
   // Clinic-scoped: each clinic manages its own supplier invoices.

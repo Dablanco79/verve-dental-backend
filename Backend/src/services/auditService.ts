@@ -37,6 +37,10 @@ export type SupplierAuditEvent =
   | "supplier_product.updated"
   | "catalogue.imported";
 
+export type MasterProductAuditEvent =
+  | "master_product.imported"
+  | "master_product.import_skipped";
+
 export type SupplierInvoiceAuditEvent =
   | "supplier_invoice.uploaded"
   | "supplier_invoice.confirmed"
@@ -47,7 +51,8 @@ export type AuditEvent =
   | AuthAuditEvent
   | PurchaseOrderAuditEvent
   | SupplierAuditEvent
-  | SupplierInvoiceAuditEvent;
+  | SupplierInvoiceAuditEvent
+  | MasterProductAuditEvent;
 
 export type AuditContext = {
   userId?: string;
@@ -87,7 +92,13 @@ function buildSafeMetadata(context: AuditContext): Record<string, unknown> {
 
 function entityTypeForEvent(event: AuditEvent): AuditEntityType {
   if (event.startsWith("supplier_invoice.")) return "invoice";
-  if (event.startsWith("supplier_") || event.startsWith("catalogue.")) return "product";
+  if (
+    event.startsWith("supplier_") ||
+    event.startsWith("catalogue.") ||
+    event.startsWith("master_product.")
+  ) {
+    return "product";
+  }
   if (event.startsWith("purchase_order.")) return "purchase_order";
   if (event.startsWith("user.")) return "user";
   return "auth";

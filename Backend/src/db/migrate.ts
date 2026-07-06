@@ -2378,6 +2378,32 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
       ALTER TYPE supplier_invoice_status ADD VALUE IF NOT EXISTS 'failed';
     `,
   },
+  {
+    /**
+     * Master Product Library import foundation.
+     *
+     * Adds curated-library metadata columns to the existing global
+     * master_catalog_items table so a bulk XLSX/CSV import can create
+     * catalogue-only master products without inventing a parallel table.
+     *
+     * status is a free-text field (not an enum) because curated dental
+     * libraries use varied vocabularies (e.g. "Active", "Discontinued",
+     * "Seasonal"). is_active continues to gate visibility in
+     * listMasterItems() and is derived from status = 'active' at write time.
+     */
+    id: "034_master_product_library",
+    sql: `
+      ALTER TABLE master_catalog_items
+        ADD COLUMN IF NOT EXISTS subcategory varchar(128),
+        ADD COLUMN IF NOT EXISTS brand varchar(255),
+        ADD COLUMN IF NOT EXISTS variant_attributes text,
+        ADD COLUMN IF NOT EXISTS notes text,
+        ADD COLUMN IF NOT EXISTS status varchar(32) NOT NULL DEFAULT 'active';
+
+      CREATE INDEX IF NOT EXISTS idx_master_catalog_items_status
+        ON master_catalog_items (status);
+    `,
+  },
 ];
 
 /**

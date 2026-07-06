@@ -59,6 +59,7 @@ function makeNullCatalog(): CatalogRepository {
     listMasterItems: () => Promise.resolve([]),
     findMasterItemById: () => Promise.resolve(null),
     findMasterItemBySku: () => Promise.resolve(null),
+    findMasterItemByNormalisedNameAndCategory: () => Promise.resolve(null),
     findBarcodeMapping: () => Promise.resolve(null),
     listBarcodeMappingsForItem: () => Promise.resolve([]),
     createMasterItem: () => Promise.reject(new Error("not implemented")),

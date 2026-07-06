@@ -21,6 +21,7 @@ import type {
   CreateProductRequest,
   CreateProductResponse,
   InventoryItem,
+  MasterProductImportResult,
   PurchaseOrderLine,
   ScanRequest,
   ScanResponse,
@@ -1158,6 +1159,41 @@ export function createApiClient(config: AppConfig) {
     return envelope.data;
   }
 
+  /**
+   * Imports a curated Master Product Library file (CSV/XLSX) into
+   * master_catalog_items. Catalogue-only: never creates stock movements.
+   * When clinicId is provided, newly created products are also provisioned
+   * into that clinic's inventory at quantityOnHand 0 so they appear in the
+   * clinic's Products list immediately.
+   */
+  async function importMasterProductLibrary(
+    file: File,
+    clinicId?: string,
+  ): Promise<MasterProductImportResult> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+    const formData = new FormData();
+    formData.append("file", file);
+    if (clinicId) {
+      formData.append("clinicId", clinicId);
+    }
+
+    const response = await fetch(`${baseUrl}/api/v1/master-products/import`, {
+      method: "POST",
+      body: formData,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(errorBody?.error.message ?? `Request failed (${String(response.status)})`);
+    }
+
+    const envelope = await response.json() as { data: MasterProductImportResult };
+    return envelope.data;
+  }
+
   async function confirmReviewedSupplierCatalogueImport(
     supplierId: string,
     body: ReviewedCatalogueImportRequest,
@@ -1815,6 +1851,7 @@ export function createApiClient(config: AppConfig) {
     previewSupplierCatalogueImport,
     confirmSupplierCatalogueImport,
     confirmReviewedSupplierCatalogueImport,
+    importMasterProductLibrary,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,
     getSupplierInvoice,

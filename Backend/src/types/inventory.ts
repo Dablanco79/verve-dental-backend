@@ -39,6 +39,16 @@ export type MasterCatalogItem = {
   unitOfMeasure: string;
   defaultUnitCostCents: number;
   isActive: boolean;
+  /** Curated Master Product Library metadata (Master Product Library Import Foundation). */
+  subcategory: string | null;
+  brand: string | null;
+  variantAttributes: string | null;
+  notes: string | null;
+  /**
+   * Free-text lifecycle status (e.g. "active", "inactive", "discontinued").
+   * isActive is derived from `status === "active"` at write time.
+   */
+  status: string;
   createdAt: Date;
   updatedAt: Date;
 };
