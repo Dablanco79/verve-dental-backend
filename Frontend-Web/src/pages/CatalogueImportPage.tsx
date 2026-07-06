@@ -413,15 +413,25 @@ export function CatalogueImportPage() {
   const selectedSupplier = activeSuppliers.find((supplier) => supplier.id === supplierId) ?? null;
   const requiresSupplier = isStructuredSource(selectedSourceId) && !structuredAnalysis?.hasSupplierColumn;
   const hasStructuredReview = structuredReviewGroups.length > 0;
-  const canProcessStructuredReview =
+  const hasUnresolvedStructuredSuppliers =
+    hasStructuredReview && structuredReviewGroups.some((group) => group.matchedSupplier === null);
+  const hasUnreviewedStructuredRows =
     hasStructuredReview &&
-    structuredReviewGroups.every((group) => group.matchedSupplier !== null) &&
-    structuredReviewGroups.every((group) =>
-      buildStructuredDisplayRows(group).every((row) => {
+    structuredReviewGroups.some((group) =>
+      buildStructuredDisplayRows(group).some((row) => {
         const state = structuredRowStates[structuredRowKey(group.supplierName, row.rowNumber)] ?? defaultStructuredRowState(row);
-        return isStructuredTerminalState(state);
+        return !isStructuredTerminalState(state);
       }),
     );
+  const canProcessStructuredReview =
+    hasStructuredReview &&
+    !hasUnresolvedStructuredSuppliers &&
+    !hasUnreviewedStructuredRows;
+  const structuredImportDisabledReason = !hasStructuredReview || canProcessStructuredReview
+    ? null
+    : hasUnresolvedStructuredSuppliers
+      ? "Resolve supplier review before importing products."
+      : "Review all product rows before importing products.";
   const canUpload =
     hasStructuredReview
       ? canUseCatalogueImport && canProcessStructuredReview && !isUploading && !isAllClinicsScope
@@ -717,7 +727,9 @@ export function CatalogueImportPage() {
   }
 
   function saveStructuredRowEdit(group: StructuredReviewGroup, row: StructuredReviewDisplayRow): void {
-    setStructuredRowState(group, row, "Needs Review");
+    void group;
+    void row;
+    setEditingStructuredRowKey(null);
   }
 
   function setAllStructuredGroupRows(group: StructuredReviewGroup, state: StructuredRowReviewState): void {
@@ -1290,6 +1302,11 @@ export function CatalogueImportPage() {
                 No inventory adjustments, stock quantity changes, or receiving timeline events are created.
               </span>
             </div>
+            {structuredImportDisabledReason ? (
+              <p className="catalogue-import-page__safety-note" role="status">
+                {structuredImportDisabledReason}
+              </p>
+            ) : null}
           </div>
 
           <aside className="catalogue-import-page__panel catalogue-import-page__panel--future">

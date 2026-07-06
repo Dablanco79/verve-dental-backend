@@ -20,6 +20,7 @@ const {
   mockPreviewSupplierCatalogueImport,
   mockConfirmSupplierCatalogueImport,
   mockConfirmReviewedSupplierCatalogueImport,
+  mockCreateSupplier,
   mockUploadSupplierInvoice,
   mockGetSupplierInvoice,
   mockUpdateSupplierInvoiceLine,
@@ -52,6 +53,7 @@ const {
     mockPreviewSupplierCatalogueImport: vi.fn(),
     mockConfirmSupplierCatalogueImport: vi.fn(),
     mockConfirmReviewedSupplierCatalogueImport: vi.fn(),
+    mockCreateSupplier: vi.fn(),
     mockUploadSupplierInvoice: vi.fn(),
     mockGetSupplierInvoice: vi.fn(),
     mockUpdateSupplierInvoiceLine: vi.fn(),
@@ -79,6 +81,7 @@ vi.mock("../src/api/client.js", () => ({
     previewSupplierCatalogueImport: mockPreviewSupplierCatalogueImport,
     confirmSupplierCatalogueImport: mockConfirmSupplierCatalogueImport,
     confirmReviewedSupplierCatalogueImport: mockConfirmReviewedSupplierCatalogueImport,
+    createSupplier: mockCreateSupplier,
     uploadSupplierInvoice: mockUploadSupplierInvoice,
     getSupplierInvoice: mockGetSupplierInvoice,
     updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
@@ -304,6 +307,7 @@ describe("CatalogueImportPage", () => {
     mockPreviewSupplierCatalogueImport.mockReset();
     mockConfirmSupplierCatalogueImport.mockReset();
     mockConfirmReviewedSupplierCatalogueImport.mockReset();
+    mockCreateSupplier.mockReset();
     mockUploadSupplierInvoice.mockReset();
     mockGetSupplierInvoice.mockReset();
     mockUpdateSupplierInvoiceLine.mockReset();
@@ -350,6 +354,7 @@ describe("CatalogueImportPage", () => {
       createdProducts: 1,
       rows: [],
     });
+    mockCreateSupplier.mockResolvedValue(dentavisionSupplier);
   });
 
   it("renders import sources, disabled future cards, and previous imports", async () => {
@@ -437,7 +442,7 @@ describe("CatalogueImportPage", () => {
   });
 
   it("requires supplier selection for structured catalogue files without a Supplier column", async () => {
-    const { container } = renderCatalogueImportPage();
+    const rendered = renderCatalogueImportPage();
 
     await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
     fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
@@ -447,7 +452,7 @@ describe("CatalogueImportPage", () => {
     const file = new File(["description,unit_cost\nGloves,12.50"], "catalogue.csv", {
       type: "text/csv",
     });
-    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    fireEvent.change(getFileInput(rendered.container), { target: { files: [file] } });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Upload & Process" })).toBeDisabled();
     });
@@ -494,7 +499,7 @@ describe("CatalogueImportPage", () => {
       }),
     );
 
-    const { container } = renderCatalogueImportPage();
+    const rendered = renderCatalogueImportPage();
     await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
     fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
     expect(await screen.findByLabelText(/Supplier \*/)).toBeInTheDocument();
@@ -508,7 +513,7 @@ describe("CatalogueImportPage", () => {
       "multi-supplier.csv",
       { type: "text/csv" },
     );
-    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    fireEvent.change(getFileInput(rendered.container), { target: { files: [file] } });
 
     expect(await screen.findByText("Supplier column detected")).toBeInTheDocument();
     expect(screen.queryByLabelText("Supplier *")).not.toBeInTheDocument();
@@ -544,7 +549,7 @@ describe("CatalogueImportPage", () => {
   it("shows supplier creation and match options for unmatched suppliers in structured files", async () => {
     mockListSuppliers.mockResolvedValue([adamDentalSupplier]);
 
-    const { container } = renderCatalogueImportPage();
+    const rendered = renderCatalogueImportPage();
     await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
     fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
     expect(await screen.findByLabelText(/Supplier \*/)).toBeInTheDocument();
@@ -555,7 +560,7 @@ describe("CatalogueImportPage", () => {
       "unmatched-supplier.csv",
       { type: "text/csv" },
     );
-    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    fireEvent.change(getFileInput(rendered.container), { target: { files: [file] } });
     await screen.findByText("Supplier column detected");
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Upload & Process" })).toBeEnabled();
@@ -566,8 +571,93 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByText("Supplier Review Required")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Supplier" })).toBeInTheDocument();
     expect(screen.getByLabelText("Match Existing")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+    expect(screen.getByText("Resolve supplier review before importing products.")).toBeInTheDocument();
     expect(mockPreviewSupplierCatalogueImport).not.toHaveBeenCalled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
+  });
+
+  it("resolves an unmatched structured supplier by creating it", async () => {
+    mockListSuppliers.mockResolvedValue([adamDentalSupplier]);
+
+    const rendered = renderCatalogueImportPage();
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+    fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+
+    const file = new File([
+      "Supplier,Product,Quantity,Unit Price,GST\nDentavision,Masks,5,8.00,0.80",
+    ],
+      "create-supplier.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(getFileInput(rendered.container), { target: { files: [file] } });
+    await screen.findByText("Supplier column detected");
+    fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByRole("heading", { name: "Dentavision" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create Supplier" }));
+
+    await waitFor(() => {
+      expect(mockCreateSupplier).toHaveBeenCalledWith({ supplierName: "Dentavision" });
+      expect(mockPreviewSupplierCatalogueImport).toHaveBeenCalledWith(
+        dentavisionSupplier.id,
+        expect.objectContaining({ name: "create-supplier-dentavision.csv" }),
+      );
+    });
+    expect(await screen.findByText("Supplier Matched")).toBeInTheDocument();
+    expect(screen.getByText("Review all product rows before importing products.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    rendered.unmount();
+    renderCatalogueImportPage();
+
+    expect(await screen.findByText("Restored your in-progress catalogue review.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Dentavision" })).toBeInTheDocument();
+    expect(screen.getByText("Supplier Matched")).toBeInTheDocument();
+    expect(screen.getByText("Ready to Create")).toBeInTheDocument();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+  });
+
+  it("resolves an unmatched structured supplier by matching an existing supplier", async () => {
+    mockListSuppliers.mockResolvedValue([adamDentalSupplier, dentavisionSupplier]);
+
+    const { container } = renderCatalogueImportPage();
+    await screen.findByRole("link", { name: /Review invoice-100\.pdf/ });
+    fireEvent.click(screen.getByRole("radio", { name: /^CSV/ }));
+
+    const file = new File([
+      "Supplier,Product,Quantity,Unit Price,GST\nUnknown Supplier,Masks,5,8.00,0.80",
+    ],
+      "match-supplier.csv",
+      { type: "text/csv" },
+    );
+    fireEvent.change(getFileInput(container), { target: { files: [file] } });
+    await screen.findByText("Supplier column detected");
+    fireEvent.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByRole("heading", { name: "Unknown Supplier" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Match Existing"), {
+      target: { value: dentavisionSupplier.id },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply Match" }));
+
+    await waitFor(() => {
+      expect(mockPreviewSupplierCatalogueImport).toHaveBeenCalledWith(
+        dentavisionSupplier.id,
+        expect.objectContaining({ name: "match-supplier-unknown-supplier.csv" }),
+      );
+    });
+    expect(await screen.findByText("Supplier Matched")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
   });
 
   it("normalises structured rows and extracts supplier SKU from product descriptions", async () => {
@@ -633,6 +723,7 @@ describe("CatalogueImportPage", () => {
     await renderStructuredProductReview();
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+    expect(screen.getByText("Review all product rows before importing products.")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
     expect(screen.getAllByText("Approved").length).toBeGreaterThan(1);
 
@@ -827,7 +918,7 @@ describe("CatalogueImportPage", () => {
     await waitFor(() => {
       expect(mockCancelSupplierInvoiceImport).toHaveBeenCalledWith(TEST_CLINIC_ID, invoiceImport.id);
     });
-    expect(await screen.findByRole("button", { name: "Upload & Process" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Catalogue Import" })).toBeInTheDocument();
   });
 
   it("renders line actions and allows approving a line locally", async () => {
