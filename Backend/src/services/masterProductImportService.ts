@@ -11,6 +11,14 @@
  *     clinic_inventory_items row per newly created product so it appears in
  *     the clinic's Products/Inventory list — quantityOnHand is always 0.
  *
+ * RLS: clinic_inventory_items is a RLS-protected table, but this router is
+ * global (not nested under /clinics/:clinicId/*), so the request never gets
+ * an RLS session context from rlsTenantContextMiddleware. provisionClinicInventory()
+ * explicitly establishes one via runWithTenantContext() for the (already
+ * access-checked) target clinicId before writing, and never bypasses RLS
+ * globally — it only ever grants the context for the single clinic the
+ * caller was authorised for.
+ *
  * Expected columns (case-insensitive, order-independent, spaces/underscores
  * interchangeable):
  *   Required: display_name, category, status
@@ -35,6 +43,7 @@ import type {
 import { normaliseMasterProductText } from "../repositories/catalogRepository.js";
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import type { AuditService } from "./auditService.js";
+import { runWithTenantContext } from "../db/tenantContext.js";
 import { AppError } from "../types/errors.js";
 import type { AuthenticatedUser } from "../types/auth.js";
 import type { MasterCatalogItem } from "../types/inventory.js";
@@ -341,20 +350,50 @@ export function createMasterProductImportService(
   }
 
   async function provisionClinicInventory(
+    caller: AuthenticatedUser,
     clinicId: string,
     masterItem: MasterCatalogItem,
   ): Promise<void> {
-    // Rule: any clinic inventory row created by this import MUST start at
-    // quantityOnHand = 0. No updateQuantity() or recordAdjustment() call is
-    // ever made — this is the only inventory write this service performs.
-    await inventoryRepository.createClinicInventoryItem({
-      clinicId,
-      masterCatalogItemId: masterItem.id,
-      quantityOnHand: 0,
-      reorderPoint: 0,
-      unitCostOverrideCents: null,
-      supplierPreference: null,
-    });
+    // clinic_inventory_items is RLS-protected (app_is_owner_admin() OR
+    // clinic_id = app_current_clinic_id()). This route is global — it is
+    // NOT nested under /clinics/:clinicId/*, so rlsTenantContextMiddleware
+    // never runs and no AsyncLocalStorage context would otherwise exist.
+    // Without runWithTenantContext, the INSERT below is executed with no
+    // RLS session variables set and Postgres rejects it with "new row
+    // violates row-level security policy for table clinic_inventory_items".
+    //
+    // assertClinicAccess() (called by importLibrary before any rows are
+    // processed) has already confirmed the caller is authorised for
+    // clinicId, so it is safe to establish that exact context here.
+    const ownerAdmin = caller.role === "owner_admin";
+
+    try {
+      await runWithTenantContext(clinicId, ownerAdmin, async () => {
+        // Rule: any clinic inventory row created by this import MUST start
+        // at quantityOnHand = 0. No updateQuantity() or recordAdjustment()
+        // call is ever made — this is the only inventory write this
+        // service performs.
+        await inventoryRepository.createClinicInventoryItem({
+          clinicId,
+          masterCatalogItemId: masterItem.id,
+          quantityOnHand: 0,
+          reorderPoint: 0,
+          unitCostOverrideCents: null,
+          supplierPreference: null,
+        });
+      });
+    } catch (err) {
+      // Convert any provisioning failure (RLS rejection, connection error,
+      // constraint violation, ...) into a well-defined AppError so callers
+      // get a clear, actionable message instead of a generic "unexpected
+      // error occurred" 500 response.
+      const reason = err instanceof Error ? err.message : "an unknown error occurred";
+      throw new AppError(
+        500,
+        "MASTER_PRODUCT_PROVISION_FAILED",
+        `"${masterItem.name}" was added to the master catalogue, but could not be provisioned into the clinic's inventory: ${reason}`,
+      );
+    }
   }
 
   return {
@@ -490,7 +529,7 @@ export function createMasterProductImportService(
         seenInBatch.add(batchKey);
 
         if (clinicId) {
-          await provisionClinicInventory(clinicId, masterItem);
+          await provisionClinicInventory(caller, clinicId, masterItem);
         }
 
         imported++;

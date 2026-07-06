@@ -17,7 +17,9 @@ import { createInMemoryCatalogRepository } from "../src/repositories/catalogRepo
 import { createInMemoryInventoryRepository } from "../src/repositories/inventoryRepository.js";
 import { createAuditService } from "../src/services/auditService.js";
 import { createLogger } from "../src/utils/logger.js";
+import { getCurrentTenantCtx } from "../src/db/tenantContext.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
+import type { ClinicInventoryItem } from "../src/types/inventory.js";
 
 const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_CLINIC_ID = "22222222-2222-4222-8222-222222222222";
@@ -349,6 +351,102 @@ describe("MasterProductImportService — no stock movement", () => {
     const afterQty = after.find((i) => i.masterCatalogItemId === seeded.id)?.quantityOnHand;
 
     expect(afterQty).toBe(beforeQty);
+  });
+});
+
+// ─── RLS tenant context (provisioning bug fix) ─────────────────────────────────
+//
+// clinic_inventory_items is RLS-protected: app_is_owner_admin() OR
+// clinic_id = app_current_clinic_id(). Because /master-products/import is a
+// global route (not nested under /clinics/:clinicId/*), rlsTenantContextMiddleware
+// never runs for it — without provisionClinicInventory() explicitly establishing
+// a context via runWithTenantContext(), Postgres would reject the INSERT with
+// "new row violates row-level security policy for table clinic_inventory_items".
+// These tests prove the correct context is established for both roles and that
+// it is never widened beyond what assertClinicAccess() already authorised.
+describe("MasterProductImportService — RLS tenant context", () => {
+  it("establishes ownerAdmin=true context scoped to the target clinic for owner_admin", async () => {
+    const { importService, inventoryRepo } = buildService();
+    const original = inventoryRepo.createClinicInventoryItem.bind(inventoryRepo);
+    let capturedCtx: ReturnType<typeof getCurrentTenantCtx> = null;
+    jest
+      .spyOn(inventoryRepo, "createClinicInventoryItem")
+      .mockImplementation(async (item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">) => {
+        capturedCtx = getCurrentTenantCtx();
+        return original(item);
+      });
+
+    const csv = "display_name,category,status\nSuture Kit,Surgical,active\n";
+    // owner_admin's home clinic is CLINIC_ID; provision a DIFFERENT clinic to
+    // prove the context follows the target clinic, not the caller's home clinic.
+    await importService.importLibrary(OWNER_ADMIN, Buffer.from(csv), "csv", OTHER_CLINIC_ID);
+
+    expect(capturedCtx).toEqual({ clinicId: OTHER_CLINIC_ID, ownerAdmin: true });
+  });
+
+  it("establishes ownerAdmin=false context scoped to the home clinic for group_practice_manager", async () => {
+    const { importService, inventoryRepo } = buildService();
+    const original = inventoryRepo.createClinicInventoryItem.bind(inventoryRepo);
+    let capturedCtx: ReturnType<typeof getCurrentTenantCtx> = null;
+    jest
+      .spyOn(inventoryRepo, "createClinicInventoryItem")
+      .mockImplementation(async (item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">) => {
+        capturedCtx = getCurrentTenantCtx();
+        return original(item);
+      });
+
+    const csv = "display_name,category,status\nSuture Kit,Surgical,active\n";
+    await importService.importLibrary(MANAGER, Buffer.from(csv), "csv", CLINIC_ID);
+
+    expect(capturedCtx).toEqual({ clinicId: CLINIC_ID, ownerAdmin: false });
+  });
+
+  it("does not establish or leak any tenant context outside the provisioning call", async () => {
+    const { importService } = buildService();
+    const csv = "display_name,category,status\nSuture Kit,Surgical,active\n";
+
+    expect(getCurrentTenantCtx()).toBeNull();
+    await importService.importLibrary(OWNER_ADMIN, Buffer.from(csv), "csv", OTHER_CLINIC_ID);
+    // The context is scoped to the runWithTenantContext() callback only — it
+    // must not still be active once importLibrary() has returned.
+    expect(getCurrentTenantCtx()).toBeNull();
+  });
+
+  it("does not call clinic inventory provisioning at all when a row is skipped as a duplicate", async () => {
+    const { importService, inventoryRepo, catalogRepo } = buildService();
+    const seeded = (await catalogRepo.listMasterItems())[0];
+    if (!seeded) throw new Error("expected seeded master items");
+
+    const createSpy = jest.spyOn(inventoryRepo, "createClinicInventoryItem");
+    const csv = `display_name,category,status\n${seeded.name},${seeded.category},active\n`;
+
+    const result = await importService.importLibrary(
+      OWNER_ADMIN,
+      Buffer.from(csv),
+      "csv",
+      CLINIC_ID,
+    );
+
+    expect(result.skippedDuplicates).toBe(1);
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a clear MASTER_PRODUCT_PROVISION_FAILED error instead of an unexpected error", async () => {
+    const { importService, inventoryRepo } = buildService();
+    jest
+      .spyOn(inventoryRepo, "createClinicInventoryItem")
+      .mockRejectedValue(
+        new Error("new row violates row-level security policy for table clinic_inventory_items"),
+      );
+
+    const csv = "display_name,category,status\nSuture Kit,Surgical,active\n";
+
+    await expect(
+      importService.importLibrary(OWNER_ADMIN, Buffer.from(csv), "csv", CLINIC_ID),
+    ).rejects.toMatchObject({
+      code: "MASTER_PRODUCT_PROVISION_FAILED",
+      statusCode: 500,
+    });
   });
 });
 

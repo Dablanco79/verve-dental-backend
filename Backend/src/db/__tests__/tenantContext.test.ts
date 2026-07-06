@@ -15,7 +15,12 @@
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import type { PoolClient } from "pg";
 
-import { installRlsPoolHook, rlsTenantContextMiddleware } from "../tenantContext.js";
+import {
+  getCurrentTenantCtx,
+  installRlsPoolHook,
+  rlsTenantContextMiddleware,
+  runWithTenantContext,
+} from "../tenantContext.js";
 import type { DatabasePool } from "../pool.js";
 
 // ─── Mock helpers ──────────────────────────────────────────────────────────────
@@ -518,6 +523,70 @@ describe("installRlsPoolHook — regression: context isolation between requests"
     const idxOfInjectB = queryLog.indexOf(injectB);
     expect(idxOfResetA).toBeGreaterThanOrEqual(0);
     expect(idxOfInjectB).toBeGreaterThan(idxOfResetA);
+  });
+});
+
+// ─── runWithTenantContext — explicit context for non-middleware code paths ─────
+//
+// Master Product Library import provisions clinic_inventory_items rows from a
+// GLOBAL route (/master-products/import) that never passes through
+// rlsTenantContextMiddleware. runWithTenantContext() is the mechanism that
+// establishes an RLS context in exactly that situation. These tests prove it
+// drives the same installRlsPoolHook injection path as the middleware does,
+// and that the context does not leak outside its callback.
+
+describe("runWithTenantContext — explicit context for global (non-clinic-scoped) routes", () => {
+  let bundle: MockClientBundle;
+  let pool: DatabasePool;
+
+  beforeEach(() => {
+    bundle = makeMockClient();
+    pool = makeMockPool(bundle.client);
+    installRlsPoolHook(pool);
+  });
+
+  it("injects set_config for the given clinicId and ownerAdmin=true", async () => {
+    await runWithTenantContext("clinic-owner-admin-1", true, async () => {
+      await pool.connect();
+    });
+
+    const rlsQuery = bundle.client.queries.find((q) => q.sql.includes("set_config"));
+    expect(rlsQuery).toBeDefined();
+    expect(rlsQuery?.params).toContain("clinic-owner-admin-1");
+    expect(rlsQuery?.params).toContain("true");
+  });
+
+  it("injects set_config for the given clinicId and ownerAdmin=false", async () => {
+    await runWithTenantContext("clinic-manager-1", false, async () => {
+      await pool.connect();
+    });
+
+    const rlsQuery = bundle.client.queries.find((q) => q.sql.includes("set_config"));
+    expect(rlsQuery).toBeDefined();
+    expect(rlsQuery?.params).toContain("clinic-manager-1");
+    expect(rlsQuery?.params).toContain("false");
+  });
+
+  it("exposes the active context via getCurrentTenantCtx() only inside the callback", async () => {
+    expect(getCurrentTenantCtx()).toBeNull();
+
+    let capturedInside: ReturnType<typeof getCurrentTenantCtx> = null;
+    await runWithTenantContext("clinic-scoped-1", true, () => {
+      capturedInside = getCurrentTenantCtx();
+      return Promise.resolve();
+    });
+
+    expect(capturedInside).toEqual({ clinicId: "clinic-scoped-1", ownerAdmin: true });
+    expect(getCurrentTenantCtx()).toBeNull();
+  });
+
+  it("propagates the callback's return value and rejection", async () => {
+    const value = await runWithTenantContext("clinic-x", false, () => Promise.resolve(42));
+    expect(value).toBe(42);
+
+    await expect(
+      runWithTenantContext("clinic-x", false, () => Promise.reject(new Error("boom"))),
+    ).rejects.toThrow("boom");
   });
 });
 

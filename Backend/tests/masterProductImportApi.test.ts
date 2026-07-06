@@ -175,6 +175,40 @@ describe("POST /api/v1/master-products/import", () => {
     expect(res.status).toBe(403);
   });
 
+  it("allows owner_admin to provision a clinic that is not their home clinic", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    // admin@clinic-a.au's home clinic is Clinic A; target Clinic B explicitly
+    // to prove owner_admin can provision ANY authorised clinic, not just home.
+    const otherClinicId = "22222222-2222-4222-8222-222222222222";
+    const csv = "display_name,category,status\nBite Blocks,Restorative,active\n";
+
+    const res = await request(app)
+      .post("/api/v1/master-products/import")
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .field("clinicId", otherClinicId)
+      .attach("file", Buffer.from(csv), { filename: "library.csv", contentType: "text/csv" });
+
+    expect(res.status).toBe(200);
+    const body = res.body as ApiData<ImportResult>;
+    expect(body.data.imported).toBe(1);
+    const productId = body.data.rows[0]?.masterProductId;
+
+    const inventoryRes = await request(app)
+      .get(`/api/v1/clinics/${otherClinicId}/inventory`)
+      .set("Authorization", `Bearer ${ownerToken}`);
+
+    expect(inventoryRes.status).toBe(200);
+    const inventoryBody = inventoryRes.body as ApiData<
+      Array<{ masterCatalogItemId: string; quantityOnHand: number }>
+    >;
+    const createdRow = inventoryBody.data.find(
+      (item) => item.masterCatalogItemId === productId,
+    );
+    expect(createdRow).toBeDefined();
+    expect(createdRow?.quantityOnHand).toBe(0);
+  });
+
   it("denies a group_practice_manager provisioning a clinic they do not belong to", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");

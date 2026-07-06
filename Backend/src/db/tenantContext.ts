@@ -133,6 +133,30 @@ export function getCurrentTenantCtx(): TenantCtx | null {
   return tenantStorage.getStore() ?? null;
 }
 
+/**
+ * Runs `fn` with an explicit RLS tenant context, for code paths that write
+ * to RLS-protected tables OUTSIDE the normal /clinics/:clinicId/* routing
+ * tree (where rlsTenantContextMiddleware never runs, so no context would
+ * otherwise be established).
+ *
+ * Any pool.query()/pool.connect() call made (directly or transitively) while
+ * `fn` is running picks up the context via installRlsPoolHook, exactly as it
+ * would for a request that went through rlsTenantContextMiddleware. Callers
+ * MUST have already authorised `clinicId` for the current actor (e.g. via
+ * resolveTenantClinicId or an equivalent role check) — this helper only
+ * propagates the context, it does not perform authorisation itself.
+ *
+ * Example: Master Product Library import provisioning clinic inventory for
+ * an optional, explicitly-supplied clinicId (see masterProductImportService).
+ */
+export function runWithTenantContext<T>(
+  clinicId: string,
+  ownerAdmin: boolean,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return tenantStorage.run({ clinicId, ownerAdmin }, fn);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pool hook — transparent context injection
 // ─────────────────────────────────────────────────────────────────────────────
