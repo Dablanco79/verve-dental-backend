@@ -101,6 +101,7 @@ import { createSupplierService } from "../services/supplierService.js";
 import { createSupplierCatalogueService } from "../services/supplierCatalogueService.js";
 import { createCatalogueImportService } from "../services/catalogueImportService.js";
 import { createMasterProductImportService } from "../services/masterProductImportService.js";
+import { createMasterProductService } from "../services/masterProductService.js";
 import { createProductMatchingService } from "../services/productMatchingService.js";
 import { createTimesheetService } from "../services/timesheetService.js";
 import { createUserService } from "../services/userService.js";
@@ -137,6 +138,7 @@ import type { SupplierService } from "../services/supplierService.js";
 import type { SupplierCatalogueService } from "../services/supplierCatalogueService.js";
 import type { CatalogueImportService } from "../services/catalogueImportService.js";
 import type { MasterProductImportService } from "../services/masterProductImportService.js";
+import type { MasterProductService } from "../services/masterProductService.js";
 
 export type AppDependencies = {
   authService: ReturnType<typeof createAuthService>;
@@ -151,6 +153,7 @@ export type AppDependencies = {
   supplierCatalogueService: SupplierCatalogueService;
   catalogueImportService: CatalogueImportService;
   masterProductImportService: MasterProductImportService;
+  masterProductService: MasterProductService;
   supplierInvoiceService: SupplierInvoiceService;
   supplierIntelligenceService: SupplierIntelligenceService;
   healthService: HealthService;
@@ -461,6 +464,7 @@ export async function createAppDependencies(
     inventoryRepository,
     auditService,
   );
+  const masterProductService = createMasterProductService(catalogRepository, auditService);
 
   // Supplier Invoice OCR — Sprint OCR-1.
   // createOcrProvider reads OCR_PROVIDER + ANTHROPIC_API_KEY from config.
@@ -512,6 +516,7 @@ export async function createAppDependencies(
     supplierCatalogueService,
     catalogueImportService,
     masterProductImportService,
+    masterProductService,
     supplierInvoiceService,
     supplierIntelligenceService,
     healthService,

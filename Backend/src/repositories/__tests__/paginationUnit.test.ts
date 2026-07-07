@@ -57,12 +57,14 @@ import type { CreateTimesheetEntryInput } from "../../types/payroll.js";
 function makeNullCatalog(): CatalogRepository {
   return {
     listMasterItems: () => Promise.resolve([]),
+    listMasterItemsPage: () => Promise.resolve({ items: [], total: 0, limit: 20, offset: 0 }),
     findMasterItemById: () => Promise.resolve(null),
     findMasterItemBySku: () => Promise.resolve(null),
     findMasterItemByNormalisedNameAndCategory: () => Promise.resolve(null),
     findBarcodeMapping: () => Promise.resolve(null),
     listBarcodeMappingsForItem: () => Promise.resolve([]),
     createMasterItem: () => Promise.reject(new Error("not implemented")),
+    updateMasterItem: () => Promise.resolve(null),
     createBarcodeMapping: () => Promise.reject(new Error("not implemented")),
   };
 }

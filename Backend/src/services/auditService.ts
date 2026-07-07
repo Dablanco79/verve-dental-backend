@@ -39,7 +39,11 @@ export type SupplierAuditEvent =
 
 export type MasterProductAuditEvent =
   | "master_product.imported"
-  | "master_product.import_skipped";
+  | "master_product.import_skipped"
+  | "master_product.created"
+  | "master_product.updated"
+  | "master_product.archived"
+  | "master_product.reactivated";
 
 export type SupplierInvoiceAuditEvent =
   | "supplier_invoice.uploaded"

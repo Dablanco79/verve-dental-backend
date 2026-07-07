@@ -2404,6 +2404,25 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ON master_catalog_items (status);
     `,
   },
+  {
+    /**
+     * Master Product Management Foundation.
+     *
+     * Adds indexes supporting the Master Products list/search/filter UI:
+     *   - category filter (exact, case-insensitive)
+     *   - free-text search across name (case-insensitive prefix/substring scans
+     *     still benefit from an index on the lowercased column for equality
+     *     and prefix matches; full substring search remains a seq scan on
+     *     small-to-medium catalogues, which is acceptable at this stage).
+     */
+    id: "035_master_product_management_indexes",
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_master_catalog_items_category
+        ON master_catalog_items (category);
+      CREATE INDEX IF NOT EXISTS idx_master_catalog_items_name_lower
+        ON master_catalog_items (lower(name));
+    `,
+  },
 ];
 
 /**

@@ -20,7 +20,13 @@
 import type { DatabasePool } from "../db/pool.js";
 import type { BarcodeFormat, BarcodeMapping, MasterCatalogItem } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
-import type { CatalogRepository, CreateMasterCatalogItemInput } from "./catalogRepository.js";
+import type {
+  CatalogRepository,
+  CreateMasterCatalogItemInput,
+  ListMasterItemsOptions,
+  MasterItemsPage,
+  UpdateMasterCatalogItemInput,
+} from "./catalogRepository.js";
 
 type MasterCatalogRow = {
   id: string;
@@ -93,6 +99,56 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
         "SELECT * FROM master_catalog_items WHERE is_active = true ORDER BY name",
       );
       return rows.map(rowToMasterItem);
+    },
+
+    async listMasterItemsPage(options: ListMasterItemsOptions = {}): Promise<MasterItemsPage> {
+      const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+      const offset = Math.max(options.offset ?? 0, 0);
+      const statusFilter = options.status ?? "active";
+
+      const params: unknown[] = [];
+      const conditions: string[] = [];
+
+      if (statusFilter !== "all") {
+        params.push(statusFilter);
+        conditions.push(`status = $${String(params.length)}`);
+      }
+
+      if (options.category) {
+        params.push(options.category.trim());
+        conditions.push(`LOWER(category) = LOWER($${String(params.length)})`);
+      }
+
+      if (options.search) {
+        params.push(`%${options.search.trim().toLowerCase()}%`);
+        const idx = params.length;
+        conditions.push(
+          `(LOWER(name) LIKE $${String(idx)}
+             OR LOWER(sku) LIKE $${String(idx)}
+             OR LOWER(category) LIKE $${String(idx)}
+             OR LOWER(COALESCE(brand, '')) LIKE $${String(idx)}
+             OR LOWER(COALESCE(subcategory, '')) LIKE $${String(idx)})`,
+        );
+      }
+
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const countResult = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM master_catalog_items ${where}`,
+        params,
+      );
+      const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
+
+      const limitIdx = params.length + 1;
+      const offsetIdx = params.length + 2;
+      const { rows } = await pool.query<MasterCatalogRow>(
+        `SELECT * FROM master_catalog_items ${where}
+         ORDER BY name ASC
+         LIMIT $${String(limitIdx)} OFFSET $${String(offsetIdx)}`,
+        [...params, limit, offset],
+      );
+
+      return { items: rows.map(rowToMasterItem), total, limit, offset };
     },
 
     async findMasterItemById(id: string): Promise<MasterCatalogItem | null> {
@@ -179,6 +235,55 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create master catalog item");
       return rowToMasterItem(row);
+    },
+
+    async updateMasterItem(
+      id: string,
+      input: UpdateMasterCatalogItemInput,
+    ): Promise<MasterCatalogItem | null> {
+      const setClauses: string[] = [];
+      const params: unknown[] = [];
+
+      let idx = 1;
+      const addField = (col: string, val: unknown) => {
+        params.push(val);
+        setClauses.push(`${col} = $${String(idx++)}`);
+      };
+
+      if (input.sku !== undefined) addField("sku", input.sku);
+      if (input.name !== undefined) addField("name", input.name);
+      if (input.description !== undefined) addField("description", input.description);
+      if (input.category !== undefined) addField("category", input.category);
+      if (input.subcategory !== undefined) addField("subcategory", input.subcategory);
+      if (input.brand !== undefined) addField("brand", input.brand);
+      if (input.variantAttributes !== undefined) {
+        addField("variant_attributes", input.variantAttributes);
+      }
+      if (input.stockUnit !== undefined) {
+        addField("stock_unit", input.stockUnit);
+        addField("unit_of_measure", input.stockUnit);
+      }
+      if (input.receivingUnit !== undefined) addField("receiving_unit", input.receivingUnit);
+      if (input.notes !== undefined) addField("notes", input.notes);
+      if (input.status !== undefined) {
+        addField("status", input.status);
+        addField("is_active", input.status === "active");
+      }
+
+      if (setClauses.length === 0) {
+        return this.findMasterItemById(id);
+      }
+
+      setClauses.push("updated_at = now()");
+      params.push(id);
+
+      const { rows } = await pool.query<MasterCatalogRow>(
+        `UPDATE master_catalog_items SET ${setClauses.join(", ")}
+         WHERE id = $${String(idx)}
+         RETURNING *`,
+        params,
+      );
+      return rows[0] ? rowToMasterItem(rows[0]) : null;
     },
 
     async createBarcodeMapping(

@@ -120,6 +120,13 @@ import type {
   SupplierContractPrice,
   UpdateSupplierContractPriceRequest,
 } from "../types/supplierContractPrice.js";
+import type {
+  CreateMasterProductRequest,
+  ListMasterProductsParams,
+  MasterProduct,
+  MasterProductsPage,
+  UpdateMasterProductRequest,
+} from "../types/masterProduct.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1194,6 +1201,99 @@ export function createApiClient(config: AppConfig) {
     return envelope.data;
   }
 
+  // ── Master Products management (CRUD/list) ──────────────────────────────────
+
+  /**
+   * Lists master products with search/category/status filters and pagination.
+   * The backend returns { data: [...], pagination: { total, limit, offset } }
+   * which differs from the standard { data: T } envelope, so we parse the
+   * response body manually to capture both the items array and pagination.
+   */
+  async function listMasterProducts(
+    params: ListMasterProductsParams = {},
+  ): Promise<MasterProductsPage> {
+    const query = new URLSearchParams();
+    if (params.search) query.set("search", params.search);
+    if (params.category) query.set("category", params.category);
+    if (params.status) query.set("status", params.status);
+    if (params.limit !== undefined) query.set("limit", String(params.limit));
+    if (params.offset !== undefined) query.set("offset", String(params.offset));
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+
+    const response = await fetch(`${baseUrl}/api/v1/master-products${qs}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      const message = errorBody?.error.message ?? `Request failed (${String(response.status)})`;
+      throw new Error(message);
+    }
+
+    type RawEnvelope = {
+      data: MasterProduct[];
+      pagination: { total: number; limit: number; offset: number };
+    };
+    const envelope = await response.json() as RawEnvelope;
+    return {
+      items: envelope.data,
+      total: envelope.pagination.total,
+      limit: envelope.pagination.limit,
+      offset: envelope.pagination.offset,
+    };
+  }
+
+  async function getMasterProduct(id: string): Promise<MasterProduct> {
+    return request<MasterProduct>(
+      config,
+      `/api/v1/master-products/${encodeURIComponent(id)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createMasterProduct(body: CreateMasterProductRequest): Promise<MasterProduct> {
+    return request<MasterProduct>(
+      config,
+      "/api/v1/master-products",
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateMasterProduct(
+    id: string,
+    body: UpdateMasterProductRequest,
+  ): Promise<MasterProduct> {
+    return request<MasterProduct>(
+      config,
+      `/api/v1/master-products/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function archiveMasterProduct(id: string): Promise<MasterProduct> {
+    return request<MasterProduct>(
+      config,
+      `/api/v1/master-products/${encodeURIComponent(id)}/archive`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
+  async function reactivateMasterProduct(id: string): Promise<MasterProduct> {
+    return request<MasterProduct>(
+      config,
+      `/api/v1/master-products/${encodeURIComponent(id)}/reactivate`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
   async function confirmReviewedSupplierCatalogueImport(
     supplierId: string,
     body: ReviewedCatalogueImportRequest,
@@ -1852,6 +1952,12 @@ export function createApiClient(config: AppConfig) {
     confirmSupplierCatalogueImport,
     confirmReviewedSupplierCatalogueImport,
     importMasterProductLibrary,
+    listMasterProducts,
+    getMasterProduct,
+    createMasterProduct,
+    updateMasterProduct,
+    archiveMasterProduct,
+    reactivateMasterProduct,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,
     getSupplierInvoice,
