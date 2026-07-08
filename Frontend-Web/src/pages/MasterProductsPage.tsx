@@ -98,7 +98,7 @@ function ProductsTable({ products, canManage, onEdit, onArchive, onReactivate }:
         <thead>
           <tr>
             <th className="supplier-table__th">Display Name</th>
-            <th className="supplier-table__th">SKU</th>
+            <th className="supplier-table__th">Internal Code</th>
             <th className="supplier-table__th">Category</th>
             <th className="supplier-table__th">Brand</th>
             <th className="supplier-table__th">Unit</th>
@@ -314,7 +314,7 @@ export function MasterProductsPage() {
               onChange={(e) => {
                 setSearchInput(e.target.value);
               }}
-              placeholder="Display name, SKU, category, or brand…"
+              placeholder="Display name, internal code, category, or brand…"
             />
           </label>
 

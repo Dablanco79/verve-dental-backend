@@ -177,7 +177,7 @@ describe("MasterProductsPage", () => {
     await screen.findByText("Nitrile Examination Gloves (Medium)");
     mockListMasterProducts.mockClear();
 
-    const searchInput = screen.getByPlaceholderText("Display name, SKU, category, or brand…");
+    const searchInput = screen.getByPlaceholderText("Display name, internal code, category, or brand…");
     await user.type(searchInput, "Nitrile");
 
     await waitFor(

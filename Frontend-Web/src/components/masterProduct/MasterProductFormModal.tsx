@@ -161,7 +161,7 @@ export function MasterProductFormModal({ product, onClose, onSaved }: MasterProd
           </label>
 
           <label className="supplier-form__field">
-            <span className="supplier-form__label">SKU</span>
+            <span className="supplier-form__label">Internal Code</span>
             <input
               type="text"
               className="supplier-form__control"
