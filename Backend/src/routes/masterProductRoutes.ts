@@ -16,6 +16,7 @@ import { Router } from "express";
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import { createMasterProductHandlers } from "../controllers/masterProductController.js";
 import { createMasterProductImportHandlers } from "../controllers/masterProductImportController.js";
+import { createMasterProductMatchHandlers } from "../controllers/masterProductMatchController.js";
 import {
   createAuthenticateMiddleware,
   requireRoles,
@@ -48,6 +49,28 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
   const requireWriteAccess = requireRoles("owner_admin", "group_practice_manager");
   const importHandlers = createMasterProductImportHandlers(deps.masterProductImportService);
   const handlers = createMasterProductHandlers(deps.masterProductService);
+  const matchHandlers = createMasterProductMatchHandlers(
+    deps.productMatchingService,
+    deps.supplierCatalogueRepository,
+    deps.auditService,
+  );
+
+  // ── Product Matching Engine — MUST be registered before /:id routes ───────
+  //    Both endpoints require write access (clinical_staff is blocked).
+
+  router.post(
+    "/match",
+    authenticate,
+    requireWriteAccess,
+    asyncHandler((req, res) => matchHandlers.suggestMatches(req, res)),
+  );
+
+  router.post(
+    "/match/confirm",
+    authenticate,
+    requireWriteAccess,
+    asyncHandler((req, res) => matchHandlers.confirmMatch(req, res)),
+  );
 
   // ── Master Products CRUD/list ─────────────────────────────────────────────
 

@@ -54,3 +54,67 @@ export type CreateMasterProductRequest = {
 };
 
 export type UpdateMasterProductRequest = Partial<CreateMasterProductRequest>;
+
+// ─── Product Matching Engine v1 ───────────────────────────────────────────────
+
+export type ProductMatchReason =
+  | "supplier_sku_mapping"
+  | "exact_name"
+  | "token_similarity"
+  | "category_boost"
+  | "brand_boost"
+  | "unit_boost";
+
+/** A single ranked suggestion from the matching engine. confidence is 0–100. */
+export type ProductMatchSuggestion = {
+  masterProductId: string;
+  displayName: string;
+  sku: string;
+  category: string;
+  brand: string | null;
+  stockUnit: string;
+  confidence: number;
+  reasons: ProductMatchReason[];
+};
+
+export type SuggestMatchesRequest = {
+  supplierId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+  category?: string | null;
+  brand?: string | null;
+  unit?: string | null;
+  packSize?: string | null;
+};
+
+export type SuggestMatchesResult = {
+  suggestions: ProductMatchSuggestion[];
+};
+
+export type ConfirmMatchRequest = {
+  supplierId: string;
+  masterProductId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+  lastUnitCostCents?: number | null;
+};
+
+export type ConfirmedSupplierProductMapping = {
+  id: string;
+  supplierId: string;
+  masterProductId: string;
+  supplierSku: string | null;
+  supplierDescription: string | null;
+  lastUnitCostCents: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Minimal accepted match info stored client-side when user accepts a suggestion. */
+export type AcceptedMatchOverride = {
+  masterProductId: string;
+  displayName: string;
+  sku: string;
+};
+

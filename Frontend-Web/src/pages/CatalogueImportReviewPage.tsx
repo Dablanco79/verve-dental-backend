@@ -5,6 +5,7 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
 import type { Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/supplier.js";
@@ -269,6 +270,11 @@ export function CatalogueImportReviewPage() {
   const [lineReviewStates, setLineReviewStates] = useState<Record<string, LineReviewState>>({});
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<LineEditDraft | null>(null);
+  // Product Matching Engine: display names for manually-matched lines (lineId → displayName)
+  const [lineMatchDisplayNames, setLineMatchDisplayNames] = useState<Record<string, string>>({});
+  const [matchSearchTargetLineId, setMatchSearchTargetLineId] = useState<string | null>(null);
+  // Tracks lines whose masterCatalogItemId PATCH is in-flight; blocks Import button
+  const [linkingLineId, setLinkingLineId] = useState<string | null>(null);
 
   const matchedSupplier = useMemo(
     () => suppliers.find((supplier) => supplier.id === invoice?.supplierId) ?? null,
@@ -291,7 +297,8 @@ export function CatalogueImportReviewPage() {
     invoice.status === "pending_review" &&
     hasLineData &&
     stillRequiringReview === 0 &&
-    hasOnlySafelyImportableStates;
+    hasOnlySafelyImportableStates &&
+    linkingLineId === null;
   const canCancelImport =
     !!invoice &&
     (invoice.status === "uploaded" ||
@@ -648,9 +655,22 @@ export function CatalogueImportReviewPage() {
                             <td>{formatLineTotal(line)}</td>
                             <td>{formatMatchStatus(line)}</td>
                             <td>
-                              <span className={`catalogue-line-state catalogue-line-state--${reviewState.toLowerCase().replace(/\s+/g, "-")}`}>
-                                {reviewState}
-                              </span>
+                              {linkingLineId === line.id ? (
+                                <span className="catalogue-line-state catalogue-line-state--needs-review" role="status" aria-label="Linking product…">
+                                  Linking…
+                                </span>
+                              ) : (
+                                <>
+                                  <span className={`catalogue-line-state catalogue-line-state--${reviewState.toLowerCase().replace(/\s+/g, "-")}`}>
+                                    {reviewState}
+                                  </span>
+                                  {reviewState === "Matched Existing Product" && lineMatchDisplayNames[line.id] ? (
+                                    <span className="catalogue-review__future-note">
+                                      {lineMatchDisplayNames[line.id]}
+                                    </span>
+                                  ) : null}
+                                </>
+                              )}
                             </td>
                             <td>
                               <div className="catalogue-review__line-actions">
@@ -730,12 +750,16 @@ export function CatalogueImportReviewPage() {
                                       >
                                         Reject / Skip
                                       </button>
-                                      <button type="button" className="link-button" disabled>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        disabled={linkingLineId !== null}
+                                        onClick={() => {
+                                          setMatchSearchTargetLineId(line.id);
+                                        }}
+                                      >
                                         Match existing product
                                       </button>
-                                      <span className="catalogue-review__future-note">
-                                        Matching persistence available in a future release
-                                      </span>
                                       <button
                                         type="button"
                                         className="link-button"
@@ -842,6 +866,44 @@ export function CatalogueImportReviewPage() {
             onConfirm={handleCancelImport}
           />
         ) : null}
+        <MasterProductSearchModal
+          isOpen={matchSearchTargetLineId !== null}
+          title="Match Existing Master Product"
+          onClose={() => {
+            setMatchSearchTargetLineId(null);
+          }}
+          onSelect={(product) => {
+            const targetLineId = matchSearchTargetLineId;
+            setMatchSearchTargetLineId(null);
+            if (!targetLineId || !invoice || !clinicId) return;
+
+            // Persist the link to the DB first — only update UI state on success.
+            setLinkingLineId(targetLineId);
+            apiClient
+              .updateSupplierInvoiceLine(clinicId, invoice.id, targetLineId, {
+                masterCatalogItemId: product.id,
+                isMatched: true,
+                matchMethod: "manual",
+              })
+              .then(() => {
+                setLineMatchDisplayNames((current) => ({
+                  ...current,
+                  [targetLineId]: product.displayName,
+                }));
+                setLineState(targetLineId, "Matched Existing Product");
+              })
+              .catch((err: unknown) => {
+                setImportError(
+                  err instanceof Error
+                    ? err.message
+                    : "Could not link this product. Please try again.",
+                );
+              })
+              .finally(() => {
+                setLinkingLineId(null);
+              });
+          }}
+        />
       </div>
     </AppShell>
   );

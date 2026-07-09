@@ -2423,6 +2423,19 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ON master_catalog_items (lower(name));
     `,
   },
+  {
+    id: "036_product_matching_engine",
+    sql: `
+      -- Track when a supplier SKU was last observed during import/OCR/matching.
+      ALTER TABLE supplier_catalogue
+        ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
+
+      -- Index to accelerate supplier-SKU lookup in the Product Matching Engine.
+      CREATE INDEX IF NOT EXISTS idx_supplier_catalogue_supplier_sku
+        ON supplier_catalogue (supplier_id, lower(supplier_sku))
+        WHERE supplier_sku IS NOT NULL AND active = true;
+    `,
+  },
 ];
 
 /**

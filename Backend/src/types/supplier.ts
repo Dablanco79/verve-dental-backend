@@ -177,6 +177,57 @@ export type ProductMatchResult = {
   matchStatus: ProductMatchStatus;
 };
 
+/** Human-readable labels explaining why a suggestion was ranked at its confidence. */
+export const PRODUCT_MATCH_REASONS = [
+  "supplier_sku_mapping",
+  "exact_name",
+  "token_similarity",
+  "category_boost",
+  "brand_boost",
+  "unit_boost",
+] as const;
+
+export type ProductMatchReason = (typeof PRODUCT_MATCH_REASONS)[number];
+
+/**
+ * A single ranked suggestion returned by the Product Matching Engine v1.
+ * confidence is an integer 0–100.
+ */
+export type ProductMatchSuggestion = {
+  masterProductId: string;
+  displayName: string;
+  sku: string;
+  category: string;
+  brand: string | null;
+  stockUnit: string;
+  /** Integer 0–100. */
+  confidence: number;
+  reasons: ProductMatchReason[];
+};
+
+export type SuggestMatchesInput = {
+  supplierId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+  category?: string | null;
+  brand?: string | null;
+  unit?: string | null;
+  packSize?: string | null;
+};
+
+export type SuggestMatchesResult = {
+  suggestions: ProductMatchSuggestion[];
+};
+
+export type ConfirmMatchInput = {
+  supplierId: string;
+  masterProductId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+  /** Unit cost in cents; pass null/undefined to default to 0 */
+  lastUnitCostCents?: number | null;
+};
+
 // ─── Catalogue import ─────────────────────────────────────────────────────────
 
 export type ImportRow = {

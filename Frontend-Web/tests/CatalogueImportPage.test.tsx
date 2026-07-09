@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogueImportPage } from "../src/pages/CatalogueImportPage.js";
 import { CatalogueImportReviewPage } from "../src/pages/CatalogueImportReviewPage.js";
 import type { ConfirmImportResult, Supplier, SupplierInvoice, SupplierInvoiceLine } from "../src/types/supplier.js";
+import type { MasterProduct, MasterProductsPage } from "../src/types/masterProduct.js";
 import { createManagerUser, TEST_CLINIC_ID, TEST_CLINIC_NAME } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
@@ -28,6 +30,7 @@ const {
   mockCancelSupplierInvoiceImport,
   mockAdjustInventory,
   mockHandleScan,
+  mockListMasterProducts,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -61,6 +64,7 @@ const {
     mockCancelSupplierInvoiceImport: vi.fn(),
     mockAdjustInventory: vi.fn(),
     mockHandleScan: vi.fn(),
+    mockListMasterProducts: vi.fn(),
   };
 });
 
@@ -89,6 +93,7 @@ vi.mock("../src/api/client.js", () => ({
     cancelSupplierInvoiceImport: mockCancelSupplierInvoiceImport,
     adjustInventory: mockAdjustInventory,
     handleScan: mockHandleScan,
+    listMasterProducts: mockListMasterProducts,
   }),
 }));
 
@@ -199,6 +204,23 @@ const unmatchedLine = {
   matchMethod: null,
 } as SupplierInvoiceLine;
 
+const masterProductFixture: MasterProduct = {
+  id: "master-gloves",
+  displayName: "Nitrile Gloves Box 100",
+  sku: "VRV-GLV-001",
+  category: "PPE",
+  subcategory: null,
+  brand: null,
+  variantAttributes: null,
+  stockUnit: "box",
+  receivingUnit: "box",
+  status: "active",
+  notes: null,
+  isActive: true,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+
 function renderCatalogueImportPage() {
   return render(
     <MemoryRouter initialEntries={["/inventory/catalogue-import"]}>
@@ -241,7 +263,7 @@ async function renderStructuredProductReview() {
     matchedRows: 1,
     unmatchedRows: 1,
     errorRows: 0,
-    rows: [
+      rows: [
       {
         rowNumber: 2,
         supplierSku: "GLV-100",
@@ -249,10 +271,10 @@ async function renderStructuredProductReview() {
         rawUnitCost: "12.50",
         unitCostCents: 1250,
         unitOfMeasure: null,
-        matchedProductId: "product-gloves",
-        matchedProductName: "Gloves",
-        matchedProductSku: "GLV",
-        matchStatus: "name",
+        matchedProductId: null,
+        matchedProductName: null,
+        matchedProductSku: null,
+        matchStatus: "unmatched",
         error: null,
       },
       {
@@ -315,6 +337,8 @@ describe("CatalogueImportPage", () => {
     mockCancelSupplierInvoiceImport.mockReset();
     mockAdjustInventory.mockReset();
     mockHandleScan.mockReset();
+    mockListMasterProducts.mockReset();
+    mockListMasterProducts.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 } satisfies MasterProductsPage);
     mockListSuppliers.mockResolvedValue([supplier]);
     mockListClinicSupplierInvoices.mockResolvedValue([invoiceImport]);
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [] });
@@ -367,7 +391,7 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByRole("radio", { name: /^CSV/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Image \(PNG\/JPG\)/ })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Supplier API/ })).toBeDisabled();
-    expect(screen.getAllByText("Available in a future release")).toHaveLength(5);
+    expect(screen.getAllByText("Available in a future release")).toHaveLength(4);
 
     expect(await screen.findByRole("link", { name: /Review invoice-100\.pdf/ })).toBeInTheDocument();
     expect(screen.getByText("DentalCo AU")).toBeInTheDocument();
@@ -708,9 +732,11 @@ describe("CatalogueImportPage", () => {
     await renderStructuredProductReview();
 
     expect(screen.getAllByText("Actions").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: "Approve" }).length).toBeGreaterThan(0);
+    // Unmatched rows must NOT show Approve — users must Match Existing, Create Product, or Skip
+    expect(screen.queryAllByRole("button", { name: "Approve" }).length).toBe(0);
     expect(screen.getAllByRole("button", { name: "Edit" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "Skip" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Match Existing" }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "Create Product" }).length).toBeGreaterThan(0);
     expect(screen.getByText("2 boxes")).toBeInTheDocument();
     expect(screen.getByText("5 packs")).toBeInTheDocument();
@@ -719,22 +745,27 @@ describe("CatalogueImportPage", () => {
     expect(screen.queryByText("Not imported")).not.toBeInTheDocument();
   });
 
-  it("allows approving, skipping, and marking structured rows as ready to create", async () => {
+  it("allows skipping and marking structured rows as ready to create", async () => {
     await renderStructuredProductReview();
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
     expect(screen.getByText("Review all product rows before importing products.")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
-    expect(screen.getAllByText("Approved").length).toBeGreaterThan(1);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[1] as HTMLElement);
+    // Unmatched rows can only be Skipped, matched, or marked Ready to Create — not Approved.
+    expect(screen.queryAllByRole("button", { name: "Approve" }).length).toBe(0);
+
+    // Skip row 2
+    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0] as HTMLElement);
     expect(screen.getAllByText("Skipped").length).toBeGreaterThan(1);
-    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
 
+    // Mark row 3 as Ready to Create — index [1] because row 2 (Skipped) still renders its buttons
     const createProductButton = screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement;
     const selectedRow = createProductButton.closest("tr");
     expect(selectedRow).not.toBeNull();
     fireEvent.click(createProductButton);
+
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
 
     const selectedRowQueries = within(selectedRow as HTMLElement);
     expect(selectedRowQueries.getByText("Ready to Create")).toBeInTheDocument();
@@ -747,7 +778,8 @@ describe("CatalogueImportPage", () => {
   it("supports editing structured rows locally without losing the review state", async () => {
     await renderStructuredProductReview();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
+    // Skip row 2 (no Approve available for unmatched rows), then verify editing preserves state
+    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0] as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0] as HTMLElement);
     fireEvent.change(screen.getByLabelText("Product name for structured row 2"), {
       target: { value: "Edited Gloves" },
@@ -757,7 +789,7 @@ describe("CatalogueImportPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save edit" }));
 
-    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
     expect(screen.getByText("Edited Gloves")).toBeInTheDocument();
     expect(screen.getByText("3 cartons")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
@@ -767,7 +799,7 @@ describe("CatalogueImportPage", () => {
     await renderStructuredProductReview();
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
-    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0] as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
@@ -779,8 +811,8 @@ describe("CatalogueImportPage", () => {
         rows: expect.arrayContaining([
           expect.objectContaining({
             rowNumber: 2,
-            state: "Approved",
-            matchedProductId: "product-gloves",
+            state: "Skipped",
+            matchedProductId: null,
             unitCostCents: 1250,
           }),
           expect.objectContaining({
@@ -806,11 +838,11 @@ describe("CatalogueImportPage", () => {
   it("bulk marks unmatched structured rows as ready to create", async () => {
     await renderStructuredProductReview();
 
-    expect(screen.getByText("Unmatched product")).toBeInTheDocument();
+    expect(screen.getAllByText("Unmatched product").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Mark all unmatched as Ready to Create" }));
 
-    expect(screen.getByText("Ready to Create")).toBeInTheDocument();
-    expect(screen.getByText("Creates catalogue product only. Does not change stock.")).toBeInTheDocument();
+    expect(screen.getAllByText("Ready to Create").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Creates catalogue product only. Does not change stock.").length).toBeGreaterThan(0);
   });
 
   it("restores structured review sessions after navigation and clears them for a new import", async () => {
@@ -1085,6 +1117,109 @@ describe("CatalogueImportPage", () => {
 
     expect(await screen.findByText("$27.50")).toBeInTheDocument();
     expect(screen.queryByText("$NaN")).not.toBeInTheDocument();
+  });
+
+  it("PATCHes the invoice line with masterCatalogItemId when user matches to a master product", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    mockListMasterProducts.mockResolvedValue({
+      items: [masterProductFixture],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    } satisfies MasterProductsPage);
+    mockUpdateSupplierInvoiceLine.mockResolvedValue({
+      ...unmatchedLine,
+      masterCatalogItemId: masterProductFixture.id,
+      isMatched: true,
+      matchMethod: "manual" as const,
+    } satisfies SupplierInvoiceLine);
+
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+    await screen.findByText("Unknown bonding agent");
+
+    // Import button must be disabled before any review decision.
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+
+    // Open the match-product modal.
+    fireEvent.click(screen.getByRole("button", { name: "Match existing product" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Type to trigger the debounced search.
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("master-product-search-input"), "Nitrile");
+
+    // Wait for the product result to appear, then click it.
+    await waitFor(() => screen.getByTestId(`search-result-${masterProductFixture.id}`));
+    await user.click(screen.getByTestId(`search-result-${masterProductFixture.id}`));
+
+    // PATCH must be called with the chosen masterCatalogItemId.
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        invoiceImport.id,
+        unmatchedLine.id,
+        {
+          masterCatalogItemId: masterProductFixture.id,
+          isMatched: true,
+          matchMethod: "manual",
+        },
+      );
+    });
+
+    // Line state must change to Matched Existing Product only after successful PATCH.
+    await waitFor(() => {
+      expect(screen.getAllByText("Matched Existing Product").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByText(masterProductFixture.displayName).length).toBeGreaterThan(0);
+
+    // Import button is now enabled (all rows are in terminal state).
+    expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+
+    // Confirm the import does NOT include the matched line in readyToCreate.
+    fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
+    await waitFor(() => {
+      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        invoiceImport.id,
+        expect.objectContaining({ readyToCreateLineIds: [] }),
+      );
+    });
+
+    // No stock movements.
+    expect(mockAdjustInventory).not.toHaveBeenCalled();
+    expect(mockHandleScan).not.toHaveBeenCalled();
+  });
+
+  it("does not change line state to Matched if the PATCH fails", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
+    mockListMasterProducts.mockResolvedValue({
+      items: [masterProductFixture],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    } satisfies MasterProductsPage);
+    mockUpdateSupplierInvoiceLine.mockRejectedValue(new Error("Server error"));
+
+    renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
+    await screen.findByText("Unknown bonding agent");
+
+    fireEvent.click(screen.getByRole("button", { name: "Match existing product" }));
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("master-product-search-input"), "Nitrile");
+    await waitFor(() => screen.getByTestId(`search-result-${masterProductFixture.id}`));
+    await user.click(screen.getByTestId(`search-result-${masterProductFixture.id}`));
+
+    // PATCH called but failed.
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalled();
+    });
+
+    // Line state must NOT be "Matched Existing Product".
+    await waitFor(() => {
+      expect(screen.queryByText("Matched Existing Product")).not.toBeInTheDocument();
+    });
+    // Error message shown.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
   it("enables final import after all invoice rows are reviewed", async () => {

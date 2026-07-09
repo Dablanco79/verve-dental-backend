@@ -97,6 +97,21 @@ export function createPostgresSupplierCatalogueRepository(
       return rows[0] ? mapSupplierProduct(rows[0]) : null;
     },
 
+    async findSupplierProductBySupplierSku(
+      supplierId: string,
+      supplierSku: string,
+    ): Promise<SupplierProduct | null> {
+      const { rows } = await pool.query<SupplierCatalogueRow>(
+        `SELECT * FROM supplier_catalogue
+         WHERE supplier_id = $1
+           AND lower(supplier_sku) = lower($2)
+           AND active = true
+         LIMIT 1`,
+        [supplierId, supplierSku.trim()],
+      );
+      return rows[0] ? mapSupplierProduct(rows[0]) : null;
+    },
+
     async listPricingForProduct(productId: string): Promise<SupplierProduct[]> {
       const { rows } = await pool.query<SupplierCatalogueRow>(
         `SELECT * FROM supplier_catalogue

@@ -126,6 +126,10 @@ import type {
   MasterProduct,
   MasterProductsPage,
   UpdateMasterProductRequest,
+  ConfirmMatchRequest,
+  ConfirmedSupplierProductMapping,
+  SuggestMatchesRequest,
+  SuggestMatchesResult,
 } from "../types/masterProduct.js";
 
 type ApiEnvelope<T> = { data: T };
@@ -1294,6 +1298,28 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function suggestMasterProductMatch(
+    body: SuggestMatchesRequest,
+  ): Promise<SuggestMatchesResult> {
+    return request<SuggestMatchesResult>(
+      config,
+      "/api/v1/master-products/match",
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function confirmMasterProductMatch(
+    body: ConfirmMatchRequest,
+  ): Promise<ConfirmedSupplierProductMapping> {
+    return request<ConfirmedSupplierProductMapping>(
+      config,
+      "/api/v1/master-products/match/confirm",
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function confirmReviewedSupplierCatalogueImport(
     supplierId: string,
     body: ReviewedCatalogueImportRequest,
@@ -1958,6 +1984,8 @@ export function createApiClient(config: AppConfig) {
     updateMasterProduct,
     archiveMasterProduct,
     reactivateMasterProduct,
+    suggestMasterProductMatch,
+    confirmMasterProductMatch,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,
     getSupplierInvoice,

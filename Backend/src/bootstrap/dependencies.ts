@@ -139,6 +139,7 @@ import type { SupplierCatalogueService } from "../services/supplierCatalogueServ
 import type { CatalogueImportService } from "../services/catalogueImportService.js";
 import type { MasterProductImportService } from "../services/masterProductImportService.js";
 import type { MasterProductService } from "../services/masterProductService.js";
+import type { ProductMatchingService } from "../services/productMatchingService.js";
 
 export type AppDependencies = {
   authService: ReturnType<typeof createAuthService>;
@@ -154,6 +155,7 @@ export type AppDependencies = {
   catalogueImportService: CatalogueImportService;
   masterProductImportService: MasterProductImportService;
   masterProductService: MasterProductService;
+  productMatchingService: ProductMatchingService;
   supplierInvoiceService: SupplierInvoiceService;
   supplierIntelligenceService: SupplierIntelligenceService;
   healthService: HealthService;
@@ -442,7 +444,10 @@ export async function createAppDependencies(
 
   const supplierService = createSupplierService(supplierRepository, auditService);
 
-  const productMatchingService = createProductMatchingService(catalogRepository);
+  const productMatchingService = createProductMatchingService(
+    catalogRepository,
+    supplierCatalogueRepository,
+  );
 
   const supplierCatalogueService = createSupplierCatalogueService(
     supplierCatalogueRepository,
@@ -517,6 +522,7 @@ export async function createAppDependencies(
     catalogueImportService,
     masterProductImportService,
     masterProductService,
+    productMatchingService,
     supplierInvoiceService,
     supplierIntelligenceService,
     healthService,

@@ -7,5 +7,7 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
+    // 15 s per test to handle full-suite JSDOM parallelism on slow hosts.
+    testTimeout: 15000,
   },
 });

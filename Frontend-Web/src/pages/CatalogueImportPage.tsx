@@ -5,8 +5,11 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
+import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
+import type { AcceptedMatchOverride } from "../types/masterProduct.js";
 import type {
   CatalogueImportConfirmResult,
   CatalogueImportPreviewResult,
@@ -182,7 +185,6 @@ const FUTURE_FEATURES = [
   "Supplier API",
   "Catalogue Synchronisation",
   "Automatic Price Updates",
-  "Smart Matching",
 ] as const;
 
 const STRUCTURED_SESSION_STORAGE_PREFIX = "verve.catalogueImport.structuredSession";
@@ -396,6 +398,14 @@ export function CatalogueImportPage() {
   const [editingStructuredRowKey, setEditingStructuredRowKey] = useState<string | null>(null);
   const [structuredSessionMetadata, setStructuredSessionMetadata] = useState<StructuredSessionMetadata | null>(null);
   const [supplierSelections, setSupplierSelections] = useState<Record<string, string>>({});
+  // Product Matching Engine: stores the user-accepted master product override per row key
+  const [structuredMatchOverrides, setStructuredMatchOverrides] = useState<Record<string, AcceptedMatchOverride>>({});
+  // Which row is currently waiting for a "Choose Different" modal selection
+  const [matchSearchTarget, setMatchSearchTarget] = useState<{
+    group: StructuredReviewGroup;
+    row: StructuredReviewDisplayRow;
+    rowKey: string;
+  } | null>(null);
   const [isAnalysingFile, setIsAnalysingFile] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<ImportHistoryRow | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -916,6 +926,10 @@ export function CatalogueImportPage() {
       const key = structuredRowKey(group.supplierName, row.rowNumber);
       const draft = structuredRowDrafts[key] ?? buildStructuredRowDraft(row);
       const state = getStructuredRowState(group, row);
+      // Use accepted match override if present, otherwise fall back to preview match
+      const override = structuredMatchOverrides[key];
+      const matchedProductId =
+        override?.masterProductId ?? row.previewRow?.matchedProductId ?? null;
       return {
         rowNumber: row.rowNumber,
         state: state === "Needs Review" ? "Skipped" : state,
@@ -923,9 +937,32 @@ export function CatalogueImportPage() {
         description: draft.productName.trim() || null,
         unitCostCents: parseMoneyToCents(draft.unitPrice) ?? row.previewRow?.unitCostCents ?? null,
         unitOfMeasure: draft.quantity.trim() || (row.previewRow?.unitOfMeasure ?? null),
-        matchedProductId: row.previewRow?.matchedProductId ?? null,
+        matchedProductId,
       };
     });
+  }
+
+  function acceptStructuredRowMatch(
+    group: StructuredReviewGroup,
+    row: StructuredReviewDisplayRow,
+    override: AcceptedMatchOverride,
+  ): void {
+    const key = structuredRowKey(group.supplierName, row.rowNumber);
+    setStructuredMatchOverrides((current) => ({ ...current, [key]: override }));
+    setStructuredRowState(group, row, "Matched Existing Product");
+  }
+
+  function undoStructuredRowMatch(
+    group: StructuredReviewGroup,
+    row: StructuredReviewDisplayRow,
+  ): void {
+    const key = structuredRowKey(group.supplierName, row.rowNumber);
+    setStructuredMatchOverrides((current) => {
+      const { [key]: _removed, ...rest } = current;
+      void _removed;
+      return rest;
+    });
+    setStructuredRowState(group, row, defaultStructuredRowState(row));
   }
 
   async function handleProcessStructuredReview(): Promise<void> {
@@ -1445,10 +1482,24 @@ export function CatalogueImportPage() {
                           type="button"
                           className="link-button"
                           onClick={() => {
-                            setAllStructuredGroupRows(group, "Approved");
+                            // Only approve rows that already have a matched product —
+                            // unmatched rows must be resolved via Match Existing, Create Product, or Skip.
+                            const rows = buildStructuredDisplayRows(group);
+                            setStructuredRowStates((current) => ({
+                              ...current,
+                              ...Object.fromEntries(
+                                rows
+                                  .filter((r) => {
+                                    const k = structuredRowKey(group.supplierName, r.rowNumber);
+                                    return !!(structuredMatchOverrides[k]?.masterProductId ?? r.previewRow?.matchedProductId);
+                                  })
+                                  .map((r) => [structuredRowKey(group.supplierName, r.rowNumber), "Approved" satisfies StructuredRowReviewState]),
+                              ),
+                            }));
+                            setEditingStructuredRowKey(null);
                           }}
                         >
-                          Approve all visible rows
+                          Approve all matched rows
                         </button>
                         <button
                           type="button"
@@ -1632,44 +1683,104 @@ export function CatalogueImportPage() {
                                         Undo
                                       </button>
                                     </>
+                                  ) : state === "Matched Existing Product" ? (
+                                    <>
+                                      <span className="catalogue-review__match-label">
+                                        {structuredMatchOverrides[key]?.displayName
+                                          ?? row.previewRow?.matchedProductName
+                                          ?? "Matched"}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="link-button"
+                                        onClick={() => {
+                                          undoStructuredRowMatch(group, row);
+                                        }}
+                                      >
+                                        Undo
+                                      </button>
+                                    </>
                                   ) : (
                                     <>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setStructuredRowState(group, row, "Approved");
-                                        }}
-                                      >
-                                        Approve
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          startEditingStructuredRow(group, row);
-                                        }}
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setStructuredRowState(group, row, "Skipped");
-                                        }}
-                                      >
-                                        Skip
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setStructuredRowState(group, row, "Ready to Create");
-                                        }}
-                                      >
-                                        Create Product
-                                      </button>
+                                      {row.previewRow?.matchedProductId ? (
+                                        <ProductMatchSuggestionCard
+                                          suggestion={{
+                                            masterProductId: row.previewRow.matchedProductId,
+                                            displayName: row.previewRow.matchedProductName ?? row.previewRow.matchedProductId,
+                                            sku: row.previewRow.matchedProductSku ?? "",
+                                            category: "",
+                                            brand: null,
+                                            stockUnit: "",
+                                            confidence: row.previewRow.matchStatus === "barcode"
+                                              ? 100
+                                              : row.previewRow.matchStatus === "sku"
+                                                ? 95
+                                                : 85,
+                                            reasons: row.previewRow.matchStatus === "barcode"
+                                              ? ["supplier_sku_mapping"]
+                                              : row.previewRow.matchStatus === "sku"
+                                                ? ["exact_name"]
+                                                : ["token_similarity"],
+                                          }}
+                                          onAccept={() => {
+                                            if (row.previewRow?.matchedProductId) {
+                                              acceptStructuredRowMatch(group, row, {
+                                                masterProductId: row.previewRow.matchedProductId,
+                                                displayName: row.previewRow.matchedProductName ?? row.previewRow.matchedProductId,
+                                                sku: row.previewRow.matchedProductSku ?? "",
+                                              });
+                                            }
+                                          }}
+                                          onChooseDifferent={() => {
+                                            setMatchSearchTarget({ group, row, rowKey: key });
+                                          }}
+                                          onCreateNew={() => {
+                                            setStructuredRowState(group, row, "Ready to Create");
+                                          }}
+                                          onSkip={() => {
+                                            setStructuredRowState(group, row, "Skipped");
+                                          }}
+                                        />
+                                      ) : (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="link-button"
+                                            onClick={() => {
+                                              startEditingStructuredRow(group, row);
+                                            }}
+                                          >
+                                            Edit
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="link-button"
+                                            onClick={() => {
+                                              setStructuredRowState(group, row, "Skipped");
+                                            }}
+                                          >
+                                            Skip
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="link-button"
+                                            onClick={() => {
+                                              setMatchSearchTarget({ group, row, rowKey: key });
+                                            }}
+                                          >
+                                            Match Existing
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="link-button"
+                                            onClick={() => {
+                                              setStructuredRowState(group, row, "Ready to Create");
+                                            }}
+                                          >
+                                            Create Product
+                                          </button>
+                                        </>
+                                      )}
                                     </>
                                   )
                                 )}
@@ -1806,6 +1917,23 @@ export function CatalogueImportPage() {
           onConfirm={handleCancelImport}
         />
       ) : null}
+      <MasterProductSearchModal
+        isOpen={matchSearchTarget !== null}
+        title="Choose Master Product"
+        onClose={() => {
+          setMatchSearchTarget(null);
+        }}
+        onSelect={(product) => {
+          if (matchSearchTarget) {
+            acceptStructuredRowMatch(matchSearchTarget.group, matchSearchTarget.row, {
+              masterProductId: product.id,
+              displayName: product.displayName,
+              sku: product.sku,
+            });
+          }
+          setMatchSearchTarget(null);
+        }}
+      />
     </AppShell>
   );
 }

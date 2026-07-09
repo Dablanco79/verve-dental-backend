@@ -24,6 +24,15 @@ export interface SupplierCatalogueRepository {
     productId: string,
   ): Promise<SupplierProduct | null>;
 
+  /**
+   * Finds the active supplier_catalogue entry for a given supplier + supplier SKU.
+   * Used by the Product Matching Engine as the highest-confidence matching strategy.
+   */
+  findSupplierProductBySupplierSku(
+    supplierId: string,
+    supplierSku: string,
+  ): Promise<SupplierProduct | null>;
+
   listPricingForProduct(productId: string): Promise<SupplierProduct[]>;
 
   createSupplierProduct(
@@ -79,6 +88,20 @@ export function createInMemorySupplierCatalogueRepository(): SupplierCatalogueRe
     ): Promise<SupplierProduct | null> {
       const found = entries.find(
         (e) => e.supplierId === supplierId && e.productId === productId && e.active,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierProductBySupplierSku(
+      supplierId: string,
+      supplierSku: string,
+    ): Promise<SupplierProduct | null> {
+      const normalized = supplierSku.trim().toLowerCase();
+      const found = entries.find(
+        (e) =>
+          e.supplierId === supplierId &&
+          e.active &&
+          e.supplierSku?.trim().toLowerCase() === normalized,
       );
       return Promise.resolve(found ? { ...found } : null);
     },
