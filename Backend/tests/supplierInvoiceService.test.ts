@@ -660,6 +660,72 @@ describe("SupplierInvoiceService", () => {
     expect(voided.voidedAt).toBeInstanceOf(Date);
   });
 
+  // ── Supplier fuzzy matching (legal suffix stripping) ──────────────────────
+
+  it("fuzzy-matches supplier when OCR name contains PTY LTD suffix", async () => {
+    const caller = makeManager();
+
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      supplierName: "DENTAVISION PTY LTD",
+      supplierAbn: null,
+      supplierEmail: null,
+      supplierPhone: null,
+      supplierWebsite: null,
+    };
+    const { service, supplierRepo } = makeService(makeMockOcrProvider(ocrResult));
+
+    // Pre-create the supplier stored under its short trading name.
+    await supplierRepo.createSupplier({ supplierName: "Dentavision" });
+
+    const result = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+
+    expect(result.supplierMatchStatus).toBe("matched");
+    expect(result.matchedSupplier?.supplierName).toBe("Dentavision");
+  });
+
+  it("fuzzy-matches supplier when OCR name contains PTY LTD and multiple tokens", async () => {
+    const caller = makeManager();
+
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      supplierName: "ADAM DENTAL PTY LTD",
+      supplierAbn: null,
+      supplierEmail: null,
+      supplierPhone: null,
+      supplierWebsite: null,
+    };
+    const { service, supplierRepo } = makeService(makeMockOcrProvider(ocrResult));
+
+    await supplierRepo.createSupplier({ supplierName: "Adam Dental" });
+
+    const result = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+
+    expect(result.supplierMatchStatus).toBe("matched");
+    expect(result.matchedSupplier?.supplierName).toBe("Adam Dental");
+  });
+
+  it("does not fuzzy-match completely unrelated supplier names", async () => {
+    const caller = makeManager();
+
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      supplierName: "Pacific Medical Wholesale",
+      supplierAbn: null,
+      supplierEmail: null,
+      supplierPhone: null,
+      supplierWebsite: null,
+    };
+    const { service, supplierRepo } = makeService(makeMockOcrProvider(ocrResult));
+
+    await supplierRepo.createSupplier({ supplierName: "Dentavision" });
+
+    const result = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+
+    expect(result.supplierMatchStatus).not.toBe("matched");
+    expect(result.matchedSupplier).toBeNull();
+  });
+
   // ── 20. voidInvoice — rejects on confirmed ────────────────────────────────
   it("voidInvoice rejects a confirmed invoice", async () => {
     const { service } = makeService();

@@ -203,10 +203,28 @@ export function createSupplierInvoiceService(
       .trim();
   }
 
+  /**
+   * Strip common legal entity suffixes from an already-normalised string so
+   * that "dentavision pty ltd" and "dentavision" resolve to the same trading
+   * name before Jaccard comparison.
+   *
+   * Longest patterns are listed first so "pty ltd" matches before "ltd".
+   */
+  function stripLegalSuffix(normalised: string): string {
+    return normalised
+      .replace(
+        /\b(pty\s+limited|pty\s+ltd|proprietary\s+limited|proprietary\s+ltd|limited|ltd|llc|incorporated|inc|corporation|corp|plc|company|co|gmbh|ag|bv|nv|sa|ug)\s*$/,
+        "",
+      )
+      .trim();
+  }
+
   /** Jaccard token similarity between two strings (0–1). */
   function supplierTokenSimilarity(a: string, b: string): number {
-    const tokensA = new Set(normaliseSupplierText(a).split(" ").filter(Boolean));
-    const tokensB = new Set(normaliseSupplierText(b).split(" ").filter(Boolean));
+    const normA = stripLegalSuffix(normaliseSupplierText(a));
+    const normB = stripLegalSuffix(normaliseSupplierText(b));
+    const tokensA = new Set(normA.split(" ").filter(Boolean));
+    const tokensB = new Set(normB.split(" ").filter(Boolean));
     if (tokensA.size === 0 && tokensB.size === 0) return 1;
     if (tokensA.size === 0 || tokensB.size === 0) return 0;
     let intersection = 0;

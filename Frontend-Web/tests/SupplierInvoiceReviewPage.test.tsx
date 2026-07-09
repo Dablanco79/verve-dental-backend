@@ -76,6 +76,9 @@ vi.mock("../src/api/client.js", () => ({
     updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
     voidSupplierInvoice: mockVoidSupplierInvoice,
+    suggestMasterProductMatch: vi.fn().mockResolvedValue({ suggestions: [] }),
+    confirmMasterProductMatch: vi.fn().mockResolvedValue({}),
+    listMasterProducts: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     getHealth: vi.fn(),
     login: vi.fn(),
     verifyMfa: vi.fn(),
@@ -370,7 +373,7 @@ describe("SupplierInvoiceReviewPage", () => {
     expect(screen.getByText("Not Matched")).toBeInTheDocument();
   });
 
-  it("renders Create Product placeholder button for unmatched lines", async () => {
+  it("renders product matching action buttons for unmatched lines", async () => {
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: sampleInvoice,
       lines: [unmatchedLine],
@@ -379,9 +382,11 @@ describe("SupplierInvoiceReviewPage", () => {
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    const createBtn = screen.getByRole("button", { name: /create product/i });
-    expect(createBtn).toBeInTheDocument();
-    expect(createBtn).toBeDisabled();
+    // New product matching UI replaces the old disabled placeholder button.
+    expect(screen.getByRole("button", { name: "Find suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
   });
 
   it("shows empty state when no lines are returned", async () => {
@@ -457,7 +462,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     renderReviewPage();
 
-    await screen.findByText("Nitrile Gloves Large");
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
 
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
@@ -486,7 +491,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     renderReviewPage();
 
-    await screen.findByText("Nitrile Gloves Large");
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
     await user.click(screen.getByRole("button", { name: "Edit" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -498,7 +503,7 @@ describe("SupplierInvoiceReviewPage", () => {
   it("shows Hide button for each line in pending_review state", async () => {
     renderReviewPage();
 
-    await screen.findByText("Nitrile Gloves Large");
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
 
     expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
   });
@@ -507,7 +512,7 @@ describe("SupplierInvoiceReviewPage", () => {
     const user = userEvent.setup();
     renderReviewPage();
 
-    await screen.findByText("Nitrile Gloves Large");
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
 
     await user.click(screen.getByRole("button", { name: "Hide" }));
 
@@ -518,7 +523,7 @@ describe("SupplierInvoiceReviewPage", () => {
     const user = userEvent.setup();
     renderReviewPage();
 
-    await screen.findByText("Nitrile Gloves Large");
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
 
     await user.click(screen.getByRole("button", { name: "Hide" }));
 
@@ -559,7 +564,11 @@ describe("SupplierInvoiceReviewPage", () => {
     await user.click(screen.getByRole("button", { name: "Approve Import" }));
 
     await waitFor(() => {
-      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(TEST_CLINIC_ID, INVOICE_ID);
+      expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        INVOICE_ID,
+        expect.objectContaining({ readyToCreateLineIds: [], skippedLineIds: [] }),
+      );
     });
 
     expect(await screen.findByText("Invoice Approved")).toBeInTheDocument();

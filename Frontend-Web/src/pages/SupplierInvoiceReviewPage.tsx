@@ -4,8 +4,11 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
+import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
+import type { MasterProduct, ProductMatchSuggestion } from "../types/masterProduct.js";
 import type {
   SupplierInvoice,
   SupplierInvoiceLine,
@@ -188,6 +191,9 @@ type EditDraft = {
   unitPriceDollars: string;
 };
 
+/** Local-only line actions that are tracked in state and passed to confirmImport. */
+type LocalLineAction = "ready_to_create" | "skipped";
+
 type LineRowProps = {
   line: SupplierInvoiceLine;
   isEditing: boolean;
@@ -200,6 +206,18 @@ type LineRowProps = {
   onEditSave: () => void;
   onEditCancel: () => void;
   onIgnoreToggle: (lineId: string) => void;
+  // ── Product matching ──
+  lineSuggestion: ProductMatchSuggestion | null;
+  isFetchingSuggestion: boolean;
+  isLinking: boolean;
+  matchDisplayName: string | null;
+  localAction: LocalLineAction | null;
+  onFetchSuggestion: () => void;
+  onAcceptSuggestion: (suggestion: ProductMatchSuggestion) => void;
+  onChooseDifferent: () => void;
+  onCreateNew: () => void;
+  onSkipLine: () => void;
+  onUndoLine: () => void;
 };
 
 function LineRow({
@@ -214,6 +232,17 @@ function LineRow({
   onEditSave,
   onEditCancel,
   onIgnoreToggle,
+  lineSuggestion,
+  isFetchingSuggestion,
+  isLinking,
+  matchDisplayName,
+  localAction,
+  onFetchSuggestion,
+  onAcceptSuggestion,
+  onChooseDifferent,
+  onCreateNew,
+  onSkipLine,
+  onUndoLine,
 }: LineRowProps) {
   const rawPreviewTotal = isEditing
     ? parseFloat(editDraft.unitPriceDollars || "0") * parseFloat(editDraft.quantity || "0")
@@ -254,17 +283,97 @@ function LineRow({
 
       {/* Match */}
       <td className="supplier-table__td">
-        <MatchBadge line={line} />
-        {!line.isMatched && !readOnly ? (
-          <button
-            type="button"
-            className="invoice-review__create-product-btn"
-            disabled
-            title="Create Product — coming in Sprint 3"
-          >
-            + Create Product
-          </button>
-        ) : null}
+        {line.isMatched ? (
+          <div className="invoice-review__match-cell">
+            <MatchBadge line={line} />
+            {matchDisplayName && matchDisplayName !== line.ocrDescription ? (
+              <span className="invoice-review__match-name">{matchDisplayName}</span>
+            ) : null}
+            {!readOnly ? (
+              <button
+                type="button"
+                className="link-button invoice-review__undo-btn"
+                onClick={onUndoLine}
+                disabled={isLinking}
+              >
+                Undo
+              </button>
+            ) : null}
+          </div>
+        ) : localAction === "ready_to_create" ? (
+          <div className="invoice-review__match-cell">
+            <span className="match-badge match-badge--create">Ready to Create</span>
+            <span className="invoice-review__match-note">
+              Creates catalogue product only. No stock change.
+            </span>
+            <button
+              type="button"
+              className="link-button invoice-review__undo-btn"
+              onClick={onUndoLine}
+            >
+              Undo
+            </button>
+          </div>
+        ) : localAction === "skipped" ? (
+          <div className="invoice-review__match-cell">
+            <span className="match-badge match-badge--skipped">Skipped</span>
+            <button
+              type="button"
+              className="link-button invoice-review__undo-btn"
+              onClick={onUndoLine}
+            >
+              Undo
+            </button>
+          </div>
+        ) : !readOnly ? (
+          <div className="invoice-review__match-cell">
+            <MatchBadge line={line} />
+            {lineSuggestion ? (
+              <ProductMatchSuggestionCard
+                suggestion={lineSuggestion}
+                onAccept={() => { onAcceptSuggestion(lineSuggestion); }}
+                onChooseDifferent={onChooseDifferent}
+                onCreateNew={onCreateNew}
+                onSkip={onSkipLine}
+              />
+            ) : (
+              <div className="invoice-review__match-actions">
+                <button
+                  type="button"
+                  className="link-button"
+                  disabled={isFetchingSuggestion || isLinking}
+                  onClick={onFetchSuggestion}
+                >
+                  {isFetchingSuggestion ? "Finding…" : "Find suggestions"}
+                </button>
+                <button
+                  type="button"
+                  className="link-button"
+                  disabled={isLinking}
+                  onClick={onChooseDifferent}
+                >
+                  Match existing product
+                </button>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={onCreateNew}
+                >
+                  Create new product
+                </button>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={onSkipLine}
+                >
+                  Skip
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <MatchBadge line={line} />
+        )}
       </td>
 
       {/* Qty */}
@@ -375,6 +484,18 @@ type LinesTableProps = {
   onEditSave: () => void;
   onEditCancel: () => void;
   onIgnoreToggle: (lineId: string) => void;
+  // ── Product matching ──
+  lineSuggestions: Record<string, ProductMatchSuggestion | null>;
+  fetchingSuggestionForLine: string | null;
+  linkingLineId: string | null;
+  lineMatchDisplayNames: Record<string, string>;
+  localLineActions: Record<string, LocalLineAction>;
+  onFetchSuggestion: (lineId: string) => void;
+  onAcceptSuggestion: (lineId: string, suggestion: ProductMatchSuggestion) => void;
+  onChooseDifferent: (lineId: string) => void;
+  onCreateNew: (lineId: string) => void;
+  onSkipLine: (lineId: string) => void;
+  onUndoLine: (lineId: string) => void;
 };
 
 function LinesTable({
@@ -389,6 +510,17 @@ function LinesTable({
   onEditSave,
   onEditCancel,
   onIgnoreToggle,
+  lineSuggestions,
+  fetchingSuggestionForLine,
+  linkingLineId,
+  lineMatchDisplayNames,
+  localLineActions,
+  onFetchSuggestion,
+  onAcceptSuggestion,
+  onChooseDifferent,
+  onCreateNew,
+  onSkipLine,
+  onUndoLine,
 }: LinesTableProps) {
   if (lines.length === 0) {
     return (
@@ -438,6 +570,17 @@ function LinesTable({
               onEditSave={onEditSave}
               onEditCancel={onEditCancel}
               onIgnoreToggle={onIgnoreToggle}
+              lineSuggestion={lineSuggestions[line.id] ?? null}
+              isFetchingSuggestion={fetchingSuggestionForLine === line.id}
+              isLinking={linkingLineId !== null}
+              matchDisplayName={lineMatchDisplayNames[line.id] ?? line.masterProductName ?? null}
+              localAction={localLineActions[line.id] ?? null}
+              onFetchSuggestion={() => { onFetchSuggestion(line.id); }}
+              onAcceptSuggestion={(s) => { onAcceptSuggestion(line.id, s); }}
+              onChooseDifferent={() => { onChooseDifferent(line.id); }}
+              onCreateNew={() => { onCreateNew(line.id); }}
+              onSkipLine={() => { onSkipLine(line.id); }}
+              onUndoLine={() => { onUndoLine(line.id); }}
             />
           ))}
         </tbody>
@@ -557,6 +700,15 @@ export function SupplierInvoiceReviewPage() {
   // Ignored lines (local only — no backend field)
   const [ignoredLineIds, setIgnoredLineIds] = useState<Set<string>>(new Set());
 
+  // ── Product matching state ──────────────────────────────────────────────────
+  const [lineSuggestions, setLineSuggestions] = useState<Record<string, ProductMatchSuggestion | null>>({});
+  const [fetchingSuggestionForLine, setFetchingSuggestionForLine] = useState<string | null>(null);
+  const [linkingLineId, setLinkingLineId] = useState<string | null>(null);
+  const [matchSearchTargetLineId, setMatchSearchTargetLineId] = useState<string | null>(null);
+  const [lineMatchDisplayNames, setLineMatchDisplayNames] = useState<Record<string, string>>({});
+  const [localLineActions, setLocalLineActions] = useState<Record<string, LocalLineAction>>({});
+  const [matchError, setMatchError] = useState<string | null>(null);
+
   // Approve / Void
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
@@ -580,6 +732,7 @@ export function SupplierInvoiceReviewPage() {
       setLines(uploadResult.lines);
       setDuplicateFile(uploadResult.duplicateFileWarning);
       setDuplicateNumber(uploadResult.duplicateInvoiceNumberWarning);
+      hydrateMatchDisplayNames(uploadResult.lines);
       setIsLoading(false);
       return;
     }
@@ -591,6 +744,7 @@ export function SupplierInvoiceReviewPage() {
       const data = await apiClient.getSupplierInvoice(clinicId ?? user.homeClinicId, invoiceId);
       setInvoice(data.invoice);
       setLines(data.lines);
+      hydrateMatchDisplayNames(data.lines);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load invoice.");
     } finally {
@@ -606,6 +760,133 @@ export function SupplierInvoiceReviewPage() {
 
   const readOnly = invoice?.status !== "pending_review";
   const backPath = locationState?.backPath ?? "/suppliers";
+
+  // ── Product matching helpers ─────────────────────────────────────────────────
+
+  function hydrateMatchDisplayNames(loadedLines: SupplierInvoiceLine[]): void {
+    setLineMatchDisplayNames(
+      Object.fromEntries(
+        loadedLines
+          .filter((l) => l.isMatched && l.masterProductName)
+          .map((l) => [l.id, l.masterProductName as string]),
+      ),
+    );
+  }
+
+  async function fetchLineSuggestion(lineId: string): Promise<void> {
+    if (!invoice?.supplierId) return;
+    const line = lines.find((l) => l.id === lineId);
+    if (!line) return;
+    setFetchingSuggestionForLine(lineId);
+    try {
+      const result = await apiClient.suggestMasterProductMatch({
+        supplierId: invoice.supplierId,
+        supplierSku: line.ocrSku ?? undefined,
+        supplierDescription: line.ocrDescription ?? undefined,
+      });
+      setLineSuggestions((prev) => ({
+        ...prev,
+        [lineId]: result.suggestions[0] ?? null,
+      }));
+    } catch {
+      setLineSuggestions((prev) => ({ ...prev, [lineId]: null }));
+    } finally {
+      setFetchingSuggestionForLine(null);
+    }
+  }
+
+  async function persistLineMatch(
+    lineId: string,
+    masterProductId: string,
+    displayName: string,
+  ): Promise<void> {
+    if (!invoice || !user) return;
+    const effectiveClinicId = clinicId ?? user.homeClinicId;
+    const line = lines.find((l) => l.id === lineId);
+    setLinkingLineId(lineId);
+    setMatchError(null);
+    try {
+      const updated = await apiClient.updateSupplierInvoiceLine(
+        effectiveClinicId,
+        invoice.id,
+        lineId,
+        { masterCatalogItemId: masterProductId, isMatched: true, matchMethod: "manual" },
+      );
+      setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+      setLineMatchDisplayNames((prev) => ({ ...prev, [lineId]: displayName }));
+      setLineSuggestions((prev) => {
+        const { [lineId]: _removed, ...rest } = prev;
+        void _removed;
+        return rest;
+      });
+      // Write supplier_catalogue mapping immediately so it survives page refresh.
+      if (invoice.supplierId) {
+        void apiClient.confirmMasterProductMatch({
+          supplierId: invoice.supplierId,
+          masterProductId,
+          supplierSku: line?.ocrSku ?? undefined,
+          supplierDescription: line?.ocrDescription ?? undefined,
+        });
+      }
+    } catch (err: unknown) {
+      setMatchError(err instanceof Error ? err.message : "Could not link this product.");
+    } finally {
+      setLinkingLineId(null);
+    }
+  }
+
+  function handleAcceptSuggestion(lineId: string, suggestion: ProductMatchSuggestion): void {
+    void persistLineMatch(lineId, suggestion.masterProductId, suggestion.displayName);
+  }
+
+  function handleManualMatchSelect(product: MasterProduct): void {
+    if (!matchSearchTargetLineId) return;
+    setMatchSearchTargetLineId(null);
+    void persistLineMatch(matchSearchTargetLineId, product.id, product.displayName);
+  }
+
+  function handleSkipLine(lineId: string): void {
+    setLocalLineActions((prev) => ({ ...prev, [lineId]: "skipped" }));
+  }
+
+  function handleCreateNew(lineId: string): void {
+    setLocalLineActions((prev) => ({ ...prev, [lineId]: "ready_to_create" }));
+  }
+
+  function handleUndoLine(lineId: string): void {
+    if (!user) return;
+    setLocalLineActions((prev) => {
+      const { [lineId]: _removed, ...rest } = prev;
+      void _removed;
+      return rest;
+    });
+    // If the line is already matched in the DB, PATCH it back to unmatched.
+    const line = lines.find((l) => l.id === lineId);
+    if (line?.isMatched && invoice) {
+      const effectiveClinicId = clinicId ?? user.homeClinicId;
+      setLinkingLineId(lineId);
+      apiClient
+        .updateSupplierInvoiceLine(effectiveClinicId, invoice.id, lineId, {
+          masterCatalogItemId: null,
+          isMatched: false,
+          matchMethod: null,
+        })
+        .then((updated) => {
+          setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+          setLineMatchDisplayNames((prev) => {
+            const { [lineId]: _removed, ...rest } = prev;
+            void _removed;
+            return rest;
+          });
+        })
+        .catch((err: unknown) => {
+          setMatchError(err instanceof Error ? err.message : "Could not undo match.");
+        })
+        .finally(() => {
+          setLinkingLineId(null);
+        });
+    }
+  }
 
   // ── Editing handlers ────────────────────────────────────────────────────────
 
@@ -687,7 +968,17 @@ export function SupplierInvoiceReviewPage() {
     setIsConfirming(true);
     setConfirmError(null);
     try {
-      const result = await apiClient.confirmSupplierInvoice(clinicId ?? user.homeClinicId, invoice.id);
+      const readyToCreateLineIds = lines
+        .filter((l) => localLineActions[l.id] === "ready_to_create")
+        .map((l) => l.id);
+      const skippedLineIds = lines
+        .filter((l) => localLineActions[l.id] === "skipped")
+        .map((l) => l.id);
+      const result = await apiClient.confirmSupplierInvoice(
+        clinicId ?? user.homeClinicId,
+        invoice.id,
+        { readyToCreateLineIds, skippedLineIds },
+      );
       setInvoice(result.invoice);
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : "Failed to approve invoice.");
@@ -769,6 +1060,12 @@ export function SupplierInvoiceReviewPage() {
                 </p>
               ) : null}
 
+              {matchError ? (
+                <p className="status-card__error" role="alert">
+                  {matchError}
+                </p>
+              ) : null}
+
               <LinesTable
                 lines={lines}
                 editingLineId={editingLineId}
@@ -781,6 +1078,17 @@ export function SupplierInvoiceReviewPage() {
                 onEditSave={() => { void handleEditSave(); }}
                 onEditCancel={handleEditCancel}
                 onIgnoreToggle={handleIgnoreToggle}
+                lineSuggestions={lineSuggestions}
+                fetchingSuggestionForLine={fetchingSuggestionForLine}
+                linkingLineId={linkingLineId}
+                lineMatchDisplayNames={lineMatchDisplayNames}
+                localLineActions={localLineActions}
+                onFetchSuggestion={(lineId) => { void fetchLineSuggestion(lineId); }}
+                onAcceptSuggestion={handleAcceptSuggestion}
+                onChooseDifferent={(lineId) => { setMatchSearchTargetLineId(lineId); }}
+                onCreateNew={handleCreateNew}
+                onSkipLine={handleSkipLine}
+                onUndoLine={handleUndoLine}
               />
             </section>
 
@@ -808,7 +1116,7 @@ export function SupplierInvoiceReviewPage() {
                     type="button"
                     className="invoice-review__approve-btn"
                     onClick={() => { void handleApprove(); }}
-                    disabled={isConfirming || isVoiding}
+                    disabled={isConfirming || isVoiding || linkingLineId !== null}
                   >
                     {isConfirming ? "Approving…" : "Approve Import"}
                   </button>
@@ -816,7 +1124,7 @@ export function SupplierInvoiceReviewPage() {
                     type="button"
                     className="invoice-review__void-btn"
                     onClick={() => { setShowVoidConfirm(true); }}
-                    disabled={isConfirming || isVoiding}
+                    disabled={isConfirming || isVoiding || linkingLineId !== null}
                   >
                     Void Invoice
                   </button>
@@ -885,6 +1193,13 @@ export function SupplierInvoiceReviewPage() {
           onCancel={() => { setShowVoidConfirm(false); }}
         />
       ) : null}
+
+      <MasterProductSearchModal
+        isOpen={matchSearchTargetLineId !== null}
+        onClose={() => { setMatchSearchTargetLineId(null); }}
+        onSelect={handleManualMatchSelect}
+        title="Match to Master Product"
+      />
     </AppShell>
   );
 }
