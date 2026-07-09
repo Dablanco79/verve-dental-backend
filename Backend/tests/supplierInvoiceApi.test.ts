@@ -245,14 +245,12 @@ describe("Supplier Invoice API", () => {
 
     expect(lineRes.status).toBe(200);
     const lineBody = lineRes.body as ApiData<{
-      subtotalCents: number;
+      lineTotalCents: number;
       taxCents: number;
-      totalCents: number;
     }>;
     // subtotal = 4 × 3000 = 12000; tax = 1200; total = 13200
-    expect(lineBody.data.subtotalCents).toBe(12_000);
     expect(lineBody.data.taxCents).toBe(1_200);
-    expect(lineBody.data.totalCents).toBe(13_200);
+    expect(lineBody.data.lineTotalCents).toBe(13_200);
   });
 
   // ── 13. POST /confirm — 422 missing supplier_id (Amendment 3) ─────────────

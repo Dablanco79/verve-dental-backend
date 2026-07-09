@@ -127,6 +127,7 @@ const sampleLine: SupplierInvoiceLine = {
   taxRateBasisPoints: 1000,
   taxCents: 500,
   masterCatalogItemId: "prod-1111",
+  masterProductName: "Nitrile Gloves Large",
   supplierCatalogueId: "cat-1111",
   isMatched: true,
   matchMethod: "exact_sku",

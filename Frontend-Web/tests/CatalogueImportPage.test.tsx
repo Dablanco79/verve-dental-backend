@@ -185,6 +185,7 @@ const matchedLine = {
   taxRateBasisPoints: 1000,
   taxCents: 250,
   masterCatalogItemId: "master-gloves",
+  masterProductName: "Nitrile Examination Gloves Box 100",
   supplierCatalogueId: "catalogue-gloves",
   isMatched: true,
   matchMethod: "exact_sku",
@@ -914,7 +915,7 @@ describe("CatalogueImportPage", () => {
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [matchedLine] });
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
-    expect(await screen.findByText("Nitrile Examination Gloves Box 100")).toBeInTheDocument();
+    expect((await screen.findAllByText("Nitrile Examination Gloves Box 100")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
 
     await waitFor(() => {
@@ -936,7 +937,7 @@ describe("CatalogueImportPage", () => {
 
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
-    expect(await screen.findByText("Nitrile Examination Gloves Box 100")).toBeInTheDocument();
+    expect((await screen.findAllByText("Nitrile Examination Gloves Box 100")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Cancel Import" }));
 
     expect(screen.getByRole("dialog", { name: "Cancel Import?" })).toBeInTheDocument();
@@ -953,15 +954,17 @@ describe("CatalogueImportPage", () => {
     expect(await screen.findByRole("heading", { name: "Catalogue Import" })).toBeInTheDocument();
   });
 
-  it("renders line actions and allows approving a line locally", async () => {
+  it("renders line actions and allows skipping an unmatched line locally", async () => {
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     expect(await screen.findByText("Actions")).toBeInTheDocument();
     expect(screen.getAllByText("Needs Review").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    // Unmatched lines cannot be Approved — they must be Matched, Ready to Create, or Skipped.
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
-    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
   });
 
   it("replaces invoice line create-product action with undo after selection", async () => {
@@ -1106,7 +1109,7 @@ describe("CatalogueImportPage", () => {
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     await screen.findByText("Unknown bonding agent");
-    fireEvent.click(screen.getByRole("button", { name: "Reject / Skip" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
     expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
   });
@@ -1227,7 +1230,8 @@ describe("CatalogueImportPage", () => {
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
 
     await screen.findByText("Unknown bonding agent");
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    // Unmatched lines must be Matched, Ready to Create, or Skipped — not directly Approved.
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
     expect(mockConfirmSupplierInvoice).not.toHaveBeenCalled();

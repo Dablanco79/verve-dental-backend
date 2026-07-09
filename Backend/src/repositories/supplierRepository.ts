@@ -16,6 +16,12 @@ export interface SupplierRepository {
   findSupplierByName(name: string): Promise<Supplier | null>;
   /** Exact match on ABN after stripping whitespace/dashes. */
   findSupplierByAbn(abn: string): Promise<Supplier | null>;
+  /** Exact case-insensitive match on email address. */
+  findSupplierByEmail(email: string): Promise<Supplier | null>;
+  /** Exact normalised match on phone number (digits only). */
+  findSupplierByPhone(phone: string): Promise<Supplier | null>;
+  /** Match on the registered domain extracted from the website URL. */
+  findSupplierByWebsiteDomain(domain: string): Promise<Supplier | null>;
   createSupplier(input: CreateSupplierInput): Promise<Supplier>;
   updateSupplier(
     supplierId: string,
@@ -66,6 +72,36 @@ export function createInMemorySupplierRepository(): SupplierRepository {
       const found = suppliers.find(
         (s) => s.abn !== null && s.abn.replace(/[\s-]/g, "") === normalized,
       );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierByEmail(email: string): Promise<Supplier | null> {
+      const normalized = email.trim().toLowerCase();
+      const found = suppliers.find(
+        (s) => s.email !== null && s.email.toLowerCase() === normalized,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierByPhone(phone: string): Promise<Supplier | null> {
+      const normalized = phone.replace(/\D/g, "");
+      const found = suppliers.find(
+        (s) => s.phone !== null && s.phone.replace(/\D/g, "") === normalized,
+      );
+      return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findSupplierByWebsiteDomain(domain: string): Promise<Supplier | null> {
+      const normalized = domain.toLowerCase();
+      const found = suppliers.find((s) => {
+        if (!s.website) return false;
+        try {
+          const url = new URL(s.website.startsWith("http") ? s.website : `https://${s.website}`);
+          return url.hostname.replace(/^www\./, "") === normalized;
+        } catch {
+          return false;
+        }
+      });
       return Promise.resolve(found ? { ...found } : null);
     },
 

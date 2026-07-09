@@ -14,6 +14,37 @@ import type { Request, Response } from "express";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { AppError } from "../types/errors.js";
 import type { AuthenticatedUser } from "../types/auth.js";
+import type { SupplierInvoiceLine } from "../types/supplierInvoice.js";
+
+/**
+ * Serialize a backend SupplierInvoiceLine to the API response shape expected
+ * by the frontend.  Field renames:
+ *   supplierInvoiceId → invoiceId
+ *   sortOrder         → lineNumber  (1-based)
+ *   totalCents        → lineTotalCents
+ */
+function serializeLine(line: SupplierInvoiceLine): Record<string, unknown> {
+  return {
+    id: line.id,
+    invoiceId: line.supplierInvoiceId,
+    lineNumber: line.sortOrder + 1,
+    ocrDescription: line.ocrDescription,
+    ocrSku: line.ocrSku,
+    ocrConfidence: line.ocrConfidence,
+    quantity: line.quantity,
+    unitPriceCents: line.unitPriceCents,
+    lineTotalCents: line.totalCents,
+    taxRateBasisPoints: line.taxRateBasisPoints,
+    taxCents: line.taxCents,
+    masterCatalogItemId: line.masterCatalogItemId,
+    masterProductName: line.masterProductName,
+    supplierCatalogueId: line.supplierCatalogueId,
+    isMatched: line.isMatched,
+    matchMethod: line.matchMethod,
+    createdAt: line.createdAt.toISOString(),
+    updatedAt: line.updatedAt.toISOString(),
+  };
+}
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -131,7 +162,12 @@ export function createSupplierInvoiceHandlers(
         originalname: req.file.originalname,
       });
 
-      res.status(201).json({ data: result });
+      res.status(201).json({
+        data: {
+          ...result,
+          lines: result.lines.map(serializeLine),
+        },
+      });
     },
 
     // ── GET / ────────────────────────────────────────────────────────────────
@@ -169,7 +205,12 @@ export function createSupplierInvoiceHandlers(
       }
 
       const result = await service.getInvoice(caller, clinicId, invoiceId.data);
-      res.status(200).json({ data: result });
+      res.status(200).json({
+        data: {
+          invoice: result.invoice,
+          lines: result.lines.map(serializeLine),
+        },
+      });
     },
 
     // ── PATCH /:invoiceId ─────────────────────────────────────────────────────
@@ -227,7 +268,7 @@ export function createSupplierInvoiceHandlers(
         body.data,
       );
 
-      res.status(200).json({ data: line });
+      res.status(200).json({ data: serializeLine(line) });
     },
 
     // ── POST /:invoiceId/confirm ──────────────────────────────────────────────

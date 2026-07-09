@@ -90,6 +90,8 @@ export type SupplierInvoiceLine = {
   clinicId: string;
   supplierInvoiceId: string;
   masterCatalogItemId: string | null;
+  /** Display name of the linked Master Product — populated via JOIN at read time. */
+  masterProductName: string | null;
   supplierCatalogueId: string | null;
   ocrDescription: string;
   ocrSku: string | null;

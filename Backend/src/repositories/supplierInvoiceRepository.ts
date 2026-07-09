@@ -363,6 +363,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         clinicId: input.clinicId,
         supplierInvoiceId: input.supplierInvoiceId,
         masterCatalogItemId: input.masterCatalogItemId,
+        masterProductName: null,
         supplierCatalogueId: input.supplierCatalogueId,
         ocrDescription: input.ocrDescription,
         ocrSku: input.ocrSku,

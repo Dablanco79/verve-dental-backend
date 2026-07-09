@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -6,8 +6,10 @@ import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
+import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
+import type { ProductMatchSuggestion } from "../types/masterProduct.js";
 import type { Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/supplier.js";
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 
@@ -94,8 +96,9 @@ function formatInvoiceStatus(invoice: SupplierInvoice | null): string {
     case "cancelled":
       return "Cancelled";
     case "failed":
-    case "voided":
       return "Failed";
+    case "voided":
+      return "Voided";
   }
 }
 
@@ -275,6 +278,13 @@ export function CatalogueImportReviewPage() {
   const [matchSearchTargetLineId, setMatchSearchTargetLineId] = useState<string | null>(null);
   // Tracks lines whose masterCatalogItemId PATCH is in-flight; blocks Import button
   const [linkingLineId, setLinkingLineId] = useState<string | null>(null);
+  // Product match suggestions fetched on demand (lineId → suggestion)
+  const [lineSuggestions, setLineSuggestions] = useState<Record<string, ProductMatchSuggestion | null>>({});
+  const [fetchingSuggestionForLine, setFetchingSuggestionForLine] = useState<string | null>(null);
+  // Supplier search UI
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
+  const [isLinkingSupplier, setIsLinkingSupplier] = useState(false);
+  const supplierSearchRef = useRef<HTMLInputElement>(null);
 
   const matchedSupplier = useMemo(
     () => suppliers.find((supplier) => supplier.id === invoice?.supplierId) ?? null,
@@ -335,6 +345,14 @@ export function CatalogueImportReviewPage() {
       setLineReviewStates({ ...initialStates, ...(persistedStates ?? {}) });
       setEditingLineId(null);
       setEditDraft(null);
+      // Hydrate display names from masterProductName returned by the API.
+      setLineMatchDisplayNames(
+        Object.fromEntries(
+          importData.lines
+            .filter((line) => line.isMatched && line.masterProductName)
+            .map((line) => [line.id, line.masterProductName as string]),
+        ),
+      );
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Catalogue import review could not be loaded.");
       setInvoice(null);
@@ -407,6 +425,41 @@ export function CatalogueImportReviewPage() {
     if (editingLineId === lineId) {
       setEditingLineId(null);
       setEditDraft(null);
+    }
+  }
+
+  async function handleLinkSupplier(supplierId: string): Promise<void> {
+    if (!invoice || !clinicId) return;
+    setIsLinkingSupplier(true);
+    setImportError(null);
+    try {
+      const result = await apiClient.updateSupplierInvoice(clinicId, invoice.id, { supplierId });
+      setInvoice(result.invoice);
+      setSupplierSearchQuery("");
+    } catch (err: unknown) {
+      setImportError(err instanceof Error ? err.message : "Could not link supplier. Please try again.");
+    } finally {
+      setIsLinkingSupplier(false);
+    }
+  }
+
+  async function fetchLineSuggestion(line: SupplierInvoiceLine): Promise<void> {
+    if (!invoice?.supplierId) return;
+    setFetchingSuggestionForLine(line.id);
+    try {
+      const result = await apiClient.suggestMasterProductMatch({
+        supplierId: invoice.supplierId,
+        supplierSku: line.ocrSku ?? undefined,
+        supplierDescription: line.ocrDescription ?? undefined,
+      });
+      setLineSuggestions((current) => ({
+        ...current,
+        [line.id]: result.suggestions[0] ?? null,
+      }));
+    } catch {
+      setLineSuggestions((current) => ({ ...current, [line.id]: null }));
+    } finally {
+      setFetchingSuggestionForLine(null);
     }
   }
 
@@ -528,13 +581,42 @@ export function CatalogueImportReviewPage() {
                 <div className="catalogue-review__supplier-card">
                   <span className="catalogue-status catalogue-status--review-required">Review Required</span>
                   <strong>{invoice?.supplierNameRaw ?? "No supplier detected"}</strong>
-                  <div className="catalogue-review__placeholder-actions">
-                    <button type="button" className="link-button" disabled>
-                      Match existing supplier - Available in a future release
-                    </button>
-                    <button type="button" className="link-button" disabled>
-                      Create supplier - Available in a future release
-                    </button>
+                  <p className="catalogue-review__future-note">
+                    Select the matching supplier below so product mappings can be saved correctly.
+                  </p>
+                  <div className="catalogue-review__supplier-search">
+                    <input
+                      ref={supplierSearchRef}
+                      type="text"
+                      className="catalogue-review__edit-input"
+                      placeholder="Search supplier name…"
+                      value={supplierSearchQuery}
+                      onChange={(e) => { setSupplierSearchQuery(e.target.value); }}
+                      disabled={isLinkingSupplier}
+                      aria-label="Search for an existing supplier"
+                    />
+                    {supplierSearchQuery.trim().length >= 2 ? (
+                      <ul className="catalogue-review__supplier-results">
+                        {suppliers
+                          .filter((s) => s.supplierName.toLowerCase().includes(supplierSearchQuery.toLowerCase()))
+                          .slice(0, 8)
+                          .map((s) => (
+                            <li key={s.id}>
+                              <button
+                                type="button"
+                                className="link-button"
+                                disabled={isLinkingSupplier}
+                                onClick={() => { void handleLinkSupplier(s.id); }}
+                              >
+                                {s.supplierName}{s.abn ? ` (ABN: ${s.abn})` : ""}
+                              </button>
+                            </li>
+                          ))}
+                        {suppliers.filter((s) => s.supplierName.toLowerCase().includes(supplierSearchQuery.toLowerCase())).length === 0 ? (
+                          <li className="catalogue-review__future-note">No suppliers match.</li>
+                        ) : null}
+                      </ul>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -696,84 +778,175 @@ export function CatalogueImportReviewPage() {
                                       Cancel
                                     </button>
                                   </>
+                                ) : reviewState === "Ready to Create" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        startEditingLine(line);
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, initialReviewStateForLine(line));
+                                      }}
+                                    >
+                                      Undo
+                                    </button>
+                                    <span className="catalogue-review__future-note">
+                                      Creates catalogue product only. Does not change stock.
+                                    </span>
+                                  </>
+                                ) : reviewState === "Matched Existing Product" ? (
+                                  <>
+                                    <span className="catalogue-review__match-label">
+                                      {lineMatchDisplayNames[line.id] ?? line.masterProductName ?? "Matched"}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, "Needs Review");
+                                        setLineMatchDisplayNames((current) => {
+                                          const { [line.id]: _removed, ...rest } = current;
+                                          void _removed;
+                                          return rest;
+                                        });
+                                        setLineSuggestions((current) => {
+                                          const { [line.id]: _removed, ...rest } = current;
+                                          void _removed;
+                                          return rest;
+                                        });
+                                      }}
+                                    >
+                                      Undo
+                                    </button>
+                                  </>
+                                ) : reviewState === "Skipped" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => {
+                                        setLineState(line.id, initialReviewStateForLine(line));
+                                      }}
+                                    >
+                                      Undo
+                                    </button>
+                                  </>
                                 ) : (
-                                  reviewState === "Ready to Create" ? (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          startEditingLine(line);
+                                  // "Needs Review" — unmatched line
+                                  <>
+                                    {lineSuggestions[line.id] ? (
+                                      <ProductMatchSuggestionCard
+                                        suggestion={lineSuggestions[line.id] as ProductMatchSuggestion}
+                                        onAccept={() => {
+                                          const suggestion = lineSuggestions[line.id];
+                                          if (!suggestion) return;
+                                          if (!invoice || !clinicId) return;
+                                          setLinkingLineId(line.id);
+                                          apiClient
+                                            .updateSupplierInvoiceLine(clinicId, invoice.id, line.id, {
+                                              masterCatalogItemId: suggestion.masterProductId,
+                                              isMatched: true,
+                                              matchMethod: "manual",
+                                            })
+                                            .then(() => {
+                                              setLineMatchDisplayNames((current) => ({
+                                                ...current,
+                                                [line.id]: suggestion.displayName,
+                                              }));
+                                              setLineState(line.id, "Matched Existing Product");
+                                              if (invoice.supplierId) {
+                                                void apiClient.confirmMasterProductMatch({
+                                                  supplierId: invoice.supplierId,
+                                                  masterProductId: suggestion.masterProductId,
+                                                  supplierSku: line.ocrSku ?? undefined,
+                                                  supplierDescription: line.ocrDescription ?? undefined,
+                                                });
+                                              }
+                                            })
+                                            .catch((err: unknown) => {
+                                              setImportError(
+                                                err instanceof Error ? err.message : "Could not link this product.",
+                                              );
+                                            })
+                                            .finally(() => {
+                                              setLinkingLineId(null);
+                                            });
                                         }}
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setLineState(line.id, initialReviewStateForLine(line));
-                                        }}
-                                      >
-                                        Undo
-                                      </button>
-                                      <span className="catalogue-review__future-note">
-                                        Creates catalogue product only. Does not change stock.
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setLineState(line.id, "Approved");
-                                        }}
-                                      >
-                                        Approve
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          startEditingLine(line);
-                                        }}
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
-                                          setLineState(line.id, "Skipped");
-                                        }}
-                                      >
-                                        Reject / Skip
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        disabled={linkingLineId !== null}
-                                        onClick={() => {
+                                        onChooseDifferent={() => {
                                           setMatchSearchTargetLineId(line.id);
                                         }}
-                                      >
-                                        Match existing product
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="link-button"
-                                        onClick={() => {
+                                        onCreateNew={() => {
                                           setLineState(line.id, "Ready to Create");
                                         }}
-                                      >
-                                        Create new product
-                                      </button>
-                                      <span className="catalogue-review__future-note">
-                                        Creates catalogue product only. Does not change stock.
-                                      </span>
-                                    </>
-                                  )
+                                        onSkip={() => {
+                                          setLineState(line.id, "Skipped");
+                                        }}
+                                      />
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => {
+                                            startEditingLine(line);
+                                          }}
+                                        >
+                                          Edit
+                                        </button>
+                                        {invoice?.supplierId ? (
+                                          <button
+                                            type="button"
+                                            className="link-button"
+                                            disabled={fetchingSuggestionForLine === line.id || linkingLineId !== null}
+                                            onClick={() => {
+                                              void fetchLineSuggestion(line);
+                                            }}
+                                          >
+                                            {fetchingSuggestionForLine === line.id ? "Finding..." : "Find suggestions"}
+                                          </button>
+                                        ) : null}
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          disabled={linkingLineId !== null}
+                                          onClick={() => {
+                                            setMatchSearchTargetLineId(line.id);
+                                          }}
+                                        >
+                                          Match existing product
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => {
+                                            setLineState(line.id, "Ready to Create");
+                                          }}
+                                        >
+                                          Create new product
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="link-button"
+                                          onClick={() => {
+                                            setLineState(line.id, "Skipped");
+                                          }}
+                                        >
+                                          Skip
+                                        </button>
+                                        <span className="catalogue-review__future-note">
+                                          Creates catalogue product only. Does not change stock.
+                                        </span>
+                                      </>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -878,6 +1051,7 @@ export function CatalogueImportReviewPage() {
             if (!targetLineId || !invoice || !clinicId) return;
 
             // Persist the link to the DB first — only update UI state on success.
+            const targetLine = lines.find((l) => l.id === targetLineId);
             setLinkingLineId(targetLineId);
             apiClient
               .updateSupplierInvoiceLine(clinicId, invoice.id, targetLineId, {
@@ -891,6 +1065,16 @@ export function CatalogueImportReviewPage() {
                   [targetLineId]: product.displayName,
                 }));
                 setLineState(targetLineId, "Matched Existing Product");
+                // Also write the supplier_catalogue mapping immediately so it persists
+                // independent of the invoice confirm.
+                if (invoice.supplierId) {
+                  void apiClient.confirmMasterProductMatch({
+                    supplierId: invoice.supplierId,
+                    masterProductId: product.id,
+                    supplierSku: targetLine?.ocrSku ?? undefined,
+                    supplierDescription: targetLine?.ocrDescription ?? undefined,
+                  });
+                }
               })
               .catch((err: unknown) => {
                 setImportError(

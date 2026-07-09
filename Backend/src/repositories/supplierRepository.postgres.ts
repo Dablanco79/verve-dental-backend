@@ -135,6 +135,34 @@ export function createPostgresSupplierRepository(
       return rows[0] ? mapSupplier(rows[0]) : null;
     },
 
+    async findSupplierByEmail(email: string): Promise<Supplier | null> {
+      const { rows } = await pool.query<SupplierRow>(
+        `SELECT * FROM suppliers WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+        [email.trim()],
+      );
+      return rows[0] ? mapSupplier(rows[0]) : null;
+    },
+
+    async findSupplierByPhone(phone: string): Promise<Supplier | null> {
+      const digitsOnly = phone.replace(/\D/g, "");
+      const { rows } = await pool.query<SupplierRow>(
+        `SELECT * FROM suppliers WHERE REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $1 LIMIT 1`,
+        [digitsOnly],
+      );
+      return rows[0] ? mapSupplier(rows[0]) : null;
+    },
+
+    async findSupplierByWebsiteDomain(domain: string): Promise<Supplier | null> {
+      const normalized = domain.toLowerCase();
+      const { rows } = await pool.query<SupplierRow>(
+        `SELECT * FROM suppliers
+         WHERE LOWER(REGEXP_REPLACE(REGEXP_REPLACE(website, '^https?://(www\\.)?', '', 'i'), '/.*$', '')) = $1
+         LIMIT 1`,
+        [normalized],
+      );
+      return rows[0] ? mapSupplier(rows[0]) : null;
+    },
+
     async createSupplier(input: CreateSupplierInput): Promise<Supplier> {
       const { rows } = await pool.query<SupplierRow>(
         `INSERT INTO suppliers

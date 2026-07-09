@@ -64,6 +64,7 @@ type LineRow = {
   clinic_id: string;
   supplier_invoice_id: string;
   master_catalog_item_id: string | null;
+  master_product_name: string | null;
   supplier_catalogue_id: string | null;
   ocr_description: string;
   ocr_sku: string | null;
@@ -137,6 +138,7 @@ function mapLine(row: LineRow): SupplierInvoiceLine {
     clinicId: row.clinic_id,
     supplierInvoiceId: row.supplier_invoice_id,
     masterCatalogItemId: row.master_catalog_item_id,
+    masterProductName: row.master_product_name ?? null,
     supplierCatalogueId: row.supplier_catalogue_id,
     ocrDescription: row.ocr_description,
     ocrSku: row.ocr_sku,
@@ -460,7 +462,10 @@ export function createPostgresSupplierInvoiceRepository(
       lineId: string,
     ): Promise<SupplierInvoiceLine | null> {
       const { rows } = await pool.query<LineRow>(
-        "SELECT * FROM supplier_invoice_lines WHERE id = $1 AND clinic_id = $2",
+        `SELECT sil.*, mci.name AS master_product_name
+         FROM supplier_invoice_lines sil
+         LEFT JOIN master_catalog_items mci ON mci.id = sil.master_catalog_item_id
+         WHERE sil.id = $1 AND sil.clinic_id = $2`,
         [lineId, clinicId],
       );
       return rows[0] ? mapLine(rows[0]) : null;
@@ -471,9 +476,11 @@ export function createPostgresSupplierInvoiceRepository(
       invoiceId: string,
     ): Promise<SupplierInvoiceLine[]> {
       const { rows } = await pool.query<LineRow>(
-        `SELECT * FROM supplier_invoice_lines
-         WHERE supplier_invoice_id = $1 AND clinic_id = $2
-         ORDER BY sort_order ASC`,
+        `SELECT sil.*, mci.name AS master_product_name
+         FROM supplier_invoice_lines sil
+         LEFT JOIN master_catalog_items mci ON mci.id = sil.master_catalog_item_id
+         WHERE sil.supplier_invoice_id = $1 AND sil.clinic_id = $2
+         ORDER BY sil.sort_order ASC`,
         [invoiceId, clinicId],
       );
       return rows.map(mapLine);
@@ -486,7 +493,10 @@ export function createPostgresSupplierInvoiceRepository(
     ): Promise<SupplierInvoiceLine | null> {
       // Fetch the existing line first so we can recalculate totals.
       const { rows: existingRows } = await pool.query<LineRow>(
-        "SELECT * FROM supplier_invoice_lines WHERE id = $1 AND clinic_id = $2",
+        `SELECT sil.*, mci.name AS master_product_name
+         FROM supplier_invoice_lines sil
+         LEFT JOIN master_catalog_items mci ON mci.id = sil.master_catalog_item_id
+         WHERE sil.id = $1 AND sil.clinic_id = $2`,
         [lineId, clinicId],
       );
       const existing = existingRows[0];
@@ -540,12 +550,22 @@ export function createPostgresSupplierInvoiceRepository(
       if (patch.isMatched !== undefined) add("is_matched", patch.isMatched);
       if (patch.matchMethod !== undefined) add("match_method", patch.matchMethod);
 
-      const { rows } = await pool.query<LineRow>(
+      const updateIdx = idx;
+      const { rows: updatedRows } = await pool.query<{ id: string }>(
         `UPDATE supplier_invoice_lines
          SET ${sets.join(", ")}
-         WHERE id = $${String(idx++)} AND clinic_id = $${String(idx)}
-         RETURNING *`,
+         WHERE id = $${String(updateIdx)} AND clinic_id = $${String(updateIdx + 1)}
+         RETURNING id`,
         [...params, lineId, clinicId],
+      );
+      if (!updatedRows[0]) return null;
+      // Re-fetch with master product name JOIN to return the complete record.
+      const { rows } = await pool.query<LineRow>(
+        `SELECT sil.*, mci.name AS master_product_name
+         FROM supplier_invoice_lines sil
+         LEFT JOIN master_catalog_items mci ON mci.id = sil.master_catalog_item_id
+         WHERE sil.id = $1 AND sil.clinic_id = $2`,
+        [lineId, clinicId],
       );
       return rows[0] ? mapLine(rows[0]) : null;
     },

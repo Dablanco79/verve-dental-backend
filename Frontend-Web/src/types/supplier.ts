@@ -228,6 +228,8 @@ export type SupplierInvoiceLine = {
   taxRateBasisPoints: number;
   taxCents: number;
   masterCatalogItemId: string | null;
+  /** Display name of the linked Master Product — null when not yet matched. */
+  masterProductName: string | null;
   supplierCatalogueId: string | null;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;

@@ -18,7 +18,8 @@ const apiClient = createApiClient(loadConfig());
 
 // ── Utility helpers ────────────────────────────────────────────────────────────
 
-function centsToDollars(cents: number): string {
+function centsToDollars(cents: number | null | undefined): string {
+  if (cents === null || cents === undefined || !Number.isFinite(cents)) return "—";
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
     currency: "AUD",
@@ -214,10 +215,10 @@ function LineRow({
   onEditCancel,
   onIgnoreToggle,
 }: LineRowProps) {
-  const previewTotal =
-    isEditing
-      ? parseFloat(editDraft.unitPriceDollars || "0") * parseFloat(editDraft.quantity || "0")
-      : null;
+  const rawPreviewTotal = isEditing
+    ? parseFloat(editDraft.unitPriceDollars || "0") * parseFloat(editDraft.quantity || "0")
+    : NaN;
+  const previewTotal = Number.isFinite(rawPreviewTotal) ? rawPreviewTotal : null;
 
   return (
     <tr
@@ -402,7 +403,10 @@ function LinesTable({
   }
 
   const activeLines = lines.filter((l) => !ignoredLineIds.has(l.id));
-  const subtotal = activeLines.reduce((sum, l) => sum + l.lineTotalCents, 0);
+  const subtotal = activeLines.reduce(
+    (sum, l) => sum + (Number.isFinite(l.lineTotalCents) ? l.lineTotalCents : 0),
+    0,
+  );
 
   return (
     <div className="supplier-table-wrap">
@@ -818,7 +822,7 @@ export function SupplierInvoiceReviewPage() {
                   </button>
                 </div>
               </section>
-            ) : invoice.status === "confirmed" ? (
+            ) : invoice.status === "confirmed" || invoice.status === "imported" ? (
               <section className="status-card supplier-detail__section invoice-review__confirmed-banner">
                 <div className="invoice-review__confirmed-icon" aria-hidden="true">✓</div>
                 <div>
@@ -835,7 +839,7 @@ export function SupplierInvoiceReviewPage() {
                   Return to Suppliers
                 </button>
               </section>
-            ) : (
+            ) : invoice.status === "voided" ? (
               <section className="status-card supplier-detail__section invoice-review__voided-banner">
                 <div className="invoice-review__voided-icon" aria-hidden="true">✕</div>
                 <div>
@@ -852,7 +856,24 @@ export function SupplierInvoiceReviewPage() {
                   Return to Suppliers
                 </button>
               </section>
-            )}
+            ) : invoice.status === "cancelled" ? (
+              <section className="status-card supplier-detail__section invoice-review__voided-banner">
+                <div className="invoice-review__voided-icon" aria-hidden="true">✕</div>
+                <div>
+                  <strong>Import Cancelled</strong>
+                  <p className="invoice-review__confirmed-hint">
+                    This invoice import was cancelled and is no longer active.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="button-link"
+                  onClick={() => { void navigate(backPath); }}
+                >
+                  Return to Suppliers
+                </button>
+              </section>
+            ) : null}
           </>
         ) : null}
       </div>

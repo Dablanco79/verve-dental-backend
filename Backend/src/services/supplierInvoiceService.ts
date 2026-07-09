@@ -194,9 +194,42 @@ export function createSupplierInvoiceService(
 
   // ── Supplier matching ──────────────────────────────────────────────────────
 
+  /** Normalise text for fuzzy comparison — lowercase, strip punctuation. */
+  function normaliseSupplierText(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /** Jaccard token similarity between two strings (0–1). */
+  function supplierTokenSimilarity(a: string, b: string): number {
+    const tokensA = new Set(normaliseSupplierText(a).split(" ").filter(Boolean));
+    const tokensB = new Set(normaliseSupplierText(b).split(" ").filter(Boolean));
+    if (tokensA.size === 0 && tokensB.size === 0) return 1;
+    if (tokensA.size === 0 || tokensB.size === 0) return 0;
+    let intersection = 0;
+    for (const token of tokensA) {
+      if (tokensB.has(token)) intersection++;
+    }
+    const union = tokensA.size + tokensB.size - intersection;
+    return intersection / union;
+  }
+
+  /** Extract the registered domain from a website URL (strips www + scheme). */
+  function extractWebsiteDomain(website: string): string | null {
+    try {
+      const url = new URL(website.startsWith("http") ? website : `https://${website}`);
+      return url.hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+
   /**
-   * Deterministic supplier matching — no fuzzy logic.
-   * Priority: ABN match → exact name match.
+   * Multi-signal supplier matching — ABN → Email → Phone → Website → Exact
+   * name → Fuzzy name.  Never returns a fuzzy match below 0.5 Jaccard score.
    * Returns { detectedSupplier, matchedSupplier, supplierMatchStatus }.
    */
   async function matchSupplierFromOcr(ocrResult: OcrInvoiceResult): Promise<{
@@ -223,7 +256,7 @@ export function createSupplierInvoiceService(
       website: ocrResult.supplierWebsite ?? null,
     };
 
-    // 1. Try ABN match first (most reliable).
+    // 1. ABN match (most reliable — authoritative legal identifier).
     if (ocrResult.supplierAbn) {
       const byAbn = await supplierRepo.findSupplierByAbn(ocrResult.supplierAbn);
       if (byAbn) {
@@ -231,13 +264,71 @@ export function createSupplierInvoiceService(
       }
     }
 
-    // 2. Exact case-insensitive name match.
+    // 2. Email match.
+    if (ocrResult.supplierEmail) {
+      const byEmail = await supplierRepo.findSupplierByEmail(ocrResult.supplierEmail);
+      if (byEmail) {
+        return { detectedSupplier, matchedSupplier: byEmail, supplierMatchStatus: "matched" };
+      }
+    }
+
+    // 3. Phone match (digits normalised).
+    if (ocrResult.supplierPhone) {
+      const byPhone = await supplierRepo.findSupplierByPhone(ocrResult.supplierPhone);
+      if (byPhone) {
+        return { detectedSupplier, matchedSupplier: byPhone, supplierMatchStatus: "matched" };
+      }
+    }
+
+    // 4. Website domain match.
+    if (ocrResult.supplierWebsite) {
+      const domain = extractWebsiteDomain(ocrResult.supplierWebsite);
+      if (domain) {
+        const byWebsite = await supplierRepo.findSupplierByWebsiteDomain(domain);
+        if (byWebsite) {
+          return { detectedSupplier, matchedSupplier: byWebsite, supplierMatchStatus: "matched" };
+        }
+      }
+    }
+
+    // 5. Exact case-insensitive name match.
     const byName = await supplierRepo.findSupplierByName(rawName);
     if (byName) {
       return { detectedSupplier, matchedSupplier: byName, supplierMatchStatus: "matched" };
     }
 
-    // 3. Name detected but no existing supplier found — needs user confirmation.
+    // 6. Fuzzy name match — Jaccard token similarity ≥ 0.50.
+    const allSuppliers = await supplierRepo.listSuppliers({ active: true });
+    let bestScore = 0;
+    let bestSupplier: Supplier | null = null;
+    for (const supplier of allSuppliers) {
+      const score = supplierTokenSimilarity(rawName, supplier.supplierName);
+      if (score > bestScore) {
+        bestScore = score;
+        bestSupplier = supplier;
+      }
+      // Also check legal name and trading name if present.
+      if (supplier.legalName) {
+        const legalScore = supplierTokenSimilarity(rawName, supplier.legalName);
+        if (legalScore > bestScore) {
+          bestScore = legalScore;
+          bestSupplier = supplier;
+        }
+      }
+      if (supplier.tradingName) {
+        const tradingScore = supplierTokenSimilarity(rawName, supplier.tradingName);
+        if (tradingScore > bestScore) {
+          bestScore = tradingScore;
+          bestSupplier = supplier;
+        }
+      }
+    }
+
+    if (bestScore >= 0.5 && bestSupplier !== null) {
+      return { detectedSupplier, matchedSupplier: bestSupplier, supplierMatchStatus: "matched" };
+    }
+
+    // 7. Name detected but no match strong enough — user must confirm.
     return {
       detectedSupplier,
       matchedSupplier: null,
