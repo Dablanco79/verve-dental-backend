@@ -98,6 +98,21 @@ export function canManageSuppliers(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
 }
 
+/**
+ * Stocktake management — create, start, complete, cancel sessions.
+ * clinical_staff may only perform counts (update line quantities).
+ */
+export function canManageStocktake(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
+}
+
+/**
+ * Stocktake count — all roles can view sessions and enter counted quantities.
+ */
+export function canPerformStocktake(): boolean {
+  return true;
+}
+
 export const ROLE_LABELS: Record<UserRole, string> = {
   owner_admin: "Owner / Admin",
   group_practice_manager: "Practice Manager",

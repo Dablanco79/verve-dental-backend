@@ -7880,3 +7880,656 @@ textarea:focus-visible {
     width: 100%;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Stocktake Module — Workflow 2.1 (Sprint 1 / 1.3 scoping)
+   ALL selectors are prefixed with "stocktake-" so they cannot leak onto
+   unrelated pages. Generic names (.btn, .alert, .data-table, etc.) were
+   deliberately avoided after audit confirmed no existing page uses them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page container ─────────────────────────────────────────────────────── */
+
+.stocktake-page {
+  padding: var(--vds-space-6);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.stocktake-page--wide {
+  max-width: 1600px;
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+
+.stocktake-page__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--vds-space-6);
+}
+
+.stocktake-page__header-left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  min-width: 0;
+}
+
+.stocktake-page__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-3);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.stocktake-page__title {
+  margin: 0;
+  font-size: var(--vds-font-size-xl);
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+  line-height: 1.2;
+}
+
+.stocktake-page__subtitle {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Breadcrumb nav ─────────────────────────────────────────────────────── */
+
+.stocktake-page__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+}
+
+.stocktake-page__nav-link {
+  color: var(--vds-colour-teal);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.stocktake-page__nav-link:hover {
+  text-decoration: underline;
+}
+
+.stocktake-page__nav-sep {
+  color: var(--vds-colour-border-strong);
+  font-size: 0.8rem;
+}
+
+.stocktake-page__nav-current {
+  color: var(--vds-colour-muted);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+
+/* ── Stocktake buttons ──────────────────────────────────────────────────── */
+
+.stocktake-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem var(--vds-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--vds-radius-md);
+  font: inherit;
+  font-size: var(--vds-font-size-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.stocktake-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.stocktake-btn--sm {
+  padding: 0.35rem var(--vds-space-3);
+  font-size: var(--vds-font-size-xs);
+}
+
+.stocktake-btn--primary {
+  background: var(--vds-colour-purple);
+  color: #ffffff;
+  border-color: var(--vds-colour-purple);
+}
+
+.stocktake-btn--primary:not(:disabled):hover {
+  background: #5e0182;
+  border-color: #5e0182;
+  transform: translateY(-1px);
+}
+
+.stocktake-btn--secondary {
+  background: var(--vds-colour-panel);
+  color: var(--vds-colour-body);
+  border-color: var(--vds-colour-border-strong);
+}
+
+.stocktake-btn--secondary:not(:disabled):hover {
+  background: var(--vds-colour-hover);
+  border-color: var(--vds-colour-border-strong);
+}
+
+.stocktake-btn--danger {
+  background: var(--vds-colour-danger-bg);
+  color: var(--vds-colour-danger);
+  border-color: var(--vds-colour-danger);
+}
+
+.stocktake-btn--danger:not(:disabled):hover {
+  background: var(--vds-colour-danger);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+/* ── Stocktake status badges ────────────────────────────────────────────── */
+
+.stocktake-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.65rem;
+  border-radius: var(--vds-radius-pill);
+  font-size: var(--vds-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.stocktake-status-badge--draft {
+  background: var(--vds-colour-soft);
+  color: var(--vds-colour-muted);
+  border: 1px solid var(--vds-colour-border-strong);
+}
+
+.stocktake-status-badge--in-progress {
+  background: var(--vds-colour-info-bg);
+  color: var(--vds-colour-info);
+}
+
+.stocktake-status-badge--completed {
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+.stocktake-status-badge--cancelled {
+  background: var(--vds-colour-danger-bg);
+  color: var(--vds-colour-danger);
+}
+
+/* ── Stocktake alert banners ────────────────────────────────────────────── */
+
+.stocktake-alert {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-3);
+  padding: 0.9rem var(--vds-space-4);
+  border-radius: var(--vds-radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--vds-font-size-sm);
+  margin-bottom: var(--vds-space-4);
+}
+
+.stocktake-alert--error {
+  background: var(--vds-colour-danger-bg);
+  border-color: var(--vds-colour-danger);
+  color: var(--vds-colour-danger);
+}
+
+.stocktake-alert--warning {
+  background: var(--vds-colour-warning-bg);
+  border-color: #e9a640;
+  color: var(--vds-colour-warning);
+}
+
+.stocktake-alert__dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--vds-font-size-xs);
+  font-weight: 600;
+  color: inherit;
+  opacity: 0.75;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.stocktake-alert__dismiss:hover {
+  opacity: 1;
+}
+
+/* ── Stocktake empty / loading states ───────────────────────────────────── */
+
+.stocktake-page__empty {
+  padding: var(--vds-space-8) var(--vds-space-4);
+  text-align: center;
+  color: var(--vds-colour-muted);
+  font-size: var(--vds-font-size-md);
+}
+
+.stocktake-page__empty--inline {
+  padding: var(--vds-space-4) var(--vds-space-4);
+  text-align: left;
+}
+
+.stocktake-page__loading {
+  padding: var(--vds-space-4);
+  color: var(--vds-colour-muted);
+  font-size: var(--vds-font-size-sm);
+}
+
+.stocktake-field-error {
+  color: var(--vds-colour-danger);
+  font-size: var(--vds-font-size-sm);
+  margin: var(--vds-space-1) 0 0;
+}
+
+/* ── Stocktake form fields ──────────────────────────────────────────────── */
+
+.stocktake-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-1);
+}
+
+.stocktake-form-field__label {
+  font-size: var(--vds-font-size-sm);
+  font-weight: 600;
+  color: var(--vds-colour-body);
+}
+
+.stocktake-input {
+  width: 100%;
+  min-height: var(--vds-control-height);
+  padding: 0.55rem var(--vds-control-padding-x);
+  border: 1px solid var(--vds-colour-border-strong);
+  border-radius: var(--vds-control-radius);
+  font: inherit;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-body);
+  background: var(--vds-colour-panel);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  appearance: none;
+}
+
+.stocktake-input:focus {
+  outline: none;
+  border-color: var(--vds-colour-purple);
+  box-shadow: 0 0 0 3px var(--vds-colour-focus);
+}
+
+.stocktake-input--compact {
+  min-height: 2rem;
+  padding: 0.3rem 0.55rem;
+  width: 7rem;
+  font-size: var(--vds-font-size-sm);
+}
+
+/* ── Stocktake modal ────────────────────────────────────────────────────── */
+
+.stocktake-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--vds-space-4) var(--vds-space-5);
+  border-bottom: 1px solid var(--vds-colour-border);
+}
+
+.stocktake-modal__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+}
+
+.stocktake-modal__close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--vds-colour-muted);
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--vds-radius-sm);
+}
+
+.stocktake-modal__close:hover {
+  background: var(--vds-colour-hover);
+  color: var(--vds-colour-body);
+}
+
+.stocktake-modal__body {
+  padding: var(--vds-space-4) var(--vds-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-4);
+}
+
+.stocktake-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--vds-space-3);
+  padding: var(--vds-space-4) var(--vds-space-5);
+  border-top: 1px solid var(--vds-colour-border);
+}
+
+/* ── Stocktake data table ───────────────────────────────────────────────── */
+
+.stocktake-page__table-wrap {
+  border: var(--vds-card-border);
+  border-radius: var(--vds-radius-lg);
+  overflow: hidden;
+}
+
+.stocktake-page__table-wrap--scroll {
+  overflow-x: auto;
+}
+
+.stocktake-page__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--vds-font-size-sm);
+}
+
+.stocktake-page__table thead tr {
+  background: var(--vds-colour-soft);
+}
+
+.stocktake-page__table th {
+  padding: 0.7rem var(--vds-table-cell-padding-x);
+  text-align: left;
+  font-size: var(--vds-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--vds-colour-muted);
+  border-bottom: 1px solid var(--vds-colour-border);
+  white-space: nowrap;
+}
+
+.stocktake-page__table td {
+  padding: var(--vds-table-cell-padding-y) var(--vds-table-cell-padding-x);
+  border-bottom: 1px solid var(--vds-colour-border);
+  vertical-align: middle;
+}
+
+.stocktake-page__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.stocktake-page__table tbody tr:hover td {
+  background: var(--vds-colour-hover);
+}
+
+.stocktake-page__col--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.stocktake-page__col--code {
+  font-family: var(--vds-font-family-mono);
+  font-size: var(--vds-font-size-xs);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Stocktake: session metadata ────────────────────────────────────────── */
+
+.stocktake-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--vds-space-3);
+  margin-top: var(--vds-space-2);
+}
+
+.stocktake-meta__item {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Stocktake: draft notice ────────────────────────────────────────────── */
+
+.stocktake-draft-notice {
+  padding: var(--vds-space-4) var(--vds-space-5);
+  background: var(--vds-colour-info-bg);
+  border: 1px solid rgba(0, 109, 131, 0.22);
+  border-radius: var(--vds-radius-sm);
+  color: var(--vds-colour-info);
+  font-size: var(--vds-font-size-sm);
+  margin-bottom: var(--vds-space-4);
+}
+
+.stocktake-draft-notice p {
+  margin: 0;
+}
+
+/* ── Stocktake: progress summary — sticky ───────────────────────────────── */
+/*
+ * position: sticky keeps the summary visible at the top of the scrollable
+ * .stocktake-page area while the product list scrolls.
+ * top: var(--vds-header-height) — the design token for the app header height
+ *   (72px, defined in :root) — ensures the bar clears the fixed AppShell header
+ *   which is itself sticky at top:0 with z-index:20 (see .app-shell__header).
+ * z-index: 10 sits below the app header (20) but above table row content.
+ * background: rgba(255,255,255,0.97) + backdrop-filter prevent table rows
+ *   bleeding through while maintaining a visually clean appearance.
+ */
+
+.stocktake-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vds-space-4);
+  padding: var(--vds-space-3) var(--vds-space-4);
+  background: var(--vds-colour-panel);
+  border: var(--vds-card-border);
+  border-radius: var(--vds-radius-md);
+  margin-bottom: var(--vds-space-4);
+}
+
+.stocktake-summary--sticky {
+  position: sticky;
+  top: var(--vds-header-height);
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(8px);
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  border-bottom: 1px solid var(--vds-colour-border);
+  margin-left: calc(-1 * var(--vds-space-6));
+  margin-right: calc(-1 * var(--vds-space-6));
+  padding-left: var(--vds-space-6);
+  padding-right: var(--vds-space-6);
+  box-shadow: 0 4px 16px rgba(74, 48, 65, 0.07);
+}
+
+.stocktake-summary__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-3);
+  flex: 1;
+  min-width: 16rem;
+}
+
+.stocktake-summary__stats {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-5);
+  flex-wrap: wrap;
+}
+
+/* ── Stocktake: progress bar ────────────────────────────────────────────── */
+
+.stocktake-progress-bar {
+  width: 8rem;
+  height: 0.5rem;
+  background: var(--vds-colour-border);
+  border-radius: var(--vds-radius-pill);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.stocktake-progress-bar__fill {
+  height: 100%;
+  background: var(--vds-colour-purple);
+  border-radius: var(--vds-radius-pill);
+  transition: width 0.3s ease;
+  min-width: 0;
+}
+
+.stocktake-progress-label {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-body);
+}
+
+/* ── Stocktake: variance stat chips ─────────────────────────────────────── */
+
+.stocktake-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.stocktake-stat__label {
+  font-size: var(--vds-font-size-xs);
+  color: var(--vds-colour-muted);
+  white-space: nowrap;
+}
+
+.stocktake-stat__value {
+  font-size: var(--vds-font-size-md);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Stocktake: variance colours ────────────────────────────────────────── */
+
+.stocktake-variance--positive {
+  color: var(--vds-colour-success);
+}
+
+.stocktake-variance--negative {
+  color: var(--vds-colour-danger);
+}
+
+.stocktake-variance--zero {
+  color: var(--vds-colour-muted);
+}
+
+/* ── Stocktake: product cell ────────────────────────────────────────────── */
+
+.stocktake-product-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 10rem;
+}
+
+.stocktake-product-name {
+  font-weight: 600;
+  color: var(--vds-colour-heading);
+  font-size: var(--vds-font-size-sm);
+}
+
+.stocktake-product-sku {
+  font-size: var(--vds-font-size-xs);
+  font-family: var(--vds-font-family-mono);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Stocktake: barcode lookup toolbar ──────────────────────────────────── */
+
+.stocktake-toolbar {
+  margin-bottom: var(--vds-space-4);
+}
+
+.stocktake-barcode-lookup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  max-width: 28rem;
+}
+
+.stocktake-barcode-lookup__row {
+  display: flex;
+  gap: var(--vds-space-2);
+}
+
+.stocktake-barcode-lookup__row .stocktake-input {
+  flex: 1;
+}
+
+/* ── Stocktake: notes display ───────────────────────────────────────────── */
+
+.stocktake-notes {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  font-style: italic;
+}
+
+/* ── Stocktake: highlighted row (from barcode scan) ─────────────────────── */
+
+.stocktake-row--highlighted {
+  background: var(--vds-colour-info-bg) !important;
+  transition: background 0.3s ease;
+}
+
+/* ── Stocktake: numeric column minimum width ─────────────────────────────── */
+
+.stocktake-page__table .stocktake-page__col--num {
+  min-width: 5rem;
+}
+
+/* ── Stocktake list: progress text ──────────────────────────────────────── */
+
+.stocktake-list-progress {
+  font-size: var(--vds-font-size-xs);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Responsive: collapse wide layouts on narrow screens ─────────────────── */
+
+@media (max-width: 768px) {
+  .stocktake-page__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stocktake-page__actions {
+    justify-content: flex-start;
+  }
+
+  .stocktake-summary--sticky {
+    margin-left: calc(-1 * var(--vds-space-4));
+    margin-right: calc(-1 * var(--vds-space-4));
+    padding-left: var(--vds-space-4);
+    padding-right: var(--vds-space-4);
+  }
+
+  .stocktake-page {
+    padding: var(--vds-space-4);
+  }
+}

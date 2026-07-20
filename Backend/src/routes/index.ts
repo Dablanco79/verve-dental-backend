@@ -32,6 +32,7 @@ import { createClinicRouter } from "./clinicRoutes.js";
 import { createForecastRouter } from "./forecastRoutes.js";
 import { createLaborForecastRouter } from "./laborForecastRoutes.js";
 import { createInventoryRouter } from "./inventoryRoutes.js";
+import { createStocktakeRouter } from "./stocktakeRoutes.js";
 import { createLeaveRouter, createTimesheetRouter } from "./payrollRoutes.js";
 import { createProductRouter } from "./productRoutes.js";
 import { createPurchaseOrderRouter } from "./purchaseOrderRoutes.js";
@@ -161,6 +162,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId", authenticate, rlsContext);
 
   router.use("/clinics/:clinicId/inventory", createInventoryRouter(deps));
+  router.use("/clinics/:clinicId/stocktakes", createStocktakeRouter(deps));
   router.use("/clinics/:clinicId/scans", createScanRouter(deps));
   router.use("/clinics/:clinicId/products", createProductRouter(deps));
   router.use("/clinics/:clinicId/users", createUserRouter(deps));

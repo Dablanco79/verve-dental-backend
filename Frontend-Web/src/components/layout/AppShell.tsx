@@ -14,6 +14,7 @@ import {
   canViewMaterialsForecast,
   canManageSuppliers,
   canManageProducts,
+  canPerformStocktake,
 } from "../../utils/roles.js";
 
 
@@ -72,6 +73,9 @@ export function AppShell({ children }: AppShellProps) {
           label: "Operations",
           items: [
             { to: "/inventory", label: "Inventory", icon: "IN" },
+            ...(canPerformStocktake()
+              ? [{ to: "/inventory/stocktakes", label: "Stocktake", icon: "ST" }]
+              : []),
             ...(canManageProducts(user.role)
               ? [{ to: "/inventory/products", label: "Products", icon: "PR" }]
               : []),

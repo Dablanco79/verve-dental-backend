@@ -85,6 +85,10 @@ import {
   createInMemorySupplierContractPriceRepository,
 } from "../repositories/supplierContractPriceRepository.js";
 import { createPostgresSupplierContractPriceRepository } from "../repositories/supplierContractPriceRepository.postgres.js";
+import {
+  createInMemoryStocktakeRepository,
+} from "../repositories/stocktakeRepository.js";
+import { createPostgresStocktakeRepository } from "../repositories/stocktakeRepository.postgres.js";
 import { createOcrProvider } from "../services/ocr/ocrProviderFactory.js";
 import { createSupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import { createSupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -127,6 +131,7 @@ import type { SupplierRelationshipRepository } from "../repositories/supplierRel
 import type { ProcurementPolicyRepository } from "../repositories/procurementPolicyRepository.js";
 import type { SupplierContractRepository } from "../repositories/supplierContractRepository.js";
 import type { SupplierContractPriceRepository } from "../repositories/supplierContractPriceRepository.js";
+import type { StocktakeRepository } from "../repositories/stocktakeRepository.js";
 import type { AnalyticsService } from "../services/analyticsService.js";
 import type { SupplierInvoiceService } from "../services/supplierInvoiceService.js";
 import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
@@ -178,6 +183,7 @@ export type AppDependencies = {
   procurementPolicyRepository: ProcurementPolicyRepository;
   supplierContractRepository: SupplierContractRepository;
   supplierContractPriceRepository: SupplierContractPriceRepository;
+  stocktakeRepository: StocktakeRepository;
   databasePool: DatabasePool | null;
   redisClient: RedisClient | null;
   shutdown: () => Promise<void>;
@@ -243,6 +249,7 @@ export async function createAppDependencies(
   let procurementPolicyRepository: ProcurementPolicyRepository;
   let supplierContractRepository: SupplierContractRepository;
   let supplierContractPriceRepository: SupplierContractPriceRepository;
+  let stocktakeRepository: StocktakeRepository;
 
   // Tracks the pool only when we have confirmed the DB is reachable.
   // Stays null if DATABASE_URL is absent OR if the probe receives ECONNREFUSED.
@@ -347,6 +354,7 @@ export async function createAppDependencies(
       createPostgresSupplierContractRepository(connectedPool);
     supplierContractPriceRepository =
       createPostgresSupplierContractPriceRepository(connectedPool);
+    stocktakeRepository = createPostgresStocktakeRepository(connectedPool);
 
     logger.info(
       "Using PostgreSQL repositories (users, catalog, clinic, inventory, roster, timesheet, leave, billing, analytics, suppliers, organisations, legal-entities, supplier-relationships, procurement-policies, supplier-contracts, supplier-contract-prices)",
@@ -375,6 +383,7 @@ export async function createAppDependencies(
       createInMemorySupplierContractRepository();
     supplierContractPriceRepository =
       createInMemorySupplierContractPriceRepository();
+    stocktakeRepository = createInMemoryStocktakeRepository();
 
     if (!databasePool) {
       logger.warn(
@@ -545,6 +554,7 @@ export async function createAppDependencies(
     procurementPolicyRepository,
     supplierContractRepository,
     supplierContractPriceRepository,
+    stocktakeRepository,
     databasePool: connectedPool,
     redisClient: connectedRedis,
     shutdown,

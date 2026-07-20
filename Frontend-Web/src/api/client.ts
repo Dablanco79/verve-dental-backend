@@ -131,6 +131,16 @@ import type {
   SuggestMatchesRequest,
   SuggestMatchesResult,
 } from "../types/masterProduct.js";
+import type {
+  CompleteStocktakeResponse,
+  CreateStocktakeSessionRequest,
+  StocktakeLine,
+  StocktakeSession,
+  StocktakeSessionsPage,
+  StocktakeSessionFilters,
+  UpdateStocktakeLineRequest,
+  UpdateStocktakeSessionRequest,
+} from "../types/stocktake.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1910,6 +1920,138 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  // ── Stocktake ──────────────────────────────────────────────────────────────
+
+  async function listStocktakeSessions(
+    clinicId: string,
+    filters?: StocktakeSessionFilters,
+  ): Promise<StocktakeSessionsPage> {
+    const params = new URLSearchParams();
+    if (filters?.limit !== undefined) params.set("limit", String(filters.limit));
+    if (filters?.offset !== undefined) params.set("offset", String(filters.offset));
+    if (filters?.status) params.set("status", filters.status);
+    const qs = params.toString();
+    const envelope = await request<{ data: StocktakeSession[]; pagination: { limit: number; offset: number; total: number } }>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes${qs ? `?${qs}` : ""}`,
+      {},
+      requireAccessToken(),
+    );
+    return {
+      items: envelope.data,
+      total: envelope.pagination.total,
+      limit: envelope.pagination.limit,
+      offset: envelope.pagination.offset,
+    };
+  }
+
+  async function getStocktakeSession(
+    clinicId: string,
+    sessionId: string,
+  ): Promise<StocktakeSession> {
+    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}`,
+      {},
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function createStocktakeSession(
+    clinicId: string,
+    body: CreateStocktakeSessionRequest,
+  ): Promise<StocktakeSession> {
+    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function updateStocktakeSession(
+    clinicId: string,
+    sessionId: string,
+    body: UpdateStocktakeSessionRequest,
+  ): Promise<StocktakeSession> {
+    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function startStocktakeSession(
+    clinicId: string,
+    sessionId: string,
+  ): Promise<StocktakeSession> {
+    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/start`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function cancelStocktakeSession(
+    clinicId: string,
+    sessionId: string,
+  ): Promise<StocktakeSession> {
+    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/cancel`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function completeStocktakeSession(
+    clinicId: string,
+    sessionId: string,
+  ): Promise<CompleteStocktakeResponse> {
+    const envelope = await request<ApiEnvelope<CompleteStocktakeResponse>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/complete`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function listStocktakeLines(
+    clinicId: string,
+    sessionId: string,
+  ): Promise<StocktakeLine[]> {
+    const envelope = await request<ApiEnvelope<StocktakeLine[]>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/lines`,
+      {},
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
+  async function updateStocktakeLine(
+    clinicId: string,
+    sessionId: string,
+    lineId: string,
+    body: UpdateStocktakeLineRequest,
+  ): Promise<StocktakeLine> {
+    const envelope = await request<ApiEnvelope<StocktakeLine>>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/lines/${encodeURIComponent(lineId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+    return envelope.data;
+  }
+
   return {
     getHealth,
     login,
@@ -2024,6 +2166,15 @@ export function createApiClient(config: AppConfig) {
     createSupplierContractPrice,
     updateSupplierContractPrice,
     expireSupplierContractPrice,
+    listStocktakeSessions,
+    getStocktakeSession,
+    createStocktakeSession,
+    updateStocktakeSession,
+    startStocktakeSession,
+    cancelStocktakeSession,
+    completeStocktakeSession,
+    listStocktakeLines,
+    updateStocktakeLine,
   };
 }
 

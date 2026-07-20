@@ -37,6 +37,8 @@ import { SuppliersPage } from "./pages/SuppliersPage.js";
 import { SupplierDetailPage } from "./pages/SupplierDetailPage.js";
 import { SupplierInvoiceReviewPage } from "./pages/SupplierInvoiceReviewPage.js";
 import { SupplierIntelligencePage } from "./pages/SupplierIntelligencePage.js";
+import { StocktakeListPage } from "./pages/StocktakeListPage.js";
+import { StocktakeSessionPage } from "./pages/StocktakeSessionPage.js";
 
 export function App() {
   return (
@@ -62,6 +64,8 @@ export function App() {
               <Route path="/inventory/receiving" element={<InventoryReceivingPage />} />
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
               <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
+              <Route path="/inventory/stocktakes" element={<StocktakeListPage />} />
+              <Route path="/inventory/stocktakes/:sessionId" element={<StocktakeSessionPage />} />
               <Route path="/users" element={<ManageUsersPage />} />
               <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
               <Route path="/roster" element={<RosterCalendarPage />} />
