@@ -129,8 +129,12 @@ export function createStocktakeHandlers(stocktakeService: StocktakeService) {
       });
 
       res.status(200).json({
-        data: page.items.map(serializeSession),
-        pagination: { limit: page.limit, offset: page.offset, total: page.total },
+        data: {
+          items: page.items.map(serializeSession),
+          total: page.total,
+          limit: page.limit,
+          offset: page.offset,
+        },
       });
     },
 

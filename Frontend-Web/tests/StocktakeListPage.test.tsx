@@ -6,12 +6,18 @@
  *  2. Shows "New Session" button for managers only
  *  3. Hides "New Session" button for clinical_staff
  *  4. Renders a list of sessions from the API
- *  5. Shows empty state when no sessions exist
- *  6. Loading indicator while fetching
- *  7. Error message on API failure
+ *  5. Shows empty state (no sessions) — "No stocktake sessions found."
+ *  6. Shows "Create your first session" button in empty state for managers
+ *  7. Hides "Create your first session" button in empty state for staff
+ *  8. Loading indicator while fetching
+ *  9. Error message on API failure
+ * 10. Handles pagination total = 0 without crashing
+ * 11. Status filter change triggers a new API call
+ * 12. Populated list with multiple sessions
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -182,7 +188,25 @@ describe("StocktakeListPage", () => {
     });
   });
 
-  // 6. Loading indicator
+  // 6. Shows "Create your first session" button in empty state for managers
+  it("shows 'Create your first session' button in empty state for managers", async () => {
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /create your first session/i })).toBeDefined();
+    });
+  });
+
+  // 7. Hides "Create your first session" button in empty state for staff
+  it("does not show 'Create your first session' button for clinical_staff in empty state", async () => {
+    authState.user = { id: "staff-1", email: "staff@clinic.au", role: "clinical_staff" };
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(/no stocktake sessions found/i)).toBeDefined();
+    });
+    expect(screen.queryByRole("button", { name: /create your first session/i })).toBeNull();
+  });
+
+  // 8. Loading indicator
   it("shows loading indicator while fetching", () => {
     mockListStocktakeSessions.mockImplementation(
       () => new Promise(() => undefined),
@@ -191,12 +215,65 @@ describe("StocktakeListPage", () => {
     expect(screen.getByText(/loading sessions/i)).toBeDefined();
   });
 
-  // 7. Error message on API failure
+  // 9. Error message on API failure
   it("shows an error message when API fails", async () => {
     mockListStocktakeSessions.mockRejectedValue(new Error("Network error"));
     renderPage();
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeDefined();
     });
+  });
+
+  // 10. Handles pagination total = 0 without crashing
+  it("renders without crashing when the API returns total = 0", async () => {
+    mockListStocktakeSessions.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(/no stocktake sessions found/i)).toBeDefined();
+    });
+  });
+
+  // 11. Status filter change triggers a new API call
+  it("calls the API again when the status filter is changed", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/no stocktake sessions found/i)).toBeDefined();
+    });
+
+    const callsBefore = mockListStocktakeSessions.mock.calls.length;
+
+    const select = screen.getByRole("combobox");
+    await user.selectOptions(select, "draft");
+
+    await waitFor(() => {
+      expect(mockListStocktakeSessions.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+
+    // The most recent call should include the status filter.
+    const lastCall = mockListStocktakeSessions.mock.calls[
+      mockListStocktakeSessions.mock.calls.length - 1
+    ] as [string, { status?: string }];
+    expect(lastCall[1].status).toBe("draft");
+  });
+
+  // 12. Populated list with multiple sessions
+  it("renders multiple sessions returned by the API", async () => {
+    const sessionA = makeSession({ id: "sess-aaaa", name: "Alpha Stocktake", status: "draft" });
+    const sessionB = makeSession({ id: "sess-bbbb", name: "Beta Stocktake", status: "completed" });
+    mockListStocktakeSessions.mockResolvedValue({
+      items: [sessionA, sessionB],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Stocktake")).toBeDefined();
+    });
+    expect(screen.getByText("Beta Stocktake")).toBeDefined();
   });
 });

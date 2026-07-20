@@ -1931,18 +1931,12 @@ export function createApiClient(config: AppConfig) {
     if (filters?.offset !== undefined) params.set("offset", String(filters.offset));
     if (filters?.status) params.set("status", filters.status);
     const qs = params.toString();
-    const envelope = await request<{ data: StocktakeSession[]; pagination: { limit: number; offset: number; total: number } }>(
+    return request<StocktakeSessionsPage>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes${qs ? `?${qs}` : ""}`,
       {},
       requireAccessToken(),
     );
-    return {
-      items: envelope.data,
-      total: envelope.pagination.total,
-      limit: envelope.pagination.limit,
-      offset: envelope.pagination.offset,
-    };
   }
 
   async function getStocktakeSession(
