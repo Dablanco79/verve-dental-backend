@@ -2436,6 +2436,182 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE supplier_sku IS NOT NULL AND active = true;
     `,
   },
+  {
+    /**
+     * Stocktake & Inventory Reconciliation schema — Workflow 2.1 (Sprint 1).
+     *
+     * Creates the stocktake_sessions and stocktake_lines tables plus the
+     * stocktake_status enum and the stocktake_adjustment inventory_adjustment_type
+     * value.  RLS policies mirror the existing clinic-tenant pattern.
+     *
+     * Note: The SQL files Backend/migrations/019_stocktake_schema.{up,down}.sql
+     * are reference/documentation artifacts.  This inline entry is the
+     * authoritative source executed by the production migration runner.
+     */
+    id: "037_stocktake_schema",
+    sql: `
+      -- Extend inventory_adjustment_type enum (non-transactional — guarded by
+      -- a DO block so re-running this migration is safe).
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_enum
+          WHERE enumlabel = 'stocktake_adjustment'
+            AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'inventory_adjustment_type')
+        ) THEN
+          ALTER TYPE inventory_adjustment_type ADD VALUE 'stocktake_adjustment';
+        END IF;
+      END;
+      $$;
+
+      -- stocktake_status enum (idempotent).
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type WHERE typname = 'stocktake_status'
+        ) THEN
+          CREATE TYPE stocktake_status AS ENUM (
+            'draft',
+            'in_progress',
+            'completed',
+            'cancelled'
+          );
+        END IF;
+      END;
+      $$;
+
+      -- Session-level metadata table.
+      CREATE TABLE IF NOT EXISTS stocktake_sessions (
+        id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        clinic_id            UUID NOT NULL
+                               REFERENCES clinics(id) ON DELETE CASCADE,
+        name                 VARCHAR(255) NOT NULL,
+        status               stocktake_status NOT NULL DEFAULT 'draft',
+        created_by_user_id   UUID NOT NULL,
+        created_by_email     VARCHAR(255) NOT NULL,
+        started_by_user_id   UUID,
+        started_by_email     VARCHAR(255),
+        completed_by_user_id UUID,
+        completed_by_email   VARCHAR(255),
+        cancelled_by_user_id UUID,
+        cancelled_by_email   VARCHAR(255),
+        started_at           TIMESTAMPTZ,
+        completed_at         TIMESTAMPTZ,
+        cancelled_at         TIMESTAMPTZ,
+        created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      ALTER TABLE stocktake_sessions ENABLE ROW LEVEL SECURITY;
+
+      -- Per-line count table (one row per inventory item per session).
+      CREATE TABLE IF NOT EXISTS stocktake_lines (
+        id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id               UUID NOT NULL
+                                   REFERENCES stocktake_sessions(id) ON DELETE CASCADE,
+        clinic_id                UUID NOT NULL,
+        clinic_inventory_item_id UUID NOT NULL
+                                   REFERENCES clinic_inventory_items(id) ON DELETE CASCADE,
+        master_catalog_item_id   UUID NOT NULL
+                                   REFERENCES master_catalog_items(id) ON DELETE CASCADE,
+        expected_quantity        INTEGER NOT NULL DEFAULT 0,
+        counted_quantity         INTEGER,
+        variance                 INTEGER GENERATED ALWAYS AS (
+                                   counted_quantity - expected_quantity
+                                 ) STORED,
+        unit_cost_cents          INTEGER NOT NULL DEFAULT 0,
+        notes                    TEXT,
+        created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      ALTER TABLE stocktake_lines ENABLE ROW LEVEL SECURITY;
+
+      -- Performance indexes.
+      CREATE INDEX IF NOT EXISTS idx_stocktake_sessions_clinic_created
+        ON stocktake_sessions (clinic_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_stocktake_sessions_clinic_status
+        ON stocktake_sessions (clinic_id, status);
+      CREATE INDEX IF NOT EXISTS idx_stocktake_lines_session
+        ON stocktake_lines (session_id);
+      CREATE INDEX IF NOT EXISTS idx_stocktake_lines_clinic_item
+        ON stocktake_lines (clinic_id, clinic_inventory_item_id);
+
+      -- RLS: tenant isolation via app.current_clinic_id session variable.
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE tablename = 'stocktake_sessions'
+            AND policyname = 'tenant_isolation_stocktake_sessions'
+        ) THEN
+          CREATE POLICY tenant_isolation_stocktake_sessions
+            ON stocktake_sessions
+            USING (clinic_id = current_setting('app.current_clinic_id', TRUE)::UUID);
+        END IF;
+      END;
+      $$;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE tablename = 'stocktake_lines'
+            AND policyname = 'tenant_isolation_stocktake_lines'
+        ) THEN
+          CREATE POLICY tenant_isolation_stocktake_lines
+            ON stocktake_lines
+            USING (clinic_id = current_setting('app.current_clinic_id', TRUE)::UUID);
+        END IF;
+      END;
+      $$;
+    `,
+  },
+  {
+    /**
+     * Stocktake product snapshot columns — Sprint 1.1 pilot-readiness fix.
+     *
+     * Adds product_name, category, stock_unit, and primary_barcode to
+     * stocktake_lines so completed sessions remain immutable even when the
+     * underlying master catalogue changes.
+     *
+     * Backfill strategy: temporary DEFAULT → UPDATE → DROP DEFAULT.
+     *
+     * Note: The SQL files Backend/migrations/020_stocktake_line_snapshot.{up,down}.sql
+     * are reference/documentation artifacts.  This inline entry is the
+     * authoritative source executed by the production migration runner.
+     */
+    id: "038_stocktake_line_snapshot",
+    sql: `
+      ALTER TABLE stocktake_lines
+        ADD COLUMN IF NOT EXISTS product_name    TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS category        TEXT NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS stock_unit      TEXT NOT NULL DEFAULT 'unit',
+        ADD COLUMN IF NOT EXISTS primary_barcode TEXT;
+
+      -- Backfill existing rows from live catalogue and barcode data.
+      UPDATE stocktake_lines sl
+      SET
+        product_name    = COALESCE(mci.name, ''),
+        category        = COALESCE(mci.category, ''),
+        stock_unit      = COALESCE(mci.stock_unit, mci.unit_of_measure, 'unit'),
+        primary_barcode = (
+          SELECT bm.barcode_value
+          FROM   barcode_mappings bm
+          WHERE  bm.master_catalog_item_id = sl.master_catalog_item_id
+            AND  bm.is_primary = TRUE
+          LIMIT  1
+        )
+      FROM master_catalog_items mci
+      WHERE mci.id = sl.master_catalog_item_id;
+
+      -- Remove temporary DEFAULTs — new rows must always supply real values.
+      ALTER TABLE stocktake_lines
+        ALTER COLUMN product_name DROP DEFAULT,
+        ALTER COLUMN category     DROP DEFAULT,
+        ALTER COLUMN stock_unit   DROP DEFAULT;
+    `,
+  },
 ];
 
 /**
@@ -2467,6 +2643,17 @@ export async function runBootstrapMigrations(
   const { nodeEnv = "development", migrateOnStartup = false } = options;
   const isRestrictedEnv = nodeEnv === "staging" || nodeEnv === "production";
 
+  // In staging/production with MIGRATE_ON_STARTUP disabled, log a clear
+  // one-line status so operators can confirm the intended startup mode from
+  // deployment logs without searching for silence.
+  if (isRestrictedEnv && !migrateOnStartup) {
+    logger.info(
+      { env: nodeEnv },
+      "Migrations disabled at startup (MIGRATE_ON_STARTUP is not set to true). " +
+        "Set MIGRATE_ON_STARTUP=true or run `npm run migrate` to apply pending migrations.",
+    );
+  }
+
   // Check-out a dedicated connection so the transaction and the advisory lock
   // are both scoped to the same physical session.  pg_advisory_xact_lock is
   // automatically released when the transaction commits or rolls back, so two
@@ -2495,6 +2682,16 @@ export async function runBootstrapMigrations(
     const applied = new Set(appliedRows.map((r) => r.id));
     const pending = BOOTSTRAP_MIGRATIONS.filter((m) => !applied.has(m.id));
 
+    logger.info(
+      {
+        env: nodeEnv,
+        totalMigrations: BOOTSTRAP_MIGRATIONS.length,
+        appliedCount: applied.size,
+        pendingCount: pending.length,
+      },
+      `Migration check: ${String(pending.length)} pending, ${String(applied.size)} already applied`,
+    );
+
     // ── Migration gate ────────────────────────────────────────────────────────
     // In staging and production, block startup when pending migrations exist
     // unless the operator has explicitly opted in via MIGRATE_ON_STARTUP=true
@@ -2510,12 +2707,35 @@ export async function runBootstrapMigrations(
       );
     }
 
+    if (pending.length === 0) {
+      logger.info(
+        { env: nodeEnv },
+        "No pending migrations — schema is up to date",
+      );
+    } else {
+      logger.info(
+        { env: nodeEnv, pendingCount: pending.length, migrateOnStartup },
+        `Applying ${String(pending.length)} pending migration(s)`,
+      );
+    }
+
     for (const migration of pending) {
+      logger.info(
+        { migrationId: migration.id },
+        `Applying migration: ${migration.id}`,
+      );
       await client.query(migration.sql);
       await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [
         migration.id,
       ]);
-      logger.info({ migrationId: migration.id }, "Bootstrap migration applied");
+      logger.info({ migrationId: migration.id }, `Migration applied: ${migration.id}`);
+    }
+
+    if (pending.length > 0) {
+      logger.info(
+        { env: nodeEnv, appliedCount: pending.length },
+        `All ${String(pending.length)} migration(s) applied successfully`,
+      );
     }
 
     await client.query("COMMIT");
