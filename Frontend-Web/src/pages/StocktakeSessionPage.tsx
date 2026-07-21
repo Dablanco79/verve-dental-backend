@@ -18,7 +18,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
-import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { StocktakeLine, StocktakeSession } from "../types/stocktake.js";
@@ -200,7 +200,7 @@ function BarcodeLookup({ lines, onFound }: BarcodeLookupProps) {
 export function StocktakeSessionPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const { user } = useAuth();
-  const { selectedClinic } = useSelectedClinic();
+  const { clinicId, clinicName } = useOperationalClinic();
   const navigate = useNavigate();
 
   const [session, setSession] = useState<StocktakeSession | null>(null);
@@ -213,7 +213,6 @@ export function StocktakeSessionPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [highlightLineId, setHighlightLineId] = useState<string | null>(null);
 
-  const clinicId = selectedClinic?.id;
   const isManager = user ? canManageStocktake(user.role) : false;
 
   // Load session + lines
@@ -364,7 +363,25 @@ export function StocktakeSessionPage() {
     return (
       <AppShell>
         <div className="stocktake-page">
-          <p className="stocktake-page__empty">Select a clinic to view this session.</p>
+          <div className="stocktake-page__header">
+            <div className="stocktake-page__header-left">
+              <nav className="stocktake-page__nav" aria-label="Breadcrumb">
+                <Link to="/inventory" className="stocktake-page__nav-link">Inventory</Link>
+                <span className="stocktake-page__nav-sep">/</span>
+                <Link to="/inventory/stocktakes" className="stocktake-page__nav-link">Stocktake</Link>
+              </nav>
+              <h1 className="stocktake-page__title">Stocktake Session</h1>
+            </div>
+          </div>
+          <div className="stocktake-page__empty" role="status">
+            <p>Select a specific clinic to view this session.</p>
+            <p className="stocktake-page__empty-hint">
+              Stocktake is always clinic-specific. Use the clinic selector to choose a clinic.
+            </p>
+            <Link to="/inventory/stocktakes" className="stocktake-btn stocktake-btn--secondary">
+              ← Back to Stocktakes
+            </Link>
+          </div>
         </div>
       </AppShell>
     );
@@ -383,12 +400,17 @@ export function StocktakeSessionPage() {
               <span className="stocktake-page__nav-sep">/</span>
               <span className="stocktake-page__nav-current">{session?.name ?? "Session"}</span>
             </nav>
-            <h1 className="stocktake-page__title">{session?.name ?? "Loading…"}</h1>
+            <h1 className="stocktake-page__title">{session?.name ?? (isLoading ? "Loading…" : "Session")}</h1>
             {session && (
               <div className="stocktake-meta">
                 <span className={`stocktake-status-badge stocktake-status-badge--${session.status.replace("_", "-")}`}>
                   {STOCKTAKE_STATUS_LABELS[session.status]}
                 </span>
+                {clinicName && (
+                  <span className="stocktake-meta__item stocktake-meta__clinic">
+                    {clinicName}
+                  </span>
+                )}
                 <span className="stocktake-meta__item">
                   Created {formatDate(session.createdAt)} by {session.createdByEmail}
                 </span>
@@ -460,10 +482,24 @@ export function StocktakeSessionPage() {
           )}
         </div>
 
-        {/* Error banners */}
+        {/* Error banner — API / load failure */}
         {error && (
           <div className="stocktake-alert stocktake-alert--error" role="alert">
-            {error}
+            <span>{error}</span>
+            <div className="stocktake-alert__actions">
+              <button
+                className="stocktake-btn stocktake-btn--secondary stocktake-btn--sm"
+                onClick={() => { void loadData(); }}
+              >
+                Retry
+              </button>
+              <Link
+                to="/inventory/stocktakes"
+                className="stocktake-btn stocktake-btn--secondary stocktake-btn--sm"
+              >
+                ← Back to Stocktakes
+              </Link>
+            </div>
           </div>
         )}
         {actionError && (
@@ -478,6 +514,19 @@ export function StocktakeSessionPage() {
         {/* Loading */}
         {isLoading && (
           <p className="stocktake-page__loading" aria-live="polite">Loading session…</p>
+        )}
+
+        {/* Not found — loaded without error but session does not exist */}
+        {!isLoading && !error && !session && (
+          <div className="stocktake-page__empty" role="status" data-testid="not-found">
+            <p>Stocktake session not found.</p>
+            <Link
+              to="/inventory/stocktakes"
+              className="stocktake-btn stocktake-btn--secondary"
+            >
+              ← Back to Stocktakes
+            </Link>
+          </div>
         )}
 
         {!isLoading && session && (

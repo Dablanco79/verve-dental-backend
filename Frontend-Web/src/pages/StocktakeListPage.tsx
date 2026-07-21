@@ -11,7 +11,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
-import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
+import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { StocktakeSession, StocktakeStatus } from "../types/stocktake.js";
@@ -137,7 +137,7 @@ function CreateSessionModal({ onClose, onCreate }: CreateModalProps) {
 
 export function StocktakeListPage() {
   const { user } = useAuth();
-  const { selectedClinic } = useSelectedClinic();
+  const { clinicId, clinicName } = useOperationalClinic();
   const navigate = useNavigate();
 
   const [sessions, setSessions] = useState<StocktakeSession[]>([]);
@@ -147,7 +147,6 @@ export function StocktakeListPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StocktakeStatus | "">("");
 
-  const clinicId = selectedClinic?.id;
   const isManager = user ? canManageStocktake(user.role) : false;
 
   const loadSessions = useCallback(async () => {
@@ -193,7 +192,22 @@ export function StocktakeListPage() {
     return (
       <AppShell>
         <div className="stocktake-page">
-          <p className="stocktake-page__empty">Select a clinic to view stocktakes.</p>
+          <div className="stocktake-page__header">
+            <div className="stocktake-page__header-left">
+              <nav className="stocktake-page__nav" aria-label="Breadcrumb">
+                <Link to="/inventory" className="stocktake-page__nav-link">Inventory</Link>
+                <span className="stocktake-page__nav-sep" aria-hidden="true">/</span>
+                <span className="stocktake-page__nav-current">Stocktake</span>
+              </nav>
+              <h1 className="stocktake-page__title">Stocktake Sessions</h1>
+            </div>
+          </div>
+          <div className="stocktake-page__empty" role="status">
+            <p>Select a specific clinic to view or start a stocktake.</p>
+            <p className="stocktake-page__empty-hint">
+              Stocktake is always clinic-specific. Use the clinic selector to choose a clinic.
+            </p>
+          </div>
         </div>
       </AppShell>
     );
@@ -212,7 +226,7 @@ export function StocktakeListPage() {
             </nav>
             <h1 className="stocktake-page__title">Stocktake Sessions</h1>
             <p className="stocktake-page__subtitle">
-              Count and reconcile stock for {selectedClinic.name}.
+              Count and reconcile stock for {clinicName}.
             </p>
           </div>
           {isManager && (

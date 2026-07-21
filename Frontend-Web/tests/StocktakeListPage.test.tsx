@@ -14,6 +14,11 @@
  * 10. Handles pagination total = 0 without crashing
  * 11. Status filter change triggers a new API call
  * 12. Populated list with multiple sessions
+ * 13. All Clinics selected — shows clinic selection message (no API call)
+ * 14. All Clinics selected — New Session button is absent
+ * 15. All Clinics selected — Create your first session button is absent
+ * 16. Specific clinic selected — correct subtitle with clinic name
+ * 17. Clinic switch — new clinic ID used in API call
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -29,7 +34,8 @@ import type { StocktakeSession } from "../src/types/stocktake.js";
 const { authState, clinicState, mockListStocktakeSessions } = vi.hoisted(() => {
   const authState = { user: null as null | { id: string; email: string; role: string } };
   const clinicState = {
-    selectedClinic: { id: "11111111-1111-4111-8111-111111111111", name: "Test Clinic" },
+    selectedClinic: { id: "11111111-1111-4111-8111-111111111111", name: "Test Clinic" } as { id: string; name: string } | null,
+    dashboardScopeType: "clinic" as "clinic" | "all_clinics",
   };
   return {
     authState,
@@ -51,13 +57,12 @@ vi.mock("../src/auth/useAuth.js", () => ({
 vi.mock("../src/clinic/useSelectedClinic.js", () => ({
   useSelectedClinic: () => ({
     selectedClinic: clinicState.selectedClinic,
-    selectedDashboardScope: {
-      type: "clinic" as const,
-      clinic: clinicState.selectedClinic,
-    },
-    availableClinics: [clinicState.selectedClinic],
+    selectedDashboardScope: clinicState.dashboardScopeType === "all_clinics"
+      ? { type: "all_clinics" as const }
+      : { type: "clinic" as const, clinic: clinicState.selectedClinic },
+    availableClinics: clinicState.selectedClinic ? [clinicState.selectedClinic] : [],
     canSwitchClinics: false,
-    canSelectAllClinics: false,
+    canSelectAllClinics: true,
     isLoadingClinics: false,
     clinicError: null,
     hasClinicProvider: true,
@@ -133,6 +138,8 @@ describe("StocktakeListPage", () => {
       email: "manager@clinic.au",
       role: "group_practice_manager",
     };
+    clinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Test Clinic" };
+    clinicState.dashboardScopeType = "clinic";
     mockListStocktakeSessions.mockResolvedValue(EMPTY_PAGE);
   });
 
@@ -275,5 +282,94 @@ describe("StocktakeListPage", () => {
       expect(screen.getByText("Alpha Stocktake")).toBeDefined();
     });
     expect(screen.getByText("Beta Stocktake")).toBeDefined();
+  });
+
+  // ── All Clinics scope ──────────────────────────────────────────────────────
+
+  // 13. All Clinics selected — shows clinic selection message
+  it("shows a clinic-selection message when All Clinics scope is active", async () => {
+    clinicState.dashboardScopeType = "all_clinics";
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/select a specific clinic/i)).toBeDefined();
+    });
+  });
+
+  // 14. All Clinics selected — does NOT make a Stocktake API call
+  it("makes no Stocktake API request when All Clinics is selected", async () => {
+    clinicState.dashboardScopeType = "all_clinics";
+
+    renderPage();
+
+    // Allow any async work to settle.
+    await waitFor(() => {
+      expect(screen.getByText(/select a specific clinic/i)).toBeDefined();
+    });
+
+    expect(mockListStocktakeSessions).not.toHaveBeenCalled();
+  });
+
+  // 15. All Clinics selected — New Session button absent
+  it("does not show the New Session button when All Clinics is selected", async () => {
+    clinicState.dashboardScopeType = "all_clinics";
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/select a specific clinic/i)).toBeDefined();
+    });
+
+    expect(screen.queryByRole("button", { name: /new session/i })).toBeNull();
+  });
+
+  // 16. Specific clinic — subtitle shows the selected clinic name
+  it("shows the clinic name in the subtitle when a specific clinic is selected", async () => {
+    clinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Heathmont Dental" };
+    clinicState.dashboardScopeType = "clinic";
+
+    renderPage();
+
+    await waitFor(() => {
+      // The subtitle paragraph specifically contains the clinic name.
+      const subtitles = screen
+        .getAllByText(/heathmont dental/i)
+        .filter((el) => el.closest(".stocktake-page__subtitle") !== null);
+      expect(subtitles.length).toBeGreaterThan(0);
+    });
+  });
+
+  // 17. Clinic switch — new clinic ID used in API request
+  it("uses the new clinic ID in the API request after a clinic switch", async () => {
+    // Start with clinic A
+    clinicState.selectedClinic = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Clinic A" };
+    clinicState.dashboardScopeType = "clinic";
+
+    const { rerender } = renderPage();
+
+    await waitFor(() => {
+      expect(mockListStocktakeSessions).toHaveBeenCalledWith(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        expect.any(Object),
+      );
+    });
+
+    // Switch to clinic B — simulate a context change by re-rendering
+    clinicState.selectedClinic = { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Clinic B" };
+    clinicState.dashboardScopeType = "clinic";
+
+    rerender(
+      <MemoryRouter>
+        <StocktakeListPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mockListStocktakeSessions).toHaveBeenCalledWith(
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        expect.any(Object),
+      );
+    });
   });
 });

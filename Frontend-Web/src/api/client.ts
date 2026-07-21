@@ -1943,26 +1943,24 @@ export function createApiClient(config: AppConfig) {
     clinicId: string,
     sessionId: string,
   ): Promise<StocktakeSession> {
-    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+    return request<StocktakeSession>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}`,
       {},
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function createStocktakeSession(
     clinicId: string,
     body: CreateStocktakeSessionRequest,
   ): Promise<StocktakeSession> {
-    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+    return request<StocktakeSession>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes`,
       { method: "POST", body: JSON.stringify(body) },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function updateStocktakeSession(
@@ -1970,65 +1968,60 @@ export function createApiClient(config: AppConfig) {
     sessionId: string,
     body: UpdateStocktakeSessionRequest,
   ): Promise<StocktakeSession> {
-    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+    return request<StocktakeSession>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}`,
       { method: "PATCH", body: JSON.stringify(body) },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function startStocktakeSession(
     clinicId: string,
     sessionId: string,
   ): Promise<StocktakeSession> {
-    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+    return request<StocktakeSession>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/start`,
       { method: "POST" },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function cancelStocktakeSession(
     clinicId: string,
     sessionId: string,
   ): Promise<StocktakeSession> {
-    const envelope = await request<ApiEnvelope<StocktakeSession>>(
+    return request<StocktakeSession>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/cancel`,
       { method: "POST" },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function completeStocktakeSession(
     clinicId: string,
     sessionId: string,
   ): Promise<CompleteStocktakeResponse> {
-    const envelope = await request<ApiEnvelope<CompleteStocktakeResponse>>(
+    return request<CompleteStocktakeResponse>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/complete`,
       { method: "POST" },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function listStocktakeLines(
     clinicId: string,
     sessionId: string,
   ): Promise<StocktakeLine[]> {
-    const envelope = await request<ApiEnvelope<StocktakeLine[]>>(
+    return request<StocktakeLine[]>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/lines`,
       {},
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   async function updateStocktakeLine(
@@ -2037,13 +2030,12 @@ export function createApiClient(config: AppConfig) {
     lineId: string,
     body: UpdateStocktakeLineRequest,
   ): Promise<StocktakeLine> {
-    const envelope = await request<ApiEnvelope<StocktakeLine>>(
+    return request<StocktakeLine>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/stocktakes/${encodeURIComponent(sessionId)}/lines/${encodeURIComponent(lineId)}`,
       { method: "PATCH", body: JSON.stringify(body) },
       requireAccessToken(),
     );
-    return envelope.data;
   }
 
   return {
