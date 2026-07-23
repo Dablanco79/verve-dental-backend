@@ -730,9 +730,10 @@ export function createSupplierInvoiceService(
     // This is safe to run on every confirmation — if the record already exists
     // (e.g. from a previous import or manual creation) the error is swallowed.
     if (inventoryRepository) {
+      const inv = inventoryRepository;
       await Promise.all(
         matchedLines.map((line) =>
-          inventoryRepository!
+          inv
             .createClinicInventoryItem({
               clinicId,
               masterCatalogItemId: line.masterCatalogItemId,
