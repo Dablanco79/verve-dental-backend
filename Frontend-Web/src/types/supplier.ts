@@ -1,3 +1,17 @@
+/**
+ * Operator-reviewed product creation details saved by the product-creation
+ * modal during invoice line review.  Mirrors the backend ProductCreationData.
+ */
+export type ProductCreationData = {
+  productName: string;
+  category: string;
+  supplierSku: string | null;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
+  unitCostCents: number;
+};
+
 export type Supplier = {
   // ── Core ───────────────────────────────────────────────────────────────────
   id: string;
@@ -244,6 +258,8 @@ export type SupplierInvoiceLine = {
    * null = no decision yet (unresolved).
    */
   reviewDecision: "create_product" | "skip" | null;
+  /** Operator-reviewed product details, null until the user saves via the product-creation modal. */
+  productCreationData: ProductCreationData | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -358,6 +374,8 @@ export type UpdateSupplierInvoiceLineRequest = {
   matchMethod?: "exact_sku" | "name_match" | "manual" | null;
   /** Persist a review decision to the database. null clears the current decision. */
   reviewDecision?: "create_product" | "skip" | null;
+  /** Operator-reviewed product creation details, saved via the product-creation modal. */
+  productCreationData?: ProductCreationData | null;
 };
 
 // ── Invoice receiving request / result ────────────────────────────────────────

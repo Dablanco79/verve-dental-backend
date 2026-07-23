@@ -42,6 +42,7 @@ function serializeLine(line: SupplierInvoiceLine): Record<string, unknown> {
     isMatched: line.isMatched,
     matchMethod: line.matchMethod,
     reviewDecision: line.reviewDecision,
+    productCreationData: line.productCreationData,
     createdAt: line.createdAt.toISOString(),
     updatedAt: line.updatedAt.toISOString(),
   };
@@ -68,8 +69,17 @@ const updateInvoiceSchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 
+const productCreationDataSchema = z.object({
+  productName: z.string().min(1).max(255),
+  category: z.string().min(1).max(100),
+  supplierSku: z.string().max(128).nullable(),
+  stockUnit: z.string().min(1).max(50),
+  receivingUnit: z.string().min(1).max(50),
+  unitsPerReceivingUnit: z.number().int().positive(),
+  unitCostCents: z.number().int().min(0),
+});
+
 const updateLineSchema = z.object({
-  ocrDescription: z.string().max(512).optional(),
   ocrSku: z.string().max(128).nullable().optional(),
   quantity: z.number().positive().optional(),
   unitPriceCents: z.number().int().min(0).optional(),
@@ -85,6 +95,7 @@ const updateLineSchema = z.object({
     .enum(["create_product", "skip"])
     .nullable()
     .optional(),
+  productCreationData: productCreationDataSchema.nullable().optional(),
 });
 
 const confirmImportSchema = z.object({

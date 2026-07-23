@@ -116,15 +116,17 @@ export function createSupplierInvoiceService(
     }
 
     const sku = await buildUniqueImportedSku(line);
+    // Prefer operator-reviewed data over raw OCR text.
+    const reviewed = line.productCreationData;
     const masterItem = await catalogRepository.createMasterItem({
       sku,
-      name: line.ocrDescription.trim() || sku,
-      description: line.ocrDescription.trim() || null,
-      category: "Imported Catalogue",
-      stockUnit: "unit",
-      receivingUnit: "unit",
-      unitsPerReceivingUnit: 1,
-      defaultUnitCostCents: line.unitPriceCents,
+      name: (reviewed?.productName ?? line.ocrDescription).trim() || sku,
+      description: (reviewed?.productName ?? line.ocrDescription).trim() || null,
+      category: reviewed?.category ?? "Imported Catalogue",
+      stockUnit: reviewed?.stockUnit ?? "unit",
+      receivingUnit: reviewed?.receivingUnit ?? "unit",
+      unitsPerReceivingUnit: reviewed?.unitsPerReceivingUnit ?? 1,
+      defaultUnitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
     });
 
     await inventoryRepository.createClinicInventoryItem({
@@ -139,10 +141,10 @@ export function createSupplierInvoiceService(
     await supplierCatalogueRepo.upsertSupplierProduct({
       supplierId,
       productId: masterItem.id,
-      supplierSku: line.ocrSku,
-      supplierDescription: line.ocrDescription,
-      unitCostCents: line.unitPriceCents,
-      unitOfMeasure: "unit",
+      supplierSku: reviewed?.supplierSku ?? line.ocrSku,
+      supplierDescription: reviewed?.productName ?? line.ocrDescription,
+      unitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
+      unitOfMeasure: reviewed?.stockUnit ?? "unit",
     });
 
     return masterItem.id;
@@ -722,6 +724,27 @@ export function createSupplierInvoiceService(
       (l): l is SupplierInvoiceLine & { masterCatalogItemId: string } =>
         l.isMatched && l.masterCatalogItemId !== null,
     );
+
+    // Ensure a clinic inventory record exists for every matched line so that
+    // the receiving workflow can find the product without manual setup.
+    // This is safe to run on every confirmation — if the record already exists
+    // (e.g. from a previous import or manual creation) the error is swallowed.
+    if (inventoryRepository) {
+      await Promise.all(
+        matchedLines.map((line) =>
+          inventoryRepository!
+            .createClinicInventoryItem({
+              clinicId,
+              masterCatalogItemId: line.masterCatalogItemId,
+              quantityOnHand: 0,
+              reorderPoint: 0,
+              unitCostOverrideCents: null,
+              supplierPreference: null,
+            })
+            .catch(() => undefined),
+        ),
+      );
+    }
 
     // Upsert supplier_catalogue pricing for each matched line.
     const priceHistoryRecords = await Promise.all(

@@ -138,6 +138,7 @@ const sampleLine: SupplierInvoiceLine = {
   isMatched: true,
   matchMethod: "exact_sku",
   reviewDecision: null,
+  productCreationData: null,
   createdAt: "2026-06-10T00:00:00.000Z",
   updatedAt: "2026-06-10T00:00:00.000Z",
 };
@@ -268,7 +269,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     expect(screen.getByText("Invoice Summary")).toBeInTheDocument();
     expect(screen.getByText("DCO-2026-0042")).toBeInTheDocument();
-    expect(screen.getByText("$55.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$55.00").length).toBeGreaterThan(0);
   });
 
   it("renders OCR confidence badge when ocrConfidence is present", async () => {
@@ -353,8 +354,8 @@ describe("SupplierInvoiceReviewPage", () => {
 
     expect(screen.getByText("Nitrile Gloves Large")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
-    expect(screen.getByText("$10.00")).toBeInTheDocument();
-    expect(screen.getByText("$50.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$10.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$50.00").length).toBeGreaterThan(0);
   });
 
   it("renders matched badge for matched lines", async () => {
@@ -753,6 +754,7 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
     isMatched: false,
     matchMethod: null,
     reviewDecision: null,
+    productCreationData: null,
     createdAt: "2026-06-10T00:00:00.000Z",
     updatedAt: "2026-06-10T00:00:00.000Z",
   };
@@ -798,7 +800,8 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
   it("shows review progress for ready_for_review invoice", async () => {
     renderReviewPage();
     await screen.findByRole("heading", { name: "DentalCo Australia" });
-    expect(screen.getByText(/0 of 1 line reviewed/i)).toBeInTheDocument();
+    // New summary grid shows "Unresolved" section with "decision required" when line has no decision
+    expect(await screen.findByText(/decision required/i)).toBeInTheDocument();
   });
 
   // 4. skip action persists to API
@@ -819,24 +822,42 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
     });
   });
 
-  // 5. create_product action persists to API
-  it("calls updateSupplierInvoiceLine with reviewDecision=create_product when Create new product is clicked", async () => {
+  // 5. create_product action opens modal, persists to API on save
+  it("calls updateSupplierInvoiceLine with reviewDecision=create_product when Create new product modal is submitted", async () => {
     mockUpdateSupplierInvoiceLine.mockResolvedValue({
       ...lineForReadyReview,
       reviewDecision: "create_product",
+      productCreationData: {
+        productName: "Nitrile Gloves",
+        category: "Dental Supplies",
+        supplierSku: null,
+        stockUnit: "unit",
+        receivingUnit: "unit",
+        unitsPerReceivingUnit: 1,
+        unitCostCents: 1200,
+      },
     });
     const user = userEvent.setup();
     renderReviewPage();
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
+    // Click opens the modal
     await user.click(screen.getByRole("button", { name: "Create new product" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/product name/i)).toBeInTheDocument();
+
+    // Submit the modal (pre-filled name should already be valid)
+    await user.click(screen.getByRole("button", { name: /Save and Mark Ready to Create/i }));
 
     await waitFor(() => {
       expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalledWith(
         TEST_CLINIC_ID,
         INVOICE_ID,
         "line-rfr-1",
-        expect.objectContaining({ reviewDecision: "create_product" }),
+        expect.objectContaining({
+          reviewDecision: "create_product",
+          productCreationData: expect.objectContaining({ productName: "Nitrile Gloves" }) as unknown,
+        }),
       );
     });
   });
@@ -874,18 +895,80 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
 
     renderReviewPage();
     await screen.findByRole("heading", { name: "DentalCo Australia" });
-    expect(await screen.findByText(/1 of 1 line reviewed/i)).toBeInTheDocument();
+    // New summary grid — no unresolved section means all lines are resolved
+    expect(await screen.findByText(/Skipped \/ Ignored/i)).toBeInTheDocument();
+    expect(screen.queryByText(/decision required/i)).not.toBeInTheDocument();
   });
 
   // 9. progress shows 1/1 when line is matched
   it("shows 1 of 1 reviewed when line is matched", async () => {
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: readyForReviewInvoice,
-      lines: [{ ...lineForReadyReview, isMatched: true, masterProductName: "Gloves", reviewDecision: null }],
+      lines: [{ ...lineForReadyReview, isMatched: true, masterProductName: "Gloves", reviewDecision: null, masterCatalogItemId: "prod-xxx" }],
     });
 
     renderReviewPage();
     await screen.findByRole("heading", { name: "DentalCo Australia" });
-    expect(await screen.findByText(/1 of 1 line reviewed/i)).toBeInTheDocument();
+    // New summary grid — matched line shows in ✅ Matched row, no unresolved
+    expect(await screen.findByText("✅ Matched")).toBeInTheDocument();
+    expect(screen.queryByText(/decision required/i)).not.toBeInTheDocument();
+  });
+
+  // 10. Proceed to Receiving navigates to correct route (not Daily Hub)
+  it("Proceed to Receiving link points to /inventory/receiving, not /inventory/receive", async () => {
+    const confirmedInvoice = {
+      ...readyForReviewInvoice,
+      status: "imported" as const,
+      confirmedByUserId: "user-1",
+      confirmedAt: "2026-07-23T00:00:00.000Z",
+      receivedAt: null,
+    };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: confirmedInvoice,
+      lines: [lineForReadyReview],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    const link = await screen.findByRole("link", { name: "Proceed to Receiving" });
+    expect(link).toHaveAttribute("href", `/inventory/receiving?invoiceId=${INVOICE_ID}`);
+  });
+
+  // 11. Zero-price line shows Free badge
+  it("shows Free badge for a zero-price line", async () => {
+    const zeroLine = { ...lineForReadyReview, unitPriceCents: 0, lineTotalCents: 0 };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [zeroLine],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(await screen.findByText("Free")).toBeInTheDocument();
+  });
+
+  // 12. Product creation modal opens and shows pre-filled product name
+  it("opens product creation modal with pre-filled product name when Create new product is clicked", async () => {
+    const user = userEvent.setup();
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Create new product" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    const nameInput = screen.getByLabelText(/product name/i);
+    expect(nameInput).toHaveValue("Nitrile Gloves");
+  });
+
+  // 13. Confirmation summary shows breakdown
+  it("shows confirmation summary with matched/create/skipped/unresolved breakdown", async () => {
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    // With 1 unresolved line, "decision required" text should appear
+    expect(await screen.findByText(/decision required/i)).toBeInTheDocument();
+    // Summary section labels
+    expect(screen.getByText(/✅ Matched/)).toBeInTheDocument();
+    expect(screen.getByText(/🆕 Ready to Create/)).toBeInTheDocument();
   });
 });

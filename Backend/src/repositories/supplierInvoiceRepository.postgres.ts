@@ -82,6 +82,7 @@ type LineRow = {
   is_matched: boolean;
   match_method: string | null;
   review_decision: string | null;
+  product_creation_data: unknown;
   created_at: Date;
   updated_at: Date;
 };
@@ -160,6 +161,7 @@ function mapLine(row: LineRow): SupplierInvoiceLine {
     isMatched: row.is_matched,
     matchMethod: row.match_method as SupplierInvoiceLine["matchMethod"],
     reviewDecision: row.review_decision as SupplierInvoiceLine["reviewDecision"],
+    productCreationData: (row.product_creation_data as SupplierInvoiceLine["productCreationData"]) ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -558,6 +560,9 @@ export function createPostgresSupplierInvoiceRepository(
       if (patch.isMatched !== undefined) add("is_matched", patch.isMatched);
       if (patch.matchMethod !== undefined) add("match_method", patch.matchMethod);
       if (patch.reviewDecision !== undefined) add("review_decision", patch.reviewDecision);
+      if (patch.productCreationData !== undefined) {
+        add("product_creation_data", patch.productCreationData !== null ? JSON.stringify(patch.productCreationData) : null);
+      }
 
       const updateIdx = idx;
       const { rows: updatedRows } = await pool.query<{ id: string }>(

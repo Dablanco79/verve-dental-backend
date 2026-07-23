@@ -11,6 +11,25 @@
  * OCR confidence is a numeric 0–100 score.
  */
 
+// ── Inline product-creation data ─────────────────────────────────────────────
+
+/**
+ * Operator-reviewed product details saved when the user completes the
+ * product-creation modal during invoice line review.
+ *
+ * Stored as JSONB in supplier_invoice_lines.product_creation_data.
+ * Used by confirmImport() in preference to raw OCR text.
+ */
+export type ProductCreationData = {
+  productName: string;
+  category: string;
+  supplierSku: string | null;
+  stockUnit: string;
+  receivingUnit: string;
+  unitsPerReceivingUnit: number;
+  unitCostCents: number;
+};
+
 // ── Status ENUM ──────────────────────────────────────────────────────────────
 
 export const SUPPLIER_INVOICE_STATUSES = [
@@ -119,6 +138,12 @@ export type SupplierInvoiceLine = {
    * 'skip'           — user explicitly excluded this line from the import
    */
   reviewDecision: "create_product" | "skip" | null;
+  /**
+   * Operator-reviewed product creation details, populated when the user
+   * completes the product-creation modal during invoice review.
+   * confirmImport() uses these values in preference to raw OCR text.
+   */
+  productCreationData: ProductCreationData | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -225,6 +250,8 @@ export type UpdateSupplierInvoiceLineInput = Partial<{
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
   /** Persisted review decision. null clears the current decision. */
   reviewDecision: "create_product" | "skip" | null;
+  /** Operator-reviewed product details for the create_product flow. null clears. */
+  productCreationData: ProductCreationData | null;
 }>;
 
 export type ListSupplierInvoicesOptions = {

@@ -4,12 +4,14 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { ProductCreationReviewModal } from "../components/invoice/ProductCreationReviewModal.js";
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
 import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import type { MasterProduct, ProductMatchSuggestion } from "../types/masterProduct.js";
 import type {
+  ProductCreationData,
   SupplierInvoice,
   SupplierInvoiceLine,
   SupplierInvoiceStatus,
@@ -303,6 +305,9 @@ function LineRow({
         ) : localAction === "ready_to_create" ? (
           <div className="invoice-review__match-cell">
             <span className="match-badge match-badge--create">Ready to Create</span>
+            {line.productCreationData ? (
+              <span className="invoice-review__match-name">{line.productCreationData.productName}</span>
+            ) : null}
             <span className="invoice-review__match-note">
               A new catalogue product will be created from this line when confirmed. No stock change.
             </span>
@@ -408,7 +413,18 @@ function LineRow({
             aria-label="Unit price"
           />
         ) : (
-          centsToDollars(line.unitPriceCents)
+          <span>
+            {centsToDollars(line.unitPriceCents)}
+            {line.unitPriceCents === 0 ? (
+              <span
+                className="match-badge match-badge--free"
+                title="Zero-price / free item — can still be received at $0.00"
+                style={{ marginLeft: "0.4rem", verticalAlign: "middle" }}
+              >
+                Free
+              </span>
+            ) : null}
+          </span>
         )}
       </td>
 
@@ -716,6 +732,10 @@ export function SupplierInvoiceReviewPage() {
   const [isVoiding, setIsVoiding] = useState(false);
   const [voidError, setVoidError] = useState<string | null>(null);
 
+  // Product creation review modal
+  const [productCreationTargetLine, setProductCreationTargetLine] = useState<SupplierInvoiceLine | null>(null);
+  const [isSavingProductCreation, setIsSavingProductCreation] = useState(false);
+
   const hasMounted = useRef(false);
 
   // ── Derived review-state helpers ────────────────────────────────────────────
@@ -912,18 +932,22 @@ export function SupplierInvoiceReviewPage() {
     }
   }
 
-  function handleCreateNew(lineId: string): void {
+  function handleCreateNew(lineId: string, data: ProductCreationData): void {
     setLocalLineActions((prev) => ({ ...prev, [lineId]: "ready_to_create" }));
-    // Persist to DB so reload restores the decision.
+    setProductCreationTargetLine(null);
+    // Persist to DB so reload restores the decision — include reviewed product data.
     if (invoice && user) {
+      setIsSavingProductCreation(true);
       void apiClient
         .updateSupplierInvoiceLine(clinicId ?? user.homeClinicId, invoice.id, lineId, {
           reviewDecision: "create_product",
+          productCreationData: data,
         })
         .then((updated) => {
           setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { setIsSavingProductCreation(false); });
     }
   }
 
@@ -1178,7 +1202,9 @@ export function SupplierInvoiceReviewPage() {
                 onFetchSuggestion={(lineId) => { void fetchLineSuggestion(lineId); }}
                 onAcceptSuggestion={handleAcceptSuggestion}
                 onChooseDifferent={(lineId) => { setMatchSearchTargetLineId(lineId); }}
-                onCreateNew={handleCreateNew}
+                onCreateNew={(lineId) => {
+                  setProductCreationTargetLine(lines.find((l) => l.id === lineId) ?? null);
+                }}
                 onSkipLine={handleSkipLine}
                 onUndoLine={handleUndoLine}
               />
@@ -1189,14 +1215,42 @@ export function SupplierInvoiceReviewPage() {
               <section className="status-card supplier-detail__section invoice-review__approval">
                 <h3 className="supplier-detail__section-title">Confirm Invoice Import</h3>
 
-                {/* Review progress summary */}
+                {/* Review summary breakdown */}
                 {lines.length > 0 ? (() => {
-                  const total = lines.length;
-                  const resolved = lines.filter((l) =>
-                    lineIsResolved(l, localLineActions, ignoredLineIds),
-                  ).length;
-                  const unresolved = total - resolved;
-                  const pct = total > 0 ? Math.round((resolved / total) * 100) : 100;
+                  const matched = lines.filter(
+                    (l) =>
+                      l.isMatched &&
+                      l.masterCatalogItemId !== null &&
+                      !ignoredLineIds.has(l.id) &&
+                      localLineActions[l.id] !== "skipped",
+                  );
+                  const toCreate = lines.filter(
+                    (l) => localLineActions[l.id] === "ready_to_create",
+                  );
+                  const skipped = lines.filter(
+                    (l) =>
+                      localLineActions[l.id] === "skipped" ||
+                      (ignoredLineIds.has(l.id) && !l.isMatched && localLineActions[l.id] !== "ready_to_create"),
+                  );
+                  const unresolved = lines.filter(
+                    (l) => !lineIsResolved(l, localLineActions, ignoredLineIds),
+                  );
+
+                  const visibleLineTotal = lines
+                    .filter(
+                      (l) =>
+                        !ignoredLineIds.has(l.id) && localLineActions[l.id] !== "skipped",
+                    )
+                    .reduce((sum, l) => sum + l.lineTotalCents, 0);
+                  const invoiceTotal = invoice.totalCents ?? null;
+                  const reconciliationDiff =
+                    invoiceTotal !== null ? invoiceTotal - visibleLineTotal : null;
+
+                  const pct =
+                    lines.length > 0
+                      ? Math.round(((lines.length - unresolved.length) / lines.length) * 100)
+                      : 100;
+
                   return (
                     <div className="invoice-review__progress">
                       <div className="invoice-review__progress-bar-wrap">
@@ -1210,14 +1264,49 @@ export function SupplierInvoiceReviewPage() {
                           aria-label="Review progress"
                         />
                       </div>
-                      <p className="invoice-review__progress-label">
-                        {resolved} of {String(total)} line{total !== 1 ? "s" : ""} reviewed
-                        {unresolved > 0 ? (
-                          <span className="invoice-review__progress-blocking">
-                            {" "}— {String(unresolved)} line{unresolved !== 1 ? "s" : ""} still need{unresolved === 1 ? "s" : ""} a decision
-                          </span>
+                      <div className="invoice-review__summary-grid">
+                        <div className="invoice-review__summary-row">
+                          <span className="invoice-review__summary-label">✅ Matched</span>
+                          <span className="invoice-review__summary-value">{matched.length} line{matched.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <div className="invoice-review__summary-row">
+                          <span className="invoice-review__summary-label">🆕 Ready to Create</span>
+                          <span className="invoice-review__summary-value">{toCreate.length} line{toCreate.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <div className="invoice-review__summary-row">
+                          <span className="invoice-review__summary-label">⏭ Skipped / Ignored</span>
+                          <span className="invoice-review__summary-value">{skipped.length} line{skipped.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        {unresolved.length > 0 ? (
+                          <div className="invoice-review__summary-row invoice-review__summary-row--blocking">
+                            <span className="invoice-review__summary-label">❓ Unresolved</span>
+                            <span className="invoice-review__summary-value invoice-review__progress-blocking">
+                              {unresolved.length} line{unresolved.length !== 1 ? "s" : ""} — decision required
+                            </span>
+                          </div>
                         ) : null}
-                      </p>
+                        {invoiceTotal !== null ? (
+                          <>
+                            <div className="invoice-review__summary-row invoice-review__summary-divider">
+                              <span className="invoice-review__summary-label">Invoice total (header)</span>
+                              <span className="invoice-review__summary-value">{centsToDollars(invoiceTotal)}</span>
+                            </div>
+                            <div className="invoice-review__summary-row">
+                              <span className="invoice-review__summary-label">Active line total</span>
+                              <span className="invoice-review__summary-value">{centsToDollars(visibleLineTotal)}</span>
+                            </div>
+                            {reconciliationDiff !== null && reconciliationDiff !== 0 ? (
+                              <div className="invoice-review__summary-row invoice-review__summary-row--warn">
+                                <span className="invoice-review__summary-label">Reconciliation difference</span>
+                                <span className="invoice-review__summary-value">
+                                  {centsToDollars(Math.abs(reconciliationDiff))}{" "}
+                                  {reconciliationDiff > 0 ? "(header exceeds lines)" : "(lines exceed header)"}
+                                </span>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })() : null}
@@ -1277,7 +1366,7 @@ export function SupplierInvoiceReviewPage() {
                     </span>
                   ) : (
                     <Link
-                      to={`/inventory/receive?invoiceId=${invoice.id}`}
+                      to={`/inventory/receiving?invoiceId=${invoice.id}`}
                       className="button-link"
                     >
                       Proceed to Receiving
@@ -1345,6 +1434,18 @@ export function SupplierInvoiceReviewPage() {
         onSelect={handleManualMatchSelect}
         title="Match to Master Product"
       />
+
+      {productCreationTargetLine ? (
+        <ProductCreationReviewModal
+          line={productCreationTargetLine}
+          initialData={productCreationTargetLine.productCreationData}
+          isSaving={isSavingProductCreation}
+          onClose={() => { setProductCreationTargetLine(null); }}
+          onSave={(data) => {
+            handleCreateNew(productCreationTargetLine.id, data);
+          }}
+        />
+      ) : null}
     </AppShell>
   );
 }

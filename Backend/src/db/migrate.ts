@@ -2680,6 +2680,27 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
               OR review_decision IN ('create_product', 'skip'));
     `,
   },
+  {
+    /*
+     * 041_invoice_line_product_creation_data
+     *
+     * Stores the operator-reviewed product details for lines where the
+     * reviewDecision is 'create_product'.  The confirmImport service reads
+     * this JSONB column and uses it instead of the raw OCR text when
+     * creating a Master Catalogue product.
+     *
+     * If this column is NULL, confirmImport falls back to OCR data (backward-
+     * compatible with existing 'create_product' decisions).
+     *
+     * Rollback:
+     *   ALTER TABLE supplier_invoice_lines DROP COLUMN IF EXISTS product_creation_data;
+     */
+    id: "041_invoice_line_product_creation_data",
+    sql: `
+      ALTER TABLE supplier_invoice_lines
+        ADD COLUMN IF NOT EXISTS product_creation_data JSONB NULL;
+    `,
+  },
 ];
 
 /**
