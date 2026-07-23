@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SupplierInvoiceReviewPage } from "../src/pages/SupplierInvoiceReviewPage.js";
 import type {
@@ -9,7 +9,7 @@ import type {
   SupplierInvoiceLine,
   UploadAndExtractResult,
 } from "../src/types/supplier.js";
-import { createManagerUser, TEST_CLINIC_ID } from "./helpers/auth.js";
+import { createAdminUser, createManagerUser, TEST_CLINIC_ID } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
   setAuthenticatedUser,
@@ -137,6 +137,7 @@ const sampleLine: SupplierInvoiceLine = {
   supplierCatalogueId: "cat-1111",
   isMatched: true,
   matchMethod: "exact_sku",
+  reviewDecision: null,
   createdAt: "2026-06-10T00:00:00.000Z",
   updatedAt: "2026-06-10T00:00:00.000Z",
 };
@@ -503,12 +504,12 @@ describe("SupplierInvoiceReviewPage", () => {
 
   // ── Hide row (display-only, no backend persist) ────────────────────────────────
 
-  it("shows Hide button for each line in pending_review state", async () => {
+  it("shows Ignore button for each line in pending_review state", async () => {
     renderReviewPage();
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ignore" })).toBeInTheDocument();
   });
 
   it("toggles row to hidden state and shows Show button", async () => {
@@ -517,43 +518,43 @@ describe("SupplierInvoiceReviewPage", () => {
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    await user.click(screen.getByRole("button", { name: "Hide" }));
+    await user.click(screen.getByRole("button", { name: "Ignore" }));
 
     expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument();
   });
 
-  it("does not call API when Hide is clicked — hide is display-only", async () => {
+  it("does not call API when Ignore is clicked — ignore is display-only", async () => {
     const user = userEvent.setup();
     renderReviewPage();
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    await user.click(screen.getByRole("button", { name: "Hide" }));
+    await user.click(screen.getByRole("button", { name: "Ignore" }));
 
     expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalled();
   });
 
-  it("shows approval hint explaining hidden lines are still imported if matched", async () => {
+  it("shows approval hint explaining what confirming will do", async () => {
     renderReviewPage();
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
     expect(
-      screen.getByText(/hidden lines are display-only and are still imported if they are matched/i),
+      screen.getByText(/confirming will create new products for lines marked/i),
     ).toBeInTheDocument();
   });
 
-  // ── Approve Import ────────────────────────────────────────────────────────────
+  // ── Confirm Invoice Import ────────────────────────────────────────────────────
 
-  it("shows Approve Import button for pending_review invoice", async () => {
+  it("shows Confirm Invoice Import button for pending_review invoice", async () => {
     renderReviewPage();
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    expect(screen.getByRole("button", { name: "Approve Import" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Invoice Import" })).toBeInTheDocument();
   });
 
-  it("confirms the invoice when Approve Import is clicked", async () => {
+  it("confirms the invoice when Confirm Invoice Import is clicked", async () => {
     const user = userEvent.setup();
     mockConfirmSupplierInvoice.mockResolvedValue({
       invoice: confirmedInvoice,
@@ -564,7 +565,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    await user.click(screen.getByRole("button", { name: "Approve Import" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Invoice Import" }));
 
     await waitFor(() => {
       expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(
@@ -587,7 +588,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     await screen.findByRole("heading", { name: "DentalCo Australia" });
 
-    await user.click(screen.getByRole("button", { name: "Approve Import" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Invoice Import" }));
 
     expect(
       await screen.findByText("Invoice number is required to confirm."),
@@ -662,7 +663,7 @@ describe("SupplierInvoiceReviewPage", () => {
 
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ignore" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve Import" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Invoice Import" })).not.toBeInTheDocument();
   });
 
   it("shows confirmed banner for confirmed invoices", async () => {
@@ -698,5 +699,193 @@ describe("SupplierInvoiceReviewPage", () => {
 
     const backLink = screen.getByRole("link", { name: /back to suppliers/i });
     expect(backLink).toBeInTheDocument();
+  });
+});
+
+// ── Additional tests: ready_for_review status and review_decision persistence ──
+
+describe("SupplierInvoiceReviewPage — ready_for_review status and review decisions", () => {
+  const readyForReviewInvoice: SupplierInvoice = {
+    id: INVOICE_ID,
+    clinicId: TEST_CLINIC_ID,
+    supplierId: "sup-1111",
+    supplierNameRaw: "DentalCo Australia",
+    invoiceNumber: "DCO-2026-0042",
+    invoiceDate: "2026-06-10",
+    dueDate: null,
+    status: "ready_for_review",
+    subtotalCents: 5000,
+    taxCents: 500,
+    totalCents: 5500,
+    currency: "AUD",
+    ocrProvider: "claude",
+    ocrConfidence: 90,
+    originalFilename: "test.pdf",
+    fileMimeType: "application/pdf",
+    importedByUserId: "user-1",
+    importedByEmail: "admin@clinic.com",
+    confirmedByUserId: null,
+    confirmedAt: null,
+    voidedByUserId: null,
+    voidedAt: null,
+    receivedAt: null,
+    receivedByUserId: null,
+    receivedReference: null,
+    notes: null,
+    createdAt: "2026-06-10T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+  };
+
+  const lineForReadyReview: SupplierInvoiceLine = {
+    id: "line-rfr-1",
+    invoiceId: INVOICE_ID,
+    lineNumber: 1,
+    ocrDescription: "Nitrile Gloves",
+    ocrSku: null,
+    quantity: 3,
+    unitPriceCents: 1200,
+    lineTotalCents: 3600,
+    taxRateBasisPoints: 1000,
+    taxCents: 360,
+    masterCatalogItemId: null,
+    masterProductName: null,
+    supplierCatalogueId: null,
+    isMatched: false,
+    matchMethod: null,
+    reviewDecision: null,
+    createdAt: "2026-06-10T00:00:00.000Z",
+    updatedAt: "2026-06-10T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
+    setAuthenticatedUser(authTestState, createAdminUser());
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [lineForReadyReview],
+    });
+    mockUpdateSupplierInvoiceLine.mockResolvedValue({
+      ...lineForReadyReview,
+      reviewDecision: "skip",
+    });
+  });
+
+  afterEach(() => {
+    clearAuthenticatedUser(authTestState);
+    vi.clearAllMocks();
+  });
+
+  // 1. ready_for_review shows actions (not read-only)
+  it("shows Edit button for ready_for_review invoice (not read-only)", async () => {
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  // 2. ready_for_review shows Confirm Invoice Import button
+  it("shows Confirm Invoice Import button for ready_for_review invoice", async () => {
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(
+      screen.getByRole("button", { name: "Confirm Invoice Import" }),
+    ).toBeInTheDocument();
+  });
+
+  // 3. ready_for_review shows review progress
+  it("shows review progress for ready_for_review invoice", async () => {
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(screen.getByText(/0 of 1 line reviewed/i)).toBeInTheDocument();
+  });
+
+  // 4. skip action persists to API
+  it("calls updateSupplierInvoiceLine with reviewDecision=skip when Skip is clicked", async () => {
+    const user = userEvent.setup();
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        INVOICE_ID,
+        "line-rfr-1",
+        expect.objectContaining({ reviewDecision: "skip" }),
+      );
+    });
+  });
+
+  // 5. create_product action persists to API
+  it("calls updateSupplierInvoiceLine with reviewDecision=create_product when Create new product is clicked", async () => {
+    mockUpdateSupplierInvoiceLine.mockResolvedValue({
+      ...lineForReadyReview,
+      reviewDecision: "create_product",
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    await user.click(screen.getByRole("button", { name: "Create new product" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        INVOICE_ID,
+        "line-rfr-1",
+        expect.objectContaining({ reviewDecision: "create_product" }),
+      );
+    });
+  });
+
+  // 6. DB reviewDecision hydrated on load — shows 'Ready to Create' badge
+  it("hydrates Ready to Create badge from line.reviewDecision=create_product on load", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [{ ...lineForReadyReview, reviewDecision: "create_product" }],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(await screen.findByText("Ready to Create")).toBeInTheDocument();
+  });
+
+  // 7. DB reviewDecision hydrated on load — shows 'Skipped' badge
+  it("hydrates Skipped badge from line.reviewDecision=skip on load", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [{ ...lineForReadyReview, reviewDecision: "skip" }],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(await screen.findByText("Skipped")).toBeInTheDocument();
+  });
+
+  // 8. progress shows 1/1 when line has a decision
+  it("shows 1 of 1 reviewed when line is skipped", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [{ ...lineForReadyReview, reviewDecision: "skip" }],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(await screen.findByText(/1 of 1 line reviewed/i)).toBeInTheDocument();
+  });
+
+  // 9. progress shows 1/1 when line is matched
+  it("shows 1 of 1 reviewed when line is matched", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: readyForReviewInvoice,
+      lines: [{ ...lineForReadyReview, isMatched: true, masterProductName: "Gloves", reviewDecision: null }],
+    });
+
+    renderReviewPage();
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    expect(await screen.findByText(/1 of 1 line reviewed/i)).toBeInTheDocument();
   });
 });

@@ -685,6 +685,14 @@ export function createSupplierInvoiceService(
     const skippedLineIds = new Set(options.skippedLineIds ?? []);
     const readyToCreateLineIds = new Set(options.readyToCreateLineIds ?? []);
 
+    // Also honour decisions persisted via PATCH /lines/:lineId so that
+    // page reloads do not reset the review.  Request-body arrays take
+    // precedence (allow override) but DB decisions fill any gaps.
+    for (const line of lines) {
+      if (line.reviewDecision === "skip") skippedLineIds.add(line.id);
+      if (line.reviewDecision === "create_product") readyToCreateLineIds.add(line.id);
+    }
+
     const createdProductPairs = await Promise.all(
       lines
         .filter((line) => readyToCreateLineIds.has(line.id) && !skippedLineIds.has(line.id))

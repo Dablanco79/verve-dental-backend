@@ -5247,6 +5247,39 @@ body {
   gap: 0.75rem;
 }
 
+/* ── Review progress bar ───────────────────────────────────────────────────── */
+
+.invoice-review__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.invoice-review__progress-bar-wrap {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.invoice-review__progress-bar {
+  height: 100%;
+  background: #059669;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.invoice-review__progress-label {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #486581;
+}
+
+.invoice-review__progress-blocking {
+  color: #c05621;
+  font-weight: 600;
+}
+
 .invoice-review__approval-hint {
   margin: 0;
   font-size: 0.875rem;

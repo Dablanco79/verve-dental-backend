@@ -111,6 +111,14 @@ export type SupplierInvoiceLine = {
   sortOrder: number;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
+  /**
+   * Persisted line review decision.
+   *
+   * null           — no decision yet (unresolved)
+   * 'create_product' — user marked this line to have a new product created at confirm time
+   * 'skip'           — user explicitly excluded this line from the import
+   */
+  reviewDecision: "create_product" | "skip" | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -215,6 +223,8 @@ export type UpdateSupplierInvoiceLineInput = Partial<{
   supplierCatalogueId: string | null;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
+  /** Persisted review decision. null clears the current decision. */
+  reviewDecision: "create_product" | "skip" | null;
 }>;
 
 export type ListSupplierInvoicesOptions = {
@@ -240,6 +250,7 @@ export type AddSupplierInvoiceLineInput = {
   sortOrder: number;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
+  reviewDecision?: "create_product" | "skip" | null;
 };
 
 // ── Upload result (service layer response) ────────────────────────────────────

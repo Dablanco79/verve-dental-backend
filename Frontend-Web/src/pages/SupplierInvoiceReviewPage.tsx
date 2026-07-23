@@ -304,7 +304,7 @@ function LineRow({
           <div className="invoice-review__match-cell">
             <span className="match-badge match-badge--create">Ready to Create</span>
             <span className="invoice-review__match-note">
-              Creates catalogue product only. No stock change.
+              A new catalogue product will be created from this line when confirmed. No stock change.
             </span>
             <button
               type="button"
@@ -458,9 +458,9 @@ function LineRow({
                 type="button"
                 className={`supplier-toggle-btn ${isIgnored ? "supplier-toggle-btn--activate" : "invoice-review__ignore-btn"}`}
                 onClick={() => { onIgnoreToggle(line.id); }}
-                title={isIgnored ? "Show this line" : "Hide this line from view (display only — does not affect import)"}
+                title={isIgnored ? "Show this line" : "Ignore this line (display-only — does not affect import)"}
               >
-                {isIgnored ? "Show" : "Hide"}
+                {isIgnored ? "Show" : "Ignore"}
               </button>
             </div>
           )}
@@ -718,6 +718,27 @@ export function SupplierInvoiceReviewPage() {
 
   const hasMounted = useRef(false);
 
+  // ── Derived review-state helpers ────────────────────────────────────────────
+
+  /**
+   * A line has a valid final decision if it is:
+   *   - already matched to a product (is_matched = true), OR
+   *   - marked to create a product (localAction = "ready_to_create"), OR
+   *   - skipped/excluded (localAction = "skipped"), OR
+   *   - in the local ignore set (display-only exclusion counts for completion)
+   */
+  function lineIsResolved(
+    line: SupplierInvoiceLine,
+    localActions: Record<string, LocalLineAction>,
+    ignored: Set<string>,
+  ): boolean {
+    if (line.isMatched) return true;
+    const action = localActions[line.id];
+    if (action === "ready_to_create" || action === "skipped") return true;
+    if (ignored.has(line.id)) return true;
+    return false;
+  }
+
   const loadInvoice = useCallback(async () => {
     if (!invoiceId || !user) {
       setIsLoading(false);
@@ -777,7 +798,9 @@ export function SupplierInvoiceReviewPage() {
     );
   }
 
-  const readOnly = invoice?.status !== "pending_review";
+  const isReviewable = (s: string | undefined) =>
+    s === "pending_review" || s === "ready_for_review";
+  const readOnly = !isReviewable(invoice?.status);
   const backPath = locationState?.backPath ?? "/suppliers";
 
   // ── Product matching helpers ─────────────────────────────────────────────────
@@ -790,6 +813,16 @@ export function SupplierInvoiceReviewPage() {
           .map((l) => [l.id, l.masterProductName as string]),
       ),
     );
+    // Hydrate persisted review decisions so reloads restore prior decisions.
+    const hydratedActions: Record<string, LocalLineAction> = {};
+    for (const line of loadedLines) {
+      if (line.reviewDecision === "create_product") {
+        hydratedActions[line.id] = "ready_to_create";
+      } else if (line.reviewDecision === "skip") {
+        hydratedActions[line.id] = "skipped";
+      }
+    }
+    setLocalLineActions(hydratedActions);
   }
 
   async function fetchLineSuggestion(lineId: string): Promise<void> {
@@ -866,10 +899,32 @@ export function SupplierInvoiceReviewPage() {
 
   function handleSkipLine(lineId: string): void {
     setLocalLineActions((prev) => ({ ...prev, [lineId]: "skipped" }));
+    // Persist to DB so reload restores the decision.
+    if (invoice && user) {
+      void apiClient
+        .updateSupplierInvoiceLine(clinicId ?? user.homeClinicId, invoice.id, lineId, {
+          reviewDecision: "skip",
+        })
+        .then((updated) => {
+          setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+        })
+        .catch(() => undefined);
+    }
   }
 
   function handleCreateNew(lineId: string): void {
     setLocalLineActions((prev) => ({ ...prev, [lineId]: "ready_to_create" }));
+    // Persist to DB so reload restores the decision.
+    if (invoice && user) {
+      void apiClient
+        .updateSupplierInvoiceLine(clinicId ?? user.homeClinicId, invoice.id, lineId, {
+          reviewDecision: "create_product",
+        })
+        .then((updated) => {
+          setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+        })
+        .catch(() => undefined);
+    }
   }
 
   function handleUndoLine(lineId: string): void {
@@ -879,10 +934,28 @@ export function SupplierInvoiceReviewPage() {
       void _removed;
       return rest;
     });
-    // If the line is already matched in the DB, PATCH it back to unmatched.
     const line = lines.find((l) => l.id === lineId);
+    const effectiveClinicId = clinicId ?? user.homeClinicId;
+
+    // Clear the persisted decision (whether it was skip or create_product).
+    if (invoice && (line?.reviewDecision === "skip" || line?.reviewDecision === "create_product")) {
+      setLinkingLineId(lineId);
+      apiClient
+        .updateSupplierInvoiceLine(effectiveClinicId, invoice.id, lineId, {
+          reviewDecision: null,
+        })
+        .then((updated) => {
+          setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          setLinkingLineId(null);
+        });
+      return;
+    }
+
+    // If the line is already matched in the DB, PATCH it back to unmatched.
     if (line?.isMatched && invoice) {
-      const effectiveClinicId = clinicId ?? user.homeClinicId;
       setLinkingLineId(lineId);
       apiClient
         .updateSupplierInvoiceLine(effectiveClinicId, invoice.id, lineId, {
@@ -1112,13 +1185,47 @@ export function SupplierInvoiceReviewPage() {
             </section>
 
             {/* ── Approval actions ── */}
-            {invoice.status === "pending_review" ? (
+            {isReviewable(invoice.status) ? (
               <section className="status-card supplier-detail__section invoice-review__approval">
-                <h3 className="supplier-detail__section-title">Approve Import</h3>
+                <h3 className="supplier-detail__section-title">Confirm Invoice Import</h3>
+
+                {/* Review progress summary */}
+                {lines.length > 0 ? (() => {
+                  const total = lines.length;
+                  const resolved = lines.filter((l) =>
+                    lineIsResolved(l, localLineActions, ignoredLineIds),
+                  ).length;
+                  const unresolved = total - resolved;
+                  const pct = total > 0 ? Math.round((resolved / total) * 100) : 100;
+                  return (
+                    <div className="invoice-review__progress">
+                      <div className="invoice-review__progress-bar-wrap">
+                        <div
+                          className="invoice-review__progress-bar"
+                          style={{ width: `${String(pct)}%` }}
+                          aria-valuenow={pct}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          role="progressbar"
+                          aria-label="Review progress"
+                        />
+                      </div>
+                      <p className="invoice-review__progress-label">
+                        {resolved} of {String(total)} line{total !== 1 ? "s" : ""} reviewed
+                        {unresolved > 0 ? (
+                          <span className="invoice-review__progress-blocking">
+                            {" "}— {String(unresolved)} line{unresolved !== 1 ? "s" : ""} still need{unresolved === 1 ? "s" : ""} a decision
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                  );
+                })() : null}
+
                 <p className="invoice-review__approval-hint">
-                  Approving will import all matched line items and update supplier pricing. Hidden
-                  lines are display-only and are still imported if they are matched. This action
-                  cannot be undone.
+                  Confirming will create new products for lines marked "Ready to Create" and
+                  update supplier pricing for all matched lines. This action cannot be undone.
+                  Unreviewed lines will be skipped but can be matched manually later.
                 </p>
                 {confirmError ? (
                   <p className="status-card__error" role="alert">
@@ -1137,7 +1244,7 @@ export function SupplierInvoiceReviewPage() {
                     onClick={() => { void handleApprove(); }}
                     disabled={isConfirming || isVoiding || linkingLineId !== null}
                   >
-                    {isConfirming ? "Approving…" : "Approve Import"}
+                    {isConfirming ? "Confirming…" : "Confirm Invoice Import"}
                   </button>
                   <button
                     type="button"

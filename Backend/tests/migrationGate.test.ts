@@ -373,9 +373,14 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(schemaIdx).toBeLessThan(snapshotIdx);
   });
 
-  it("038_stocktake_line_snapshot is the last migration", () => {
+  it("038_stocktake_line_snapshot is the last stocktake migration", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("038_stocktake_line_snapshot");
+    expect(ids).toContain("038_stocktake_line_snapshot");
+  });
+
+  it("040_invoice_line_review_decision is the last migration", () => {
+    const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
+    expect(ids[ids.length - 1]).toBe("040_invoice_line_review_decision");
   });
 
   it("detects stocktake migrations as pending on a pre-stocktake database", async () => {

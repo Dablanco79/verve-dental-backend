@@ -239,6 +239,11 @@ export type SupplierInvoiceLine = {
   supplierCatalogueId: string | null;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
+  /**
+   * Persisted review decision returned by the backend.
+   * null = no decision yet (unresolved).
+   */
+  reviewDecision: "create_product" | "skip" | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -351,6 +356,8 @@ export type UpdateSupplierInvoiceLineRequest = {
   supplierCatalogueId?: string | null;
   isMatched?: boolean;
   matchMethod?: "exact_sku" | "name_match" | "manual" | null;
+  /** Persist a review decision to the database. null clears the current decision. */
+  reviewDecision?: "create_product" | "skip" | null;
 };
 
 // ── Invoice receiving request / result ────────────────────────────────────────

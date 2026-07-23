@@ -41,6 +41,7 @@ function serializeLine(line: SupplierInvoiceLine): Record<string, unknown> {
     supplierCatalogueId: line.supplierCatalogueId,
     isMatched: line.isMatched,
     matchMethod: line.matchMethod,
+    reviewDecision: line.reviewDecision,
     createdAt: line.createdAt.toISOString(),
     updatedAt: line.updatedAt.toISOString(),
   };
@@ -78,6 +79,10 @@ const updateLineSchema = z.object({
   isMatched: z.boolean().optional(),
   matchMethod: z
     .enum(["exact_sku", "name_match", "manual"])
+    .nullable()
+    .optional(),
+  reviewDecision: z
+    .enum(["create_product", "skip"])
     .nullable()
     .optional(),
 });

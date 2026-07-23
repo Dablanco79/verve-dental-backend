@@ -2660,6 +2660,26 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ALTER COLUMN stock_unit   DROP DEFAULT;
     `,
   },
+  {
+    /*
+     * 040_invoice_line_review_decision
+     *
+     * Adds a persistent review_decision column to supplier_invoice_lines so
+     * that per-line decisions (create_product / skip) survive page reloads
+     * without relying on React state or localStorage.
+     *
+     * Rollback:
+     *   ALTER TABLE supplier_invoice_lines DROP COLUMN IF EXISTS review_decision;
+     */
+    id: "040_invoice_line_review_decision",
+    sql: `
+      ALTER TABLE supplier_invoice_lines
+        ADD COLUMN IF NOT EXISTS review_decision VARCHAR(32)
+          CONSTRAINT supplier_invoice_lines_review_decision_check
+          CHECK (review_decision IS NULL
+              OR review_decision IN ('create_product', 'skip'));
+    `,
+  },
 ];
 
 /**

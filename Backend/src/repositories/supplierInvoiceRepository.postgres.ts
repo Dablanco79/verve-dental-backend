@@ -81,6 +81,7 @@ type LineRow = {
   sort_order: number;
   is_matched: boolean;
   match_method: string | null;
+  review_decision: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -158,6 +159,7 @@ function mapLine(row: LineRow): SupplierInvoiceLine {
     sortOrder: row.sort_order,
     isMatched: row.is_matched,
     matchMethod: row.match_method as SupplierInvoiceLine["matchMethod"],
+    reviewDecision: row.review_decision as SupplierInvoiceLine["reviewDecision"],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -555,6 +557,7 @@ export function createPostgresSupplierInvoiceRepository(
       if (patch.supplierCatalogueId !== undefined) add("supplier_catalogue_id", patch.supplierCatalogueId);
       if (patch.isMatched !== undefined) add("is_matched", patch.isMatched);
       if (patch.matchMethod !== undefined) add("match_method", patch.matchMethod);
+      if (patch.reviewDecision !== undefined) add("review_decision", patch.reviewDecision);
 
       const updateIdx = idx;
       const { rows: updatedRows } = await pool.query<{ id: string }>(

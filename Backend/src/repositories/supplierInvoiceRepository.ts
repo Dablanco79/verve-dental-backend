@@ -395,6 +395,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         sortOrder: input.sortOrder,
         isMatched: input.isMatched,
         matchMethod: input.matchMethod,
+        reviewDecision: input.reviewDecision ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -478,6 +479,9 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         ...(patch.isMatched !== undefined && { isMatched: patch.isMatched }),
         ...(patch.matchMethod !== undefined && {
           matchMethod: patch.matchMethod,
+        }),
+        ...(patch.reviewDecision !== undefined && {
+          reviewDecision: patch.reviewDecision,
         }),
         updatedAt: new Date(),
       };
