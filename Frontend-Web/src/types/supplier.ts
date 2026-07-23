@@ -198,6 +198,12 @@ export type SupplierInvoice = {
   confirmedAt: string | null;
   voidedByUserId: string | null;
   voidedAt: string | null;
+  /** Set once physical receiving is completed for this invoice. */
+  receivedAt: string | null;
+  /** ID of the user who confirmed receiving. */
+  receivedByUserId: string | null;
+  /** Invoice/delivery reference recorded at receiving time. */
+  receivedReference: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -345,4 +351,23 @@ export type UpdateSupplierInvoiceLineRequest = {
   supplierCatalogueId?: string | null;
   isMatched?: boolean;
   matchMethod?: "exact_sku" | "name_match" | "manual" | null;
+};
+
+// ── Invoice receiving request / result ────────────────────────────────────────
+
+export type ReceiveInvoiceLineRequest = {
+  itemId: string;
+  quantityDelta: number;
+};
+
+export type ReceiveInvoiceRequest = {
+  lines: ReceiveInvoiceLineRequest[];
+  receivedReference?: string | null;
+};
+
+export type ReceiveInvoiceResult = {
+  invoice: SupplierInvoice;
+  adjustments: import("./inventory.js").InventoryAdjustment[];
+  receivedAt: string;
+  receivedBy: string;
 };

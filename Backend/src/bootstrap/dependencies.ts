@@ -493,6 +493,7 @@ export async function createAppDependencies(
     supplierRelationshipRepository,
     catalogRepository,
     inventoryRepository,
+    connectedPool,
   );
   const timesheetService = createTimesheetService(
     timesheetRepository,

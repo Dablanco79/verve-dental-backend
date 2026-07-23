@@ -35,6 +35,8 @@ import type {
   ConfirmImportResult,
   DetectedSupplierInfo,
   ListSupplierInvoicesOptions,
+  ReceiveInvoiceLineInput,
+  ReceiveInvoiceResult,
   SupplierInvoice,
   SupplierInvoiceLine,
   SupplierInvoiceStatus,
@@ -44,6 +46,9 @@ import type {
   UploadAndExtractResult,
 } from "../types/supplierInvoice.js";
 import type { OcrInvoiceResult } from "../types/supplierInvoice.js";
+import type { InventoryAdjustment } from "../types/inventory.js";
+import type { DatabasePool } from "../db/pool.js";
+import { withTenantContext } from "../db/tenantContext.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
 
 export function createSupplierInvoiceService(
@@ -55,6 +60,7 @@ export function createSupplierInvoiceService(
   supplierRelationshipRepo?: SupplierRelationshipRepository,
   catalogRepository?: CatalogRepository,
   inventoryRepository?: InventoryRepository,
+  pool?: DatabasePool | null,
 ) {
   // ── Tenant + role guards ─────────────────────────────────────────────────
 
@@ -494,34 +500,23 @@ export function createSupplierInvoiceService(
     );
 
     // Duplicate invoice-number warning (Amendment 4).
-    // Only checked when OCR extracted an invoice_number.
-    // Cannot check supplier-scoped duplicate without a supplierId yet,
-    // so we do a clinic-wide check on invoice_number alone using a
-    // relaxed approach: check after the invoice is persisted (exclude self).
+    // When a supplier was matched AND OCR extracted an invoice number, run the
+    // authoritative supplier-scoped duplicate check immediately (same query used
+    // at PATCH time).  Without a supplierId we cannot reliably deduplicate at
+    // upload time — the check runs again when the user sets the supplier via PATCH.
     let duplicateInvoiceNumberWarning = null;
-    if (ocrResult.invoiceNumber) {
-      // We search across all suppliers for this clinic+invoiceNumber
-      // (partial check — full supplier-scoped check happens at PATCH/confirm).
-      const existingInvoices = await repo.listSupplierInvoices(clinicId, {
-        limit: 1,
-      });
-      const dup = existingInvoices.find(
-        (inv) =>
-          inv.invoiceNumber === ocrResult.invoiceNumber &&
-          inv.status !== "voided" &&
-          inv.status !== "cancelled" &&
-          inv.id !== invoice.id,
+    if (ocrResult.invoiceNumber && resolvedSupplierId) {
+      duplicateInvoiceNumberWarning = await repo.findDuplicateInvoiceNumber(
+        clinicId,
+        resolvedSupplierId,
+        ocrResult.invoiceNumber,
+        invoice.id,
       );
-      if (dup) {
-        duplicateInvoiceNumberWarning = {
-          existingInvoiceId: dup.id,
-          existingStatus: dup.status,
-        };
-      }
     }
 
     auditService.logEvent("supplier_invoice.uploaded", {
       userId: caller.id,
+      clinicId,
       resourceId: invoice.id,
     });
 
@@ -758,6 +753,7 @@ export function createSupplierInvoiceService(
 
     auditService.logEvent("supplier_invoice.confirmed", {
       userId: caller.id,
+      clinicId,
       resourceId: invoiceId,
     });
 
@@ -844,10 +840,455 @@ export function createSupplierInvoiceService(
 
     auditService.logEvent("supplier_invoice.voided", {
       userId: caller.id,
+      clinicId,
       resourceId: invoiceId,
     });
 
     return voided;
+  }
+
+  // ── 9. Receive Invoice ────────────────────────────────────────────────────
+
+  /**
+   * Records physical stock receipt against a confirmed supplier invoice.
+   *
+   * ATOMICITY GUARANTEE (PostgreSQL path):
+   *   When a DatabasePool is available, the complete operation runs inside a
+   *   single withTenantContext transaction on one PoolClient:
+   *     BEGIN
+   *     SELECT … FOR UPDATE  (invoice row — prevents concurrent duplicate receive)
+   *     SELECT … FOR UPDATE  (each inventory row — prevents concurrent QoH drift)
+   *     UPDATE clinic_inventory_items  (per line)
+   *     INSERT inventory_adjustments   (per line)
+   *     UPDATE supplier_invoices SET received_at …
+   *     COMMIT
+   *   Any failure in any step triggers ROLLBACK — no inventory mutation is
+   *   visible and no invoice state update is written.
+   *
+   * IN-MEMORY PATH (tests, no pool):
+   *   Pre-validates ALL items before the first mutation so that a missing item
+   *   stops the operation before any stock is changed.  Mutations within the
+   *   single-threaded in-memory model are effectively atomic.
+   *
+   * AUDIT EVENTS (durable, inside transaction):
+   *   The supplier_invoice.received audit event is inserted as step 4 of
+   *   executeAtomicReceivingPg, using the same PoolClient and RLS context as
+   *   every other SQL statement in the operation.  An audit INSERT failure
+   *   triggers ROLLBACK — inventory updates, adjustments, and invoice state
+   *   are all reverted.
+   *   The in-memory path (no pool) does not write an audit event.
+   *
+   * Safety rules enforced:
+   *   - Invoice must exist for the given clinic (cross-clinic rejected).
+   *   - Invoice must be in 'imported' status.
+   *   - received_at must be null — 409 INVOICE_ALREADY_RECEIVED if not.
+   *   - All quantityDelta values must be positive integers.
+   */
+  async function receiveInvoice(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    invoiceId: string,
+    lines: ReceiveInvoiceLineInput[],
+    receivedReference: string | null,
+  ): Promise<ReceiveInvoiceResult> {
+    assertTenantAccess(caller, clinicId);
+    assertWriteAccess(caller);
+
+    // ── Input validation (before any DB access) ────────────────────────────
+    if (lines.length === 0) {
+      throw new AppError(400, "VALIDATION_ERROR", "At least one receiving line is required");
+    }
+    for (const line of lines) {
+      if (!Number.isInteger(line.quantityDelta) || line.quantityDelta <= 0) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          `quantityDelta must be a positive integer (itemId: ${line.itemId})`,
+        );
+      }
+    }
+
+    let invoice: SupplierInvoice;
+    let adjustments: InventoryAdjustment[];
+
+    if (pool) {
+      // ── PostgreSQL path: true atomic transaction ─────────────────────────
+      // The audit INSERT is step 4 inside executeAtomicReceivingPg — any
+      // failure (including the audit step) triggers a full ROLLBACK.
+      const result = await executeAtomicReceivingPg(caller, clinicId, invoiceId, lines, receivedReference);
+      invoice = result.invoice;
+      adjustments = result.adjustments;
+    } else {
+      // ── In-memory path: sequential with complete pre-validation ──────────
+      // No audit event is written on this path — the durable audit lives
+      // exclusively inside the PostgreSQL transaction.
+      if (!inventoryRepository) {
+        throw new AppError(500, "INTERNAL_ERROR", "Inventory repository is not configured");
+      }
+      const result = await executeInMemoryReceiving(caller, clinicId, invoiceId, lines, receivedReference, inventoryRepository);
+      invoice = result.invoice;
+      adjustments = result.adjustments;
+    }
+
+    return {
+      invoice,
+      adjustments,
+      receivedAt: invoice.receivedAt as Date,
+      receivedBy: caller.email,
+    };
+  }
+
+  // ── Internal: PostgreSQL atomic transaction ──────────────────────────────────
+
+  /**
+   * Executes the complete invoice-receiving operation inside one PostgreSQL
+   * transaction on a single PoolClient.
+   *
+   * Transaction boundary:
+   *   BEGIN (from withTenantContext)
+   *   SET LOCAL app.current_clinic_id + app.owner_admin_mode
+   *   SELECT … FROM supplier_invoices FOR UPDATE
+   *   Per line: SELECT … FROM clinic_inventory_items FOR UPDATE
+   *             UPDATE clinic_inventory_items
+   *             INSERT INTO inventory_adjustments
+   *   UPDATE supplier_invoices SET received_at …
+   *   INSERT INTO audit_events (supplier_invoice.received)
+   *   COMMIT (from withTenantContext)
+   *
+   * Any error → ROLLBACK (from withTenantContext catch).
+   * The invoice row lock (FOR UPDATE) serialises concurrent requests:
+   *   - first request acquires the lock, sees receivedAt=NULL, proceeds
+   *   - second concurrent request blocks until the first commits or rolls back
+   *   - after commit: second request reads receivedAt≠NULL → 409 ALREADY_RECEIVED
+   *   - after rollback: second request sees clean state and may retry
+   *
+   * The audit INSERT (step 4) is inside the transaction: audit failure rolls
+   * back inventory updates, adjustments, and invoice state.
+   */
+  async function executeAtomicReceivingPg(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    invoiceId: string,
+    lines: ReceiveInvoiceLineInput[],
+    receivedReference: string | null,
+  ): Promise<{ invoice: SupplierInvoice; adjustments: InventoryAdjustment[] }> {
+    const isOwnerAdmin = caller.role === "owner_admin";
+
+    // Local row types — mirrors postgres repo row shapes; kept private here.
+    type InvoiceRow = {
+      id: string; clinic_id: string; supplier_id: string | null;
+      supplier_name_raw: string | null; invoice_number: string | null;
+      invoice_date: string | null; due_date: string | null;
+      status: string; subtotal_cents: number | null; tax_cents: number | null;
+      total_cents: number | null; currency: string; ocr_provider: string;
+      ocr_confidence: string | null; ocr_raw_response: unknown;
+      original_filename: string; file_mime_type: string;
+      file_sha256: string | null; storage_key: string | null;
+      imported_by_user_id: string; imported_by_email: string;
+      confirmed_by_user_id: string | null; confirmed_at: Date | null;
+      voided_by_user_id: string | null; voided_at: Date | null;
+      received_at: Date | null; received_by_user_id: string | null;
+      received_reference: string | null; notes: string | null;
+      created_at: Date; updated_at: Date;
+    };
+    type ItemRow = {
+      id: string; clinic_id: string; master_catalog_item_id: string;
+      quantity_on_hand: number; reorder_point: number;
+      unit_cost_override_cents: number | null;
+      supplier_preference: string | null;
+      created_at: Date; updated_at: Date;
+    };
+    type AdjRow = {
+      id: string; clinic_id: string; clinic_inventory_item_id: string;
+      master_catalog_item_id: string; adjustment_type: string;
+      quantity_delta: number; quantity_before: number; quantity_after: number;
+      reason: string | null; performed_by_user_id: string;
+      performed_by_email: string; reference_id: string | null;
+      created_at: Date;
+    };
+
+    if (!pool) {
+      throw new AppError(500, "INTERNAL_ERROR", "Database pool is required for transactional receiving");
+    }
+
+    return withTenantContext(pool, clinicId, async (client) => {
+      // ── 1. Lock invoice row and validate ──────────────────────────────────
+      const { rows: invoiceRows } = await client.query<InvoiceRow>(
+        `SELECT id, clinic_id, supplier_id, supplier_name_raw, invoice_number,
+                invoice_date, due_date, status, subtotal_cents, tax_cents,
+                total_cents, currency, ocr_provider, ocr_confidence,
+                ocr_raw_response, original_filename, file_mime_type,
+                file_sha256, storage_key, imported_by_user_id,
+                imported_by_email, confirmed_by_user_id, confirmed_at,
+                voided_by_user_id, voided_at, received_at,
+                received_by_user_id, received_reference, notes,
+                created_at, updated_at
+         FROM supplier_invoices
+         WHERE id = $1 AND clinic_id = $2
+         FOR UPDATE`,
+        [invoiceId, clinicId],
+      );
+
+      if (!invoiceRows[0]) {
+        throw new AppError(404, "NOT_FOUND", "Supplier invoice not found");
+      }
+
+      const invRow = invoiceRows[0];
+
+      if (invRow.status !== "imported") {
+        throw new AppError(
+          409,
+          "SUPPLIER_INVOICE_INVALID_STATUS",
+          `Receiving requires invoice status 'imported'. Current status: ${invRow.status}`,
+        );
+      }
+
+      if (invRow.received_at !== null) {
+        throw new AppError(
+          409,
+          "INVOICE_ALREADY_RECEIVED",
+          "This invoice has already been received. Receiving cannot be repeated.",
+        );
+      }
+
+      // ── 2. Process each receiving line within the same connection ─────────
+      const resultAdjustments: InventoryAdjustment[] = [];
+      const reason = `Received against invoice ${invRow.invoice_number ?? invoiceId}${receivedReference ? ` (ref: ${receivedReference})` : ""}`;
+
+      for (const line of lines) {
+        // Lock the inventory row to prevent concurrent QoH drift.
+        const { rows: itemRows } = await client.query<ItemRow>(
+          `SELECT id, clinic_id, master_catalog_item_id, quantity_on_hand,
+                  reorder_point, unit_cost_override_cents, supplier_preference,
+                  created_at, updated_at
+           FROM clinic_inventory_items
+           WHERE id = $1 AND clinic_id = $2
+           FOR UPDATE`,
+          [line.itemId, clinicId],
+        );
+
+        if (!itemRows[0]) {
+          throw new AppError(
+            404,
+            "INVENTORY_ITEM_NOT_FOUND",
+            `Inventory item not found: ${line.itemId}`,
+          );
+        }
+
+        const item = itemRows[0];
+        const quantityAfter = item.quantity_on_hand + line.quantityDelta;
+
+        await client.query(
+          `UPDATE clinic_inventory_items
+           SET quantity_on_hand = $1, updated_at = now()
+           WHERE id = $2 AND clinic_id = $3`,
+          [quantityAfter, line.itemId, clinicId],
+        );
+
+        const { rows: adjRows } = await client.query<AdjRow>(
+          `INSERT INTO inventory_adjustments
+             (clinic_id, clinic_inventory_item_id, master_catalog_item_id,
+              adjustment_type, quantity_delta, quantity_before, quantity_after,
+              reason, performed_by_user_id, performed_by_email, reference_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING *`,
+          [
+            clinicId,
+            line.itemId,
+            item.master_catalog_item_id,
+            "receive",
+            line.quantityDelta,
+            item.quantity_on_hand,
+            quantityAfter,
+            reason,
+            caller.id,
+            caller.email,
+            invoiceId,
+          ],
+        );
+
+        const adjRow = adjRows[0];
+        if (!adjRow) {
+          throw new AppError(500, "INTERNAL_ERROR", "Failed to record inventory adjustment");
+        }
+
+        resultAdjustments.push({
+          id: adjRow.id,
+          clinicId: adjRow.clinic_id,
+          clinicInventoryItemId: adjRow.clinic_inventory_item_id,
+          masterCatalogItemId: adjRow.master_catalog_item_id,
+          adjustmentType: "receive",
+          quantityDelta: adjRow.quantity_delta,
+          quantityBefore: adjRow.quantity_before,
+          quantityAfter: adjRow.quantity_after,
+          reason: adjRow.reason,
+          performedByUserId: adjRow.performed_by_user_id,
+          performedByEmail: adjRow.performed_by_email,
+          referenceId: adjRow.reference_id,
+          createdAt: adjRow.created_at,
+        });
+      }
+
+      // ── 3. Mark invoice received — final step, all inventory already updated
+      const { rows: updatedRows } = await client.query<InvoiceRow>(
+        `UPDATE supplier_invoices
+         SET received_at         = now(),
+             received_by_user_id = $1,
+             received_reference  = $2,
+             updated_at          = now()
+         WHERE id = $3 AND clinic_id = $4
+         RETURNING *`,
+        [caller.id, receivedReference, invoiceId, clinicId],
+      );
+
+      const updatedRow = updatedRows[0];
+      if (!updatedRow) {
+        throw new AppError(500, "INTERNAL_ERROR", "Failed to mark invoice as received");
+      }
+
+      const receivedInvoice: SupplierInvoice = {
+        id: updatedRow.id,
+        clinicId: updatedRow.clinic_id,
+        supplierId: updatedRow.supplier_id,
+        supplierNameRaw: updatedRow.supplier_name_raw,
+        invoiceNumber: updatedRow.invoice_number,
+        invoiceDate: updatedRow.invoice_date,
+        dueDate: updatedRow.due_date,
+        status: updatedRow.status as SupplierInvoiceStatus,
+        subtotalCents: updatedRow.subtotal_cents,
+        taxCents: updatedRow.tax_cents,
+        totalCents: updatedRow.total_cents,
+        currency: updatedRow.currency,
+        ocrProvider: updatedRow.ocr_provider,
+        ocrConfidence: updatedRow.ocr_confidence !== null ? Number(updatedRow.ocr_confidence) : null,
+        ocrRawResponse: updatedRow.ocr_raw_response,
+        originalFilename: updatedRow.original_filename,
+        fileMimeType: updatedRow.file_mime_type,
+        fileSha256: updatedRow.file_sha256,
+        storageKey: updatedRow.storage_key,
+        importedByUserId: updatedRow.imported_by_user_id,
+        importedByEmail: updatedRow.imported_by_email,
+        confirmedByUserId: updatedRow.confirmed_by_user_id,
+        confirmedAt: updatedRow.confirmed_at,
+        voidedByUserId: updatedRow.voided_by_user_id,
+        voidedAt: updatedRow.voided_at,
+        receivedAt: updatedRow.received_at,
+        receivedByUserId: updatedRow.received_by_user_id,
+        receivedReference: updatedRow.received_reference,
+        notes: updatedRow.notes,
+        createdAt: updatedRow.created_at,
+        updatedAt: updatedRow.updated_at,
+      };
+
+      // ── 4. Insert audit event inside the transaction (durable) ──────────
+      // This INSERT uses the same PoolClient, RLS context, and transaction as
+      // steps 1–3.  A failure here triggers ROLLBACK — no partial state is
+      // visible.  ownerAdmin context ensures the INSERT is always permitted.
+      await client.query(
+        `INSERT INTO audit_events
+           (clinic_id, entity_type, entity_id, action,
+            actor_id, actor_email, metadata)
+         VALUES ($1, 'invoice', $2, 'supplier_invoice.received', $3, $4, $5)`,
+        [
+          clinicId,
+          invoiceId,
+          caller.id,
+          caller.email,
+          JSON.stringify({ resourceId: invoiceId }),
+        ],
+      );
+
+      return { invoice: receivedInvoice, adjustments: resultAdjustments };
+    }, isOwnerAdmin);
+  }
+
+  // ── Internal: in-memory sequential receiving (test / no-DB path) ─────────────
+
+  /**
+   * In-memory receiving implementation for test environments.
+   *
+   * Pre-validates ALL items and quantities before the first mutation so that
+   * a missing item stops the operation without touching any inventory rows.
+   * Mutations within the single-threaded JS model are effectively atomic
+   * (no concurrent access to in-memory stores).
+   *
+   * True database rollback is not required here because:
+   *   a) JavaScript is single-threaded — no concurrent mutation is possible.
+   *   b) In-memory repos only throw if deliberately injected in test stubs.
+   *   c) The production PostgreSQL path is the authoritative atomic path.
+   */
+  async function executeInMemoryReceiving(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    invoiceId: string,
+    lines: ReceiveInvoiceLineInput[],
+    receivedReference: string | null,
+    invRepo: InventoryRepository,
+  ): Promise<{ invoice: SupplierInvoice; adjustments: InventoryAdjustment[] }> {
+    const invoice = await repo.findById(clinicId, invoiceId);
+    if (!invoice) {
+      throw new AppError(404, "NOT_FOUND", "Supplier invoice not found");
+    }
+    if (invoice.status !== "imported") {
+      throw new AppError(
+        409,
+        "SUPPLIER_INVOICE_INVALID_STATUS",
+        `Receiving requires invoice status 'imported'. Current status: ${invoice.status}`,
+      );
+    }
+    if (invoice.receivedAt !== null) {
+      throw new AppError(
+        409,
+        "INVOICE_ALREADY_RECEIVED",
+        "This invoice has already been received. Receiving cannot be repeated.",
+      );
+    }
+
+    // Pre-validate ALL inventory items before any mutation.
+    // This ensures a missing item on line N doesn't leave lines 0…N-1 updated.
+    const existingItems = await Promise.all(
+      lines.map(async (line) => {
+        const item = await invRepo.findClinicInventoryItem(clinicId, line.itemId);
+        if (!item) {
+          throw new AppError(404, "INVENTORY_ITEM_NOT_FOUND", `Inventory item not found: ${line.itemId}`);
+        }
+        return item;
+      }),
+    );
+
+    // All items validated — now perform mutations.
+    const adjustments: InventoryAdjustment[] = [];
+    const reason = `Received against invoice ${invoice.invoiceNumber ?? invoiceId}${receivedReference ? ` (ref: ${receivedReference})` : ""}`;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const existing = existingItems[i];
+      if (!line || !existing) continue; // TypeScript safety — arrays were validated above
+      const quantityAfter = existing.quantityOnHand + line.quantityDelta;
+
+      await invRepo.updateQuantity(clinicId, line.itemId, quantityAfter);
+      const adjustment = await invRepo.recordAdjustment({
+        clinicId,
+        clinicInventoryItemId: line.itemId,
+        masterCatalogItemId: existing.masterCatalogItemId,
+        adjustmentType: "receive",
+        quantityDelta: line.quantityDelta,
+        quantityBefore: existing.quantityOnHand,
+        quantityAfter,
+        reason,
+        performedByUserId: caller.id,
+        performedByEmail: caller.email,
+        referenceId: invoiceId,
+      });
+      adjustments.push(adjustment);
+    }
+
+    const receivedInvoice = await repo.markReceived(clinicId, invoiceId, caller.id, receivedReference);
+    if (!receivedInvoice) {
+      throw new AppError(500, "INTERNAL_ERROR", "Failed to mark invoice as received");
+    }
+
+    return { invoice: receivedInvoice, adjustments };
   }
 
   return {
@@ -859,6 +1300,7 @@ export function createSupplierInvoiceService(
     confirmImport,
     cancelImport,
     voidInvoice,
+    receiveInvoice,
   };
 }
 

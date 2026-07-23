@@ -51,6 +51,12 @@ export function createInventoryRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.adjustInventory(req, res)),
   );
 
+  router.post(
+    "/receive",
+    requireRoles(...INVENTORY_MANAGE_ROLES),
+    asyncHandler((req, res) => handlers.receiveInventory(req, res)),
+  );
+
   router.get(
     "/:itemId",
     requireRoles(...INVENTORY_READ_ROLES),

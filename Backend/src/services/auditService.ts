@@ -49,7 +49,8 @@ export type SupplierInvoiceAuditEvent =
   | "supplier_invoice.uploaded"
   | "supplier_invoice.confirmed"
   | "supplier_invoice.cancelled"
-  | "supplier_invoice.voided";
+  | "supplier_invoice.voided"
+  | "supplier_invoice.received";
 
 export type AuditEvent =
   | AuthAuditEvent

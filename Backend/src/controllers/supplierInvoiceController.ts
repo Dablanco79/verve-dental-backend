@@ -87,6 +87,21 @@ const confirmImportSchema = z.object({
   skippedLineIds: z.array(z.string().uuid()).optional(),
 });
 
+const receiveInvoiceSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        quantityDelta: z
+          .number()
+          .int()
+          .positive({ message: "quantityDelta must be a positive integer" }),
+      }),
+    )
+    .min(1, "At least one receiving line is required"),
+  receivedReference: z.string().max(255).nullable().optional(),
+});
+
 const listQuerySchema = z.object({
   status: z
     .enum([
@@ -319,6 +334,44 @@ export function createSupplierInvoiceHandlers(
 
       const invoice = await service.voidInvoice(caller, clinicId, invoiceId.data);
       res.status(200).json({ data: invoice });
+    },
+
+    // ── POST /:invoiceId/receive ───────────────────────────────────────────────
+
+    async receive(req: Request, res: Response): Promise<void> {
+      const caller = getCaller(req);
+      const clinicId = getClinicId(req);
+
+      const invoiceId = uuidSchema.safeParse(req.params.invoiceId);
+      if (!invoiceId.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Invalid invoiceId");
+      }
+
+      const body = receiveInvoiceSchema.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          body.error.errors[0]?.message ?? "Invalid request body",
+        );
+      }
+
+      const result = await service.receiveInvoice(
+        caller,
+        clinicId,
+        invoiceId.data,
+        body.data.lines,
+        body.data.receivedReference ?? null,
+      );
+
+      res.status(200).json({
+        data: {
+          invoice: result.invoice,
+          adjustments: result.adjustments,
+          receivedAt: result.receivedAt.toISOString(),
+          receivedBy: result.receivedBy,
+        },
+      });
     },
   };
 }

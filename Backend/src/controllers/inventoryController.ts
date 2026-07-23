@@ -17,6 +17,26 @@ const adjustSchema = z.object({
   reason: z.string().trim().min(1).max(255).optional(),
 });
 
+/**
+ * POST /inventory/receive — standalone (non-invoice-linked) stock receiving.
+ *
+ * Accepts a single item with a positive quantityDelta and an optional reason.
+ *
+ * IMPORTANT: invoiceId is intentionally NOT accepted here.
+ *   Receiving against a supplier invoice must use the dedicated transactional
+ *   endpoint: POST /supplier-invoices/:invoiceId/receive
+ *   That endpoint runs a true atomic database transaction, locks the invoice
+ *   row, prevents duplicate receiving, and updates the invoice lifecycle.
+ *
+ *   Passing an invoiceId here would bypass all of those safety checks and
+ *   silently update inventory without marking the invoice received.
+ */
+const receiveSchema = z.object({
+  itemId: z.string().uuid(),
+  quantityDelta: z.number().int().positive({ message: "quantityDelta must be a positive integer" }),
+  reason: z.string().trim().min(1).max(255).optional(),
+});
+
 const paginationQuerySchema = z.object({
   limit: z.coerce
     .number()
@@ -135,6 +155,30 @@ export function createInventoryHandlers(inventoryService: InventoryService) {
       const body = parseBody(adjustSchema, req.body);
 
       const result = await inventoryService.adjustStock({
+        clinicId,
+        itemId: body.itemId,
+        quantityDelta: body.quantityDelta,
+        reason: body.reason ?? null,
+        performedBy: {
+          id: user.id,
+          email: user.email,
+        },
+      });
+
+      res.status(200).json({
+        data: {
+          item: serializeInventoryItem(result.item),
+          adjustment: serializeAdjustment(result.adjustment),
+        },
+      });
+    },
+
+    async receiveInventory(req: Request, res: Response): Promise<void> {
+      const user = requireUser(req);
+      const clinicId = routeParam(req.params.clinicId);
+      const body = parseBody(receiveSchema, req.body);
+
+      const result = await inventoryService.receiveStock({
         clinicId,
         itemId: body.itemId,
         quantityDelta: body.quantityDelta,

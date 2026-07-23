@@ -70,6 +70,12 @@ export type SupplierInvoice = {
   confirmedAt: Date | null;
   voidedByUserId: string | null;
   voidedAt: Date | null;
+  /** Timestamp set when physical receiving is completed for this invoice. */
+  receivedAt: Date | null;
+  /** ID of the user who completed receiving. */
+  receivedByUserId: string | null;
+  /** Invoice/delivery reference recorded at receiving time (free-text). */
+  receivedReference: string | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -315,4 +321,27 @@ export type ConfirmImportResult = {
 export type ConfirmImportOptions = {
   readyToCreateLineIds?: string[];
   skippedLineIds?: string[];
+};
+
+// ── Receiving request / result types ──────────────────────────────────────────
+
+/**
+ * One line of a receiving action — links a clinic inventory item to the
+ * quantity being physically received.
+ */
+export type ReceiveInvoiceLineInput = {
+  itemId: string;
+  quantityDelta: number;
+};
+
+/**
+ * Result returned by receiveInvoice().
+ * Contains the updated invoice (with receivedAt set), one adjustment
+ * record per received line, and the actor who completed receiving.
+ */
+export type ReceiveInvoiceResult = {
+  invoice: SupplierInvoice;
+  adjustments: import("./inventory.js").InventoryAdjustment[];
+  receivedAt: Date;
+  receivedBy: string;
 };

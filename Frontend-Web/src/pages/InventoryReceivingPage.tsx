@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -10,8 +10,8 @@ import {
   STOCK_UNIT_OPTIONS,
 } from "../constants/inventoryUnits.js";
 import { loadConfig } from "../config/index.js";
-import type { BarcodeFormat, CreateProductRequest, InventoryItem } from "../types/inventory.js";
-import type { Supplier } from "../types/supplier.js";
+import type { BarcodeFormat, CreateProductRequest, InventoryItem, ReceiveInventoryRequest } from "../types/inventory.js";
+import type { Supplier, SupplierInvoice } from "../types/supplier.js";
 import {
   getInventoryBarcode,
   getInventoryReceivingUnit,
@@ -85,11 +85,17 @@ export function InventoryReceivingPage() {
   const selectedClinicId = selectedClinic?.id;
   const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
   const requestIdRef = useRef({ id: 0 });
+  const [searchParams] = useSearchParams();
+  const invoiceId = searchParams.get("invoiceId") ?? null;
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Invoice lifecycle state — only populated when invoiceId query param is present.
+  const [linkedInvoice, setLinkedInvoice] = useState<SupplierInvoice | null>(null);
+  const [invoiceLoadError, setInvoiceLoadError] = useState<string | null>(null);
 
   const [supplierId, setSupplierId] = useState("");
   const [reference, setReference] = useState("");
@@ -154,6 +160,7 @@ export function InventoryReceivingPage() {
     if (!selectedClinicId || isAllClinicsScope) {
       setInventoryItems([]);
       setSuppliers([]);
+      setLinkedInvoice(null);
       setIsLoading(false);
       return;
     }
@@ -161,16 +168,26 @@ export function InventoryReceivingPage() {
     const requestId = ++requestIdRef.current.id;
     setIsLoading(true);
     setLoadError(null);
+    setInvoiceLoadError(null);
 
     try {
-      const [inventory, supplierList] = await Promise.all([
+      const loads: [
+        Promise<InventoryItem[]>,
+        Promise<Supplier[]>,
+        Promise<{ invoice: SupplierInvoice; lines: unknown[] } | null>,
+      ] = [
         apiClient.listInventory(selectedClinicId),
         apiClient.listSuppliers({ active: true }),
-      ]);
+        invoiceId
+          ? apiClient.getSupplierInvoice(selectedClinicId, invoiceId)
+          : Promise.resolve(null),
+      ];
+      const [inventory, supplierList, invoiceData] = await Promise.all(loads);
 
       if (requestId === requestIdRef.current.id) {
         setInventoryItems(inventory);
         setSuppliers(supplierList);
+        setLinkedInvoice(invoiceData?.invoice ?? null);
       }
     } catch (err: unknown) {
       if (requestId === requestIdRef.current.id) {
@@ -181,7 +198,7 @@ export function InventoryReceivingPage() {
         setIsLoading(false);
       }
     }
-  }, [isAllClinicsScope, selectedClinicId, user]);
+  }, [isAllClinicsScope, selectedClinicId, user, invoiceId]);
 
   useEffect(() => {
     void loadReceivingData();
@@ -206,6 +223,37 @@ export function InventoryReceivingPage() {
             Receiving is clinic-specific. Choose a real clinic from Clinic scope before
             adding delivered stock to inventory.
           </p>
+        </section>
+      </AppShell>
+    );
+  }
+
+  // Already-received guard: show a clear message and disable the entire flow.
+  if (invoiceId && linkedInvoice?.receivedAt && !isLoading) {
+    return (
+      <AppShell>
+        <section className="status-card receiving-page receiving-page--success" role="status">
+          <div className="invoice-review__confirmed-icon" aria-hidden="true">✓</div>
+          <h2>This invoice has already been received.</h2>
+          <p className="inventory-page__subtitle">
+            Stock was received on{" "}
+            {new Date(linkedInvoice.receivedAt).toLocaleDateString("en-AU", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })}.
+          </p>
+          <div className="inventory-page__actions">
+            <Link
+              to={`/suppliers/invoices/${invoiceId}`}
+              className="button-link"
+            >
+              Back to Invoice
+            </Link>
+            <Link to="/inventory" className="link-button">
+              Back to Inventory
+            </Link>
+          </div>
         </section>
       </AppShell>
     );
@@ -364,7 +412,11 @@ export function InventoryReceivingPage() {
   async function handleFinishReceiving(): Promise<void> {
     setFinishError(null);
 
-    if (!selectedSupplier || !selectedClinicId) {
+    if (!selectedClinicId) {
+      setFinishError("Please select a specific clinic before receiving stock.");
+      return;
+    }
+    if (!selectedSupplier) {
       setFinishError("Supplier is required.");
       return;
     }
@@ -391,18 +443,48 @@ export function InventoryReceivingPage() {
         notes,
       });
 
-      for (const line of lineItems) {
-        const receivingQuantity = Number(line.quantity);
-        await apiClient.adjustInventory(selectedClinicId, {
+      if (invoiceId) {
+        // Invoice-linked receiving — single atomic request that marks the
+        // invoice as received and creates all adjustments together.
+        const lines = lineItems.map((line) => ({
           itemId: line.item.id,
-          quantityDelta: calculateStockIncrease(line.item, receivingQuantity),
-          reason,
+          quantityDelta: calculateStockIncrease(line.item, Number(line.quantity)),
+        }));
+        await apiClient.receiveSupplierInvoice(selectedClinicId, invoiceId, {
+          lines,
+          receivedReference: reference.trim() || null,
         });
+        // Reload invoice to surface the updated received state.
+        const refreshed = await apiClient.getSupplierInvoice(selectedClinicId, invoiceId);
+        setLinkedInvoice(refreshed.invoice);
+      } else {
+        // Standalone receiving — per-item calls to the generic /inventory/receive endpoint.
+        for (const line of lineItems) {
+          const receivingQuantity = Number(line.quantity);
+          const body: ReceiveInventoryRequest = {
+            itemId: line.item.id,
+            quantityDelta: calculateStockIncrease(line.item, receivingQuantity),
+            reason,
+          };
+          await apiClient.receiveInventory(selectedClinicId, body);
+        }
       }
 
       setIsComplete(true);
     } catch (err: unknown) {
-      setFinishError(err instanceof Error ? err.message : "Stock update failed. Please try again.");
+      const msg = err instanceof Error ? err.message : "Stock update failed. Please try again.";
+      // Surface duplicate-receiving conflict clearly.
+      if (msg.includes("already been received")) {
+        setFinishError("This invoice has already been received. Receiving cannot be repeated.");
+        // Reload to show current state.
+        if (invoiceId && selectedClinicId) {
+          apiClient.getSupplierInvoice(selectedClinicId, invoiceId).then((data) => {
+            setLinkedInvoice(data.invoice);
+          }).catch(() => undefined);
+        }
+      } else {
+        setFinishError(msg);
+      }
     } finally {
       setIsFinishing(false);
     }
@@ -421,6 +503,7 @@ export function InventoryReceivingPage() {
     setFormError(null);
     setFinishError(null);
     setIsComplete(false);
+    setLinkedInvoice(null);
     void loadReceivingData();
   }
 
@@ -465,6 +548,19 @@ export function InventoryReceivingPage() {
           <p className="status-card__error" role="alert">
             {loadError}
           </p>
+        ) : null}
+        {invoiceLoadError ? (
+          <p className="status-card__error" role="alert">
+            {invoiceLoadError}
+          </p>
+        ) : null}
+
+        {linkedInvoice && !isLoading ? (
+          <div className="inventory-receiving-callout" role="status">
+            <strong>Receiving against invoice:</strong>{" "}
+            {linkedInvoice.invoiceNumber ?? "—"}{" "}
+            {linkedInvoice.supplierNameRaw ? `(${linkedInvoice.supplierNameRaw})` : null}
+          </div>
         ) : null}
 
         {!isLoading && !loadError && activeSuppliers.length === 0 ? (

@@ -61,6 +61,21 @@ export interface SupplierInvoiceRepository {
     invoiceId: string,
   ): Promise<void>;
 
+  // ── Receiving lifecycle ────────────────────────────────────────────────────
+
+  /**
+   * Mark an invoice as physically received.
+   * Called only after all inventory updates for the receiving action complete.
+   *
+   * @param receivedReference  Optional invoice/delivery reference note.
+   */
+  markReceived(
+    clinicId: string,
+    invoiceId: string,
+    receivedByUserId: string,
+    receivedReference: string | null,
+  ): Promise<SupplierInvoice | null>;
+
   // ── Duplicate detection ────────────────────────────────────────────────────
 
   findDuplicateFile(
@@ -162,6 +177,9 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         confirmedAt: null,
         voidedByUserId: null,
         voidedAt: null,
+        receivedAt: null,
+        receivedByUserId: null,
+        receivedReference: null,
         notes: null,
         createdAt: now,
         updatedAt: now,
@@ -483,6 +501,32 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         }
       }
       return Promise.resolve();
+    },
+
+    // ── Receiving lifecycle ──────────────────────────────────────────────────
+
+    markReceived(
+      clinicId: string,
+      invoiceId: string,
+      receivedByUserId: string,
+      receivedReference: string | null,
+    ): Promise<SupplierInvoice | null> {
+      const idx = invoices.findIndex(
+        (inv) => inv.id === invoiceId && inv.clinicId === clinicId,
+      );
+      if (idx === -1) return Promise.resolve(null);
+      const existing = invoices[idx];
+      if (!existing) return Promise.resolve(null);
+      const now = new Date();
+      const updated: SupplierInvoice = {
+        ...existing,
+        receivedAt: now,
+        receivedByUserId,
+        receivedReference,
+        updatedAt: now,
+      };
+      invoices[idx] = updated;
+      return Promise.resolve({ ...updated });
     },
 
     // ── Supplier catalogue pricing ────────────────────────────────────────────

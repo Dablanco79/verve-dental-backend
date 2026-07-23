@@ -2581,6 +2581,54 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
      * are reference/documentation artifacts.  This inline entry is the
      * authoritative source executed by the production migration runner.
      */
+    /**
+     * Supplier invoice receiving lifecycle — Sprint Workflow 1.0 safety gate.
+     *
+     * Adds three columns to supplier_invoices that record when and by whom an
+     * invoice was physically received (i.e. stock was accepted into inventory):
+     *
+     *   received_at           — timestamp of the first successful receiving action
+     *   received_by_user_id   — FK to the user who confirmed receiving
+     *   received_reference    — optional invoice/delivery reference recorded at
+     *                           receiving time (free-text, max 255 chars)
+     *
+     * A partial index on (clinic_id, received_at) WHERE received_at IS NOT NULL
+     * supports efficient "find received invoices for clinic" queries.
+     *
+     * Design rationale (Option B vs Option A — status transition):
+     *   The status column models the COMMERCIAL lifecycle (upload → review →
+     *   imported).  Receiving is a PHYSICAL delivery event.  Mixing them in the
+     *   same enum conflates two distinct concerns and would break existing status-
+     *   guard logic in the service.  Adding explicit timestamp+user columns
+     *   follows the exact same pattern already used for confirmed_at /
+     *   confirmed_by_user_id and voided_at / voided_by_user_id, keeping the
+     *   schema consistent and leaving a clean migration path for future partial
+     *   or split deliveries (which would add a receiving_sessions table without
+     *   touching the status enum).
+     *
+     * Rollback SQL (for reference — not executed automatically):
+     *   DROP INDEX IF EXISTS idx_supplier_invoices_received;
+     *   ALTER TABLE supplier_invoices
+     *     DROP COLUMN IF EXISTS received_at,
+     *     DROP COLUMN IF EXISTS received_by_user_id,
+     *     DROP COLUMN IF EXISTS received_reference;
+     */
+    id: "039_supplier_invoice_receiving_lifecycle",
+    sql: `
+      ALTER TABLE supplier_invoices
+        ADD COLUMN IF NOT EXISTS received_at
+          TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS received_by_user_id
+          UUID REFERENCES users(id),
+        ADD COLUMN IF NOT EXISTS received_reference
+          VARCHAR(255);
+
+      CREATE INDEX IF NOT EXISTS idx_supplier_invoices_received
+        ON supplier_invoices (clinic_id, received_at)
+        WHERE received_at IS NOT NULL;
+    `,
+  },
+  {
     id: "038_stocktake_line_snapshot",
     sql: `
       ALTER TABLE stocktake_lines

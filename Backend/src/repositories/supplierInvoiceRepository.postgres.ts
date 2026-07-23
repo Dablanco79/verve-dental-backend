@@ -54,6 +54,9 @@ type InvoiceRow = {
   confirmed_at: Date | null;
   voided_by_user_id: string | null;
   voided_at: Date | null;
+  received_at: Date | null;
+  received_by_user_id: string | null;
+  received_reference: string | null;
   notes: string | null;
   created_at: Date;
   updated_at: Date;
@@ -126,6 +129,9 @@ function mapInvoice(row: InvoiceRow): SupplierInvoice {
     confirmedAt: row.confirmed_at,
     voidedByUserId: row.voided_by_user_id,
     voidedAt: row.voided_at,
+    receivedAt: row.received_at,
+    receivedByUserId: row.received_by_user_id,
+    receivedReference: row.received_reference,
     notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -582,6 +588,28 @@ export function createPostgresSupplierInvoiceRepository(
         "DELETE FROM supplier_invoice_lines WHERE supplier_invoice_id = $1 AND clinic_id = $2",
         [invoiceId, clinicId],
       );
+    },
+
+    // ── Receiving lifecycle ────────────────────────────────────────────────
+
+    async markReceived(
+      clinicId: string,
+      invoiceId: string,
+      receivedByUserId: string,
+      receivedReference: string | null,
+    ): Promise<SupplierInvoice | null> {
+      const now = new Date();
+      const { rows } = await pool.query<InvoiceRow>(
+        `UPDATE supplier_invoices
+         SET received_at           = $1,
+             received_by_user_id   = $2,
+             received_reference    = $3,
+             updated_at            = $1
+         WHERE id = $4 AND clinic_id = $5
+         RETURNING *`,
+        [now, receivedByUserId, receivedReference, invoiceId, clinicId],
+      );
+      return rows[0] ? mapInvoice(rows[0]) : null;
     },
 
     // ── Supplier catalogue pricing upsert ──────────────────────────────────

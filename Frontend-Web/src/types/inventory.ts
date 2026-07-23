@@ -157,6 +157,17 @@ export type AdjustInventoryRequest = {
   reason?: string;
 };
 
+// ── Receive stock request ─────────────────────────────────────────────────────
+
+export type ReceiveInventoryRequest = {
+  itemId: string;
+  /** Must be positive — receiving always adds stock. */
+  quantityDelta: number;
+  reason?: string;
+  /** Optional reference to the confirmed supplier invoice this delivery fulfils. */
+  invoiceId?: string;
+};
+
 export type AdjustInventoryResponse = {
   item: InventoryItem;
   adjustment: InventoryAdjustment;

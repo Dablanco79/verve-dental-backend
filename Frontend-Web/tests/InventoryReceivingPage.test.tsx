@@ -17,7 +17,9 @@ const {
   selectedClinicState,
   mockListInventory,
   mockListSuppliers,
-  mockAdjustInventory,
+  mockReceiveInventory,
+  mockReceiveSupplierInvoice,
+  mockGetSupplierInvoice,
   mockCreateProduct,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -41,7 +43,9 @@ const {
     selectedClinicState,
     mockListInventory: vi.fn(),
     mockListSuppliers: vi.fn(),
-    mockAdjustInventory: vi.fn(),
+    mockReceiveInventory: vi.fn(),
+    mockReceiveSupplierInvoice: vi.fn(),
+    mockGetSupplierInvoice: vi.fn(),
     mockCreateProduct: vi.fn(),
   };
 });
@@ -60,7 +64,9 @@ vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listInventory: mockListInventory,
     listSuppliers: mockListSuppliers,
-    adjustInventory: mockAdjustInventory,
+    receiveInventory: mockReceiveInventory,
+    receiveSupplierInvoice: mockReceiveSupplierInvoice,
+    getSupplierInvoice: mockGetSupplierInvoice,
     createProduct: mockCreateProduct,
   }),
 }));
@@ -175,18 +181,18 @@ describe("InventoryReceivingPage", () => {
     };
     mockListInventory.mockReset();
     mockListSuppliers.mockReset();
-    mockAdjustInventory.mockReset();
+    mockReceiveInventory.mockReset();
     mockCreateProduct.mockReset();
     mockListInventory.mockResolvedValue([burItem, gloveItem]);
     mockListSuppliers.mockResolvedValue([supplier]);
-    mockAdjustInventory.mockResolvedValue({
+    mockReceiveInventory.mockResolvedValue({
       item: { ...burItem, quantityOnHand: 15 },
       adjustment: {
         id: "adj-1",
         clinicId: TEST_CLINIC_ID,
         clinicInventoryItemId: burItem.id,
         masterCatalogItemId: burItem.masterCatalogItemId,
-        adjustmentType: "manual",
+        adjustmentType: "receive",
         quantityDelta: 3,
         quantityBefore: 12,
         quantityAfter: 15,
@@ -352,9 +358,9 @@ describe("InventoryReceivingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Finish receiving" }));
 
     await waitFor(() => {
-      expect(mockAdjustInventory).toHaveBeenCalledTimes(1);
+      expect(mockReceiveInventory).toHaveBeenCalledTimes(1);
     });
-    const adjustCalls = mockAdjustInventory.mock.calls as unknown as Array<
+    const adjustCalls = mockReceiveInventory.mock.calls as unknown as Array<
       [string, { itemId: string; quantityDelta: number; reason?: string }]
     >;
     const firstAdjustCall = adjustCalls[0];
@@ -375,5 +381,158 @@ describe("InventoryReceivingPage", () => {
       "href",
       "/inventory",
     );
+  });
+});
+
+// ── Invoice-linked receiving ───────────────────────────────────────────────────
+
+const INVOICE_ID = "inv-aaaa-1111-4000-8000-000000000001";
+
+const sampleInvoice = {
+  id: INVOICE_ID,
+  clinicId: TEST_CLINIC_ID,
+  supplierId: "supplier-1",
+  supplierNameRaw: "DentalCo AU",
+  invoiceNumber: "INV-TEST-001",
+  invoiceDate: "2026-07-01",
+  dueDate: null,
+  status: "imported",
+  subtotalCents: 10000,
+  taxCents: 1000,
+  totalCents: 11000,
+  currency: "AUD",
+  ocrProvider: "stub",
+  ocrConfidence: 95,
+  originalFilename: "invoice.pdf",
+  fileMimeType: "application/pdf",
+  importedByUserId: "user-1",
+  importedByEmail: "admin@clinic.com",
+  confirmedByUserId: "user-1",
+  confirmedAt: "2026-07-02T00:00:00.000Z",
+  voidedByUserId: null,
+  voidedAt: null,
+  receivedAt: null,
+  receivedByUserId: null,
+  receivedReference: null,
+  notes: null,
+  createdAt: "2026-07-01T00:00:00.000Z",
+  updatedAt: "2026-07-02T00:00:00.000Z",
+};
+
+describe("InventoryReceivingPage — invoice-linked receiving", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAuthenticatedUser(authTestState, createManagerUser());
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+    };
+    mockListInventory.mockResolvedValue([burItem, gloveItem]);
+    mockListSuppliers.mockResolvedValue([supplier]);
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: sampleInvoice, lines: [] });
+  });
+
+  it("8. Correct invoiceId is submitted when receiving against an invoice", async () => {
+    mockReceiveSupplierInvoice.mockResolvedValue({
+      invoice: { ...sampleInvoice, receivedAt: "2026-07-21T10:00:00.000Z" },
+      adjustments: [],
+      receivedAt: "2026-07-21T10:00:00.000Z",
+      receivedBy: "admin@clinic.com",
+    });
+
+    render(
+      <MemoryRouter initialEntries={[`/inventory/receive?invoiceId=${INVOICE_ID}`]}>
+        <InventoryReceivingPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText("Supplier *");
+    fireEvent.change(screen.getByLabelText("Supplier *"), { target: { value: supplier.id } });
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: burItem.barcodeValue ?? burItem.masterSku },
+    });
+    await screen.findByLabelText("Product found");
+    fireEvent.click(screen.getByRole("button", { name: "Add received item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish receiving" }));
+
+    await waitFor(() => {
+      expect(mockReceiveSupplierInvoice).toHaveBeenCalledTimes(1);
+    });
+    const calls = mockReceiveSupplierInvoice.mock.calls as unknown as Array<
+      [string, string, { lines: unknown[]; receivedReference: unknown }]
+    >;
+    const firstCall = calls[0];
+    expect(firstCall?.[0]).toBe(TEST_CLINIC_ID);
+    expect(firstCall?.[1]).toBe(INVOICE_ID);
+    expect(firstCall?.[2].lines).toHaveLength(1);
+    expect(await screen.findByText("Stock received successfully.")).toBeInTheDocument();
+  });
+
+  it("4. Duplicate receive conflict shows clear message", async () => {
+    // After a 409 conflict the page reloads the invoice (which now has receivedAt set)
+    // and transitions to the full-page "already received" guard — which is the clearest
+    // possible duplicate-receiving message.
+    const alreadyReceivedError = new Error(
+      "This invoice has already been received. Receiving cannot be repeated.",
+    );
+    mockReceiveSupplierInvoice.mockRejectedValue(alreadyReceivedError);
+    mockGetSupplierInvoice
+      .mockResolvedValueOnce({ invoice: sampleInvoice, lines: [] })
+      .mockResolvedValue({
+        invoice: { ...sampleInvoice, receivedAt: "2026-07-21T08:00:00.000Z" },
+        lines: [],
+      });
+
+    render(
+      <MemoryRouter initialEntries={[`/inventory/receive?invoiceId=${INVOICE_ID}`]}>
+        <InventoryReceivingPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText("Supplier *");
+    fireEvent.change(screen.getByLabelText("Supplier *"), { target: { value: supplier.id } });
+    fireEvent.change(screen.getByLabelText("Barcode"), {
+      target: { value: burItem.barcodeValue ?? burItem.masterSku },
+    });
+    await screen.findByLabelText("Product found");
+    fireEvent.click(screen.getByRole("button", { name: "Add received item" }));
+    fireEvent.click(screen.getByRole("button", { name: "Finish receiving" }));
+
+    // The page transitions to the full-page "already received" guard — this IS the clear
+    // conflict message. The "Finish receiving" button disappears (duplicate is blocked).
+    expect(
+      await screen.findByText("This invoice has already been received."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish receiving" })).not.toBeInTheDocument();
+  });
+
+  it("1. Already-received invoice shows received state and disables flow", async () => {
+    const receivedInvoice = {
+      ...sampleInvoice,
+      receivedAt: "2026-07-21T08:00:00.000Z",
+    };
+    mockGetSupplierInvoice.mockResolvedValue({ invoice: receivedInvoice, lines: [] });
+
+    render(
+      <MemoryRouter initialEntries={[`/inventory/receive?invoiceId=${INVOICE_ID}`]}>
+        <InventoryReceivingPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("This invoice has already been received.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish receiving" })).not.toBeInTheDocument();
+  });
+
+  it("6. All Clinics scope shows clinic-selection message", async () => {
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+
+    render(
+      <MemoryRouter initialEntries={[`/inventory/receive?invoiceId=${INVOICE_ID}`]}>
+        <InventoryReceivingPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Select a clinic to receive stock")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish receiving" })).not.toBeInTheDocument();
   });
 });

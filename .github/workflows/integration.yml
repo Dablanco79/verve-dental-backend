@@ -73,5 +73,14 @@ jobs:
             sleep 2
           done
 
+      # ── P0 explicit gate ──────────────────────────────────────────────────────
+      # Run the six supplier-invoice receiving integration tests as a dedicated
+      # named step.  If any of A–F fail, or if DATABASE_URL were somehow absent,
+      # CI fails here with a clear label — it cannot silently skip.
+      # The DATABASE_URL job-level env guarantees the pre-check in the script
+      # always passes, so skipping is structurally impossible in this workflow.
+      - name: "P0 — Receiving integration tests (A–F: atomic, rollback, lifecycle, concurrent, RLS, audit)"
+        run: npm run test:receiving-integration --workspace=@verve/backend
+
       - name: Run full test suite with real infrastructure
         run: npm run test --workspace=@verve/backend -- --forceExit

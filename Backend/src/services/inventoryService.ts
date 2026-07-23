@@ -138,6 +138,86 @@ export function createInventoryService(
     ): Promise<AdjustmentsPage> {
       return inventoryRepository.listAdjustmentsPage(clinicId, options);
     },
+
+    /**
+     * Records physical stock received from a supplier delivery (standalone).
+     * Uses adjustment type 'receive' (distinct from 'manual_adjust') so that
+     * receiving events are separately identifiable in the adjustment history.
+     *
+     * NOTE: This method is for standalone receiving ONLY (no supplier invoice).
+     * Receiving against a confirmed supplier invoice must use the dedicated
+     * POST /supplier-invoices/:invoiceId/receive endpoint, which runs a true
+     * atomic database transaction, locks the invoice row, prevents duplicate
+     * receiving, and updates the invoice lifecycle.
+     *
+     * Unlike adjustStock, quantityDelta must be strictly positive.
+     */
+    async receiveStock(params: {
+      clinicId: string;
+      itemId: string;
+      quantityDelta: number;
+      reason: string | null;
+      performedBy: InventoryActor;
+    }): Promise<{ item: ClinicInventoryItemView; adjustment: InventoryAdjustment }> {
+      const { clinicId, itemId, quantityDelta, reason, performedBy } = params;
+
+      if (!Number.isInteger(quantityDelta) || quantityDelta <= 0) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "quantityDelta must be a positive integer for a receiving operation",
+        );
+      }
+
+      const existing = await inventoryRepository.findClinicInventoryItem(clinicId, itemId);
+      if (!existing) {
+        throw new AppError(404, "INVENTORY_ITEM_NOT_FOUND", "Inventory item not found");
+      }
+
+      const quantityAfter = existing.quantityOnHand + quantityDelta;
+
+      await inventoryRepository.updateQuantity(clinicId, itemId, quantityAfter);
+
+      const adjustment = await inventoryRepository.recordAdjustment({
+        clinicId,
+        clinicInventoryItemId: itemId,
+        masterCatalogItemId: existing.masterCatalogItemId,
+        adjustmentType: "receive",
+        quantityDelta,
+        quantityBefore: existing.quantityOnHand,
+        quantityAfter,
+        reason,
+        performedByUserId: performedBy.id,
+        performedByEmail: performedBy.email,
+        referenceId: null,
+      });
+
+      const item = await inventoryRepository.findClinicInventoryItem(clinicId, itemId);
+      if (!item) {
+        throw new AppError(500, "INTERNAL_ERROR", "Failed to load updated inventory item");
+      }
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "inventory_adjustment",
+        entityId: adjustment.id,
+        action: "stock_received",
+        actorId: performedBy.id,
+        actorEmail: performedBy.email,
+        metadata: {
+          itemId,
+          sku: item.masterSku,
+          quantityDelta,
+          quantityBefore: adjustment.quantityBefore,
+          quantityAfter: adjustment.quantityAfter,
+          reason,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return { item, adjustment };
+    },
   };
 }
 

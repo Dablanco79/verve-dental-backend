@@ -23,6 +23,7 @@ import type {
   InventoryItem,
   MasterProductImportResult,
   PurchaseOrderLine,
+  ReceiveInventoryRequest,
   ScanRequest,
   ScanResponse,
 } from "../types/inventory.js";
@@ -96,6 +97,8 @@ import type {
   UpdateSupplierInvoiceRequest,
   UpdateSupplierRequest,
   UploadAndExtractResult,
+  ReceiveInvoiceRequest,
+  ReceiveInvoiceResult,
 } from "../types/supplier.js";
 import type {
   CreateSupplierRelationshipRequest,
@@ -334,6 +337,18 @@ export function createApiClient(config: AppConfig) {
     return request<AdjustInventoryResponse>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/inventory/adjust`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function receiveInventory(
+    clinicId: string,
+    body: ReceiveInventoryRequest,
+  ): Promise<AdjustInventoryResponse> {
+    return request<AdjustInventoryResponse>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/inventory/receive`,
       { method: "POST", body: JSON.stringify(body) },
       requireAccessToken(),
     );
@@ -1523,6 +1538,24 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * POST /:invoiceId/receive
+   * Records physical stock receipt against a confirmed invoice.
+   * Returns 409 INVOICE_ALREADY_RECEIVED if the invoice was already received.
+   */
+  async function receiveSupplierInvoice(
+    clinicId: string,
+    invoiceId: string,
+    body: ReceiveInvoiceRequest,
+  ): Promise<ReceiveInvoiceResult> {
+    return request<ReceiveInvoiceResult>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/supplier-invoices/${encodeURIComponent(invoiceId)}/receive`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   // ── Supplier Intelligence ──────────────────────────────────────────────────
 
   async function getSupplierIntelligence(
@@ -2050,6 +2083,7 @@ export function createApiClient(config: AppConfig) {
     listInventory,
     getInventoryItem,
     adjustInventory,
+    receiveInventory,
     listAdjustments,
     handleScan,
     createProduct,
@@ -2122,6 +2156,7 @@ export function createApiClient(config: AppConfig) {
     confirmSupplierInvoice,
     cancelSupplierInvoiceImport,
     voidSupplierInvoice,
+    receiveSupplierInvoice,
     getSupplierIntelligence,
     listOrganisations,
     getOrganisation,

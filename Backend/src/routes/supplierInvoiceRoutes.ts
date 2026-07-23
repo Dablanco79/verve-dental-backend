@@ -115,5 +115,14 @@ export function createSupplierInvoiceRouter(
     asyncHandler((req, res) => handlers.void(req, res)),
   );
 
+  // ── POST /:invoiceId/receive ───────────────────────────────────────────────
+  // Receive physical stock against a confirmed (imported) invoice.
+  // Blocks if the invoice has already been received (409 INVOICE_ALREADY_RECEIVED).
+  router.post(
+    "/:invoiceId/receive",
+    requireWriteAccess,
+    asyncHandler((req, res) => handlers.receive(req, res)),
+  );
+
   return router;
 }

@@ -672,7 +672,7 @@ type LocationState = {
 export function SupplierInvoiceReviewPage() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const { user } = useAuth();
-  const { clinicId } = useOperationalClinic();
+  const { clinicId, isAllClinicsScope } = useOperationalClinic();
   const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as LocationState | null;
@@ -757,6 +757,25 @@ export function SupplierInvoiceReviewPage() {
   }, [loadInvoice]);
 
   if (!user) return null;
+
+  // Operational actions are clinic-specific. Block when "All Clinics" is selected
+  // to prevent any operation silently targeting a fallback home clinic.
+  if (isAllClinicsScope) {
+    return (
+      <AppShell>
+        <section className="status-card invoice-review__callout" role="status">
+          <h2>Select a clinic to review this invoice</h2>
+          <p>
+            Invoice review and confirmation are clinic-specific operations. Choose a specific
+            clinic from the clinic selector before proceeding.
+          </p>
+          <Link to="/suppliers" className="button-link">
+            Back to Suppliers
+          </Link>
+        </section>
+      </AppShell>
+    );
+  }
 
   const readOnly = invoice?.status !== "pending_review";
   const backPath = locationState?.backPath ?? "/suppliers";
@@ -1138,14 +1157,33 @@ export function SupplierInvoiceReviewPage() {
                   <p className="invoice-review__confirmed-hint">
                     This invoice was confirmed on {formatDate(invoice.confirmedAt)}.
                   </p>
+                  {invoice.receivedAt ? (
+                    <p className="invoice-review__confirmed-hint invoice-review__received-hint">
+                      Stock received on {formatDate(invoice.receivedAt)} by {invoice.importedByEmail}.
+                    </p>
+                  ) : null}
                 </div>
-                <button
-                  type="button"
-                  className="button-link"
-                  onClick={() => { void navigate(backPath); }}
-                >
-                  Return to Suppliers
-                </button>
+                <div className="invoice-review__confirmed-actions">
+                  {invoice.receivedAt ? (
+                    <span className="supplier-invoice-badge supplier-invoice-badge--imported">
+                      Stock Received
+                    </span>
+                  ) : (
+                    <Link
+                      to={`/inventory/receive?invoiceId=${invoice.id}`}
+                      className="button-link"
+                    >
+                      Proceed to Receiving
+                    </Link>
+                  )}
+                  <button
+                    type="button"
+                    className="button-link"
+                    onClick={() => { void navigate(backPath); }}
+                  >
+                    Return to Suppliers
+                  </button>
+                </div>
               </section>
             ) : invoice.status === "voided" ? (
               <section className="status-card supplier-detail__section invoice-review__voided-banner">
