@@ -6,13 +6,20 @@ import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
-import type { PurchaseOrderLine } from "../types/inventory.js";
+import type {
+  PurchaseOrder,
+  PurchaseOrderLine,
+} from "../types/inventory.js";
+import type { Supplier } from "../types/supplier.js";
 import { canManageUsers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 const REASON_LABELS: Record<string, string> = {
   below_reorder_point: "Below reorder point",
+  manual: "Manual",
 };
 
 function formatReason(reason: string): string {
@@ -36,6 +43,35 @@ function formatCurrencyOrDash(cents: number | null | undefined): string {
     currency: "AUD",
   }).format(cents / 100);
 }
+
+function generatePoReference(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const rand = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+  return `PO-${String(year)}${month}${day}-${rand}`;
+}
+
+type PoStatus = PurchaseOrder["status"];
+
+const STATUS_LABELS: Record<PoStatus, string> = {
+  draft: "Draft",
+  submitted: "Submitted",
+  partially_received: "Partially received",
+  received: "Received",
+  cancelled: "Cancelled",
+};
+
+const STATUS_BADGE_CLASS: Record<PoStatus, string> = {
+  draft: "po-badge po-badge--draft",
+  submitted: "po-badge po-badge--submitted",
+  partially_received: "po-badge po-badge--partial",
+  received: "po-badge po-badge--received",
+  cancelled: "po-badge po-badge--cancelled",
+};
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SupplierSummary({ line }: { line: PurchaseOrderLine }) {
   const pricing = line.supplierPricing ?? [];
@@ -74,6 +110,154 @@ function SupplierSummary({ line }: { line: PurchaseOrderLine }) {
   );
 }
 
+// ─── Create PO Form ───────────────────────────────────────────────────────────
+
+type CreatePoFormProps = {
+  suppliers: Supplier[];
+  clinicId: string;
+  onCreated: (po: PurchaseOrder) => void;
+  onCancel: () => void;
+};
+
+function CreatePoForm({ suppliers, clinicId, onCreated, onCancel }: CreatePoFormProps) {
+  const [supplierId, setSupplierId] = useState("");
+  const [notes, setNotes] = useState("");
+  const [poReference, setPoReference] = useState(generatePoReference);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate() {
+    setError(null);
+    setIsSaving(true);
+    try {
+      const po = await apiClient.createPurchaseOrder(clinicId, {
+        supplierId: supplierId || null,
+        notes: notes.trim() || null,
+        poReference: poReference.trim() || null,
+      });
+      onCreated(po);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create purchase order");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  const activeSuppliers = suppliers.filter((s) => s.active).sort((a, b) =>
+    a.supplierName.localeCompare(b.supplierName),
+  );
+
+  return (
+    <div className="po-create-form">
+      <h3>New Purchase Order</h3>
+      <div className="product-form__grid">
+        <label className="product-form__field">
+          Supplier
+          <select
+            value={supplierId}
+            onChange={(e) => { setSupplierId(e.target.value); }}
+          >
+            <option value="">Select supplier (optional for draft)</option>
+            {activeSuppliers.map((s) => (
+              <option key={s.id} value={s.id}>{s.supplierName}</option>
+            ))}
+          </select>
+        </label>
+        <label className="product-form__field">
+          PO Reference
+          <input
+            value={poReference}
+            onChange={(e) => { setPoReference(e.target.value); }}
+            placeholder="e.g. PO-20260724-0001"
+          />
+        </label>
+        <label className="product-form__field product-form__full">
+          Notes
+          <textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => { setNotes(e.target.value); }}
+            placeholder="Optional notes about this order"
+          />
+        </label>
+      </div>
+      {error ? (
+        <p className="status-card__error" role="alert">{error}</p>
+      ) : null}
+      <div className="inventory-page__actions">
+        <button
+          type="button"
+          className="button-link"
+          onClick={() => { void handleCreate(); }}
+          disabled={isSaving}
+        >
+          {isSaving ? "Creating…" : "Create draft PO"}
+        </button>
+        <button type="button" className="link-button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Confirm Cancel Dialog ────────────────────────────────────────────────────
+
+type ConfirmCancelDialogProps = {
+  poId: string;
+  poReference: string | null;
+  clinicId: string;
+  onCancelled: () => void;
+  onDismiss: () => void;
+};
+
+function ConfirmCancelDialog({ poId, poReference, clinicId, onCancelled, onDismiss }: ConfirmCancelDialogProps) {
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConfirm() {
+    setError(null);
+    setIsCancelling(true);
+    try {
+      await apiClient.cancelPurchaseOrder(clinicId, poId);
+      onCancelled();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to cancel purchase order");
+      setIsCancelling(false);
+    }
+  }
+
+  return (
+    <div className="po-confirm-dialog" role="dialog" aria-modal="true" aria-label="Cancel purchase order">
+      <h3>Cancel purchase order?</h3>
+      <p>
+        {poReference
+          ? `Purchase order ${poReference} will be cancelled and preserved for historical visibility.`
+          : "This purchase order will be cancelled and preserved for historical visibility."}
+        {" "}This action cannot be undone.
+      </p>
+      {error ? (
+        <p className="status-card__error" role="alert">{error}</p>
+      ) : null}
+      <div className="inventory-page__actions">
+        <button
+          type="button"
+          className="button-link button-link--danger"
+          onClick={() => { void handleConfirm(); }}
+          disabled={isCancelling}
+        >
+          {isCancelling ? "Cancelling…" : "Yes, cancel this PO"}
+        </button>
+        <button type="button" className="link-button" onClick={onDismiss} disabled={isCancelling}>
+          Go back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export function PurchaseOrdersPage() {
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
@@ -81,19 +265,27 @@ export function PurchaseOrdersPage() {
   const selectedClinicId = selectedClinic?.id;
   const focusedItemId = searchParams.get("item");
   const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
+
   const [lines, setLines] = useState<PurchaseOrderLine[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [recentlySubmittedPoId, setRecentlySubmittedPoId] = useState<string | null>(null);
+
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const loadLines = useCallback(async () => {
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [cancelConfirmPoId, setCancelConfirmPoId] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
     if (!user || !canManageUsers(user.role)) return;
     if (!selectedClinicId || isAllClinicsScope) {
       setLines([]);
+      setSuppliers([]);
       setIsLoading(false);
       setLoadError(null);
       return;
@@ -101,8 +293,12 @@ export function PurchaseOrdersPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const result = await apiClient.listPurchaseOrders(selectedClinicId);
-      setLines(result);
+      const [linesResult, suppliersResult] = await Promise.all([
+        apiClient.listPurchaseOrders(selectedClinicId),
+        apiClient.listSuppliers({ active: true }),
+      ]);
+      setLines(linesResult);
+      setSuppliers(suppliersResult);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load purchase orders");
     } finally {
@@ -111,10 +307,10 @@ export function PurchaseOrdersPage() {
   }, [isAllClinicsScope, selectedClinicId, user]);
 
   useEffect(() => {
-    void loadLines();
-  }, [loadLines]);
+    void loadData();
+  }, [loadData]);
 
-  /** Collect unique draft PO IDs so we can render a submit button per PO group. */
+  // Collect unique draft PO IDs so we can render a submit button per PO group.
   const draftPoIds = useMemo(
     () => [
       ...new Set(
@@ -125,6 +321,7 @@ export function PurchaseOrdersPage() {
     ],
     [lines],
   );
+
   const visibleLines = useMemo(
     () =>
       focusedItemId
@@ -132,11 +329,17 @@ export function PurchaseOrdersPage() {
         : lines,
     [focusedItemId, lines],
   );
+
   const focusedLine = focusedItemId
     ? lines.find((line) => line.masterCatalogItemId === focusedItemId)
     : undefined;
+
   const submittedReceiveHref = recentlySubmittedPoId
-    ? `/inventory?mode=receive&reference=${encodeURIComponent(recentlySubmittedPoId)}`
+    ? `/inventory?mode=receive&poId=${encodeURIComponent(recentlySubmittedPoId)}`
+    : null;
+
+  const cancellingPo = cancelConfirmPoId
+    ? lines.find((l) => l.draftPurchaseOrderId === cancelConfirmPoId)
     : null;
 
   async function handleSubmit(poId: string) {
@@ -146,7 +349,7 @@ export function PurchaseOrdersPage() {
     try {
       await apiClient.submitPurchaseOrder(selectedClinicId, poId);
       setRecentlySubmittedPoId(poId);
-      await loadLines();
+      await loadData();
     } catch (err: unknown) {
       setSubmitError(
         err instanceof Error ? err.message : "Failed to submit purchase order",
@@ -193,13 +396,29 @@ export function PurchaseOrdersPage() {
 
   return (
     <AppShell>
+      {/* Cancel confirmation dialog */}
+      {cancelConfirmPoId && selectedClinicId ? (
+        <div className="po-dialog-overlay" role="presentation">
+          <ConfirmCancelDialog
+            poId={cancelConfirmPoId}
+            poReference={cancellingPo?.poReference ?? null}
+            clinicId={selectedClinicId}
+            onCancelled={() => {
+              setCancelConfirmPoId(null);
+              void loadData();
+            }}
+            onDismiss={() => { setCancelConfirmPoId(null); }}
+          />
+        </div>
+      ) : null}
+
       <section className="status-card">
         <div className="status-card__header">
           <div>
             <h2>Purchase orders</h2>
             <p className="inventory-page__subtitle">
-              {(selectedClinic?.name ?? user.homeClinicName)} — review draft lines, submit purchase orders,
-              then receive deliveries through the inventory scanner.
+              {(selectedClinic?.name ?? user.homeClinicName)} — create and submit purchase orders,
+              then receive deliveries through the receiving workflow.
             </p>
           </div>
           <div className="inventory-page__actions">
@@ -212,6 +431,14 @@ export function PurchaseOrdersPage() {
             <button
               type="button"
               className="button-link"
+              onClick={() => { setShowCreateForm(!showCreateForm); }}
+              disabled={isLoading}
+            >
+              {showCreateForm ? "Cancel new PO" : "Create PO"}
+            </button>
+            <button
+              type="button"
+              className="button-link"
               onClick={() => void handleExport()}
               disabled={isExporting || isLoading || lines.length === 0}
             >
@@ -220,7 +447,7 @@ export function PurchaseOrdersPage() {
             <button
               type="button"
               className="button-link"
-              onClick={() => void loadLines()}
+              onClick={() => void loadData()}
               disabled={isLoading}
             >
               {isLoading ? "Loading…" : "Refresh"}
@@ -239,6 +466,19 @@ export function PurchaseOrdersPage() {
             {submitError}
           </p>
         )}
+
+        {/* Create PO inline form */}
+        {showCreateForm && selectedClinicId ? (
+          <CreatePoForm
+            suppliers={suppliers}
+            clinicId={selectedClinicId}
+            onCreated={() => {
+              setShowCreateForm(false);
+              void loadData();
+            }}
+            onCancel={() => { setShowCreateForm(false); }}
+          />
+        ) : null}
 
         {submittedReceiveHref ? (
           <div className="inventory-notice inventory-notice--receive" role="status">
@@ -270,23 +510,27 @@ export function PurchaseOrdersPage() {
           <p className="status-card__error">{loadError}</p>
         ) : isLoading ? (
           <p className="loading-message">Loading purchase orders…</p>
-        ) : lines.length === 0 ? (
+        ) : lines.length === 0 && !showCreateForm ? (
           <div className="po-empty">
-            <p className="po-empty__title">No purchase order lines yet.</p>
+            <p className="po-empty__title">No purchase orders yet.</p>
             <p className="po-empty__hint">
-              Lines are created automatically when a barcode scan causes stock
-              to drop below the reorder point.
+              Create a purchase order manually using the Create PO button, or
+              lines are created automatically when stock falls below the reorder point.
             </p>
             <div className="po-empty__actions">
-              <Link to="/inventory?focus=low-stock" className="button-link">
+              <button
+                type="button"
+                className="button-link"
+                onClick={() => { setShowCreateForm(true); }}
+              >
+                Create PO manually
+              </button>
+              <Link to="/inventory?focus=low-stock" className="link-button">
                 Review low stock
-              </Link>
-              <Link to="/inventory" className="link-button">
-                Scan inventory
               </Link>
             </div>
           </div>
-        ) : visibleLines.length === 0 ? (
+        ) : visibleLines.length === 0 && !showCreateForm ? (
           <div className="po-empty">
             <p className="po-empty__title">No purchase order line matches this product yet.</p>
             <p className="po-empty__hint">
@@ -302,22 +546,16 @@ export function PurchaseOrdersPage() {
               </Link>
             </div>
           </div>
-        ) : (
+        ) : visibleLines.length > 0 ? (
           <>
             <div className="po-workflow-callout">
               <ol className="po-workflow-steps" aria-label="Purchase workflow">
-                <li>Low stock</li>
-                <li>Review supplier</li>
+                <li>Create PO</li>
+                <li>Add lines</li>
                 <li>Submit PO</li>
                 <li>Receive stock</li>
               </ol>
             </div>
-            <p className="po-summary__hint">
-              Submitted purchase orders serve as a receiving reference. Stock is received through
-              the Inventory scanner, which updates stock on hand and records an adjustment entry.
-              Purchase order status does not update automatically when items are received — use
-              adjustment history as proof of receipt.
-            </p>
             <div className="inventory-table-wrapper">
               <table className="inventory-table">
               <thead>
@@ -326,6 +564,7 @@ export function PurchaseOrdersPage() {
                   <th className="inventory-table__numeric">Qty needed</th>
                   <th>Supplier</th>
                   <th className="inventory-table__numeric">Estimate</th>
+                  <th>Reference</th>
                   <th>Trigger</th>
                   <th>Status</th>
                   <th>Created</th>
@@ -346,16 +585,13 @@ export function PurchaseOrdersPage() {
                     <td className="inventory-table__numeric">
                       {formatCurrencyOrDash(line.estimatedLineCostCents)}
                     </td>
+                    <td className="inventory-table__meta">
+                      {line.poReference ?? "—"}
+                    </td>
                     <td>{formatReason(line.reason)}</td>
                     <td>
-                      <span
-                        className={
-                          line.orderStatus === "submitted"
-                            ? "po-badge po-badge--submitted"
-                            : "po-badge po-badge--draft"
-                        }
-                      >
-                        {line.orderStatus === "submitted" ? "Submitted" : "Draft"}
+                      <span className={STATUS_BADGE_CLASS[line.orderStatus]}>
+                        {STATUS_LABELS[line.orderStatus]}
                       </span>
                     </td>
                     <td className="inventory-table__meta">
@@ -364,6 +600,13 @@ export function PurchaseOrdersPage() {
                     <td>
                       {line.orderStatus === "draft" ? (
                         <div className="po-row-actions">
+                          <Link
+                            to={`/purchase-orders/${encodeURIComponent(line.draftPurchaseOrderId)}`}
+                            className="button-link"
+                            aria-label={`Edit draft purchase order for ${line.itemName}`}
+                          >
+                            Edit / Lines
+                          </Link>
                           <Link
                             to="/suppliers"
                             className="link-button"
@@ -386,15 +629,44 @@ export function PurchaseOrdersPage() {
                               ? "Submitting…"
                               : "Submit PO"}
                           </button>
+                          <button
+                            type="button"
+                            className="link-button link-button--danger"
+                            onClick={() => { setCancelConfirmPoId(line.draftPurchaseOrderId); }}
+                            aria-label={`Cancel purchase order for ${line.itemName}`}
+                          >
+                            Cancel
+                          </button>
                         </div>
+                      ) : line.orderStatus === "submitted" || line.orderStatus === "partially_received" ? (
+                        <div className="po-row-actions">
+                          <Link
+                            to={`/purchase-orders/${encodeURIComponent(line.draftPurchaseOrderId)}`}
+                            className="link-button"
+                            aria-label={`View purchase order for ${line.itemName}`}
+                          >
+                            View
+                          </Link>
+                          <Link
+                            to={`/inventory?mode=receive&poId=${encodeURIComponent(line.draftPurchaseOrderId)}`}
+                            className="button-link"
+                            aria-label={`Receive stock for ${line.itemName}`}
+                          >
+                            Receive stock
+                          </Link>
+                          <button
+                            type="button"
+                            className="link-button link-button--danger"
+                            onClick={() => { setCancelConfirmPoId(line.draftPurchaseOrderId); }}
+                            aria-label={`Cancel purchase order for ${line.itemName}`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : line.orderStatus === "received" ? (
+                        <span className="inventory-table__meta">Fully received</span>
                       ) : (
-                        <Link
-                          to={`/inventory?mode=receive&reference=${encodeURIComponent(line.draftPurchaseOrderId)}`}
-                          className="link-button"
-                          aria-label={`Receive stock for ${line.itemName}`}
-                        >
-                          Receive stock
-                        </Link>
+                        <span className="inventory-table__meta">Cancelled</span>
                       )}
                     </td>
                   </tr>
@@ -403,7 +675,7 @@ export function PurchaseOrdersPage() {
               </table>
             </div>
           </>
-        )}
+        ) : null}
 
         {draftPoIds.length > 0 && (
           <div className="po-batch-actions">
@@ -411,6 +683,7 @@ export function PurchaseOrdersPage() {
               const poLineCount = lines.filter(
                 (l) => l.draftPurchaseOrderId === poId && l.orderStatus === "draft",
               ).length;
+              const firstLine = lines.find((l) => l.draftPurchaseOrderId === poId);
               return (
                 <button
                   key={poId}
@@ -421,7 +694,7 @@ export function PurchaseOrdersPage() {
                 >
                   {submittingPoId === poId
                     ? "Submitting…"
-                    : `Submit draft PO (${String(poLineCount)} line${poLineCount !== 1 ? "s" : ""})`}
+                    : `Submit draft PO${firstLine?.poReference ? ` (${firstLine.poReference})` : ""} — ${String(poLineCount)} line${poLineCount !== 1 ? "s" : ""}`}
                 </button>
               );
             })}
@@ -436,20 +709,24 @@ export function PurchaseOrdersPage() {
             <dd>{lines.length}</dd>
           </div>
           <div className="po-summary__stat">
-            <dt>Draft lines</dt>
+            <dt>Draft</dt>
             <dd>{lines.filter((l) => l.orderStatus === "draft").length}</dd>
           </div>
           <div className="po-summary__stat">
-            <dt>Submitted lines</dt>
+            <dt>Submitted</dt>
             <dd>{lines.filter((l) => l.orderStatus === "submitted").length}</dd>
           </div>
           <div className="po-summary__stat">
+            <dt>Received</dt>
+            <dd>{lines.filter((l) => l.orderStatus === "received" || l.orderStatus === "partially_received").length}</dd>
+          </div>
+          <div className="po-summary__stat">
             <dt>Total units needed</dt>
-            <dd>{lines.reduce((sum, l) => sum + l.quantity, 0)}</dd>
+            <dd>{lines.filter((l) => l.orderStatus !== "cancelled" && l.orderStatus !== "received").reduce((sum, l) => sum + l.quantity, 0)}</dd>
           </div>
           <div className="po-summary__stat">
             <dt>Unique SKUs</dt>
-            <dd>{new Set(lines.map((l) => l.masterSku)).size}</dd>
+            <dd>{new Set(lines.filter((l) => l.orderStatus !== "cancelled").map((l) => l.masterSku)).size}</dd>
           </div>
         </dl>
       </section>

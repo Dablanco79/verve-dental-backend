@@ -35,7 +35,10 @@ import type {
 import {
   PoAlreadySubmittedError,
   PoNotFoundError,
+  PoLineNotFoundError,
+  PoInvalidTransitionError,
 } from "../types/purchaseOrderErrors.js";
+import { PO_VALID_TRANSITIONS } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
 import type { InventoryRepository } from "./inventoryRepository.js";
 
@@ -103,6 +106,9 @@ type DraftPoRow = {
   id: string;
   clinic_id: string;
   status: DraftPoStatus;
+  supplier_id: string | null;
+  notes: string | null;
+  po_reference: string | null;
   created_by_user_id: string;
   created_at: Date;
   updated_at: Date;
@@ -115,6 +121,9 @@ type DraftPoLineRow = {
   clinic_inventory_item_id: string;
   quantity: number;
   reason: string;
+  unit_cost_cents: number | null;
+  receiving_unit: string | null;
+  received_quantity: number;
   created_at: Date;
 };
 
@@ -192,6 +201,9 @@ function rowToDraftPo(row: DraftPoRow): DraftPurchaseOrder {
     id: row.id,
     clinicId: row.clinic_id,
     status: row.status,
+    supplierId: row.supplier_id,
+    notes: row.notes,
+    poReference: row.po_reference,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -206,6 +218,9 @@ function rowToDraftPoLine(row: DraftPoLineRow): DraftPoLine {
     clinicInventoryItemId: row.clinic_inventory_item_id,
     quantity: row.quantity,
     reason: row.reason,
+    unitCostCents: row.unit_cost_cents,
+    receivingUnit: row.receiving_unit,
+    receivedQuantity: row.received_quantity,
     createdAt: row.created_at,
   };
 }
@@ -454,14 +469,71 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       return rowToDraftPo(row);
     },
 
+    async createManualPurchaseOrder(input: {
+      clinicId: string;
+      createdByUserId: string;
+      supplierId: string | null;
+      notes: string | null;
+      poReference: string | null;
+    }): Promise<DraftPurchaseOrder> {
+      const { rows } = await pool.query<DraftPoRow>(
+        `INSERT INTO draft_purchase_orders
+           (clinic_id, status, created_by_user_id, supplier_id, notes, po_reference)
+         VALUES ($1, 'draft', $2, $3, $4, $5)
+         RETURNING *`,
+        [input.clinicId, input.createdByUserId, input.supplierId, input.notes, input.poReference],
+      );
+      const row = rows[0];
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create purchase order");
+      return rowToDraftPo(row);
+    },
+
+    async updatePurchaseOrder(
+      clinicId: string,
+      poId: string,
+      patch: { supplierId?: string | null; notes?: string | null; poReference?: string | null },
+    ): Promise<DraftPurchaseOrder> {
+      const sets: string[] = ["updated_at = now()"];
+      const params: (string | null | number)[] = [];
+
+      if (patch.supplierId !== undefined) {
+        params.push(patch.supplierId);
+        sets.push(`supplier_id = $${String(params.length)}`);
+      }
+      if (patch.notes !== undefined) {
+        params.push(patch.notes);
+        sets.push(`notes = $${String(params.length)}`);
+      }
+      if (patch.poReference !== undefined) {
+        params.push(patch.poReference);
+        sets.push(`po_reference = $${String(params.length)}`);
+      }
+
+      params.push(clinicId);
+      const clinicParam = params.length;
+      params.push(poId);
+      const poParam = params.length;
+
+      const { rows } = await pool.query<DraftPoRow>(
+        `UPDATE draft_purchase_orders
+         SET ${sets.join(", ")}
+         WHERE clinic_id = $${String(clinicParam)} AND id = $${String(poParam)}
+         RETURNING *`,
+        params,
+      );
+      const row = rows[0];
+      if (!row) throw new PoNotFoundError(poId);
+      return rowToDraftPo(row);
+    },
+
     async addDraftPoLine(
-      line: Omit<DraftPoLine, "id" | "createdAt">,
+      line: Omit<DraftPoLine, "id" | "createdAt" | "receivedQuantity">,
     ): Promise<DraftPoLine> {
       const { rows } = await pool.query<DraftPoLineRow>(
         `INSERT INTO draft_po_lines
            (draft_purchase_order_id, master_catalog_item_id,
-            clinic_inventory_item_id, quantity, reason)
-         VALUES ($1, $2, $3, $4, $5)
+            clinic_inventory_item_id, quantity, reason, unit_cost_cents, receiving_unit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [
           line.draftPurchaseOrderId,
@@ -469,12 +541,70 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
           line.clinicInventoryItemId,
           line.quantity,
           line.reason,
+          line.unitCostCents ?? null,
+          line.receivingUnit ?? null,
         ],
       );
 
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to add draft PO line");
       return rowToDraftPoLine(row);
+    },
+
+    async updatePoLine(
+      lineId: string,
+      patch: { quantity?: number; unitCostCents?: number | null; receivingUnit?: string | null },
+    ): Promise<DraftPoLine> {
+      const sets: string[] = [];
+      const params: (string | number | null)[] = [];
+
+      if (patch.quantity !== undefined) {
+        params.push(patch.quantity);
+        sets.push(`quantity = $${String(params.length)}`);
+      }
+      if (patch.unitCostCents !== undefined) {
+        params.push(patch.unitCostCents);
+        sets.push(`unit_cost_cents = $${String(params.length)}`);
+      }
+      if (patch.receivingUnit !== undefined) {
+        params.push(patch.receivingUnit);
+        sets.push(`receiving_unit = $${String(params.length)}`);
+      }
+
+      if (sets.length === 0) {
+        const { rows: existing } = await pool.query<DraftPoLineRow>(
+          `SELECT * FROM draft_po_lines WHERE id = $1 LIMIT 1`,
+          [lineId],
+        );
+        const row = existing[0];
+        if (!row) throw new PoLineNotFoundError(lineId);
+        return rowToDraftPoLine(row);
+      }
+
+      params.push(lineId);
+      const { rows } = await pool.query<DraftPoLineRow>(
+        `UPDATE draft_po_lines SET ${sets.join(", ")} WHERE id = $${String(params.length)} RETURNING *`,
+        params,
+      );
+      const row = rows[0];
+      if (!row) throw new PoLineNotFoundError(lineId);
+      return rowToDraftPoLine(row);
+    },
+
+    async removePoLine(lineId: string): Promise<void> {
+      const { rowCount } = await pool.query(
+        `DELETE FROM draft_po_lines WHERE id = $1`,
+        [lineId],
+      );
+      if (!rowCount || rowCount === 0) throw new PoLineNotFoundError(lineId);
+    },
+
+    async findPoLineById(lineId: string): Promise<DraftPoLine | null> {
+      const { rows } = await pool.query<DraftPoLineRow>(
+        `SELECT * FROM draft_po_lines WHERE id = $1 LIMIT 1`,
+        [lineId],
+      );
+      return rows[0] ? rowToDraftPoLine(rows[0]) : null;
     },
 
     async listDraftPoLines(clinicId: string): Promise<DraftPoLine[]> {
@@ -485,6 +615,14 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
          WHERE dpo.clinic_id = $1
          ORDER BY dpl.created_at DESC`,
         [clinicId],
+      );
+      return rows.map(rowToDraftPoLine);
+    },
+
+    async listPoLinesByPoId(poId: string): Promise<DraftPoLine[]> {
+      const { rows } = await pool.query<DraftPoLineRow>(
+        `SELECT * FROM draft_po_lines WHERE draft_purchase_order_id = $1 ORDER BY created_at ASC`,
+        [poId],
       );
       return rows.map(rowToDraftPoLine);
     },
@@ -536,6 +674,84 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       }
 
       return rowToDraftPo(rows[0]);
+    },
+
+    async cancelPurchaseOrder(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder> {
+      const { rows: existing } = await pool.query<DraftPoRow>(
+        `SELECT * FROM draft_purchase_orders WHERE clinic_id = $1 AND id = $2 LIMIT 1`,
+        [clinicId, poId],
+      );
+      const po = existing[0];
+      if (!po) throw new PoNotFoundError(poId);
+
+      const allowed = PO_VALID_TRANSITIONS[po.status];
+      if (!allowed.includes("cancelled")) {
+        throw new PoInvalidTransitionError(po.status, "cancelled");
+      }
+
+      const { rows } = await pool.query<DraftPoRow>(
+        `UPDATE draft_purchase_orders
+         SET status = 'cancelled', updated_at = now()
+         WHERE clinic_id = $1 AND id = $2
+         RETURNING *`,
+        [clinicId, poId],
+      );
+      const row = rows[0];
+      if (!row) throw new PoNotFoundError(poId);
+      return rowToDraftPo(row);
+    },
+
+    async transitionPoStatus(
+      clinicId: string,
+      poId: string,
+      toStatus: import("../types/inventory.js").DraftPoStatus,
+    ): Promise<DraftPurchaseOrder> {
+      const { rows: existing } = await pool.query<DraftPoRow>(
+        `SELECT * FROM draft_purchase_orders WHERE clinic_id = $1 AND id = $2 LIMIT 1`,
+        [clinicId, poId],
+      );
+      const po = existing[0];
+      if (!po) throw new PoNotFoundError(poId);
+
+      const allowed = PO_VALID_TRANSITIONS[po.status];
+      if (!allowed.includes(toStatus)) {
+        throw new PoInvalidTransitionError(po.status, toStatus);
+      }
+
+      const { rows } = await pool.query<DraftPoRow>(
+        `UPDATE draft_purchase_orders
+         SET status = $1, updated_at = now()
+         WHERE clinic_id = $2 AND id = $3
+         RETURNING *`,
+        [toStatus, clinicId, poId],
+      );
+      const row = rows[0];
+      if (!row) throw new PoNotFoundError(poId);
+      return rowToDraftPo(row);
+    },
+
+    async incrementPoLineReceivedQty(
+      clinicId: string,
+      lineId: string,
+      delta: number,
+    ): Promise<DraftPoLine> {
+      // Validate via a join to ensure the line belongs to the authorised clinic.
+      const { rows } = await pool.query<DraftPoLineRow>(
+        `UPDATE draft_po_lines dpl
+         SET received_quantity = dpl.received_quantity + $1
+         FROM draft_purchase_orders dpo
+         WHERE dpl.id = $2
+           AND dpl.draft_purchase_order_id = dpo.id
+           AND dpo.clinic_id = $3
+         RETURNING dpl.*`,
+        [delta, lineId, clinicId],
+      );
+      const row = rows[0];
+      if (!row) throw new PoLineNotFoundError(lineId);
+      return rowToDraftPoLine(row);
     },
 
     async createClinicInventoryItem(

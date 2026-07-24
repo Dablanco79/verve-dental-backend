@@ -18,14 +18,22 @@ import type {
   AdjustInventoryResponse,
   AdjustmentsFilters,
   AdjustmentsPage,
+  AddPoLineRequest,
   CreateProductRequest,
   CreateProductResponse,
+  CreatePurchaseOrderRequest,
   InventoryItem,
   MasterProductImportResult,
+  PurchaseOrder,
+  PurchaseOrderDetail,
   PurchaseOrderLine,
   ReceiveInventoryRequest,
+  ReceivePoRequest,
+  ReceivePoResult,
   ScanRequest,
   ScanResponse,
+  UpdatePoLineRequest,
+  UpdatePurchaseOrderRequest,
 } from "../types/inventory.js";
 import type {
   CreateShiftRequest,
@@ -515,17 +523,119 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function getPurchaseOrderDetail(
+    clinicId: string,
+    poId: string,
+  ): Promise<PurchaseOrderDetail> {
+    return request<PurchaseOrderDetail>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createPurchaseOrder(
+    clinicId: string,
+    body: CreatePurchaseOrderRequest,
+  ): Promise<PurchaseOrder> {
+    return request<PurchaseOrder>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updatePurchaseOrder(
+    clinicId: string,
+    poId: string,
+    body: UpdatePurchaseOrderRequest,
+  ): Promise<PurchaseOrder> {
+    return request<PurchaseOrder>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function submitPurchaseOrder(
     clinicId: string,
     poId: string,
-  ): Promise<{ purchaseOrder: { id: string; status: string }; lines: PurchaseOrderLine[] }> {
-    return request<{ purchaseOrder: { id: string; status: string }; lines: PurchaseOrderLine[] }>(
+  ): Promise<PurchaseOrderDetail> {
+    return request<PurchaseOrderDetail>(
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/submit`,
       {
         method: "PATCH",
         body: JSON.stringify({}),
       },
+      requireAccessToken(),
+    );
+  }
+
+  async function cancelPurchaseOrder(
+    clinicId: string,
+    poId: string,
+  ): Promise<{ id: string; status: string; updatedAt: string }> {
+    return request<{ id: string; status: string; updatedAt: string }>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/cancel`,
+      { method: "POST" },
+      requireAccessToken(),
+    );
+  }
+
+  async function addPoLine(
+    clinicId: string,
+    poId: string,
+    body: AddPoLineRequest,
+  ): Promise<PurchaseOrderLine> {
+    return request<PurchaseOrderLine>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/lines`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updatePoLine(
+    clinicId: string,
+    poId: string,
+    lineId: string,
+    body: UpdatePoLineRequest,
+  ): Promise<PurchaseOrderLine> {
+    return request<PurchaseOrderLine>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/lines/${encodeURIComponent(lineId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function removePoLine(
+    clinicId: string,
+    poId: string,
+    lineId: string,
+  ): Promise<void> {
+    await request<undefined>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/lines/${encodeURIComponent(lineId)}`,
+      { method: "DELETE" },
+      requireAccessToken(),
+    );
+  }
+
+  async function receivePurchaseOrder(
+    clinicId: string,
+    poId: string,
+    body: ReceivePoRequest,
+  ): Promise<ReceivePoResult> {
+    return request<ReceivePoResult>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/receive`,
+      { method: "POST", body: JSON.stringify(body) },
       requireAccessToken(),
     );
   }
@@ -2093,7 +2203,15 @@ export function createApiClient(config: AppConfig) {
     changePassword,
     resetUserPassword,
     listPurchaseOrders,
+    getPurchaseOrderDetail,
+    createPurchaseOrder,
+    updatePurchaseOrder,
     submitPurchaseOrder,
+    cancelPurchaseOrder,
+    addPoLine,
+    updatePoLine,
+    removePoLine,
+    receivePurchaseOrder,
     exportPurchaseOrdersCsv,
     listRoster,
     getMyShifts,

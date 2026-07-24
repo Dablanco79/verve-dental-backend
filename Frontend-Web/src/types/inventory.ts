@@ -90,8 +90,19 @@ export type PurchaseOrderLine = {
   itemName: string;
   clinicInventoryItemId: string;
   quantity: number;
+  receivedQuantity: number;
+  outstandingQuantity: number;
   reason: string;
-  orderStatus: "draft" | "submitted";
+  unitCostCents?: number | null;
+  receivingUnit?: string | null;
+  /** Stock unit the inventory is measured in (from master catalog). */
+  stockUnit?: string | null;
+  /** How many stock units equal one receiving unit (from master catalog). */
+  unitsPerReceivingUnit?: number | null;
+  orderStatus: "draft" | "submitted" | "partially_received" | "received" | "cancelled";
+  poSupplierId?: string | null;
+  poNotes?: string | null;
+  poReference?: string | null;
   createdAt: string;
   supplierPricing?: Array<{
     supplierProductId: string;
@@ -103,6 +114,62 @@ export type PurchaseOrderLine = {
   }>;
   estimatedUnitCostCents?: number | null;
   estimatedLineCostCents?: number | null;
+};
+
+export type PurchaseOrder = {
+  id: string;
+  clinicId: string;
+  status: "draft" | "submitted" | "partially_received" | "received" | "cancelled";
+  supplierId: string | null;
+  notes: string | null;
+  poReference: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePurchaseOrderRequest = {
+  supplierId?: string | null;
+  notes?: string | null;
+  poReference?: string | null;
+};
+
+export type UpdatePurchaseOrderRequest = {
+  supplierId?: string | null;
+  notes?: string | null;
+  poReference?: string | null;
+};
+
+export type AddPoLineRequest = {
+  masterCatalogItemId: string;
+  clinicInventoryItemId: string;
+  quantity: number;
+  reason?: string;
+  unitCostCents?: number | null;
+  receivingUnit?: string | null;
+};
+
+export type UpdatePoLineRequest = {
+  quantity?: number;
+  unitCostCents?: number | null;
+  receivingUnit?: string | null;
+};
+
+export type ReceivePoRequest = {
+  lines: Array<{
+    poLineId: string;
+    quantityDelta: number;
+  }>;
+};
+
+export type ReceivePoResult = {
+  purchaseOrder: PurchaseOrder;
+  adjustments: InventoryAdjustment[];
+};
+
+export type PurchaseOrderDetail = {
+  purchaseOrder: PurchaseOrder;
+  lines: PurchaseOrderLine[];
 };
 
 export type ScanResponse = {

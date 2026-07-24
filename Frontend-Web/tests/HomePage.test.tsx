@@ -243,6 +243,8 @@ const draftPurchaseOrderLine: PurchaseOrderLine = {
   itemName: "Nitrile Gloves",
   clinicInventoryItemId: "item-1",
   quantity: 4,
+  receivedQuantity: 0,
+  outstandingQuantity: 4,
   reason: "below_reorder_point",
   orderStatus: "draft",
   createdAt: "2026-06-25T00:00:00.000Z",

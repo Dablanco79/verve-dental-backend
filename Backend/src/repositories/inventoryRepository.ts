@@ -14,7 +14,10 @@ import type {
 import {
   PoAlreadySubmittedError,
   PoNotFoundError,
+  PoLineNotFoundError,
+  PoInvalidTransitionError,
 } from "../types/purchaseOrderErrors.js";
+import { PO_VALID_TRANSITIONS } from "../types/inventory.js";
 import type { CatalogRepository } from "./catalogRepository.js";
 import { buildClinicInventorySeed } from "./seed/inventorySeed.js";
 
@@ -66,10 +69,43 @@ export interface InventoryRepository {
     clinicId: string,
     createdByUserId: string,
   ): Promise<DraftPurchaseOrder>;
+  /** Create a manual purchase order draft with explicit header fields. */
+  createManualPurchaseOrder(input: {
+    clinicId: string;
+    createdByUserId: string;
+    supplierId: string | null;
+    notes: string | null;
+    poReference: string | null;
+  }): Promise<DraftPurchaseOrder>;
+  /** Update editable header fields on a draft PO. */
+  updatePurchaseOrder(
+    clinicId: string,
+    poId: string,
+    patch: {
+      supplierId?: string | null;
+      notes?: string | null;
+      poReference?: string | null;
+    },
+  ): Promise<DraftPurchaseOrder>;
   addDraftPoLine(
-    line: Omit<DraftPoLine, "id" | "createdAt">,
+    line: Omit<DraftPoLine, "id" | "createdAt" | "receivedQuantity">,
   ): Promise<DraftPoLine>;
+  /** Update quantity and/or price on a single PO line. */
+  updatePoLine(
+    lineId: string,
+    patch: {
+      quantity?: number;
+      unitCostCents?: number | null;
+      receivingUnit?: string | null;
+    },
+  ): Promise<DraftPoLine>;
+  /** Remove a line from a PO. */
+  removePoLine(lineId: string): Promise<void>;
+  /** Find a single PO line by its ID. */
+  findPoLineById(lineId: string): Promise<DraftPoLine | null>;
   listDraftPoLines(clinicId: string): Promise<DraftPoLine[]>;
+  /** List lines for a specific PO. */
+  listPoLinesByPoId(poId: string): Promise<DraftPoLine[]>;
   /** List all purchase orders for a clinic (any status). */
   listPurchaseOrders(clinicId: string): Promise<DraftPurchaseOrder[]>;
   /** Find a single PO by ID, scoped to the clinic for tenant safety. */
@@ -82,6 +118,23 @@ export interface InventoryRepository {
     clinicId: string,
     poId: string,
   ): Promise<DraftPurchaseOrder>;
+  /** Transition an eligible PO to cancelled status. */
+  cancelPurchaseOrder(
+    clinicId: string,
+    poId: string,
+  ): Promise<DraftPurchaseOrder>;
+  /** Transition a submitted/partially-received PO to received or partially_received. */
+  transitionPoStatus(
+    clinicId: string,
+    poId: string,
+    toStatus: import("../types/inventory.js").DraftPoStatus,
+  ): Promise<DraftPurchaseOrder>;
+  /** Increment a PO line's cumulative received_quantity (for in-memory receiving path). */
+  incrementPoLineReceivedQty(
+    clinicId: string,
+    lineId: string,
+    delta: number,
+  ): Promise<DraftPoLine>;
   createClinicInventoryItem(
     item: Omit<ClinicInventoryItem, "id" | "createdAt" | "updatedAt">,
   ): Promise<ClinicInventoryItem>;
@@ -298,6 +351,9 @@ export function createInMemoryInventoryRepository(
         id: randomUUID(),
         clinicId,
         status: "draft",
+        supplierId: null,
+        notes: null,
+        poReference: null,
         createdByUserId,
         createdAt: now,
         updatedAt: now,
@@ -307,10 +363,54 @@ export function createInMemoryInventoryRepository(
       return Promise.resolve({ ...order });
     },
 
+    createManualPurchaseOrder(input: {
+      clinicId: string;
+      createdByUserId: string;
+      supplierId: string | null;
+      notes: string | null;
+      poReference: string | null;
+    }): Promise<DraftPurchaseOrder> {
+      const now = new Date();
+      const order: DraftPurchaseOrder = {
+        id: randomUUID(),
+        clinicId: input.clinicId,
+        status: "draft",
+        supplierId: input.supplierId,
+        notes: input.notes,
+        poReference: input.poReference,
+        createdByUserId: input.createdByUserId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      draftOrders.push(order);
+      return Promise.resolve({ ...order });
+    },
+
+    updatePurchaseOrder(
+      clinicId: string,
+      poId: string,
+      patch: { supplierId?: string | null; notes?: string | null; poReference?: string | null },
+    ): Promise<DraftPurchaseOrder> {
+      const index = draftOrders.findIndex((o) => o.clinicId === clinicId && o.id === poId);
+      if (index === -1) return Promise.reject(new PoNotFoundError(poId));
+      const existing = draftOrders[index];
+      if (!existing) return Promise.reject(new PoNotFoundError(poId));
+      const updated: DraftPurchaseOrder = {
+        ...existing,
+        ...(patch.supplierId !== undefined && { supplierId: patch.supplierId }),
+        ...(patch.notes !== undefined && { notes: patch.notes }),
+        ...(patch.poReference !== undefined && { poReference: patch.poReference }),
+        updatedAt: new Date(),
+      };
+      draftOrders[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
     addDraftPoLine(
-      line: Omit<DraftPoLine, "id" | "createdAt">,
+      line: Omit<DraftPoLine, "id" | "createdAt" | "receivedQuantity">,
     ): Promise<DraftPoLine> {
       const record: DraftPoLine = {
+        receivedQuantity: 0,
         ...line,
         id: randomUUID(),
         createdAt: new Date(),
@@ -318,6 +418,36 @@ export function createInMemoryInventoryRepository(
 
       draftPoLines.push(record);
       return Promise.resolve({ ...record });
+    },
+
+    updatePoLine(
+      lineId: string,
+      patch: { quantity?: number; unitCostCents?: number | null; receivingUnit?: string | null },
+    ): Promise<DraftPoLine> {
+      const index = draftPoLines.findIndex((l) => l.id === lineId);
+      if (index === -1) return Promise.reject(new PoLineNotFoundError(lineId));
+      const existing = draftPoLines[index];
+      if (!existing) return Promise.reject(new PoLineNotFoundError(lineId));
+      const updated: DraftPoLine = {
+        ...existing,
+        ...(patch.quantity !== undefined && { quantity: patch.quantity }),
+        ...(patch.unitCostCents !== undefined && { unitCostCents: patch.unitCostCents }),
+        ...(patch.receivingUnit !== undefined && { receivingUnit: patch.receivingUnit }),
+      };
+      draftPoLines[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    removePoLine(lineId: string): Promise<void> {
+      const index = draftPoLines.findIndex((l) => l.id === lineId);
+      if (index === -1) return Promise.reject(new PoLineNotFoundError(lineId));
+      draftPoLines.splice(index, 1);
+      return Promise.resolve();
+    },
+
+    findPoLineById(lineId: string): Promise<DraftPoLine | null> {
+      const line = draftPoLines.find((l) => l.id === lineId);
+      return Promise.resolve(line ? { ...line } : null);
     },
 
     listDraftPoLines(clinicId: string): Promise<DraftPoLine[]> {
@@ -330,6 +460,14 @@ export function createInMemoryInventoryRepository(
       return Promise.resolve(
         draftPoLines
           .filter((line) => orderIds.has(line.draftPurchaseOrderId))
+          .map((line) => ({ ...line })),
+      );
+    },
+
+    listPoLinesByPoId(poId: string): Promise<DraftPoLine[]> {
+      return Promise.resolve(
+        draftPoLines
+          .filter((line) => line.draftPurchaseOrderId === poId)
           .map((line) => ({ ...line })),
       );
     },
@@ -382,6 +520,55 @@ export function createInMemoryInventoryRepository(
       };
 
       draftOrders[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    cancelPurchaseOrder(
+      clinicId: string,
+      poId: string,
+    ): Promise<DraftPurchaseOrder> {
+      const index = draftOrders.findIndex((o) => o.clinicId === clinicId && o.id === poId);
+      if (index === -1) return Promise.reject(new PoNotFoundError(poId));
+      const existing = draftOrders[index];
+      if (!existing) return Promise.reject(new PoNotFoundError(poId));
+      const allowed = PO_VALID_TRANSITIONS[existing.status];
+      if (!allowed.includes("cancelled")) {
+        return Promise.reject(new PoInvalidTransitionError(existing.status, "cancelled"));
+      }
+      const updated: DraftPurchaseOrder = { ...existing, status: "cancelled", updatedAt: new Date() };
+      draftOrders[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    transitionPoStatus(
+      clinicId: string,
+      poId: string,
+      toStatus: import("../types/inventory.js").DraftPoStatus,
+    ): Promise<DraftPurchaseOrder> {
+      const index = draftOrders.findIndex((o) => o.clinicId === clinicId && o.id === poId);
+      if (index === -1) return Promise.reject(new PoNotFoundError(poId));
+      const existing = draftOrders[index];
+      if (!existing) return Promise.reject(new PoNotFoundError(poId));
+      const allowed = PO_VALID_TRANSITIONS[existing.status];
+      if (!allowed.includes(toStatus)) {
+        return Promise.reject(new PoInvalidTransitionError(existing.status, toStatus));
+      }
+      const updated: DraftPurchaseOrder = { ...existing, status: toStatus, updatedAt: new Date() };
+      draftOrders[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    incrementPoLineReceivedQty(
+      _clinicId: string,
+      lineId: string,
+      delta: number,
+    ): Promise<DraftPoLine> {
+      const index = draftPoLines.findIndex((l) => l.id === lineId);
+      if (index === -1) return Promise.reject(new PoLineNotFoundError(lineId));
+      const existing = draftPoLines[index];
+      if (!existing) return Promise.reject(new PoLineNotFoundError(lineId));
+      const updated: DraftPoLine = { ...existing, receivedQuantity: existing.receivedQuantity + delta };
+      draftPoLines[index] = updated;
       return Promise.resolve({ ...updated });
     },
 

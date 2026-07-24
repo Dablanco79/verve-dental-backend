@@ -10,7 +10,7 @@ import {
   STOCK_UNIT_OPTIONS,
 } from "../constants/inventoryUnits.js";
 import { loadConfig } from "../config/index.js";
-import type { BarcodeFormat, CreateProductRequest, InventoryItem, ReceiveInventoryRequest } from "../types/inventory.js";
+import type { BarcodeFormat, CreateProductRequest, InventoryItem, ReceiveInventoryRequest, PurchaseOrderDetail } from "../types/inventory.js";
 import type { Supplier, SupplierInvoice } from "../types/supplier.js";
 import {
   getInventoryBarcode,
@@ -25,6 +25,23 @@ const apiClient = createApiClient(loadConfig());
 type ReceivingLine = {
   item: InventoryItem;
   quantity: string;
+};
+
+type PoReceivingLine = {
+  poLineId: string;
+  clinicInventoryItemId: string;
+  itemName: string;
+  masterSku: string;
+  orderedQty: number;
+  receivedQty: number;
+  outstandingQty: number;
+  inputQty: string;
+  /** Receiving/ordering unit for this line (e.g. "Case", "Carton"). */
+  receivingUnit: string | null;
+  /** Stock unit the inventory is measured in (e.g. "Pack", "Box"). */
+  stockUnit: string | null;
+  /** How many stock units equal one receiving unit (0 = unknown). */
+  unitsPerReceivingUnit: number;
 };
 
 type CreateProductValues = {
@@ -87,6 +104,7 @@ export function InventoryReceivingPage() {
   const requestIdRef = useRef({ id: 0 });
   const [searchParams] = useSearchParams();
   const invoiceId = searchParams.get("invoiceId") ?? null;
+  const poId = searchParams.get("poId") ?? null;
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -96,6 +114,9 @@ export function InventoryReceivingPage() {
   // Invoice lifecycle state — only populated when invoiceId query param is present.
   const [linkedInvoice, setLinkedInvoice] = useState<SupplierInvoice | null>(null);
   const [invoiceLoadError, setInvoiceLoadError] = useState<string | null>(null);
+
+  // PO lifecycle state — only populated when poId query param is present.
+  const [linkedPo, setLinkedPo] = useState<PurchaseOrderDetail | null>(null);
 
   const [supplierId, setSupplierId] = useState("");
   const [reference, setReference] = useState("");
@@ -108,6 +129,7 @@ export function InventoryReceivingPage() {
   const [productSearch, setProductSearch] = useState("");
   const [productQuantity, setProductQuantity] = useState("1");
   const [lineItems, setLineItems] = useState<ReceivingLine[]>([]);
+  const [poReceivingLines, setPoReceivingLines] = useState<PoReceivingLine[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [finishError, setFinishError] = useState<string | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
@@ -161,6 +183,7 @@ export function InventoryReceivingPage() {
       setInventoryItems([]);
       setSuppliers([]);
       setLinkedInvoice(null);
+      setLinkedPo(null);
       setIsLoading(false);
       return;
     }
@@ -175,19 +198,24 @@ export function InventoryReceivingPage() {
         Promise<InventoryItem[]>,
         Promise<Supplier[]>,
         Promise<{ invoice: SupplierInvoice; lines: unknown[] } | null>,
+        Promise<PurchaseOrderDetail | null>,
       ] = [
         apiClient.listInventory(selectedClinicId),
         apiClient.listSuppliers({ active: true }),
         invoiceId
           ? apiClient.getSupplierInvoice(selectedClinicId, invoiceId)
           : Promise.resolve(null),
+        poId
+          ? apiClient.getPurchaseOrderDetail(selectedClinicId, poId)
+          : Promise.resolve(null),
       ];
-      const [inventory, supplierList, invoiceData] = await Promise.all(loads);
+      const [inventory, supplierList, invoiceData, poData] = await Promise.all(loads);
 
       if (requestId === requestIdRef.current.id) {
         setInventoryItems(inventory);
         setSuppliers(supplierList);
         setLinkedInvoice(invoiceData?.invoice ?? null);
+        setLinkedPo(poData);
       }
     } catch (err: unknown) {
       if (requestId === requestIdRef.current.id) {
@@ -198,7 +226,7 @@ export function InventoryReceivingPage() {
         setIsLoading(false);
       }
     }
-  }, [isAllClinicsScope, selectedClinicId, user, invoiceId]);
+  }, [isAllClinicsScope, selectedClinicId, user, invoiceId, poId]);
 
   useEffect(() => {
     void loadReceivingData();
@@ -207,6 +235,34 @@ export function InventoryReceivingPage() {
       tracker.id++;
     };
   }, [loadReceivingData]);
+
+  // When a PO is loaded, pre-fill supplier, reference, and receiving lines from the PO.
+  useEffect(() => {
+    if (!linkedPo) return;
+    if (linkedPo.purchaseOrder.supplierId) {
+      setSupplierId(linkedPo.purchaseOrder.supplierId);
+    }
+    if (linkedPo.purchaseOrder.poReference) {
+      setReference(linkedPo.purchaseOrder.poReference);
+    }
+    // Pre-populate PO receiving lines for all lines with outstanding > 0.
+    const lines: PoReceivingLine[] = linkedPo.lines
+      .filter((l) => l.outstandingQuantity > 0)
+      .map((l) => ({
+        poLineId: l.id,
+        clinicInventoryItemId: l.clinicInventoryItemId,
+        itemName: l.itemName,
+        masterSku: l.masterSku,
+        orderedQty: l.quantity,
+        receivedQty: l.receivedQuantity,
+        outstandingQty: l.outstandingQuantity,
+        inputQty: String(l.outstandingQuantity),
+        receivingUnit: l.receivingUnit ?? null,
+        stockUnit: l.stockUnit ?? null,
+        unitsPerReceivingUnit: l.unitsPerReceivingUnit ?? 1,
+      }));
+    setPoReceivingLines(lines);
+  }, [linkedPo]);
 
   if (!user) return null;
 
@@ -252,6 +308,50 @@ export function InventoryReceivingPage() {
             </Link>
             <Link to="/inventory" className="link-button">
               Back to Inventory
+            </Link>
+          </div>
+        </section>
+      </AppShell>
+    );
+  }
+
+  // PO already received guard
+  if (poId && linkedPo && (linkedPo.purchaseOrder.status === "received") && !isLoading) {
+    return (
+      <AppShell>
+        <section className="status-card receiving-page receiving-page--success" role="status">
+          <div className="invoice-review__confirmed-icon" aria-hidden="true">✓</div>
+          <h2>This purchase order has been fully received.</h2>
+          <p className="inventory-page__subtitle">
+            {linkedPo.purchaseOrder.poReference
+              ? `Purchase order ${linkedPo.purchaseOrder.poReference} is complete.`
+              : "All stock from this purchase order has been received."}
+          </p>
+          <div className="inventory-page__actions">
+            <Link to="/purchase-orders" className="button-link">
+              Back to Purchase Orders
+            </Link>
+            <Link to="/inventory" className="link-button">
+              Back to Inventory
+            </Link>
+          </div>
+        </section>
+      </AppShell>
+    );
+  }
+
+  // PO cancelled guard
+  if (poId && linkedPo && linkedPo.purchaseOrder.status === "cancelled" && !isLoading) {
+    return (
+      <AppShell>
+        <section className="status-card receiving-page" role="status">
+          <h2>This purchase order has been cancelled.</h2>
+          <p className="inventory-page__subtitle">
+            Cancelled purchase orders cannot be received.
+          </p>
+          <div className="inventory-page__actions">
+            <Link to="/purchase-orders" className="button-link">
+              Back to Purchase Orders
             </Link>
           </div>
         </section>
@@ -420,7 +520,27 @@ export function InventoryReceivingPage() {
       setFinishError("Supplier is required.");
       return;
     }
-    if (lineItems.length === 0) {
+    if (poId) {
+      // PO-specific validation: check at least one line has a positive input qty.
+      const anyValid = poReceivingLines.some((l) => {
+        const qty = Number(l.inputQty);
+        return Number.isInteger(qty) && qty > 0;
+      });
+      if (!anyValid) {
+        setFinishError("Enter at least one positive quantity to receive.");
+        return;
+      }
+      const overReceiptLine = poReceivingLines.find((l) => {
+        const qty = Number(l.inputQty);
+        return qty > 0 && qty > l.outstandingQty;
+      });
+      if (overReceiptLine) {
+        setFinishError(
+          `Cannot receive more than outstanding for ${overReceiptLine.itemName} (outstanding: ${String(overReceiptLine.outstandingQty)}).`,
+        );
+        return;
+      }
+    } else if (lineItems.length === 0) {
       setFinishError("Add at least one received item before finishing.");
       return;
     }
@@ -457,6 +577,25 @@ export function InventoryReceivingPage() {
         // Reload invoice to surface the updated received state.
         const refreshed = await apiClient.getSupplierInvoice(selectedClinicId, invoiceId);
         setLinkedInvoice(refreshed.invoice);
+      } else if (poId) {
+        // PO-linked receiving — uses the dedicated PO receive endpoint.
+        // Lines are identified by poLineId; the backend resolves inventory items.
+        const lines = poReceivingLines
+          .filter((l) => {
+            const qty = Number(l.inputQty);
+            return Number.isInteger(qty) && qty > 0;
+          })
+          .map((l) => ({
+            poLineId: l.poLineId,
+            quantityDelta: Number(l.inputQty),
+          }));
+        if (lines.length === 0) {
+          setFinishError("Enter at least one positive quantity to receive.");
+          setIsFinishing(false);
+          return;
+        }
+        const result = await apiClient.receivePurchaseOrder(selectedClinicId, poId, { lines });
+        setLinkedPo((prev) => prev ? { ...prev, purchaseOrder: result.purchaseOrder } : null);
       } else {
         // Standalone receiving — per-item calls to the generic /inventory/receive endpoint.
         for (const line of lineItems) {
@@ -516,9 +655,19 @@ export function InventoryReceivingPage() {
             Inventory quantities have been increased and adjustment records were created.
           </p>
           <div className="inventory-page__actions">
-            <button type="button" className="button-link" onClick={resetReceiving}>
-              Receive another delivery
-            </button>
+            {poId ? (
+              <Link to="/purchase-orders" className="button-link">
+                Back to Purchase Orders
+              </Link>
+            ) : invoiceId ? (
+              <Link to={`/suppliers/invoices/${invoiceId}`} className="button-link">
+                Back to Invoice
+              </Link>
+            ) : (
+              <button type="button" className="button-link" onClick={resetReceiving}>
+                Receive another delivery
+              </button>
+            )}
             <Link to="/inventory" className="link-button">
               Back to Inventory
             </Link>
@@ -560,6 +709,93 @@ export function InventoryReceivingPage() {
             <strong>Receiving against invoice:</strong>{" "}
             {linkedInvoice.invoiceNumber ?? "—"}{" "}
             {linkedInvoice.supplierNameRaw ? `(${linkedInvoice.supplierNameRaw})` : null}
+          </div>
+        ) : null}
+
+        {linkedPo && !isLoading ? (
+          <div className="inventory-receiving-callout" role="status">
+            <strong>Receiving against purchase order:</strong>{" "}
+            {linkedPo.purchaseOrder.poReference ?? linkedPo.purchaseOrder.id}
+            {linkedPo.purchaseOrder.status === "partially_received" ? " (partial receipt in progress)" : ""}
+            {linkedPo.lines.length > 0 ? (
+              <span className="inventory-table__meta">
+                {" — "}{linkedPo.lines.length} ordered line{linkedPo.lines.length !== 1 ? "s" : ""}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* PO-specific receiving lines table */}
+        {poId && linkedPo && !isLoading && poReceivingLines.length > 0 ? (
+          <div className="receiving-page__po-lines">
+            <h3 className="receiving-page__section-title">Ordered lines — enter quantities received</h3>
+            <table className="inventory-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="inventory-table__numeric">Ordered</th>
+                  <th className="inventory-table__numeric">Received</th>
+                  <th className="inventory-table__numeric">Outstanding</th>
+                  <th className="inventory-table__numeric">Receive now</th>
+                </tr>
+              </thead>
+              <tbody>
+                {poReceivingLines.map((line) => (
+                  <tr key={line.poLineId}>
+                    <td>
+                      <span className="inventory-table__name">{line.itemName}</span>
+                      <span className="inventory-table__meta">{line.masterSku}</span>
+                      {line.receivingUnit && line.stockUnit && line.receivingUnit !== line.stockUnit ? (
+                        <span className="inventory-table__meta" title="Each receiving unit adds this many stock units to inventory">
+                          {line.receivingUnit} → {line.stockUnit}
+                          {line.unitsPerReceivingUnit > 1 ? ` (×${String(line.unitsPerReceivingUnit)})` : ""}
+                        </span>
+                      ) : line.stockUnit ? (
+                        <span className="inventory-table__meta">{line.stockUnit}</span>
+                      ) : null}
+                    </td>
+                    <td className="inventory-table__numeric">
+                      {line.orderedQty}
+                      {line.receivingUnit ? <span className="inventory-table__unit"> {line.receivingUnit}</span> : null}
+                    </td>
+                    <td className="inventory-table__numeric">
+                      {line.receivedQty}
+                      {line.receivingUnit ? <span className="inventory-table__unit"> {line.receivingUnit}</span> : null}
+                    </td>
+                    <td className="inventory-table__numeric">
+                      {line.outstandingQty}
+                      {line.receivingUnit ? <span className="inventory-table__unit"> {line.receivingUnit}</span> : null}
+                    </td>
+                    <td className="inventory-table__numeric">
+                      <input
+                        type="number"
+                        min={0}
+                        max={line.outstandingQty}
+                        step={1}
+                        value={line.inputQty}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPoReceivingLines((prev) =>
+                            prev.map((l) =>
+                              l.poLineId === line.poLineId ? { ...l, inputQty: val } : l,
+                            ),
+                          );
+                        }}
+                        className="receiving-page__qty-input"
+                        aria-label={`Receive quantity for ${line.itemName}`}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {poId && linkedPo && !isLoading && poReceivingLines.length === 0 ? (
+          <div className="billing-empty" role="status">
+            <p className="billing-empty__title">All lines fully received.</p>
+            <p className="billing-empty__hint">All ordered quantities have been received for this purchase order.</p>
           </div>
         ) : null}
 

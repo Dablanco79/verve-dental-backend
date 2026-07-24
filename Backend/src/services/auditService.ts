@@ -27,7 +27,15 @@ export type AuthAuditEvent =
   | "auth.password.reset";
 
 export type PurchaseOrderAuditEvent =
+  | "purchase_order.created"
+  | "purchase_order.updated"
+  | "purchase_order.line_added"
+  | "purchase_order.line_updated"
+  | "purchase_order.line_removed"
   | "purchase_order.submitted"
+  | "purchase_order.cancelled"
+  | "purchase_order.partially_received"
+  | "purchase_order.received"
   | "purchase_order.csv_exported";
 
 export type SupplierAuditEvent =

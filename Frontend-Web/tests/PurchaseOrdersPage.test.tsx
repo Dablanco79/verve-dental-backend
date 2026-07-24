@@ -14,6 +14,9 @@ const {
   authTestState,
   selectedClinicState,
   mockListPurchaseOrders,
+  mockListSuppliers,
+  mockCreatePurchaseOrder,
+  mockCancelPurchaseOrder,
   mockSubmitPurchaseOrder,
   mockExportCsv,
 } =
@@ -38,6 +41,9 @@ const {
       authTestState,
       selectedClinicState,
       mockListPurchaseOrders: vi.fn(),
+      mockListSuppliers: vi.fn(),
+      mockCreatePurchaseOrder: vi.fn(),
+      mockCancelPurchaseOrder: vi.fn(),
       mockSubmitPurchaseOrder: vi.fn(),
       mockExportCsv: vi.fn(),
     };
@@ -73,6 +79,9 @@ vi.mock("../src/clinic/useSelectedClinic.js", () => ({
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listPurchaseOrders: mockListPurchaseOrders,
+    listSuppliers: mockListSuppliers,
+    createPurchaseOrder: mockCreatePurchaseOrder,
+    cancelPurchaseOrder: mockCancelPurchaseOrder,
     submitPurchaseOrder: mockSubmitPurchaseOrder,
     exportPurchaseOrdersCsv: mockExportCsv,
   }),
@@ -86,6 +95,8 @@ const submittedLine: PurchaseOrderLine = {
   itemName: "Diamond Burs FG Round #2 (Pack 5)",
   clinicInventoryItemId: "inventory-1",
   quantity: 4,
+  receivedQuantity: 0,
+  outstandingQuantity: 4,
   reason: "below_reorder_point",
   orderStatus: "submitted",
   createdAt: "2026-06-25T00:00:00.000Z",
@@ -125,9 +136,15 @@ describe("PurchaseOrdersPage", () => {
   beforeEach(() => {
     setAuthenticatedUser(authTestState, createManagerUser());
     mockListPurchaseOrders.mockReset();
+    mockListSuppliers.mockReset();
+    mockCreatePurchaseOrder.mockReset();
+    mockCancelPurchaseOrder.mockReset();
     mockSubmitPurchaseOrder.mockReset();
     mockExportCsv.mockReset();
     mockListPurchaseOrders.mockResolvedValue([submittedLine]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "BurDirect", active: true },
+    ]);
     selectedClinicState.selectedDashboardScope = {
       type: "clinic",
       clinic: selectedClinicState.selectedClinic,
@@ -138,7 +155,7 @@ describe("PurchaseOrdersPage", () => {
     renderPurchaseOrdersPage();
 
     expect(await screen.findByText("Diamond Burs FG Round #2 (Pack 5)")).toBeInTheDocument();
-    expect(screen.getByText(/purchase order status does not update automatically/i)).toBeInTheDocument();
+    expect(screen.queryByText(/purchase order status does not update automatically/i)).not.toBeInTheDocument();
     expect(screen.getByText("BurDirect")).toBeInTheDocument();
     expect(screen.getByText(/\$183\.96/)).toBeInTheDocument();
 
@@ -147,7 +164,7 @@ describe("PurchaseOrdersPage", () => {
     });
     expect(receiveLink).toHaveAttribute(
       "href",
-      "/inventory?mode=receive&reference=po-123",
+      `/inventory?mode=receive&poId=po-123`,
     );
   });
 
@@ -177,7 +194,7 @@ describe("PurchaseOrdersPage", () => {
       { ...draftLine, orderStatus: "submitted" },
     ]);
     mockSubmitPurchaseOrder.mockResolvedValue({
-      purchaseOrder: { id: "po-draft-1", status: "submitted" },
+      purchaseOrder: { id: "po-draft-1", status: "submitted", clinicId: "11111111-1111-4111-8111-111111111111", supplierId: null, notes: null, poReference: null, createdByUserId: "user-1", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       lines: [{ ...draftLine, orderStatus: "submitted" }],
     });
 
@@ -197,7 +214,7 @@ describe("PurchaseOrdersPage", () => {
     expect(await screen.findByText(/Purchase order submitted/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Receive stock now" })).toHaveAttribute(
       "href",
-      "/inventory?mode=receive&reference=po-draft-1",
+      "/inventory?mode=receive&poId=po-draft-1",
     );
   });
 

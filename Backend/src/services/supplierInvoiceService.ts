@@ -50,6 +50,7 @@ import type { InventoryAdjustment } from "../types/inventory.js";
 import type { DatabasePool } from "../db/pool.js";
 import { withTenantContext } from "../db/tenantContext.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
+import { receiveInventoryLine } from "./receivingEngine.js";
 
 export function createSupplierInvoiceService(
   repo: SupplierInvoiceRepository,
@@ -1023,21 +1024,6 @@ export function createSupplierInvoiceService(
       received_reference: string | null; notes: string | null;
       created_at: Date; updated_at: Date;
     };
-    type ItemRow = {
-      id: string; clinic_id: string; master_catalog_item_id: string;
-      quantity_on_hand: number; reorder_point: number;
-      unit_cost_override_cents: number | null;
-      supplier_preference: string | null;
-      created_at: Date; updated_at: Date;
-    };
-    type AdjRow = {
-      id: string; clinic_id: string; clinic_inventory_item_id: string;
-      master_catalog_item_id: string; adjustment_type: string;
-      quantity_delta: number; quantity_before: number; quantity_after: number;
-      reason: string | null; performed_by_user_id: string;
-      performed_by_email: string; reference_id: string | null;
-      created_at: Date;
-    };
 
     if (!pool) {
       throw new AppError(500, "INTERNAL_ERROR", "Database pool is required for transactional receiving");
@@ -1088,77 +1074,19 @@ export function createSupplierInvoiceService(
       const reason = `Received against invoice ${invRow.invoice_number ?? invoiceId}${receivedReference ? ` (ref: ${receivedReference})` : ""}`;
 
       for (const line of lines) {
-        // Lock the inventory row to prevent concurrent QoH drift.
-        const { rows: itemRows } = await client.query<ItemRow>(
-          `SELECT id, clinic_id, master_catalog_item_id, quantity_on_hand,
-                  reorder_point, unit_cost_override_cents, supplier_preference,
-                  created_at, updated_at
-           FROM clinic_inventory_items
-           WHERE id = $1 AND clinic_id = $2
-           FOR UPDATE`,
-          [line.itemId, clinicId],
-        );
-
-        if (!itemRows[0]) {
-          throw new AppError(
-            404,
-            "INVENTORY_ITEM_NOT_FOUND",
-            `Inventory item not found: ${line.itemId}`,
-          );
-        }
-
-        const item = itemRows[0];
-        const quantityAfter = item.quantity_on_hand + line.quantityDelta;
-
-        await client.query(
-          `UPDATE clinic_inventory_items
-           SET quantity_on_hand = $1, updated_at = now()
-           WHERE id = $2 AND clinic_id = $3`,
-          [quantityAfter, line.itemId, clinicId],
-        );
-
-        const { rows: adjRows } = await client.query<AdjRow>(
-          `INSERT INTO inventory_adjustments
-             (clinic_id, clinic_inventory_item_id, master_catalog_item_id,
-              adjustment_type, quantity_delta, quantity_before, quantity_after,
-              reason, performed_by_user_id, performed_by_email, reference_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING *`,
-          [
-            clinicId,
-            line.itemId,
-            item.master_catalog_item_id,
-            "receive",
-            line.quantityDelta,
-            item.quantity_on_hand,
-            quantityAfter,
-            reason,
-            caller.id,
-            caller.email,
-            invoiceId,
-          ],
-        );
-
-        const adjRow = adjRows[0];
-        if (!adjRow) {
-          throw new AppError(500, "INTERNAL_ERROR", "Failed to record inventory adjustment");
-        }
-
-        resultAdjustments.push({
-          id: adjRow.id,
-          clinicId: adjRow.clinic_id,
-          clinicInventoryItemId: adjRow.clinic_inventory_item_id,
-          masterCatalogItemId: adjRow.master_catalog_item_id,
-          adjustmentType: "receive",
-          quantityDelta: adjRow.quantity_delta,
-          quantityBefore: adjRow.quantity_before,
-          quantityAfter: adjRow.quantity_after,
-          reason: adjRow.reason,
-          performedByUserId: adjRow.performed_by_user_id,
-          performedByEmail: adjRow.performed_by_email,
-          referenceId: adjRow.reference_id,
-          createdAt: adjRow.created_at,
+        // Delegate inventory locking, mutation, and adjustment recording to the
+        // shared receiving engine.  Invoice receiving uses conversionFactor=1
+        // because invoice quantityDelta values are already in stock units.
+        const adjustment = await receiveInventoryLine(client, clinicId, {
+          clinicInventoryItemId: line.itemId,
+          quantityDeltaInReceivingUnits: line.quantityDelta,
+          conversionFactor: 1,
+          reason,
+          performedByUserId: caller.id,
+          performedByEmail: caller.email,
+          referenceId: invoiceId,
         });
+        resultAdjustments.push(adjustment);
       }
 
       // ── 3. Mark invoice received — final step, all inventory already updated

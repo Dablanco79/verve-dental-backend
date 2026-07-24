@@ -2701,6 +2701,95 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ADD COLUMN IF NOT EXISTS product_creation_data JSONB NULL;
     `,
   },
+  {
+    /*
+     * 042_purchase_order_lifecycle
+     *
+     * Workflow 1.1 – Purchase Orders
+     *
+     * 1. Extends draft_po_status ENUM with partially_received, received, cancelled.
+     * 2. Adds supplier_id, notes, po_reference to draft_purchase_orders.
+     * 3. Adds unit_cost_cents, receiving_unit to draft_po_lines.
+     *
+     * Non-destructive: all new columns are nullable. Existing rows are preserved.
+     *
+     * Rollback:
+     *   See migrations/042_purchase_order_lifecycle.down.sql
+     *   Note: ENUM value removal requires manual type recreation.
+     */
+    id: "042_purchase_order_lifecycle",
+    sql: `
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          WHERE t.typname = 'draft_po_status' AND e.enumlabel = 'partially_received'
+        ) THEN
+          ALTER TYPE draft_po_status ADD VALUE 'partially_received';
+        END IF;
+      END $$;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          WHERE t.typname = 'draft_po_status' AND e.enumlabel = 'received'
+        ) THEN
+          ALTER TYPE draft_po_status ADD VALUE 'received';
+        END IF;
+      END $$;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON t.oid = e.enumtypid
+          WHERE t.typname = 'draft_po_status' AND e.enumlabel = 'cancelled'
+        ) THEN
+          ALTER TYPE draft_po_status ADD VALUE 'cancelled';
+        END IF;
+      END $$;
+
+      ALTER TABLE draft_purchase_orders
+        ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES suppliers (id) ON DELETE SET NULL,
+        ADD COLUMN IF NOT EXISTS notes TEXT,
+        ADD COLUMN IF NOT EXISTS po_reference VARCHAR(128);
+
+      CREATE INDEX IF NOT EXISTS idx_draft_po_clinic_reference
+        ON draft_purchase_orders (clinic_id, po_reference)
+        WHERE po_reference IS NOT NULL;
+
+      ALTER TABLE draft_po_lines
+        ADD COLUMN IF NOT EXISTS unit_cost_cents INTEGER
+          CONSTRAINT draft_po_lines_unit_cost_check
+          CHECK (unit_cost_cents IS NULL OR unit_cost_cents >= 0),
+        ADD COLUMN IF NOT EXISTS receiving_unit VARCHAR(32);
+    `,
+  },
+  {
+    /*
+     * 043_po_line_received_quantity
+     *
+     * Adds cumulative received_quantity per PO line so that partial receipts
+     * survive page reloads and multiple receiving sessions aggregate correctly.
+     *
+     * outstanding_quantity = quantity - received_quantity (derived, not stored).
+     * PO status transitions are derived from durable line data on the backend.
+     *
+     * Rollback:
+     *   See migrations/043_po_line_received_quantity.down.sql
+     */
+    id: "043_po_line_received_quantity",
+    sql: `
+      ALTER TABLE draft_po_lines
+        ADD COLUMN IF NOT EXISTS received_quantity INTEGER NOT NULL DEFAULT 0
+          CONSTRAINT draft_po_lines_received_qty_check
+          CHECK (received_quantity >= 0);
+
+      CREATE INDEX IF NOT EXISTS idx_draft_po_lines_received
+        ON draft_po_lines (draft_purchase_order_id)
+        WHERE received_quantity > 0;
+    `,
+  },
 ];
 
 /**

@@ -22,9 +22,29 @@ export const SCAN_MODES = ["deduct", "receive"] as const;
 
 export type ScanMode = (typeof SCAN_MODES)[number];
 
-export const DRAFT_PO_STATUSES = ["draft", "submitted"] as const;
+export const DRAFT_PO_STATUSES = [
+  "draft",
+  "submitted",
+  "partially_received",
+  "received",
+  "cancelled",
+] as const;
 
 export type DraftPoStatus = (typeof DRAFT_PO_STATUSES)[number];
+
+/**
+ * Valid forward state transitions for purchase orders.
+ * Any transition not in this map is invalid and must be rejected.
+ */
+export const PO_VALID_TRANSITIONS: Record<DraftPoStatus, DraftPoStatus[]> = {
+  draft: ["submitted", "cancelled"],
+  submitted: ["partially_received", "received", "cancelled"],
+  // partially_received → partially_received: allowed for cumulative receiving sessions
+  // where further quantities remain outstanding after each session.
+  partially_received: ["partially_received", "received", "cancelled"],
+  received: [],
+  cancelled: [],
+};
 
 export type MasterCatalogItem = {
   id: string;
@@ -125,6 +145,9 @@ export type DraftPurchaseOrder = {
   id: string;
   clinicId: string;
   status: DraftPoStatus;
+  supplierId: string | null;
+  notes: string | null;
+  poReference: string | null;
   createdByUserId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -137,6 +160,9 @@ export type DraftPoLine = {
   clinicInventoryItemId: string;
   quantity: number;
   reason: string;
+  unitCostCents?: number | null;
+  receivingUnit?: string | null;
+  receivedQuantity: number;
   createdAt: Date;
 };
 

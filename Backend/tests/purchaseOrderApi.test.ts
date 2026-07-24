@@ -13,6 +13,7 @@
 import request from "supertest";
 
 import { SEED_CLINIC_A_ID, SEED_CLINIC_B_ID } from "../src/repositories/userRepository.js";
+import { SEED_SUPPLIER_A_ID } from "../src/repositories/supplierRelationshipRepository.js";
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
@@ -45,6 +46,7 @@ type ScanResponse = {
 /**
  * Helper: scan Diamond Burs (VRV-BUR-001) in Clinic A with quantity 9,
  * which drops stock from 12 → 3 (< reorder point 4), triggering a draft PO line.
+ * Sets the default test supplier on the PO (required for submission validation).
  * Returns the draftPurchaseOrderId from the response.
  */
 async function scanAndGetPoId(
@@ -63,7 +65,15 @@ async function scanAndGetPoId(
 
   const poLine = body.data.draftPoLine;
   if (!poLine) throw new Error("Expected draftPoLine to be defined");
-  return poLine.draftPurchaseOrderId;
+  const poId = poLine.draftPurchaseOrderId;
+
+  // Assign the default seed supplier so submit validation passes.
+  await request(app)
+    .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/purchase-orders/${poId}`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({ supplierId: SEED_SUPPLIER_A_ID });
+
+  return poId;
 }
 
 // ─── List Purchase Orders ──────────────────────────────────────────────────────
@@ -378,7 +388,7 @@ describe("Purchase Order API — CSV export", () => {
     const csvText = res.text;
     const lines = csvText.split("\r\n");
     expect(lines[0]).toBe(
-      "Line ID,PO ID,SKU,Item Name,Qty Needed,Trigger,Status,Created At",
+      "Line ID,PO ID,PO Reference,SKU,Item Name,Qty Needed,Trigger,Status,Created At",
     );
   });
 

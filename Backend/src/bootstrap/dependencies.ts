@@ -428,6 +428,7 @@ export async function createAppDependencies(
     analyticsRepository,
     supplierCatalogueRepository,
     supplierRepository,
+    connectedPool ?? undefined,
   );
 
   // Supplier Intelligence — Sprint 3.

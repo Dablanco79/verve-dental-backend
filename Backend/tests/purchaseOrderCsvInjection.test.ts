@@ -169,7 +169,7 @@ describe("CSV export — formula injection neutralization (API level)", () => {
 
       // Header row must be unmodified
       expect(lines[0]).toBe(
-        "Line ID,PO ID,SKU,Item Name,Qty Needed,Trigger,Status,Created At",
+        "Line ID,PO ID,PO Reference,SKU,Item Name,Qty Needed,Trigger,Status,Created At",
       );
 
       // Data row must exist
