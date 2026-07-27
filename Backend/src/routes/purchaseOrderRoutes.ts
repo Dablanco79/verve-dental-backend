@@ -31,10 +31,23 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.exportPurchaseOrdersCsv(req, res)),
   );
 
+  // List PO headers only (no lines) — used for the "add to existing draft" selector.
+  // Mounted BEFORE /:poId so /headers is matched as a literal path segment.
+  router.get(
+    "/headers",
+    asyncHandler((req, res) => handlers.listPurchaseOrderHeaders(req, res)),
+  );
+
   // Create a manual draft Purchase Order.
   router.post(
     "/",
     asyncHandler((req, res) => handlers.createPurchaseOrder(req, res)),
+  );
+
+  // Create a draft PO and add all lines in one atomic request.
+  router.post(
+    "/with-lines",
+    asyncHandler((req, res) => handlers.createPurchaseOrderWithLines(req, res)),
   );
 
   // Get detail for a single Purchase Order (header + enriched lines).
@@ -65,6 +78,12 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
   router.post(
     "/:poId/lines",
     asyncHandler((req, res) => handlers.addPoLine(req, res)),
+  );
+
+  // Batch-add multiple lines to a draft PO in one atomic request.
+  router.post(
+    "/:poId/lines/batch",
+    asyncHandler((req, res) => handlers.addLinesToPurchaseOrder(req, res)),
   );
 
   // Update a line on a draft PO.

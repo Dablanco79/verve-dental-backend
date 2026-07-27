@@ -22,6 +22,8 @@ import type {
   CreateProductRequest,
   CreateProductResponse,
   CreatePurchaseOrderRequest,
+  CreatePurchaseOrderWithLinesRequest,
+  BatchAddLinesRequest,
   InventoryItem,
   MasterProductImportResult,
   PurchaseOrder,
@@ -678,6 +680,40 @@ export function createApiClient(config: AppConfig) {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
+  }
+
+  async function listPurchaseOrderHeaders(clinicId: string): Promise<PurchaseOrder[]> {
+    return request<PurchaseOrder[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/headers`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createPurchaseOrderWithLines(
+    clinicId: string,
+    body: CreatePurchaseOrderWithLinesRequest,
+  ): Promise<PurchaseOrderDetail> {
+    return request<PurchaseOrderDetail>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/with-lines`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function addLinesToPurchaseOrder(
+    clinicId: string,
+    poId: string,
+    body: BatchAddLinesRequest,
+  ): Promise<PurchaseOrderDetail> {
+    return request<PurchaseOrderDetail>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/lines/batch`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
   }
 
   async function listRoster(
@@ -2213,6 +2249,9 @@ export function createApiClient(config: AppConfig) {
     removePoLine,
     receivePurchaseOrder,
     exportPurchaseOrdersCsv,
+    listPurchaseOrderHeaders,
+    createPurchaseOrderWithLines,
+    addLinesToPurchaseOrder,
     listRoster,
     getMyShifts,
     createShift,

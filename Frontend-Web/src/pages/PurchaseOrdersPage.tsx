@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -262,6 +262,7 @@ export function PurchaseOrdersPage() {
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope } = useSelectedClinic();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const selectedClinicId = selectedClinic?.id;
   const focusedItemId = searchParams.get("item");
   const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
@@ -472,9 +473,9 @@ export function PurchaseOrdersPage() {
           <CreatePoForm
             suppliers={suppliers}
             clinicId={selectedClinicId}
-            onCreated={() => {
+            onCreated={(po) => {
               setShowCreateForm(false);
-              void loadData();
+              void navigate(`/purchase-orders/${po.id}`);
             }}
             onCancel={() => { setShowCreateForm(false); }}
           />

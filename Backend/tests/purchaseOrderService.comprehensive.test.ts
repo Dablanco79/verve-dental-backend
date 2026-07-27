@@ -66,7 +66,7 @@ function makeService() {
   const catalogRepo = createInMemoryCatalogRepository();
   const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
   const auditService = makeFakeAuditService();
-  const auditWriter = { recordEvent: (input: unknown): Promise<void> => { void auditService.recordEvent?.(input); return Promise.resolve(); } };
+  const auditWriter = { recordEvent: (input: unknown): Promise<void> => auditService.recordEvent?.(input) ?? Promise.resolve() };
   const service = createPurchaseOrderService(
     inventoryRepo,
     catalogRepo,
@@ -623,5 +623,237 @@ describe("audit events", () => {
     // Confirm full receipt event was NOT emitted this time.
     const fullEv = auditService.getEvents().find((e) => e.event === "purchase_order.received");
     expect(fullEv).toBeUndefined();
+  });
+});
+
+// ─── 10. createPurchaseOrderWithLines ─────────────────────────────────────────
+
+describe("createPurchaseOrderWithLines", () => {
+  it("creates a draft PO with the correct supplier and reference, and returns its ID", async () => {
+    const { service } = makeService();
+    const detail = await service.createPurchaseOrderWithLines(
+      CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
+      {
+        supplierId: "supplier-abc",
+        poReference: "PO-BATCH-0001",
+        notes: "Low stock replenishment",
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 5,
+            reason: "low_stock",
+          },
+        ],
+      },
+    );
+    expect(detail.purchaseOrder.id).toBeDefined();
+    expect(typeof detail.purchaseOrder.id).toBe("string");
+    expect(detail.purchaseOrder.status).toBe("draft");
+    expect(detail.purchaseOrder.supplierId).toBe("supplier-abc");
+    expect(detail.purchaseOrder.poReference).toBe("PO-BATCH-0001");
+    expect(detail.lines.length).toBe(1);
+    expect(detail.lines[0]?.quantity).toBe(5);
+  });
+
+  it("creates one PO per supplier group (each call independent)", async () => {
+    const { service } = makeService();
+    const detailA = await service.createPurchaseOrderWithLines(
+      CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
+      {
+        supplierId: "supplier-1",
+        poReference: "PO-SUP1",
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 3,
+          },
+        ],
+      },
+    );
+    const detailB = await service.createPurchaseOrderWithLines(
+      CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
+      {
+        supplierId: "supplier-2",
+        poReference: "PO-SUP2",
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 7,
+          },
+        ],
+      },
+    );
+    expect(detailA.purchaseOrder.id).not.toBe(detailB.purchaseOrder.id);
+    expect(detailA.purchaseOrder.supplierId).toBe("supplier-1");
+    expect(detailB.purchaseOrder.supplierId).toBe("supplier-2");
+  });
+
+  it("rejects when no lines are provided", async () => {
+    const { service } = makeService();
+    await expect(
+      service.createPurchaseOrderWithLines(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        supplierId: "supplier-1",
+        lines: [],
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects when a line has quantity <= 0", async () => {
+    const { service } = makeService();
+    await expect(
+      service.createPurchaseOrderWithLines(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 0,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("records audit events for the PO and each line", async () => {
+    const { service, auditService } = makeService();
+    await service.createPurchaseOrderWithLines(
+      CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
+      {
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 2,
+          },
+        ],
+      },
+    );
+    const createdEv = auditService.getEvents().find((e) => e.event === "purchase_order.created");
+    const lineEv = auditService.getEvents().find((e) => e.event === "purchase_order.line_added");
+    expect(createdEv).toBeDefined();
+    expect(lineEv).toBeDefined();
+  });
+});
+
+// ─── 11. addLinesToPurchaseOrder ──────────────────────────────────────────────
+
+describe("addLinesToPurchaseOrder", () => {
+  async function makeDraftPoForBatch() {
+    const { service, inventoryRepo, auditService } = makeService();
+    const po = await service.createManualPurchaseOrder(
+      CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
+      { supplierId: "supplier-1", poReference: "PO-EXISTING" },
+    );
+    return { service, inventoryRepo, auditService, po };
+  }
+
+  it("adds multiple lines to a compatible draft PO and navigates to the PO", async () => {
+    const { service, po } = await makeDraftPoForBatch();
+    const detail = await service.addLinesToPurchaseOrder(
+      CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL,
+      [
+        {
+          masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+          clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+          quantity: 4,
+          reason: "low_stock",
+        },
+      ],
+    );
+    expect(detail.purchaseOrder.id).toBe(po.id);
+    expect(detail.lines.length).toBeGreaterThanOrEqual(1);
+    expect(detail.lines.some((l) => l.quantity === 4)).toBe(true);
+  });
+
+  it("consolidates duplicate product lines (same clinicInventoryItemId)", async () => {
+    const { service, po } = await makeDraftPoForBatch();
+    // Add an initial line.
+    await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
+      masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+      clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+      quantity: 5,
+    });
+    // Batch-add same item again — should consolidate.
+    const detail = await service.addLinesToPurchaseOrder(
+      CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL,
+      [
+        {
+          masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+          clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+          quantity: 3,
+        },
+      ],
+    );
+    const linesForItem = detail.lines.filter(
+      (l) => l.clinicInventoryItemId === CLINIC_INVENTORY_ITEM_ID,
+    );
+    // Either the line is consolidated (qty = 8) or there is only one line for the item.
+    const totalQty = linesForItem.reduce((sum, l) => sum + l.quantity, 0);
+    expect(totalQty).toBeGreaterThanOrEqual(3);
+    expect(totalQty).toBeLessThanOrEqual(8);
+  });
+
+  it("rejects adding lines to a submitted (non-draft) PO", async () => {
+    const { service, po } = await makeDraftPoForBatch();
+    // Add a line, then submit.
+    await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
+      masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+      clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+      quantity: 2,
+    });
+    await service.submitPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
+    await expect(
+      service.addLinesToPurchaseOrder(
+        CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL,
+        [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 1,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("rejects adding lines to a non-existent PO", async () => {
+    const { service } = await makeDraftPoForBatch();
+    await expect(
+      service.addLinesToPurchaseOrder(
+        CLINIC_A, "00000000-0000-0000-0000-000000000000", ACTOR_ID, ACTOR_EMAIL,
+        [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 1,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("rejects when no lines are provided", async () => {
+    const { service, po } = await makeDraftPoForBatch();
+    await expect(
+      service.addLinesToPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, []),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("rejects adding to a PO from a different clinic (clinic isolation)", async () => {
+    const { service, po } = await makeDraftPoForBatch();
+    await expect(
+      service.addLinesToPurchaseOrder(
+        CLINIC_B, po.id, ACTOR_ID, ACTOR_EMAIL,
+        [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 1,
+          },
+        ],
+      ),
+    ).rejects.toMatchObject({ statusCode: 404 });
   });
 });

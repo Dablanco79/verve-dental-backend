@@ -25,6 +25,9 @@ export default tseslint.config(
         "warn",
         { allowConstantExport: true },
       ],
+      // react-router-dom v7 types navigate() as Promise<void>; void-prefixed
+      // fire-and-forget navigation is intentional in sync callbacks.
+      "@typescript-eslint/no-floating-promises": ["error", { ignoreVoid: true }],
     },
   },
   {

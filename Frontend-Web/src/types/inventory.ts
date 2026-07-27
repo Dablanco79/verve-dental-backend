@@ -134,6 +134,31 @@ export type CreatePurchaseOrderRequest = {
   poReference?: string | null;
 };
 
+export type CreatePurchaseOrderWithLinesRequest = {
+  supplierId?: string | null;
+  notes?: string | null;
+  poReference?: string | null;
+  lines: Array<{
+    masterCatalogItemId: string;
+    clinicInventoryItemId: string;
+    quantity: number;
+    reason?: string;
+    unitCostCents?: number | null;
+    receivingUnit?: string | null;
+  }>;
+};
+
+export type BatchAddLinesRequest = {
+  lines: Array<{
+    masterCatalogItemId: string;
+    clinicInventoryItemId: string;
+    quantity: number;
+    reason?: string;
+    unitCostCents?: number | null;
+    receivingUnit?: string | null;
+  }>;
+};
+
 export type UpdatePurchaseOrderRequest = {
   supplierId?: string | null;
   notes?: string | null;

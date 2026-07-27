@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InventoryPage } from "../src/pages/InventoryPage.js";
@@ -27,6 +27,9 @@ const {
   mockListInventory,
   mockListAdjustments,
   mockListPurchaseOrders,
+  mockListPurchaseOrderHeaders,
+  mockCreatePurchaseOrderWithLines,
+  mockAddLinesToPurchaseOrder,
   mockHandleScan,
   mockCreateProduct,
   mockListSuppliers,
@@ -53,6 +56,9 @@ const {
     mockListInventory: vi.fn(),
     mockListAdjustments: vi.fn(),
     mockListPurchaseOrders: vi.fn(),
+    mockListPurchaseOrderHeaders: vi.fn(),
+    mockCreatePurchaseOrderWithLines: vi.fn(),
+    mockAddLinesToPurchaseOrder: vi.fn(),
     mockHandleScan: vi.fn(),
     mockCreateProduct: vi.fn(),
     mockListSuppliers: vi.fn(),
@@ -80,6 +86,9 @@ vi.mock("../src/api/client.js", () => ({
     listInventory: mockListInventory,
     listAdjustments: mockListAdjustments,
     listPurchaseOrders: mockListPurchaseOrders,
+    listPurchaseOrderHeaders: mockListPurchaseOrderHeaders,
+    createPurchaseOrderWithLines: mockCreatePurchaseOrderWithLines,
+    addLinesToPurchaseOrder: mockAddLinesToPurchaseOrder,
     listSuppliers: mockListSuppliers,
     handleScan: mockHandleScan,
     createProduct: mockCreateProduct,
@@ -215,7 +224,10 @@ const submittedPoLine: PurchaseOrderLine = {
 function renderInventoryPage(initialPath = "/inventory") {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <InventoryPage />
+      <Routes>
+        <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/purchase-orders/:poId" element={<div data-testid="po-detail-page">PO Detail</div>} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -233,6 +245,9 @@ describe("InventoryPage", () => {
     mockListInventory.mockReset();
     mockListAdjustments.mockReset();
     mockListPurchaseOrders.mockReset();
+    mockListPurchaseOrderHeaders.mockReset();
+    mockCreatePurchaseOrderWithLines.mockReset();
+    mockAddLinesToPurchaseOrder.mockReset();
     mockHandleScan.mockReset();
     mockCreateProduct.mockReset();
     mockListSuppliers.mockReset();
@@ -245,6 +260,7 @@ describe("InventoryPage", () => {
     mockListInventory.mockResolvedValue(sampleInventory);
     mockListAdjustments.mockResolvedValue({ items: [receiveAdjustment], total: 1, limit: 25, offset: 0 });
     mockListPurchaseOrders.mockResolvedValue([submittedPoLine]);
+    mockListPurchaseOrderHeaders.mockResolvedValue([]);
     mockListSuppliers.mockResolvedValue([
       { id: "supplier-1", supplierName: "DentalCo AU", active: true },
       { id: "supplier-2", supplierName: "BurDirect", active: true },
@@ -580,7 +596,7 @@ describe("InventoryPage", () => {
     });
   });
 
-  it("links managers from low stock products to the matching purchase order review", async () => {
+  it("shows eligible low-stock items as selectable checkboxes in the purchasing queue", async () => {
     setAuthenticatedUser(authTestState, managerUser);
 
     renderInventoryPage("/inventory?focus=low-stock");
@@ -588,13 +604,185 @@ describe("InventoryPage", () => {
     expect(await screen.findByRole("heading", { name: "Low stock purchasing queue" }))
       .toBeInTheDocument();
 
-    const reviewLinks = screen.getAllByRole("link", {
-      name: "Review purchase order for Nitrile Examination Gloves (Box 100)",
+    // The new UI shows items with checkboxes, not "Review purchase order" links.
+    // findAllByRole waits for the LowStockPurchasingQueue to finish loading (isLoading → false).
+    const checkboxes = await screen.findAllByRole("checkbox");
+    expect(checkboxes.length).toBeGreaterThan(0);
+
+    // The item name is visible in the queue (scoped to <strong> to avoid matching the workspace table <a>).
+    expect(screen.getByText("Nitrile Examination Gloves (Box 100)", { selector: "strong" })).toBeInTheDocument();
+
+    // Select all control is visible.
+    expect(screen.getByText(/Select all eligible/i)).toBeInTheDocument();
+  });
+
+  it("select-all selects all eligible low-stock items", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // findByRole waits for the LowStockPurchasingQueue to finish loading before clicking.
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // All eligible item checkboxes should now be checked.
+    const checkboxes = screen.getAllByRole("checkbox");
+    // At least one item checkbox is checked (the select-all + item checkboxes).
+    const checkedItems = checkboxes.filter((cb) => (cb as HTMLInputElement).checked);
+    expect(checkedItems.length).toBeGreaterThan(0);
+  });
+
+  it("creates a draft PO from selected low-stock items and navigates to it", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // Set up an item with a preferredSupplierId so groupBySupplier works correctly.
+    const eligibleWithSupplier = {
+      ...sampleInventory[0],
+      id: "e1111111-1111-4111-8111-111111111114",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([eligibleWithSupplier]);
+
+    const createdDetail = {
+      purchaseOrder: {
+        id: "aaaaaaaa-1111-4111-8111-000000000001",
+        clinicId: TEST_CLINIC_ID,
+        status: "draft",
+        supplierId: "supplier-1",
+        notes: null,
+        poReference: "PO-TEST-001",
+        createdByUserId: "user-1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      lines: [],
+    };
+    mockCreatePurchaseOrderWithLines.mockResolvedValue(createdDetail);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // findByRole waits for the LowStockPurchasingQueue to finish loading before selecting.
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // Click "Create Draft PO from selected".
+    const createBtn = await screen.findByRole("button", { name: /create draft po from selected/i });
+    fireEvent.click(createBtn);
+
+    await waitFor(() => {
+      const linesContaining = expect.arrayContaining([
+        expect.objectContaining({ clinicInventoryItemId: eligibleWithSupplier.id }),
+      ]) as Array<Record<string, unknown>>;
+      expect(mockCreatePurchaseOrderWithLines).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        expect.objectContaining({
+          supplierId: "supplier-1",
+          lines: linesContaining,
+        }),
+      );
     });
-    expect(reviewLinks[0]).toHaveAttribute(
-      "href",
-      "/purchase-orders?item=d1111111-1111-4111-8111-111111111111",
-    );
+
+    // Should navigate to the new PO's detail page.
+    await waitFor(() => {
+      expect(screen.getByTestId("po-detail-page")).toBeInTheDocument();
+    });
+  });
+
+  it("adds selected low-stock items to an existing draft PO", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const eligibleItem = {
+      ...sampleInventory[0],
+      id: "e1111111-1111-4111-8111-111111111115",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([eligibleItem]);
+
+    const existingDraft = {
+      id: "dddddddd-1111-4111-8111-000000000001",
+      clinicId: TEST_CLINIC_ID,
+      status: "draft",
+      supplierId: "supplier-1",
+      notes: null,
+      poReference: "PO-EXISTING-001",
+      createdByUserId: "user-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mockListPurchaseOrderHeaders.mockResolvedValue([existingDraft]);
+
+    const updatedDetail = {
+      purchaseOrder: existingDraft,
+      lines: [{ id: "line-1", quantity: 2, clinicInventoryItemId: eligibleItem.id }],
+    };
+    mockAddLinesToPurchaseOrder.mockResolvedValue(updatedDetail);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // findByRole waits for the LowStockPurchasingQueue to finish loading before selecting.
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // Open the "Add to existing PO" section.
+    const addToExistingBtn = await screen.findByRole("button", { name: /add to existing draft po/i });
+    fireEvent.click(addToExistingBtn);
+
+    // Should load existing draft POs.
+    await waitFor(() => {
+      expect(mockListPurchaseOrderHeaders).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    });
+
+    // Click the confirm button.
+    const confirmBtn = await screen.findByRole("button", { name: /add selected items to this po/i });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      const linesContaining = expect.arrayContaining([
+        expect.objectContaining({ clinicInventoryItemId: eligibleItem.id }),
+      ]) as Array<Record<string, unknown>>;
+      expect(mockAddLinesToPurchaseOrder).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        existingDraft.id,
+        expect.objectContaining({
+          lines: linesContaining,
+        }),
+      );
+    });
+
+    // Should navigate to the existing PO's detail page.
+    await waitFor(() => {
+      expect(screen.getByTestId("po-detail-page")).toBeInTheDocument();
+    });
+  });
+
+  it("only shows items below reorder point in the purchasing queue — others are omitted", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // Mix: one eligible (below reorder) and one healthy (above reorder).
+    const eligibleItem = { ...sampleInventory[0], isBelowReorderPoint: true, name: "Low Stock Item" } as InventoryItem;
+    const healthyItem = { ...sampleInventory[1], isBelowReorderPoint: false, name: "Healthy Stock Item" } as InventoryItem;
+    mockListInventory.mockResolvedValue([eligibleItem, healthyItem]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // The queue renders item names as <strong>. Scoping to "strong" distinguishes queue items
+    // from the workspace table which renders the same name as an <a> link.
+    expect(await screen.findByText("Low Stock Item", { selector: "strong" })).toBeInTheDocument();
+
+    // Healthy item does NOT appear in the queue (it is omitted, not disabled).
+    // The workspace table shows it as <a>, not <strong>, so this scoped check targets only the queue.
+    expect(screen.queryByText("Healthy Stock Item", { selector: "strong" })).not.toBeInTheDocument();
   });
 
   it("submits a barcode scan and shows a success notice", async () => {

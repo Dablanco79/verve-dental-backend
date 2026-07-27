@@ -667,6 +667,152 @@ export function createPurchaseOrderService(
 
       return { csv, filename };
     },
+
+    // ── Batch-create: PO header + lines in one request ────────────────────────
+    async createPurchaseOrderWithLines(
+      clinicId: string,
+      userId: string,
+      actorEmail: string,
+      input: {
+        supplierId?: string | null;
+        notes?: string | null;
+        poReference?: string | null;
+        lines: Array<{
+          masterCatalogItemId: string;
+          clinicInventoryItemId: string;
+          quantity: number;
+          reason?: string;
+          unitCostCents?: number | null;
+          receivingUnit?: string | null;
+        }>;
+      },
+    ) {
+      if (input.lines.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "At least one line is required");
+      }
+      for (const l of input.lines) {
+        if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
+          throw new AppError(400, "VALIDATION_ERROR", "All line quantities must be positive whole numbers");
+        }
+      }
+
+      if (pool) {
+        return executeAtomicCreatePoWithLinesPg(clinicId, userId, actorEmail, input);
+      }
+
+      // In-memory path (non-atomic; used for tests).
+      const po = await inventoryRepository.createManualPurchaseOrder({
+        clinicId,
+        createdByUserId: userId,
+        supplierId: input.supplierId ?? null,
+        notes: input.notes ?? null,
+        poReference: input.poReference ?? null,
+      });
+      auditService.logEvent("purchase_order.created", { userId, clinicId, resourceId: po.id });
+      fireAudit(auditWriter, auditService, {
+        clinicId, entityType: "purchase_order", entityId: po.id,
+        action: "created", actorId: userId, actorEmail,
+        metadata: { supplierId: po.supplierId, poReference: po.poReference },
+      });
+
+      const rawLines: RawPoLine[] = [];
+      for (const l of input.lines) {
+        const line = await inventoryRepository.addDraftPoLine({
+          draftPurchaseOrderId: po.id,
+          masterCatalogItemId: l.masterCatalogItemId,
+          clinicInventoryItemId: l.clinicInventoryItemId,
+          quantity: l.quantity,
+          reason: l.reason ?? "low_stock",
+          unitCostCents: l.unitCostCents ?? null,
+          receivingUnit: l.receivingUnit ?? null,
+        });
+        rawLines.push(line);
+        auditService.logEvent("purchase_order.line_added", { userId, clinicId, resourceId: po.id });
+      }
+
+      const poStatusMap = new Map<string, DraftPoStatus>([[po.id, po.status]]);
+      const enriched = await enrichedLines(rawLines, poStatusMap);
+      return { purchaseOrder: po, lines: enriched };
+    },
+
+    // ── Batch-add lines to an existing draft PO ───────────────────────────────
+    async addLinesToPurchaseOrder(
+      clinicId: string,
+      poId: string,
+      userId: string,
+      actorEmail: string,
+      lines: Array<{
+        masterCatalogItemId: string;
+        clinicInventoryItemId: string;
+        quantity: number;
+        reason?: string;
+        unitCostCents?: number | null;
+        receivingUnit?: string | null;
+      }>,
+    ) {
+      if (lines.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "At least one line is required");
+      }
+      for (const l of lines) {
+        if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
+          throw new AppError(400, "VALIDATION_ERROR", "All line quantities must be positive whole numbers");
+        }
+      }
+
+      const po = await inventoryRepository.findPurchaseOrderById(clinicId, poId);
+      if (!po) throw new AppError(404, "PO_NOT_FOUND", "Purchase order not found");
+      if (po.status !== "draft") {
+        throw new AppError(
+          409, "PO_NOT_EDITABLE",
+          `Purchase order in '${po.status}' status cannot be edited`,
+        );
+      }
+
+      if (pool) {
+        return executeAtomicAddLinesPg(clinicId, poId, userId, actorEmail, lines);
+      }
+
+      // In-memory path: add each line with duplicate consolidation.
+      const existingLines = await inventoryRepository.listPoLinesByPoId(poId);
+
+      for (const l of lines) {
+        const duplicate = existingLines.find(
+          (el) => el.masterCatalogItemId === l.masterCatalogItemId,
+        );
+        if (duplicate) {
+          const merged = await inventoryRepository.updatePoLine(duplicate.id, {
+            quantity: duplicate.quantity + l.quantity,
+            unitCostCents: l.unitCostCents ?? duplicate.unitCostCents,
+            receivingUnit: l.receivingUnit ?? duplicate.receivingUnit,
+          });
+          const idx = existingLines.findIndex((el) => el.id === duplicate.id);
+          if (idx >= 0) existingLines[idx] = merged;
+        } else {
+          const line = await inventoryRepository.addDraftPoLine({
+            draftPurchaseOrderId: poId,
+            masterCatalogItemId: l.masterCatalogItemId,
+            clinicInventoryItemId: l.clinicInventoryItemId,
+            quantity: l.quantity,
+            reason: l.reason ?? "low_stock",
+            unitCostCents: l.unitCostCents ?? null,
+            receivingUnit: l.receivingUnit ?? null,
+          });
+          existingLines.push(line);
+          auditService.logEvent("purchase_order.line_added", { userId, clinicId, resourceId: poId });
+          fireAudit(auditWriter, auditService, {
+            clinicId, entityType: "purchase_order", entityId: poId,
+            action: "line_added", actorId: userId, actorEmail,
+            metadata: { masterCatalogItemId: l.masterCatalogItemId },
+          });
+        }
+      }
+
+      const updatedPo = await inventoryRepository.findPurchaseOrderById(clinicId, poId);
+      const allLines = await inventoryRepository.listPoLinesByPoId(poId);
+      const poStatusMap = new Map<string, DraftPoStatus>([[poId, updatedPo?.status ?? "draft"]]);
+      const enriched = await enrichedLines(allLines, poStatusMap);
+      return { purchaseOrder: updatedPo ?? po, lines: enriched };
+    },
   };
 
   // ── Internal: PostgreSQL atomic PO receiving ──────────────────────────────────
@@ -1000,6 +1146,236 @@ export function createPurchaseOrderService(
     });
 
     return { purchaseOrder: updatedPo, adjustments };
+  }
+
+  // ── Internal: PostgreSQL atomic create PO with lines ─────────────────────────
+
+  type BatchLineInput = {
+    masterCatalogItemId: string;
+    clinicInventoryItemId: string;
+    quantity: number;
+    reason?: string;
+    unitCostCents?: number | null;
+    receivingUnit?: string | null;
+  };
+
+  async function executeAtomicCreatePoWithLinesPg(
+    clinicId: string,
+    userId: string,
+    actorEmail: string,
+    input: {
+      supplierId?: string | null;
+      notes?: string | null;
+      poReference?: string | null;
+      lines: BatchLineInput[];
+    },
+  ) {
+    if (!pool) {
+      throw new AppError(500, "INTERNAL_ERROR", "Database pool is required for transactional PO creation");
+    }
+    return withTenantContext(pool, clinicId, async (client) => {
+      type PoRow = {
+        id: string; clinic_id: string; status: string; supplier_id: string | null;
+        po_reference: string | null; notes: string | null; created_by_user_id: string;
+        created_at: Date; updated_at: Date;
+      };
+      type LineRow = {
+        id: string; draft_purchase_order_id: string; master_catalog_item_id: string;
+        clinic_inventory_item_id: string; quantity: number; received_quantity: number;
+        reason: string; unit_cost_cents: number | null; receiving_unit: string | null;
+        created_at: Date;
+      };
+
+      const poResult = await client.query<PoRow>(
+        `INSERT INTO draft_purchase_orders
+           (clinic_id, status, supplier_id, po_reference, notes, created_by_user_id)
+         VALUES ($1, 'draft', $2, $3, $4, $5)
+         RETURNING *`,
+        [clinicId, input.supplierId ?? null, input.poReference ?? null, input.notes ?? null, userId],
+      );
+      const pr = poResult.rows[0];
+      if (!pr) throw new AppError(500, "INTERNAL_ERROR", "Failed to create purchase order");
+      const poId = pr.id;
+
+      const rawLines: RawPoLine[] = [];
+      for (const l of input.lines) {
+        const lineResult = await client.query<LineRow>(
+          `INSERT INTO draft_po_lines
+             (draft_purchase_order_id, master_catalog_item_id, clinic_inventory_item_id,
+              quantity, received_quantity, reason, unit_cost_cents, receiving_unit)
+           VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
+           RETURNING *`,
+          [poId, l.masterCatalogItemId, l.clinicInventoryItemId,
+           l.quantity, l.reason ?? "low_stock", l.unitCostCents ?? null, l.receivingUnit ?? null],
+        );
+        const lr = lineResult.rows[0];
+        if (!lr) throw new AppError(500, "INTERNAL_ERROR", "Failed to insert PO line");
+        rawLines.push({
+          id: lr.id,
+          draftPurchaseOrderId: lr.draft_purchase_order_id,
+          masterCatalogItemId: lr.master_catalog_item_id,
+          clinicInventoryItemId: lr.clinic_inventory_item_id,
+          quantity: lr.quantity,
+          reason: lr.reason,
+          unitCostCents: lr.unit_cost_cents,
+          receivingUnit: lr.receiving_unit,
+          receivedQuantity: lr.received_quantity,
+          createdAt: lr.created_at,
+        });
+      }
+
+      const po = {
+        id: pr.id, clinicId: pr.clinic_id,
+        status: pr.status as DraftPoStatus,
+        supplierId: pr.supplier_id, poReference: pr.po_reference,
+        notes: pr.notes, createdByUserId: pr.created_by_user_id,
+        createdAt: pr.created_at, updatedAt: pr.updated_at,
+      };
+
+      await client.query(
+        `INSERT INTO audit_events
+           (clinic_id, entity_type, entity_id, action, actor_id, actor_email, metadata)
+         VALUES ($1, 'purchase_order', $2, 'created', $3, $4, $5)`,
+        [clinicId, poId, userId, actorEmail,
+         JSON.stringify({ supplierId: input.supplierId, poReference: input.poReference })],
+      );
+
+      auditService.logEvent("purchase_order.created", { userId, clinicId, resourceId: poId });
+      const poStatusMap = new Map<string, DraftPoStatus>([[po.id, po.status]]);
+      const enriched = await enrichedLines(rawLines, poStatusMap);
+      return { purchaseOrder: po, lines: enriched };
+    });
+  }
+
+  // ── Internal: PostgreSQL atomic batch-add lines to existing PO ───────────────
+
+  async function executeAtomicAddLinesPg(
+    clinicId: string,
+    poId: string,
+    userId: string,
+    actorEmail: string,
+    lines: BatchLineInput[],
+  ) {
+    if (!pool) {
+      throw new AppError(500, "INTERNAL_ERROR", "Database pool is required for transactional line addition");
+    }
+    return withTenantContext(pool, clinicId, async (client) => {
+      type ExistingLineRow = {
+        id: string; master_catalog_item_id: string; quantity: number;
+        unit_cost_cents: number | null; receiving_unit: string | null;
+      };
+      type PoRow = {
+        id: string; clinic_id: string; status: string; supplier_id: string | null;
+        po_reference: string | null; notes: string | null; created_by_user_id: string;
+        created_at: Date; updated_at: Date;
+      };
+
+      // Lock PO and verify status.
+      const lockedResult = await client.query<{ id: string; status: string }>(
+        `SELECT id, status FROM draft_purchase_orders WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
+        [poId, clinicId],
+      );
+      const lockedPo = lockedResult.rows[0];
+      if (!lockedPo) throw new AppError(404, "PO_NOT_FOUND", "Purchase order not found");
+      if (lockedPo.status !== "draft") {
+        throw new AppError(409, "PO_NOT_EDITABLE",
+          `Purchase order in '${lockedPo.status}' status cannot be edited`);
+      }
+
+      // Load existing lines to handle duplicates.
+      const existingResult = await client.query<ExistingLineRow>(
+        `SELECT id, master_catalog_item_id, quantity, unit_cost_cents, receiving_unit
+         FROM draft_po_lines WHERE draft_purchase_order_id = $1`,
+        [poId],
+      );
+      const existingRows = existingResult.rows;
+
+      for (const l of lines) {
+        const dup = existingRows.find((r) => r.master_catalog_item_id === l.masterCatalogItemId);
+        if (dup) {
+          await client.query(
+            `UPDATE draft_po_lines
+               SET quantity = quantity + $1,
+                   unit_cost_cents = COALESCE($2, unit_cost_cents),
+                   receiving_unit  = COALESCE($3, receiving_unit)
+             WHERE id = $4`,
+            [l.quantity, l.unitCostCents ?? null, l.receivingUnit ?? null, dup.id],
+          );
+          dup.quantity += l.quantity;
+        } else {
+          const insertResult = await client.query<{ id: string }>(
+            `INSERT INTO draft_po_lines
+               (draft_purchase_order_id, master_catalog_item_id, clinic_inventory_item_id,
+                quantity, received_quantity, reason, unit_cost_cents, receiving_unit)
+             VALUES ($1, $2, $3, $4, 0, $5, $6, $7)
+             RETURNING id`,
+            [poId, l.masterCatalogItemId, l.clinicInventoryItemId,
+             l.quantity, l.reason ?? "low_stock", l.unitCostCents ?? null, l.receivingUnit ?? null],
+          );
+          const insertedLine = insertResult.rows[0];
+          if (!insertedLine) throw new AppError(500, "INTERNAL_ERROR", "Failed to insert PO line");
+          existingRows.push({
+            id: insertedLine.id,
+            master_catalog_item_id: l.masterCatalogItemId,
+            quantity: l.quantity,
+            unit_cost_cents: l.unitCostCents ?? null,
+            receiving_unit: l.receivingUnit ?? null,
+          });
+          await client.query(
+            `INSERT INTO audit_events
+               (clinic_id, entity_type, entity_id, action, actor_id, actor_email, metadata)
+             VALUES ($1, 'purchase_order', $2, 'line_added', $3, $4, $5)`,
+            [clinicId, poId, userId, actorEmail,
+             JSON.stringify({ masterCatalogItemId: l.masterCatalogItemId })],
+          );
+          auditService.logEvent("purchase_order.line_added", { userId, clinicId, resourceId: poId });
+        }
+      }
+
+      // Reload final state.
+      const updatedPoResult = await client.query<PoRow>(
+        `SELECT id, clinic_id, status, supplier_id, po_reference, notes, created_by_user_id, created_at, updated_at
+         FROM draft_purchase_orders WHERE id = $1`,
+        [poId],
+      );
+      const updatedPoRow = updatedPoResult.rows[0];
+      if (!updatedPoRow) throw new AppError(500, "INTERNAL_ERROR", "Failed to reload purchase order");
+      const updatedPo = {
+        id: updatedPoRow.id, clinicId: updatedPoRow.clinic_id,
+        status: updatedPoRow.status as DraftPoStatus,
+        supplierId: updatedPoRow.supplier_id, poReference: updatedPoRow.po_reference,
+        notes: updatedPoRow.notes, createdByUserId: updatedPoRow.created_by_user_id,
+        createdAt: updatedPoRow.created_at, updatedAt: updatedPoRow.updated_at,
+      };
+
+      const { rows: finalLineRows } = await client.query<{
+        id: string; draft_purchase_order_id: string; master_catalog_item_id: string;
+        clinic_inventory_item_id: string; quantity: number; received_quantity: number;
+        reason: string; unit_cost_cents: number | null; receiving_unit: string | null;
+        created_at: Date;
+      }>(
+        `SELECT id, draft_purchase_order_id, master_catalog_item_id, clinic_inventory_item_id,
+                quantity, received_quantity, reason, unit_cost_cents, receiving_unit, created_at
+         FROM draft_po_lines WHERE draft_purchase_order_id = $1`,
+        [poId],
+      );
+      const rawLines: RawPoLine[] = finalLineRows.map((r) => ({
+        id: r.id,
+        draftPurchaseOrderId: r.draft_purchase_order_id,
+        masterCatalogItemId: r.master_catalog_item_id,
+        clinicInventoryItemId: r.clinic_inventory_item_id,
+        quantity: r.quantity,
+        reason: r.reason,
+        unitCostCents: r.unit_cost_cents,
+        receivingUnit: r.receiving_unit,
+        receivedQuantity: r.received_quantity,
+        createdAt: r.created_at,
+      }));
+
+      const poStatusMap = new Map<string, DraftPoStatus>([[poId, updatedPo.status]]);
+      const enriched = await enrichedLines(rawLines, poStatusMap);
+      return { purchaseOrder: updatedPo, lines: enriched };
+    });
   }
 }
 

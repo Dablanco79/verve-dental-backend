@@ -7,6 +7,7 @@ import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { InventoryTable } from "../components/inventory/InventoryTable.js";
 import { ScanForm } from "../components/inventory/ScanForm.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { LowStockPurchasingQueue } from "../components/purchasing/LowStockPurchasingQueue.js";
 import { loadConfig } from "../config/index.js";
 import type {
   BarcodeFormat,
@@ -464,7 +465,7 @@ export function InventoryPage() {
         ) : null}
       </section>
 
-      {canReviewPurchaseOrders && !isAllClinicsScope ? (
+      {canReviewPurchaseOrders && !isAllClinicsScope && selectedClinicId ? (
         <section
           className={
             shouldFocusLowStock
@@ -476,7 +477,7 @@ export function InventoryPage() {
             <div>
               <h2>Low stock purchasing queue</h2>
               <p className="inventory-page__subtitle">
-                Review products that are below reorder point, then continue to purchase orders.
+                Select items below reorder point to create or populate a draft purchase order.
               </p>
             </div>
             <div className="inventory-page__actions">
@@ -489,39 +490,12 @@ export function InventoryPage() {
             </div>
           </div>
 
-          {isLoading ? (
-            <p className="loading-message">Checking low-stock products...</p>
-          ) : lowStockItems.length > 0 ? (
-            <div className="inventory-receiving-list">
-              <ul>
-                {lowStockItems.slice(0, 5).map((item) => (
-                  <li key={item.id}>
-                    <span>
-                      <strong>{item.name}</strong>
-                      {" "}
-                      <span className="inventory-table__meta">
-                        {item.masterSku} — {item.quantityOnHand} on hand, reorder at {item.reorderPoint}
-                        {item.preferredSupplierName ?? item.supplierPreference
-                          ? ` — supplier: ${item.preferredSupplierName ?? item.supplierPreference ?? ""}`
-                          : ""}
-                      </span>
-                    </span>
-                    <Link
-                      to={`/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`}
-                      className="link-button"
-                    >
-                      Review purchase order
-                      <span className="visually-hidden"> for {item.name}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="inventory-page__subtitle">
-              No products are currently below reorder point for this clinic.
-            </p>
-          )}
+          <LowStockPurchasingQueue
+            clinicId={selectedClinicId}
+            items={lowStockItems}
+            suppliers={suppliers}
+            isLoading={isLoading}
+          />
         </section>
       ) : null}
 

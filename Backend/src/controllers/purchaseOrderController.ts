@@ -63,6 +63,26 @@ const receivePoBodySchema = z.object({
   })).min(1),
 });
 
+const poLineInputSchema = z.object({
+  masterCatalogItemId: z.string().uuid(),
+  clinicInventoryItemId: z.string().uuid(),
+  quantity: z.number().int().positive(),
+  reason: z.string().min(1).max(255).optional(),
+  unitCostCents: z.number().int().min(0).nullable().optional(),
+  receivingUnit: z.string().max(32).nullable().optional(),
+});
+
+const createPoWithLinesBodySchema = z.object({
+  supplierId: z.string().uuid().nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  poReference: z.string().max(128).nullable().optional(),
+  lines: z.array(poLineInputSchema).min(1),
+});
+
+const batchAddLinesBodySchema = z.object({
+  lines: z.array(poLineInputSchema).min(1),
+});
+
 // ─── Handler factory ──────────────────────────────────────────────────────────
 
 export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
@@ -288,6 +308,40 @@ export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.status(200).send(csv);
+    },
+
+    async listPurchaseOrderHeaders(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const headers = await service.getPurchaseOrders(clinicId);
+      res.status(200).json({ data: headers });
+    },
+
+    async createPurchaseOrderWithLines(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const parseResult = createPoWithLinesBodySchema.safeParse(req.body ?? {});
+      if (!parseResult.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parseResult.error));
+      }
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const detail = await service.createPurchaseOrderWithLines(
+        clinicId, req.user.id, req.user.email, parseResult.data,
+      );
+      res.status(201).json({ data: detail });
+    },
+
+    async addLinesToPurchaseOrder(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const parseResult = batchAddLinesBodySchema.safeParse(req.body ?? {});
+      if (!parseResult.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parseResult.error));
+      }
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const poId = parseUuidParam(req.params.poId, "poId");
+      const detail = await service.addLinesToPurchaseOrder(
+        clinicId, poId, req.user.id, req.user.email, parseResult.data.lines,
+      );
+      res.status(200).json({ data: detail });
     },
   };
 }

@@ -127,6 +127,7 @@ function renderPurchaseOrdersPage(initialPath = "/purchase-orders") {
       <Routes>
         <Route path="/" element={<div>Home redirect</div>} />
         <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+        <Route path="/purchase-orders/:poId" element={<div data-testid="po-detail-page">PO Detail</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -234,5 +235,90 @@ describe("PurchaseOrdersPage", () => {
 
     expect(screen.getByText("Home redirect")).toBeInTheDocument();
     expect(mockListPurchaseOrders).not.toHaveBeenCalled();
+  });
+
+  // ── Manual PO creation ────────────────────────────────────────────────────
+
+  it("opens the create form when 'Create PO' is clicked", async () => {
+    renderPurchaseOrdersPage();
+    await screen.findByText("Diamond Burs FG Round #2 (Pack 5)");
+
+    // "Create PO" is the header button; "Create PO manually" is only in the empty state.
+    fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
+
+    expect(await screen.findByRole("heading", { name: /new purchase order/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create draft po/i })).toBeInTheDocument();
+  });
+
+  it("shows a loading state and prevents double-submission while saving", async () => {
+    // Delay the response so we can assert the loading state.
+    mockCreatePurchaseOrder.mockImplementation(
+      () => new Promise<never>(() => undefined),
+    );
+    renderPurchaseOrdersPage();
+    await screen.findByText("Diamond Burs FG Round #2 (Pack 5)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
+    const createBtn = await screen.findByRole("button", { name: /create draft po/i });
+    fireEvent.click(createBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /creating…/i })).toBeDisabled();
+    });
+  });
+
+  it("navigates to the PO detail page on successful manual creation", async () => {
+    const newPo = {
+      id: "aaaaaaaa-1111-4111-8111-000000000001",
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      status: "draft",
+      supplierId: "supplier-1",
+      notes: null,
+      poReference: "PO-TEST-001",
+      createdByUserId: "user-1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mockCreatePurchaseOrder.mockResolvedValue(newPo);
+
+    renderPurchaseOrdersPage();
+    await screen.findByText("Diamond Burs FG Round #2 (Pack 5)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
+    await screen.findByRole("heading", { name: /new purchase order/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /create draft po/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("po-detail-page")).toBeInTheDocument();
+    });
+    const anyString = expect.any(String) as string;
+    expect(mockCreatePurchaseOrder).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      expect.objectContaining({ poReference: anyString }),
+    );
+  });
+
+  it("retains form values and shows an error message on failed creation", async () => {
+    mockCreatePurchaseOrder.mockRejectedValue(new Error("Supplier not found"));
+
+    renderPurchaseOrdersPage();
+    await screen.findByText("Diamond Burs FG Round #2 (Pack 5)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
+    await screen.findByRole("heading", { name: /new purchase order/i });
+
+    // Clear the auto-generated PO reference and type a known value.
+    const poRefInput = screen.getByPlaceholderText(/e\.g\. PO-/i);
+    fireEvent.change(poRefInput, { target: { value: "PO-RETAIN-001" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /create draft po/i }));
+
+    // Error message must appear.
+    expect(await screen.findByRole("alert")).toHaveTextContent("Supplier not found");
+
+    // Form must still be visible with the entered value retained.
+    expect(screen.getByDisplayValue("PO-RETAIN-001")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create draft po/i })).toBeInTheDocument();
   });
 });
