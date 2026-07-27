@@ -1,12 +1,32 @@
 /**
  * LowStockPurchasingQueue
  *
- * Allows staff to select low-stock items, group them by preferred supplier,
- * and create one or more draft POs (or add to an existing draft PO) — all
- * using the same purchaseOrderService paths as manual PO creation.
+ * Allows staff to select low-stock items and either:
+ *   A) Create a new Purchasing Draft (one PD + one child supplier PO per supplier)
+ *   B) Add selected items to the individual lines of an existing draft supplier PO
+ *
+ * Pricing source (Issue 1 — Finding 2):
+ *   Estimated unit cost = item.unitCostCents, which is the clinic's configured
+ *   cost per STOCK UNIT (derived from unitCostOverrideCents ?? defaultUnitCostCents).
+ *   This is the authoritative operational price available before a PO is created.
+ *
+ *   Suggested purchasing quantity is in RECEIVING UNITS.
+ *   Conversion: ceil(stockUnitShortfall / unitsPerReceivingUnit).
+ *   Estimated line total = receivingQty × unitsPerReceivingUnit × unitCostCents.
+ *   Amounts are clearly labelled "Estimated" — they are NOT accounting-grade costs.
+ *
+ * Supplier guard (Issue 3):
+ *   Products without a preferred supplier are shown with a "Supplier required"
+ *   warning.  They are excluded from Purchasing Draft creation but remain
+ *   visible in the queue and may still be added to an existing draft PO.
+ *   No other valid supplier groups are blocked.
+ *
+ * Suggested order quantity accounts for confirmed on-order stock (submitted POs)
+ * to prevent duplicate ordering.  Draft quantities are shown as a warning but
+ * are NOT treated as confirmed incoming stock.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../../api/client.js";
 import { loadConfig } from "../../config/index.js";
@@ -15,18 +35,66 @@ import type { Supplier } from "../../types/supplier.js";
 
 const apiClient = createApiClient(loadConfig());
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Currency helpers ──────────────────────────────────────────────────────────
 
-function generatePoReference(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const rand = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
-  return `PO-${String(y)}${m}${day}-${rand}`;
+function formatCurrency(cents: number): string {
+  return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(cents / 100);
 }
 
-/** Items below reorder point that have a clinic inventory item ID */
+
+// ── Cost calculation helpers ──────────────────────────────────────────────────
+
+/**
+ * Suggested order quantity in RECEIVING UNITS.
+ *
+ * Steps:
+ * 1. Stock-unit shortfall = reorderPoint − quantityOnHand − onOrderQuantity.
+ *    Confirmed on-order stock (submitted POs, always in stock units from the backend)
+ *    is deducted so the suggestion already accounts for inbound deliveries.
+ * 2. Convert to receiving units: ceil(shortfall / unitsPerReceivingUnit).
+ *    Ceiling ensures enough whole receiving units are ordered to cover the need.
+ *    When receivingUnit == stockUnit (or unitsPerReceivingUnit absent), factor = 1 (1:1).
+ *
+ * Returns 0 when the shortfall is fully covered by confirmed on-order stock.
+ * Draft quantities are NOT deducted — they are shown as a caution only.
+ */
+function suggestedReceivingQty(item: InventoryItem): number {
+  const onOrder = item.onOrderQuantity ?? 0;
+  const stockUnitShortfall = item.reorderPoint - item.quantityOnHand - onOrder;
+  if (stockUnitShortfall <= 0) return 0;
+  const conversionFactor = item.unitsPerReceivingUnit ?? 1;
+  return Math.ceil(stockUnitShortfall / conversionFactor);
+}
+
+/**
+ * Estimated line total in CENTS for a given receiving-unit quantity.
+ *
+ * Formula: receivingQty × unitsPerReceivingUnit × unitCostCents
+ *
+ * item.unitCostCents is per STOCK UNIT (the authoritative clinic price).
+ * receivingQty is in RECEIVING UNITS.
+ * conversionFactor (unitsPerReceivingUnit) converts receiving → stock units.
+ *
+ * Example: 3 Carton × 10 Box/Carton × $8.00/Box = $240.00
+ */
+function estimatedLineCostCents(item: InventoryItem, receivingQty: number): number {
+  const conversionFactor = item.unitsPerReceivingUnit ?? 1;
+  return item.unitCostCents * receivingQty * conversionFactor;
+}
+
+/**
+ * Supplier subtotal (in cents) for a group of items.
+ */
+function groupSubtotalCents(items: InventoryItem[]): number {
+  return items.reduce((total, item) => {
+    const qty = suggestedReceivingQty(item);
+    return total + estimatedLineCostCents(item, qty);
+  }, 0);
+}
+
+// ── Queue helpers ─────────────────────────────────────────────────────────────
+
+/** Items below reorder point that have a clinic inventory item ID. */
 function isEligible(item: InventoryItem): boolean {
   return item.isBelowReorderPoint && Boolean(item.id);
 }
@@ -37,8 +105,9 @@ function getIneligibleReason(item: InventoryItem): string | null {
   return null;
 }
 
-function suggestedQty(item: InventoryItem): number {
-  return Math.max(1, item.reorderPoint - item.quantityOnHand);
+/** True when an item has a preferred supplier that can form a real supplier PO. */
+function hasSupplier(item: InventoryItem): boolean {
+  return Boolean(item.preferredSupplierId);
 }
 
 type SupplierGroup = {
@@ -65,7 +134,7 @@ function groupBySupplier(items: InventoryItem[], suppliers: Supplier[]): Supplie
     .map(([supplierId, groupItems]) => ({
       supplierId,
       supplierName: supplierId
-        ? (supplierMap.get(supplierId) ?? item_preferredSupplierName(groupItems, supplierId) ?? "Unknown supplier")
+        ? (supplierMap.get(supplierId) ?? groupItems.find((i) => i.preferredSupplierId === supplierId)?.preferredSupplierName ?? "Unknown supplier")
         : "No supplier assigned",
       items: groupItems,
     }))
@@ -74,10 +143,6 @@ function groupBySupplier(items: InventoryItem[], suppliers: Supplier[]): Supplie
       if (b.supplierId === null) return -1;
       return a.supplierName.localeCompare(b.supplierName);
     });
-}
-
-function item_preferredSupplierName(items: InventoryItem[], supplierId: string): string | null {
-  return items.find((i) => i.preferredSupplierId === supplierId)?.preferredSupplierName ?? null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -105,7 +170,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
 
   // Classify all items into eligible / ineligible.
   const allEligible = useMemo(() => items.filter(isEligible), [items]);
-  const allItems = useMemo(() => items.sort((a, b) => a.name.localeCompare(b.name)), [items]);
+  const allItems = useMemo(() => items.slice().sort((a, b) => a.name.localeCompare(b.name)), [items]);
 
   // Reset selection when clinic or items change.
   useEffect(() => {
@@ -140,51 +205,61 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
     [allEligible, selectedIds],
   );
 
-  // ── Create draft PO(s) from selected items ──────────────────────────────────
+  // All supplier groups from the selected items.
+  const groupSummary = useMemo(
+    () => groupBySupplier(selectedItems, suppliers),
+    [selectedItems, suppliers],
+  );
 
-  async function handleCreateFromSelected() {
-    if (selectedItems.length === 0) return;
+  // Only groups that have a real supplier can become child supplier POs.
+  const actionableGroups = useMemo(
+    () => groupSummary.filter((g) => g.supplierId !== null),
+    [groupSummary],
+  );
+
+  // Items with no preferred supplier — excluded from PD creation.
+  const noSupplierGroup = useMemo(
+    () => groupSummary.find((g) => g.supplierId === null),
+    [groupSummary],
+  );
+
+  // Overall estimated total for the actionable selected items (stock-unit basis).
+  const overallEstimatedCents = useMemo((): number => {
+    return actionableGroups.reduce((total, group) => total + groupSubtotalCents(group.items), 0);
+  }, [actionableGroups]);
+
+  // ── Create a Purchasing Draft with one child supplier PO per supplier ────────
+
+  async function handleCreatePurchasingDraft() {
+    if (actionableGroups.length === 0) return;
     setSaveError(null);
     setIsSaving(true);
 
     try {
-      const groups = groupBySupplier(selectedItems, suppliers);
-      const createdPoIds: string[] = [];
-
-      for (const group of groups) {
-        const poRef = generatePoReference();
-        const detail = await apiClient.createPurchaseOrderWithLines(clinicId, {
-          supplierId: group.supplierId,
-          poReference: poRef,
-          notes: null,
-          lines: group.items.map((item) => ({
+      const result = await apiClient.createPurchasingDraft(clinicId, {
+        supplierGroups: actionableGroups.map((g) => ({
+          supplierId: g.supplierId,
+          supplierName: g.supplierName,
+          lines: g.items.map((item) => ({
             masterCatalogItemId: item.masterCatalogItemId,
             clinicInventoryItemId: item.id,
-            quantity: suggestedQty(item),
+            quantity: Math.max(1, suggestedReceivingQty(item)),
             reason: "low_stock",
             receivingUnit: item.receivingUnit ?? null,
-            unitCostCents: null,
+            unitCostCents: item.unitCostCents,
           })),
-        });
-        createdPoIds.push(detail.purchaseOrder.id);
-      }
+        })),
+      });
 
-      // Navigate to the first created PO; the user can review the others from the PO list.
-      if (createdPoIds[0]) {
-        const extraCount = createdPoIds.length - 1;
-        const note = extraCount > 0
-          ? `?notice=${encodeURIComponent(`Created ${String(createdPoIds.length)} draft POs (one per supplier). You are viewing the first.`)}`
-          : "";
-        await navigate(`/purchase-orders/${createdPoIds[0]}${note}`);
-      }
+      await navigate(`/purchasing-drafts/${result.purchasingDraft.id}`);
     } catch (err: unknown) {
-      setSaveError(err instanceof Error ? err.message : "Failed to create purchase order");
+      setSaveError(err instanceof Error ? err.message : "Failed to create purchasing draft");
     } finally {
       setIsSaving(false);
     }
   }
 
-  // ── Add selected items to an existing draft PO ──────────────────────────────
+  // ── Add selected items to an existing draft supplier PO ─────────────────────
 
   async function handleLoadDraftPos() {
     setAddToExisting({ phase: "loading_pos" });
@@ -211,10 +286,10 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
         lines: selectedItems.map((item) => ({
           masterCatalogItemId: item.masterCatalogItemId,
           clinicInventoryItemId: item.id,
-          quantity: suggestedQty(item),
+          quantity: Math.max(1, suggestedReceivingQty(item)),
           reason: "low_stock",
           receivingUnit: item.receivingUnit ?? null,
-          unitCostCents: null,
+          unitCostCents: item.unitCostCents,
         })),
       });
       await navigate(`/purchase-orders/${selectedPoId}`);
@@ -225,11 +300,6 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
       setIsSaving(false);
     }
   }
-
-  const groupSummary = useMemo(
-    () => groupBySupplier(selectedItems, suppliers),
-    [selectedItems, suppliers],
-  );
 
   const allSelectedCount = selectedIds.size;
   const allEligibleCount = allEligible.length;
@@ -253,7 +323,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
         <label className="low-stock-queue__select-all">
           <input
             type="checkbox"
-            checked={allSelectedCount === allEligibleCount}
+            checked={allSelectedCount === allEligibleCount && allEligibleCount > 0}
             ref={(el) => {
               if (el) {
                 el.indeterminate = allSelectedCount > 0 && allSelectedCount < allEligibleCount;
@@ -267,7 +337,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
               }
             }}
           />
-          {allSelectedCount === allEligibleCount
+          {allSelectedCount === allEligibleCount && allEligibleCount > 0
             ? `Deselect all (${String(allEligibleCount)})`
             : `Select all eligible (${String(allEligibleCount)})`}
         </label>
@@ -285,10 +355,19 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           const eligible = isEligible(item);
           const reason = getIneligibleReason(item);
           const checked = selectedIds.has(item.id);
-          const qty = suggestedQty(item);
-          const supplierName =
-            item.preferredSupplierName ??
-            (item.supplierPreference ?? null);
+          // qty is in RECEIVING UNITS (ceil of stock-unit shortfall / conversionFactor).
+          const qty = suggestedReceivingQty(item);
+          const supplierName = item.preferredSupplierName ?? (item.supplierPreference ?? null);
+          const itemHasSupplier = hasSupplier(item);
+          const inDraft = item.inDraftQuantity ?? 0;
+          const onOrder = item.onOrderQuantity ?? 0;
+          const activeDocs = item.activePurchasingDocuments ?? [];
+          const conversionFactor = item.unitsPerReceivingUnit ?? 1;
+
+          // Cost per RECEIVING UNIT = unitCostCents (per stock unit) × conversionFactor.
+          // Estimated line total = receivingQty × conversionFactor × unitCostCents.
+          const costPerReceivingUnitCents = item.unitCostCents * conversionFactor;
+          const lineCostEstimate = estimatedLineCostCents(item, qty);
 
           return (
             <div
@@ -308,15 +387,25 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
                 <strong>{item.name}</strong>
                 <span className="inventory-table__meta">
                   {item.masterSku}
-                  {" · "}On hand: {String(item.quantityOnHand)}
+                  {" · "}On hand: <strong>{String(item.quantityOnHand)}</strong>
                   {" · "}Reorder at: {String(item.reorderPoint)}
                   {" · "}
-                  <strong>Suggest: {String(qty)}</strong>
-                  {item.receivingUnit ? ` ${item.receivingUnit}` : ""}
-                  {item.receivingUnit && item.stockUnit && item.receivingUnit !== item.stockUnit && item.unitsPerReceivingUnit
-                    ? ` (= ${String(qty * item.unitsPerReceivingUnit)} ${item.stockUnit})`
-                    : ""}
+                  {qty === 0 && onOrder > 0
+                    ? <><strong>Covered</strong> — {String(onOrder)} {item.stockUnit ?? "units"} on order</>
+                    : <>
+                        <strong>Suggest: {String(Math.max(1, qty))}</strong>
+                        {item.receivingUnit ? ` ${item.receivingUnit}` : ""}
+                        {item.receivingUnit && item.stockUnit && item.receivingUnit !== item.stockUnit && conversionFactor > 1
+                          ? ` (${String(Math.max(1, qty) * conversionFactor)} ${item.stockUnit} incoming)`
+                          : ""}
+                      </>}
                 </span>
+
+                {/* Estimated cost — qty in receiving units; cost per receiving unit = stockCost × conversionFactor */}
+                <span className="inventory-table__meta">
+                  Estimated: {String(Math.max(1, qty))} × {item.receivingUnit ?? item.stockUnit ?? "unit"} @ {formatCurrency(costPerReceivingUnitCents)} = <strong>{formatCurrency(lineCostEstimate)}</strong>
+                </span>
+
                 {supplierName ? (
                   <span className="inventory-table__meta">
                     Supplier: {supplierName}
@@ -324,8 +413,59 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
                 ) : (
                   <span className="inventory-table__meta inventory-table__meta--warn">
                     No preferred supplier
+                    {eligible && " — assign a supplier in Inventory or Product settings before adding to a Purchasing Draft"}
                   </span>
                 )}
+
+                {/* Supplier-required warning for PD creation */}
+                {eligible && !itemHasSupplier && (
+                  <span className="inventory-table__meta inventory-table__meta--warn" data-testid="supplier-required">
+                    Supplier required — this item will not be included in a new Purchasing Draft
+                  </span>
+                )}
+
+                {/* In-draft warning: quantity is planned but NOT confirmed */}
+                {inDraft > 0 && (
+                  <span className="inventory-table__meta inventory-table__meta--warn">
+                    {String(inDraft)} {item.stockUnit ?? "units"} already in a draft order
+                    {activeDocs.filter((d) => d.status === "draft").map((d) => (
+                      <span key={d.poId}>
+                        {" · "}
+                        {d.draftReference ? (
+                          <Link to={`/purchasing-drafts/${d.purchasingDraftId ?? ""}`} className="low-stock-queue__doc-link">
+                            {d.draftReference}
+                          </Link>
+                        ) : (
+                          <Link to={`/purchase-orders/${d.poId}`} className="low-stock-queue__doc-link">
+                            {d.poReference ?? d.poId.slice(0, 8)}
+                          </Link>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                )}
+
+                {/* On-order status: confirmed incoming */}
+                {onOrder > 0 && (
+                  <span className="inventory-table__meta">
+                    {String(onOrder)} {item.stockUnit ?? "units"} already on order
+                    {activeDocs.filter((d) => d.status === "submitted" || d.status === "partially_received").map((d) => (
+                      <span key={d.poId}>
+                        {" · "}
+                        {d.draftReference ? (
+                          <Link to={`/purchasing-drafts/${d.purchasingDraftId ?? ""}`} className="low-stock-queue__doc-link">
+                            {d.draftReference}
+                          </Link>
+                        ) : (
+                          <Link to={`/purchase-orders/${d.poId}`} className="low-stock-queue__doc-link">
+                            {d.poReference ?? d.poId.slice(0, 8)}
+                          </Link>
+                        )}
+                      </span>
+                    ))}
+                  </span>
+                )}
+
                 {reason ? (
                   <span className="inventory-table__meta inventory-table__meta--warn">
                     {reason}
@@ -337,35 +477,74 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
         })}
       </div>
 
-      {/* Supplier grouping summary */}
-      {allSelectedCount > 0 && groupSummary.length > 1 && (
+      {/* Supplier grouping summary with subtotals */}
+      {allSelectedCount > 0 && groupSummary.length > 0 && (
         <div className="low-stock-queue__group-summary">
-          <p className="inventory-table__meta">
-            Selected items span {String(groupSummary.length)} supplier groups — one draft PO will be created per group:
-          </p>
-          <ul className="low-stock-queue__group-list">
-            {groupSummary.map((g, i) => (
-              <li key={i}>
-                <strong>{g.supplierName}</strong>: {String(g.items.length)} item{g.items.length !== 1 ? "s" : ""}
-              </li>
-            ))}
-          </ul>
+          {actionableGroups.length > 0 && (
+            <>
+              <p className="inventory-table__meta">
+                {actionableGroups.length > 1
+                  ? `Selected items span ${String(actionableGroups.length)} supplier groups — one supplier PO will be created per group under a single Purchasing Draft:`
+                  : "Selected items will be added to one supplier PO under a Purchasing Draft:"}
+              </p>
+              <ul className="low-stock-queue__group-list">
+                {actionableGroups.map((g, i) => {
+                  const subtotal = groupSubtotalCents(g.items);
+                  return (
+                    <li key={i}>
+                      <strong>{g.supplierName}</strong>
+                      {": "}
+                      {String(g.items.length)} item{g.items.length !== 1 ? "s" : ""}
+                      {" — Estimated: "}
+                      <strong>{formatCurrency(subtotal)}</strong>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="inventory-table__meta">
+                {"Overall Purchasing Draft Estimated: "}
+                <strong data-testid="overall-estimated-total">{formatCurrency(overallEstimatedCents)}</strong>
+              </p>
+            </>
+          )}
+
+          {/* Warning about items excluded from PD due to missing supplier */}
+          {noSupplierGroup && (
+            <div className="inventory-notice inventory-notice--warn" role="status" data-testid="no-supplier-warning">
+              <strong>{String(noSupplierGroup.items.length)} item{noSupplierGroup.items.length !== 1 ? "s" : ""} need a supplier</strong>
+              {" — "}
+              {noSupplierGroup.items.map((i) => i.name).join(", ")}
+              {". These will not be included in the Purchasing Draft. "}
+              {actionableGroups.length > 0
+                ? "The remaining supplier groups will proceed."
+                : ""}
+            </div>
+          )}
         </div>
       )}
 
       {/* Action buttons */}
       {allSelectedCount > 0 && (
         <div className="inventory-page__actions low-stock-queue__actions">
-          <button
-            type="button"
-            className="button-link"
-            onClick={() => { void handleCreateFromSelected(); }}
-            disabled={isSaving}
-          >
-            {isSaving && addToExisting.phase === "idle"
-              ? "Creating…"
-              : `Create draft PO${groupSummary.length > 1 ? `s (${String(groupSummary.length)})` : ""} from selected`}
-          </button>
+          {actionableGroups.length > 0 && (
+            <button
+              type="button"
+              className="button-link"
+              onClick={() => { void handleCreatePurchasingDraft(); }}
+              disabled={isSaving}
+            >
+              {isSaving && addToExisting.phase === "idle"
+                ? "Creating…"
+                : `Create Purchasing Draft (${String(actionableGroups.length)} supplier PO${actionableGroups.length !== 1 ? "s" : ""})`}
+            </button>
+          )}
+
+          {/* If ALL selected items lack a supplier, show a clearer message */}
+          {actionableGroups.length === 0 && (
+            <span className="inventory-table__meta inventory-table__meta--warn">
+              Assign a preferred supplier to at least one item to create a Purchasing Draft.
+            </span>
+          )}
 
           {addToExisting.phase === "idle" && (
             <button
@@ -374,7 +553,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
               onClick={() => { void handleLoadDraftPos(); }}
               disabled={isSaving}
             >
-              Add to existing draft PO
+              Add to existing draft supplier PO
             </button>
           )}
 
@@ -385,10 +564,10 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           {addToExisting.phase === "selecting" && (
             <div className="low-stock-queue__add-to-existing">
               {addToExisting.draftPos.length === 0 ? (
-                <p className="inventory-table__meta">No draft POs found for this clinic.</p>
+                <p className="inventory-table__meta">No draft supplier POs found for this clinic.</p>
               ) : (
                 <label className="product-form__field">
-                  Choose existing draft PO
+                  Choose existing draft supplier PO
                   <select
                     value={selectedPoId}
                     onChange={(e) => { setSelectedPoId(e.target.value); }}

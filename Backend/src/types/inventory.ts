@@ -123,6 +123,29 @@ export type ClinicInventoryItemView = ClinicInventoryItem & {
   isBelowReorderPoint: boolean;
   preferredSupplierId: string | null;
   preferredSupplierName: string | null;
+  /**
+   * Total quantity (in stock units) currently included in active Purchasing
+   * Drafts or unsubmitted supplier POs.  Displayed to prevent duplicate work
+   * but NOT treated as confirmed incoming stock.
+   */
+  inDraftQuantity: number;
+  /**
+   * Total outstanding quantity (in stock units) on submitted or
+   * partially-received supplier POs.  Used to adjust the suggested reorder
+   * quantity: if onOrderQuantity >= (reorderPoint - quantityOnHand), the
+   * item is considered covered.
+   */
+  onOrderQuantity: number;
+  /** References to active purchasing documents for this item. */
+  activePurchasingDocuments: Array<{
+    poId: string;
+    poReference: string | null;
+    purchasingDraftId: string | null;
+    draftReference: string | null;
+    status: DraftPoStatus;
+    quantity: number;
+    receivedQuantity: number;
+  }>;
 };
 
 export type InventoryAdjustment = {
@@ -148,9 +171,43 @@ export type DraftPurchaseOrder = {
   supplierId: string | null;
   notes: string | null;
   poReference: string | null;
+  /** Optional parent Purchasing Draft. Null for standalone/legacy POs. */
+  purchasingDraftId: string | null;
   createdByUserId: string;
   createdAt: Date;
   updatedAt: Date;
+};
+
+/**
+ * Derived status for a Purchasing Draft, computed from its child supplier POs.
+ * Never stored directly; always calculated at query time.
+ */
+export const PURCHASING_DRAFT_STATUSES = [
+  "draft",
+  "partially_submitted",
+  "ordered",
+  "partially_received",
+  "complete",
+  "cancelled",
+] as const;
+
+export type PurchasingDraftStatus = (typeof PURCHASING_DRAFT_STATUSES)[number];
+
+export type PurchasingDraft = {
+  id: string;
+  clinicId: string;
+  draftReference: string;
+  createdByUserId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PurchasingDraftWithStatus = PurchasingDraft & {
+  /** Derived from child PO statuses — never stored. */
+  derivedStatus: PurchasingDraftStatus;
+  childPos: DraftPurchaseOrder[];
+  totalItems: number;
+  supplierCount: number;
 };
 
 export type DraftPoLine = {

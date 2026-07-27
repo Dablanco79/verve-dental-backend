@@ -2,6 +2,16 @@ export type BarcodeFormat = "gs1" | "ean13" | "code128" | "qr" | "data_matrix";
 
 export type ScanMode = "deduct" | "receive";
 
+export type ActivePurchasingDocument = {
+  poId: string;
+  poReference: string | null;
+  purchasingDraftId: string | null;
+  draftReference: string | null;
+  status: "draft" | "submitted" | "partially_received" | "received" | "cancelled";
+  quantity: number;
+  receivedQuantity: number;
+};
+
 export type InventoryItem = {
   id: string;
   clinicId: string;
@@ -24,6 +34,12 @@ export type InventoryItem = {
   preferredSupplierId?: string | null;
   preferredSupplierName?: string | null;
   isBelowReorderPoint: boolean;
+  /** Quantity in active (draft) POs — shown to prevent duplicate work; not confirmed incoming. */
+  inDraftQuantity?: number;
+  /** Outstanding quantity on submitted/partially-received POs — used for suggested reorder calc. */
+  onOrderQuantity?: number;
+  /** Links to active purchasing documents for this item. */
+  activePurchasingDocuments?: ActivePurchasingDocument[];
   createdAt: string;
   updatedAt: string;
 };
@@ -123,9 +139,55 @@ export type PurchaseOrder = {
   supplierId: string | null;
   notes: string | null;
   poReference: string | null;
+  purchasingDraftId?: string | null;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type PurchasingDraftStatus =
+  | "draft"
+  | "partially_submitted"
+  | "ordered"
+  | "partially_received"
+  | "complete"
+  | "cancelled";
+
+export type PurchasingDraft = {
+  id: string;
+  clinicId: string;
+  draftReference: string;
+  derivedStatus: PurchasingDraftStatus;
+  childPos: PurchaseOrder[];
+  totalItems: number;
+  supplierCount: number;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePurchasingDraftRequest = {
+  supplierGroups: Array<{
+    supplierId?: string | null;
+    supplierName: string;
+    lines: Array<{
+      masterCatalogItemId: string;
+      clinicInventoryItemId: string;
+      quantity: number;
+      reason?: string;
+      unitCostCents?: number | null;
+      receivingUnit?: string | null;
+    }>;
+  }>;
+  notes?: string | null;
+};
+
+export type PurchasingDraftDetail = {
+  purchasingDraft: PurchasingDraft;
+  childPos: Array<{
+    purchaseOrder: PurchaseOrder;
+    lines: PurchaseOrderLine[];
+  }>;
 };
 
 export type CreatePurchaseOrderRequest = {

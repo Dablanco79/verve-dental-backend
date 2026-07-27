@@ -20,6 +20,7 @@ import { ManageUsersPage } from "./pages/ManageUsersPage.js";
 import { MyShiftsPage } from "./pages/MyShiftsPage.js";
 import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage.js";
 import { PurchaseOrderDetailPage } from "./pages/PurchaseOrderDetailPage.js";
+import { PurchasingDraftPage } from "./pages/PurchasingDraftPage.js";
 import { RosterCalendarPage } from "./pages/RosterCalendarPage.js";
 import { LaborForecastPage } from "./pages/LaborForecastPage.js";
 import { MaterialsForecastPage } from "./pages/MaterialsForecastPage.js";
@@ -70,6 +71,7 @@ export function App() {
               <Route path="/users" element={<ManageUsersPage />} />
               <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
               <Route path="/purchase-orders/:poId" element={<PurchaseOrderDetailPage />} />
+              <Route path="/purchasing-drafts/:pdId" element={<PurchasingDraftPage />} />
               <Route path="/roster" element={<RosterCalendarPage />} />
               <Route path="/my-shifts" element={<MyShiftsPage />} />
               <Route path="/account" element={<AccountPage />} />

@@ -60,9 +60,13 @@ export type SupplierInvoiceAuditEvent =
   | "supplier_invoice.voided"
   | "supplier_invoice.received";
 
+export type PurchasingDraftAuditEvent =
+  | "purchasing_draft.created";
+
 export type AuditEvent =
   | AuthAuditEvent
   | PurchaseOrderAuditEvent
+  | PurchasingDraftAuditEvent
   | SupplierAuditEvent
   | SupplierInvoiceAuditEvent
   | MasterProductAuditEvent;
@@ -113,6 +117,7 @@ function entityTypeForEvent(event: AuditEvent): AuditEntityType {
     return "product";
   }
   if (event.startsWith("purchase_order.")) return "purchase_order";
+  if (event.startsWith("purchasing_draft.")) return "purchasing_draft";
   if (event.startsWith("user.")) return "user";
   return "auth";
 }

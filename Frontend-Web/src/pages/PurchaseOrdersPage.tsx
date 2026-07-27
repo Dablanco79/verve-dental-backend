@@ -9,6 +9,8 @@ import { loadConfig } from "../config/index.js";
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
+  PurchasingDraft,
+  PurchasingDraftStatus,
 } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
 import { canManageUsers } from "../utils/roles.js";
@@ -16,15 +18,6 @@ import { canManageUsers } from "../utils/roles.js";
 const apiClient = createApiClient(loadConfig());
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const REASON_LABELS: Record<string, string> = {
-  below_reorder_point: "Below reorder point",
-  manual: "Manual",
-};
-
-function formatReason(reason: string): string {
-  return REASON_LABELS[reason] ?? reason;
-}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("en-AU", {
@@ -71,41 +64,49 @@ const STATUS_BADGE_CLASS: Record<PoStatus, string> = {
   cancelled: "po-badge po-badge--cancelled",
 };
 
+const PD_STATUS_LABELS: Record<PurchasingDraftStatus, string> = {
+  draft: "Draft",
+  partially_submitted: "Partially submitted",
+  ordered: "Ordered",
+  partially_received: "Partially received",
+  complete: "Complete",
+  cancelled: "Cancelled",
+};
+
+// ─── Document-oriented PO summary type ───────────────────────────────────────
+
+/**
+ * One entry per Purchase Order document (not per line).
+ * Built by grouping PurchaseOrderLine[] by draftPurchaseOrderId.
+ */
+type PoSummary = {
+  poId: string;
+  poReference: string | null;
+  status: PoStatus;
+  supplierId: string | null;
+  supplierName: string | null;
+  lineCount: number;
+  estimatedSubtotalCents: number | null;
+  hasAnyPricedLine: boolean;
+  parentPd: PurchasingDraft | null;
+  createdAt: string;
+  masterCatalogItemIds: string[];
+};
+
+const STATUS_ORDER: Record<PoStatus, number> = {
+  draft: 0,
+  submitted: 1,
+  partially_received: 2,
+  received: 3,
+  cancelled: 4,
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SupplierSummary({ line }: { line: PurchaseOrderLine }) {
-  const pricing = line.supplierPricing ?? [];
-
-  if (pricing.length === 0) {
-    return (
-      <span className="inventory-table__meta">
-        No supplier pricing linked
-      </span>
-    );
-  }
-
-  if (pricing.length === 1) {
-    const supplier = pricing[0];
-    if (!supplier) return null;
-    return (
-      <span>
-        <span className="inventory-table__name">{supplier.supplierName}</span>
-        <span className="inventory-table__meta">
-          {supplier.supplierSku ?? supplier.supplierCode ?? "Supplier pricing available"} -{" "}
-          {formatCurrencyOrDash(supplier.unitCostCents)} per unit
-        </span>
-      </span>
-    );
-  }
-
+function PoStatusBadge({ status }: { status: PoStatus }) {
   return (
-    <span>
-      <span className="inventory-table__name">
-        {String(pricing.length)} supplier options
-      </span>
-      <span className="inventory-table__meta">
-        Review suppliers before ordering
-      </span>
+    <span className={STATUS_BADGE_CLASS[status]}>
+      {STATUS_LABELS[status]}
     </span>
   );
 }
@@ -256,6 +257,118 @@ function ConfirmCancelDialog({ poId, poReference, clinicId, onCancelled, onDismi
   );
 }
 
+// ─── PO document card ─────────────────────────────────────────────────────────
+
+type PoCardProps = {
+  po: PoSummary;
+  submittingPoId: string | null;
+  onSubmit: (poId: string) => void;
+  onCancelRequest: (poId: string) => void;
+};
+
+function PoCard({ po, submittingPoId, onSubmit, onCancelRequest }: PoCardProps) {
+  const isSubmitting = submittingPoId === po.poId;
+
+  return (
+    <div className="pd-list__item" data-testid={`po-card-${po.poId}`}>
+      <div className="pd-list__item-info">
+        <Link to={`/purchase-orders/${encodeURIComponent(po.poId)}`} className="inventory-table__name">
+          {po.poReference ?? po.poId.slice(0, 8)}
+        </Link>
+        <span className="inventory-table__meta">
+          {po.supplierName ?? "No supplier"}
+          {po.parentPd && (
+            <>{" · "}
+              <Link to={`/purchasing-drafts/${encodeURIComponent(po.parentPd.id)}`} className="low-stock-queue__doc-link">
+                {po.parentPd.draftReference}
+              </Link>
+            </>
+          )}
+        </span>
+        <span className="inventory-table__meta">
+          {String(po.lineCount)} product line{po.lineCount !== 1 ? "s" : ""}
+          {" · "}
+          {po.hasAnyPricedLine
+            ? <><em>Estimated: {formatCurrencyOrDash(po.estimatedSubtotalCents)}</em></>
+            : "No pricing available"}
+          {" · "}
+          {formatDate(po.createdAt)}
+        </span>
+      </div>
+
+      <div className="pd-list__item-actions">
+        <PoStatusBadge status={po.status} />
+
+        {po.status === "draft" && (
+          <>
+            <Link
+              to={`/purchase-orders/${encodeURIComponent(po.poId)}`}
+              className="link-button"
+              aria-label={`Edit lines for ${po.poReference ?? po.poId}`}
+            >
+              Edit / Lines
+            </Link>
+            <button
+              type="button"
+              className="button-link po-submit-btn"
+              onClick={() => { onSubmit(po.poId); }}
+              disabled={isSubmitting}
+              aria-label={`Submit ${po.poReference ?? po.poId}`}
+            >
+              {isSubmitting ? "Submitting…" : "Submit PO"}
+            </button>
+            <button
+              type="button"
+              className="link-button link-button--danger"
+              onClick={() => { onCancelRequest(po.poId); }}
+              aria-label={`Cancel ${po.poReference ?? po.poId}`}
+            >
+              Cancel
+            </button>
+          </>
+        )}
+
+        {(po.status === "submitted" || po.status === "partially_received") && (
+          <>
+            <Link
+              to={`/purchase-orders/${encodeURIComponent(po.poId)}`}
+              className="link-button"
+              aria-label={`View lines for ${po.poReference ?? po.poId}`}
+            >
+              View lines
+            </Link>
+            <Link
+              to={`/inventory?mode=receive&poId=${encodeURIComponent(po.poId)}`}
+              className="button-link"
+              aria-label={`Receive stock for ${po.poReference ?? po.poId}`}
+            >
+              Receive stock
+            </Link>
+            <button
+              type="button"
+              className="link-button link-button--danger"
+              onClick={() => { onCancelRequest(po.poId); }}
+              aria-label={`Cancel ${po.poReference ?? po.poId}`}
+            >
+              Cancel
+            </button>
+          </>
+        )}
+
+        {(po.status === "received" || po.status === "cancelled") && (
+          <Link
+            to={`/purchase-orders/${encodeURIComponent(po.poId)}`}
+            className="link-button"
+            aria-label={`View ${po.poReference ?? po.poId}`}
+          >
+            View
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function PurchaseOrdersPage() {
@@ -268,6 +381,7 @@ export function PurchaseOrdersPage() {
   const isAllClinicsScope = selectedDashboardScope?.type === "all_clinics";
 
   const [lines, setLines] = useState<PurchaseOrderLine[]>([]);
+  const [purchasingDrafts, setPurchasingDrafts] = useState<PurchasingDraft[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -294,12 +408,14 @@ export function PurchaseOrdersPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [linesResult, suppliersResult] = await Promise.all([
+      const [linesResult, suppliersResult, draftsResult] = await Promise.all([
         apiClient.listPurchaseOrders(selectedClinicId),
         apiClient.listSuppliers({ active: true }),
+        apiClient.listPurchasingDrafts(selectedClinicId),
       ]);
       setLines(linesResult);
       setSuppliers(suppliersResult);
+      setPurchasingDrafts(draftsResult);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load purchase orders");
     } finally {
@@ -311,36 +427,94 @@ export function PurchaseOrdersPage() {
     void loadData();
   }, [loadData]);
 
-  // Collect unique draft PO IDs so we can render a submit button per PO group.
-  const draftPoIds = useMemo(
-    () => [
-      ...new Set(
-        lines
-          .filter((l) => l.orderStatus === "draft")
-          .map((l) => l.draftPurchaseOrderId),
-      ),
-    ],
-    [lines],
+  // ─── Build PD → PO lookup for document-oriented rendering ─────────────────
+
+  const pdByPoId = useMemo(() => {
+    const map = new Map<string, PurchasingDraft>();
+    for (const pd of purchasingDrafts) {
+      for (const po of pd.childPos) {
+        map.set(po.id, pd);
+      }
+    }
+    return map;
+  }, [purchasingDrafts]);
+
+  // ─── Group lines into one PoSummary per PO document ───────────────────────
+
+  const supplierMap = useMemo(
+    () => new Map(suppliers.map((s) => [s.id, s.supplierName])),
+    [suppliers],
   );
 
-  const visibleLines = useMemo(
-    () =>
-      focusedItemId
-        ? lines.filter((line) => line.masterCatalogItemId === focusedItemId)
-        : lines,
-    [focusedItemId, lines],
-  );
+  const allPoSummaries = useMemo((): PoSummary[] => {
+    const groups = new Map<string, PurchaseOrderLine[]>();
+    for (const line of lines) {
+      const existing = groups.get(line.draftPurchaseOrderId);
+      if (existing) {
+        existing.push(line);
+      } else {
+        groups.set(line.draftPurchaseOrderId, [line]);
+      }
+    }
 
-  const focusedLine = focusedItemId
-    ? lines.find((line) => line.masterCatalogItemId === focusedItemId)
+    const summaries: PoSummary[] = [];
+
+    for (const [poId, poLines] of groups.entries()) {
+      const firstLine = poLines[0];
+      if (!firstLine) continue;
+
+      const supplierId = firstLine.poSupplierId ?? null;
+      const supplierName = supplierId
+        ? (supplierMap.get(supplierId) ?? firstLine.supplierPricing?.[0]?.supplierName ?? "Unknown supplier")
+        : null;
+
+      let runningSubtotal = 0;
+      let hasAnyPricedLine: boolean = false;
+      for (const l of poLines) {
+        if (l.estimatedLineCostCents !== null && l.estimatedLineCostCents !== undefined) {
+          hasAnyPricedLine = true;
+          runningSubtotal += l.estimatedLineCostCents;
+        }
+      }
+      const estimatedSubtotalCents: number | null = hasAnyPricedLine ? runningSubtotal : null;
+
+      summaries.push({
+        poId,
+        poReference: firstLine.poReference ?? null,
+        status: firstLine.orderStatus,
+        supplierId,
+        supplierName,
+        lineCount: poLines.length,
+        estimatedSubtotalCents,
+        hasAnyPricedLine,
+        parentPd: pdByPoId.get(poId) ?? null,
+        createdAt: firstLine.createdAt,
+        masterCatalogItemIds: poLines.map((l) => l.masterCatalogItemId),
+      });
+    }
+
+    return summaries.sort((a, b) => {
+      const statusDiff = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      if (statusDiff !== 0) return statusDiff;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [lines, pdByPoId, supplierMap]);
+
+  const visiblePoSummaries = useMemo(() => {
+    if (!focusedItemId) return allPoSummaries;
+    return allPoSummaries.filter((po) => po.masterCatalogItemIds.includes(focusedItemId));
+  }, [allPoSummaries, focusedItemId]);
+
+  const focusedFirstLine = focusedItemId
+    ? lines.find((l) => l.masterCatalogItemId === focusedItemId)
     : undefined;
 
   const submittedReceiveHref = recentlySubmittedPoId
     ? `/inventory?mode=receive&poId=${encodeURIComponent(recentlySubmittedPoId)}`
     : null;
 
-  const cancellingPo = cancelConfirmPoId
-    ? lines.find((l) => l.draftPurchaseOrderId === cancelConfirmPoId)
+  const cancellingPoRef = cancelConfirmPoId
+    ? (allPoSummaries.find((p) => p.poId === cancelConfirmPoId)?.poReference ?? null)
     : null;
 
   async function handleSubmit(poId: string) {
@@ -395,6 +569,14 @@ export function PurchaseOrdersPage() {
     );
   }
 
+  const draftPoSummaries = visiblePoSummaries.filter((p) => p.status === "draft");
+  const activePOs = visiblePoSummaries.filter(
+    (p) => p.status === "submitted" || p.status === "partially_received",
+  );
+  const historicalPOs = visiblePoSummaries.filter(
+    (p) => p.status === "received" || p.status === "cancelled",
+  );
+
   return (
     <AppShell>
       {/* Cancel confirmation dialog */}
@@ -402,7 +584,7 @@ export function PurchaseOrdersPage() {
         <div className="po-dialog-overlay" role="presentation">
           <ConfirmCancelDialog
             poId={cancelConfirmPoId}
-            poReference={cancellingPo?.poReference ?? null}
+            poReference={cancellingPoRef}
             clinicId={selectedClinicId}
             onCancelled={() => {
               setCancelConfirmPoId(null);
@@ -495,10 +677,10 @@ export function PurchaseOrdersPage() {
           <div className="po-workflow-callout">
             <div>
               <strong>
-                {focusedLine ? `Reviewing ${focusedLine.itemName}` : "Reviewing selected inventory item"}
+                {focusedFirstLine ? `Reviewing ${focusedFirstLine.itemName}` : "Reviewing selected inventory item"}
               </strong>
               <p className="inventory-page__subtitle">
-                This view was opened from a low-stock product. Clear the filter to review every purchase order line.
+                This view was opened from a low-stock product. Clear the filter to review every purchase order.
               </p>
             </div>
             <Link to="/purchase-orders" className="link-button">
@@ -507,16 +689,59 @@ export function PurchaseOrdersPage() {
           </div>
         ) : null}
 
+        {/* ── Purchasing Drafts ── */}
+        {!loadError && !isLoading && purchasingDrafts.length > 0 && !focusedItemId && (
+          <div className="pd-list">
+            <h3>Purchasing drafts</h3>
+            <p className="inventory-page__subtitle">
+              A Purchasing Draft represents one purchasing exercise. Each draft contains one supplier PO per supplier.
+            </p>
+            {purchasingDrafts.map((pd) => (
+              <div key={pd.id} className="pd-list__item">
+                <div className="pd-list__item-info">
+                  <Link to={`/purchasing-drafts/${encodeURIComponent(pd.id)}`} className="inventory-table__name">
+                    {pd.draftReference}
+                  </Link>
+                  <span className="inventory-table__meta">
+                    {String(pd.totalItems)} item{pd.totalItems !== 1 ? "s" : ""}
+                    {" · "}
+                    {String(pd.supplierCount)} supplier{pd.supplierCount !== 1 ? "s" : ""}
+                    {" · "}
+                    {formatDate(pd.createdAt)}
+                  </span>
+                  <span className="inventory-table__meta">
+                    Child POs: {pd.childPos.map((po) => po.poReference ?? po.id.slice(0, 8)).join(", ")}
+                  </span>
+                </div>
+                <div className="pd-list__item-actions">
+                  <span className="po-badge po-badge--draft">
+                    {PD_STATUS_LABELS[pd.derivedStatus]}
+                  </span>
+                  <Link
+                    to={`/purchasing-drafts/${encodeURIComponent(pd.id)}`}
+                    className="button-link"
+                  >
+                    {pd.derivedStatus === "draft" || pd.derivedStatus === "partially_submitted"
+                      ? "Continue order"
+                      : "View"}
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Loading / error / empty states ── */}
         {loadError ? (
           <p className="status-card__error">{loadError}</p>
         ) : isLoading ? (
           <p className="loading-message">Loading purchase orders…</p>
-        ) : lines.length === 0 && !showCreateForm ? (
+        ) : allPoSummaries.length === 0 && !showCreateForm ? (
           <div className="po-empty">
             <p className="po-empty__title">No purchase orders yet.</p>
             <p className="po-empty__hint">
               Create a purchase order manually using the Create PO button, or
-              lines are created automatically when stock falls below the reorder point.
+              start from Low Stock to generate supplier-specific orders automatically.
             </p>
             <div className="po-empty__actions">
               <button
@@ -531,13 +756,9 @@ export function PurchaseOrdersPage() {
               </Link>
             </div>
           </div>
-        ) : visibleLines.length === 0 && !showCreateForm ? (
+        ) : visiblePoSummaries.length === 0 && focusedItemId ? (
           <div className="po-empty">
-            <p className="po-empty__title">No purchase order line matches this product yet.</p>
-            <p className="po-empty__hint">
-              If the product is below reorder point but has not crossed the threshold through a scan,
-              continue from Inventory to confirm stock and review suppliers.
-            </p>
+            <p className="po-empty__title">No purchase order found for this product.</p>
             <div className="po-empty__actions">
               <Link to="/inventory?focus=low-stock" className="button-link">
                 Review low stock
@@ -547,8 +768,9 @@ export function PurchaseOrdersPage() {
               </Link>
             </div>
           </div>
-        ) : visibleLines.length > 0 ? (
+        ) : (
           <>
+            {/* ── Workflow guide ── */}
             <div className="po-workflow-callout">
               <ol className="po-workflow-steps" aria-label="Purchase workflow">
                 <li>Create PO</li>
@@ -557,179 +779,135 @@ export function PurchaseOrdersPage() {
                 <li>Receive stock</li>
               </ol>
             </div>
-            <div className="inventory-table-wrapper">
-              <table className="inventory-table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th className="inventory-table__numeric">Qty needed</th>
-                  <th>Supplier</th>
-                  <th className="inventory-table__numeric">Estimate</th>
-                  <th>Reference</th>
-                  <th>Trigger</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleLines.map((line) => (
-                  <tr key={line.id}>
-                    <td>
-                      <span className="inventory-table__name">{line.itemName}</span>
-                      <span className="inventory-table__meta">{line.masterSku}</span>
-                    </td>
-                    <td className="inventory-table__numeric">{line.quantity}</td>
-                    <td>
-                      <SupplierSummary line={line} />
-                    </td>
-                    <td className="inventory-table__numeric">
-                      {formatCurrencyOrDash(line.estimatedLineCostCents)}
-                    </td>
-                    <td className="inventory-table__meta">
-                      {line.poReference ?? "—"}
-                    </td>
-                    <td>{formatReason(line.reason)}</td>
-                    <td>
-                      <span className={STATUS_BADGE_CLASS[line.orderStatus]}>
-                        {STATUS_LABELS[line.orderStatus]}
-                      </span>
-                    </td>
-                    <td className="inventory-table__meta">
-                      {formatDate(line.createdAt)}
-                    </td>
-                    <td>
-                      {line.orderStatus === "draft" ? (
-                        <div className="po-row-actions">
-                          <Link
-                            to={`/purchase-orders/${encodeURIComponent(line.draftPurchaseOrderId)}`}
-                            className="button-link"
-                            aria-label={`Edit draft purchase order for ${line.itemName}`}
-                          >
-                            Edit / Lines
-                          </Link>
-                          <Link
-                            to="/suppliers"
-                            className="link-button"
-                            aria-label={`View suppliers for ${line.itemName}`}
-                          >
-                            Suppliers
-                          </Link>
-                          <button
-                            type="button"
-                            className="button-link po-submit-btn"
-                            onClick={() =>
-                              void handleSubmit(line.draftPurchaseOrderId)
-                            }
-                            disabled={
-                              submittingPoId === line.draftPurchaseOrderId
-                            }
-                            aria-label={`Submit purchase order for ${line.itemName}`}
-                          >
-                            {submittingPoId === line.draftPurchaseOrderId
-                              ? "Submitting…"
-                              : "Submit PO"}
-                          </button>
-                          <button
-                            type="button"
-                            className="link-button link-button--danger"
-                            onClick={() => { setCancelConfirmPoId(line.draftPurchaseOrderId); }}
-                            aria-label={`Cancel purchase order for ${line.itemName}`}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : line.orderStatus === "submitted" || line.orderStatus === "partially_received" ? (
-                        <div className="po-row-actions">
-                          <Link
-                            to={`/purchase-orders/${encodeURIComponent(line.draftPurchaseOrderId)}`}
-                            className="link-button"
-                            aria-label={`View purchase order for ${line.itemName}`}
-                          >
-                            View
-                          </Link>
-                          <Link
-                            to={`/inventory?mode=receive&poId=${encodeURIComponent(line.draftPurchaseOrderId)}`}
-                            className="button-link"
-                            aria-label={`Receive stock for ${line.itemName}`}
-                          >
-                            Receive stock
-                          </Link>
-                          <button
-                            type="button"
-                            className="link-button link-button--danger"
-                            onClick={() => { setCancelConfirmPoId(line.draftPurchaseOrderId); }}
-                            aria-label={`Cancel purchase order for ${line.itemName}`}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : line.orderStatus === "received" ? (
-                        <span className="inventory-table__meta">Fully received</span>
-                      ) : (
-                        <span className="inventory-table__meta">Cancelled</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              </table>
+
+            {/* ── Supplier Purchase Orders (document-oriented) ── */}
+            <div className="pd-list">
+              <h3>Supplier purchase orders</h3>
+              <p className="inventory-page__subtitle">
+                Each row is one Purchase Order document. Product lines are inside the order detail.
+              </p>
+
+              {draftPoSummaries.length > 0 && (
+                <>
+                  <h4 className="inventory-table__section-heading">Draft</h4>
+                  {draftPoSummaries.map((po) => (
+                    <PoCard
+                      key={po.poId}
+                      po={po}
+                      submittingPoId={submittingPoId}
+                      onSubmit={(poId) => { void handleSubmit(poId); }}
+                      onCancelRequest={(poId) => { setCancelConfirmPoId(poId); }}
+                    />
+                  ))}
+                </>
+              )}
+
+              {activePOs.length > 0 && (
+                <>
+                  <h4 className="inventory-table__section-heading">Active</h4>
+                  {activePOs.map((po) => (
+                    <PoCard
+                      key={po.poId}
+                      po={po}
+                      submittingPoId={submittingPoId}
+                      onSubmit={(poId) => { void handleSubmit(poId); }}
+                      onCancelRequest={(poId) => { setCancelConfirmPoId(poId); }}
+                    />
+                  ))}
+                </>
+              )}
+
+              {historicalPOs.length > 0 && (
+                <>
+                  <h4 className="inventory-table__section-heading">Historical</h4>
+                  {historicalPOs.map((po) => (
+                    <PoCard
+                      key={po.poId}
+                      po={po}
+                      submittingPoId={submittingPoId}
+                      onSubmit={(poId) => { void handleSubmit(poId); }}
+                      onCancelRequest={(poId) => { setCancelConfirmPoId(poId); }}
+                    />
+                  ))}
+                </>
+              )}
             </div>
           </>
-        ) : null}
-
-        {draftPoIds.length > 0 && (
-          <div className="po-batch-actions">
-            {draftPoIds.map((poId) => {
-              const poLineCount = lines.filter(
-                (l) => l.draftPurchaseOrderId === poId && l.orderStatus === "draft",
-              ).length;
-              const firstLine = lines.find((l) => l.draftPurchaseOrderId === poId);
-              return (
-                <button
-                  key={poId}
-                  type="button"
-                  className="button-primary"
-                  onClick={() => void handleSubmit(poId)}
-                  disabled={submittingPoId === poId}
-                >
-                  {submittingPoId === poId
-                    ? "Submitting…"
-                    : `Submit draft PO${firstLine?.poReference ? ` (${firstLine.poReference})` : ""} — ${String(poLineCount)} line${poLineCount !== 1 ? "s" : ""}`}
-                </button>
-              );
-            })}
-          </div>
         )}
       </section>
 
+      {/* ── Summary stats ── */}
       <section className="status-card po-summary">
         <dl className="po-summary__stats">
           <div className="po-summary__stat">
-            <dt>Total lines</dt>
-            <dd>{lines.length}</dd>
+            <dt>Total POs</dt>
+            <dd>{allPoSummaries.length}</dd>
           </div>
           <div className="po-summary__stat">
             <dt>Draft</dt>
-            <dd>{lines.filter((l) => l.orderStatus === "draft").length}</dd>
+            <dd>{allPoSummaries.filter((p) => p.status === "draft").length}</dd>
           </div>
           <div className="po-summary__stat">
             <dt>Submitted</dt>
-            <dd>{lines.filter((l) => l.orderStatus === "submitted").length}</dd>
+            <dd>{allPoSummaries.filter((p) => p.status === "submitted").length}</dd>
           </div>
           <div className="po-summary__stat">
             <dt>Received</dt>
-            <dd>{lines.filter((l) => l.orderStatus === "received" || l.orderStatus === "partially_received").length}</dd>
+            <dd>{allPoSummaries.filter((p) => p.status === "received" || p.status === "partially_received").length}</dd>
           </div>
           <div className="po-summary__stat">
-            <dt>Total units needed</dt>
-            <dd>{lines.filter((l) => l.orderStatus !== "cancelled" && l.orderStatus !== "received").reduce((sum, l) => sum + l.quantity, 0)}</dd>
+            <dt>Total product lines</dt>
+            <dd>{lines.filter((l) => l.orderStatus !== "cancelled" && l.orderStatus !== "received").length}</dd>
           </div>
           <div className="po-summary__stat">
             <dt>Unique SKUs</dt>
             <dd>{new Set(lines.filter((l) => l.orderStatus !== "cancelled").map((l) => l.masterSku)).size}</dd>
           </div>
         </dl>
+
+        {/* Supplier subtotals for active (non-cancelled, non-received) POs */}
+        {(() => {
+          const activePos = allPoSummaries.filter(
+            (p) => p.status !== "cancelled" && p.status !== "received",
+          );
+          const priced = activePos.filter((p) => p.hasAnyPricedLine);
+          if (priced.length === 0) return null;
+
+          const overallTotal = priced.reduce<number | null>((acc, p) => {
+            if (p.estimatedSubtotalCents === null) return acc;
+            return (acc ?? 0) + p.estimatedSubtotalCents;
+          }, null);
+
+          return (
+            <div className="po-supplier-subtotals">
+              <h4>Estimated order totals by supplier PO</h4>
+              <p className="inventory-page__subtitle">Amounts are estimates based on supplier catalogue pricing. Actual invoice pricing is authoritative.</p>
+              <ul className="po-supplier-subtotals__list">
+                {priced.map((p) => (
+                  <li key={p.poId}>
+                    <span className="inventory-table__name">
+                      {p.poReference ?? p.poId.slice(0, 8)} — {p.supplierName ?? "No supplier"}
+                    </span>
+                    <span className="inventory-table__meta">
+                      {String(p.lineCount)} item{p.lineCount !== 1 ? "s" : ""}
+                    </span>
+                    <span>
+                      {p.estimatedSubtotalCents !== null
+                        ? <><em>Estimated: {formatCurrencyOrDash(p.estimatedSubtotalCents)}</em></>
+                        : "Price unavailable"}
+                    </span>
+                  </li>
+                ))}
+                {overallTotal !== null && (
+                  <li className="po-supplier-subtotals__total">
+                    <strong>Overall estimated total</strong>
+                    <strong><em>{formatCurrencyOrDash(overallTotal)}</em></strong>
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })()}
       </section>
     </AppShell>
   );

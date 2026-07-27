@@ -29,6 +29,9 @@ import type {
   PurchaseOrder,
   PurchaseOrderDetail,
   PurchaseOrderLine,
+  PurchasingDraft,
+  PurchasingDraftDetail,
+  CreatePurchasingDraftRequest,
   ReceiveInventoryRequest,
   ReceivePoRequest,
   ReceivePoResult,
@@ -712,6 +715,41 @@ export function createApiClient(config: AppConfig) {
       config,
       `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchase-orders/${encodeURIComponent(poId)}/lines/batch`,
       { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  // ── Purchasing Drafts ──────────────────────────────────────────────────────
+
+  async function listPurchasingDrafts(clinicId: string): Promise<PurchasingDraft[]> {
+    return request<PurchasingDraft[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchasing-drafts`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createPurchasingDraft(
+    clinicId: string,
+    body: CreatePurchasingDraftRequest,
+  ): Promise<PurchasingDraftDetail> {
+    return request<PurchasingDraftDetail>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchasing-drafts`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function getPurchasingDraftDetail(
+    clinicId: string,
+    pdId: string,
+  ): Promise<PurchasingDraftDetail> {
+    return request<PurchasingDraftDetail>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/purchasing-drafts/${encodeURIComponent(pdId)}`,
+      {},
       requireAccessToken(),
     );
   }
@@ -2252,6 +2290,9 @@ export function createApiClient(config: AppConfig) {
     listPurchaseOrderHeaders,
     createPurchaseOrderWithLines,
     addLinesToPurchaseOrder,
+    listPurchasingDrafts,
+    createPurchasingDraft,
+    getPurchasingDraftDetail,
     listRoster,
     getMyShifts,
     createShift,

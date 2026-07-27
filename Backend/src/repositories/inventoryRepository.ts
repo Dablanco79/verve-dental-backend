@@ -10,6 +10,8 @@ import type {
   InventoryAdjustment,
   InventoryPage,
   ProductSupplier,
+  PurchasingDraft,
+  PurchasingDraftWithStatus,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -141,6 +143,31 @@ export interface InventoryRepository {
   createProductSupplier(
     productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
   ): Promise<ProductSupplier>;
+
+  // ── Purchasing Drafts ─────────────────────────────────────────────────────
+
+  /** Create a new Purchasing Draft and return it. */
+  createPurchasingDraft(input: {
+    clinicId: string;
+    draftReference: string;
+    createdByUserId: string;
+  }): Promise<PurchasingDraft>;
+
+  /** List all Purchasing Drafts for a clinic, with derived status + child POs. */
+  listPurchasingDrafts(clinicId: string): Promise<PurchasingDraftWithStatus[]>;
+
+  /** Find a single Purchasing Draft by ID, scoped to clinic. */
+  findPurchasingDraftById(clinicId: string, pdId: string): Promise<PurchasingDraftWithStatus | null>;
+
+  /** Create a manual draft PO linked to a parent Purchasing Draft. */
+  createManualPurchaseOrderForDraft(input: {
+    clinicId: string;
+    createdByUserId: string;
+    supplierId: string | null;
+    notes: string | null;
+    poReference: string | null;
+    purchasingDraftId: string;
+  }): Promise<DraftPurchaseOrder>;
 }
 
 export function createInMemoryInventoryRepository(
@@ -151,6 +178,7 @@ export function createInMemoryInventoryRepository(
   const adjustments: InventoryAdjustment[] = [];
   const draftOrders: DraftPurchaseOrder[] = [];
   const draftPoLines: DraftPoLine[] = [];
+  const purchasingDrafts: PurchasingDraft[] = [];
 
   async function toInventoryView(
     item: ClinicInventoryItem,
@@ -170,6 +198,49 @@ export function createInMemoryInventoryRepository(
         supplier.active,
     );
 
+    // Compute in-draft and on-order quantities from active PO lines
+    const conversionFactor = master.unitsPerReceivingUnit;
+    const clinicOrderIds = new Set(
+      draftOrders.filter((o) => o.clinicId === item.clinicId).map((o) => o.id),
+    );
+    const activeLines = draftPoLines.filter(
+      (l) =>
+        clinicOrderIds.has(l.draftPurchaseOrderId) &&
+        l.clinicInventoryItemId === item.id,
+    );
+
+    let inDraftQuantity = 0;
+    let onOrderQuantity = 0;
+    const activePurchasingDocuments: ClinicInventoryItemView["activePurchasingDocuments"] = [];
+
+    for (const line of activeLines) {
+      const po = draftOrders.find((o) => o.id === line.draftPurchaseOrderId);
+      if (!po) continue;
+      const pd = po.purchasingDraftId
+        ? purchasingDrafts.find((d) => d.id === po.purchasingDraftId) ?? null
+        : null;
+      const lineQtyInStockUnits = line.quantity * conversionFactor;
+      const receivedQtyInStockUnits = line.receivedQuantity * conversionFactor;
+
+      if (po.status === "draft") {
+        inDraftQuantity += lineQtyInStockUnits;
+      } else if (po.status === "submitted" || po.status === "partially_received") {
+        onOrderQuantity += Math.max(0, lineQtyInStockUnits - receivedQtyInStockUnits);
+      }
+
+      if (po.status !== "received" && po.status !== "cancelled") {
+        activePurchasingDocuments.push({
+          poId: po.id,
+          poReference: po.poReference,
+          purchasingDraftId: po.purchasingDraftId,
+          draftReference: pd?.draftReference ?? null,
+          status: po.status,
+          quantity: line.quantity,
+          receivedQuantity: line.receivedQuantity,
+        });
+      }
+    }
+
     return {
       ...item,
       masterSku: master.sku,
@@ -183,6 +254,9 @@ export function createInMemoryInventoryRepository(
       isBelowReorderPoint: item.quantityOnHand < item.reorderPoint,
       preferredSupplierId: preferredSupplier?.supplierId ?? null,
       preferredSupplierName: preferredSupplier?.supplierName ?? item.supplierPreference,
+      inDraftQuantity,
+      onOrderQuantity,
+      activePurchasingDocuments,
     };
   }
 
@@ -354,6 +428,7 @@ export function createInMemoryInventoryRepository(
         supplierId: null,
         notes: null,
         poReference: null,
+        purchasingDraftId: null,
         createdByUserId,
         createdAt: now,
         updatedAt: now,
@@ -378,6 +453,32 @@ export function createInMemoryInventoryRepository(
         supplierId: input.supplierId,
         notes: input.notes,
         poReference: input.poReference,
+        purchasingDraftId: null,
+        createdByUserId: input.createdByUserId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      draftOrders.push(order);
+      return Promise.resolve({ ...order });
+    },
+
+    createManualPurchaseOrderForDraft(input: {
+      clinicId: string;
+      createdByUserId: string;
+      supplierId: string | null;
+      notes: string | null;
+      poReference: string | null;
+      purchasingDraftId: string;
+    }): Promise<DraftPurchaseOrder> {
+      const now = new Date();
+      const order: DraftPurchaseOrder = {
+        id: randomUUID(),
+        clinicId: input.clinicId,
+        status: "draft",
+        supplierId: input.supplierId,
+        notes: input.notes,
+        poReference: input.poReference,
+        purchasingDraftId: input.purchasingDraftId,
         createdByUserId: input.createdByUserId,
         createdAt: now,
         updatedAt: now,
@@ -613,5 +714,88 @@ export function createInMemoryInventoryRepository(
       productSuppliers.push(record);
       return Promise.resolve({ ...record });
     },
+
+    createPurchasingDraft(input: {
+      clinicId: string;
+      draftReference: string;
+      createdByUserId: string;
+    }): Promise<PurchasingDraft> {
+      const now = new Date();
+      const pd: PurchasingDraft = {
+        id: randomUUID(),
+        clinicId: input.clinicId,
+        draftReference: input.draftReference,
+        createdByUserId: input.createdByUserId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      purchasingDrafts.push(pd);
+      return Promise.resolve({ ...pd });
+    },
+
+    listPurchasingDrafts(clinicId: string): Promise<PurchasingDraftWithStatus[]> {
+      const clinicDrafts = purchasingDrafts
+        .filter((pd) => pd.clinicId === clinicId)
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      const result: PurchasingDraftWithStatus[] = clinicDrafts.map((pd) => {
+        const children = draftOrders.filter(
+          (po) => po.clinicId === clinicId && po.purchasingDraftId === pd.id,
+        );
+        const derivedStatus = derivePurchasingDraftStatus(children.map((c) => c.status));
+        const totalItems = children.reduce((sum, po) => {
+          return sum + draftPoLines.filter((l) => l.draftPurchaseOrderId === po.id).length;
+        }, 0);
+        return {
+          ...pd,
+          derivedStatus,
+          childPos: children.map((c) => ({ ...c })),
+          totalItems,
+          supplierCount: children.filter((c) => c.supplierId !== null).length,
+        };
+      });
+
+      return Promise.resolve(result);
+    },
+
+    findPurchasingDraftById(clinicId: string, pdId: string): Promise<PurchasingDraftWithStatus | null> {
+      const pd = purchasingDrafts.find((d) => d.clinicId === clinicId && d.id === pdId);
+      if (!pd) return Promise.resolve(null);
+
+      const children = draftOrders.filter(
+        (po) => po.clinicId === clinicId && po.purchasingDraftId === pdId,
+      );
+      const derivedStatus = derivePurchasingDraftStatus(children.map((c) => c.status));
+      const totalItems = children.reduce((sum, po) => {
+        return sum + draftPoLines.filter((l) => l.draftPurchaseOrderId === po.id).length;
+      }, 0);
+
+      return Promise.resolve({
+        ...pd,
+        derivedStatus,
+        childPos: children.map((c) => ({ ...c })),
+        totalItems,
+        supplierCount: children.filter((c) => c.supplierId !== null).length,
+      });
+    },
   };
+}
+
+/**
+ * Derives a Purchasing Draft status from its child PO statuses.
+ * Called by both in-memory and Postgres implementations.
+ */
+export function derivePurchasingDraftStatus(
+  childStatuses: import("../types/inventory.js").DraftPoStatus[],
+): import("../types/inventory.js").PurchasingDraftStatus {
+  if (childStatuses.length === 0) return "draft";
+
+  const nonCancelled = childStatuses.filter((s) => s !== "cancelled");
+  if (nonCancelled.length === 0) return "cancelled";
+
+  if (nonCancelled.every((s) => s === "received")) return "complete";
+  if (nonCancelled.some((s) => s === "partially_received" || s === "received")) return "partially_received";
+  if (nonCancelled.every((s) => s === "submitted")) return "ordered";
+  if (nonCancelled.some((s) => s === "submitted")) return "partially_submitted";
+  return "draft";
 }

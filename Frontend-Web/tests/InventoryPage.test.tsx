@@ -33,6 +33,7 @@ const {
   mockHandleScan,
   mockCreateProduct,
   mockListSuppliers,
+  mockCreatePurchasingDraft,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState = {
@@ -62,6 +63,7 @@ const {
     mockHandleScan: vi.fn(),
     mockCreateProduct: vi.fn(),
     mockListSuppliers: vi.fn(),
+    mockCreatePurchasingDraft: vi.fn(),
   };
 });
 
@@ -92,6 +94,9 @@ vi.mock("../src/api/client.js", () => ({
     listSuppliers: mockListSuppliers,
     handleScan: mockHandleScan,
     createProduct: mockCreateProduct,
+    createPurchasingDraft: mockCreatePurchasingDraft,
+    listPurchasingDrafts: vi.fn().mockResolvedValue([]),
+    getPurchasingDraftDetail: vi.fn(),
   }),
 }));
 
@@ -227,6 +232,7 @@ function renderInventoryPage(initialPath = "/inventory") {
       <Routes>
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/purchase-orders/:poId" element={<div data-testid="po-detail-page">PO Detail</div>} />
+        <Route path="/purchasing-drafts/:pdId" element={<div data-testid="purchasing-draft-page">Purchasing Draft</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -251,6 +257,7 @@ describe("InventoryPage", () => {
     mockHandleScan.mockReset();
     mockCreateProduct.mockReset();
     mockListSuppliers.mockReset();
+    mockCreatePurchasingDraft.mockReset();
     setAuthenticatedUser(authTestState, authUser);
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME };
     selectedClinicState.selectedDashboardScope = {
@@ -633,7 +640,7 @@ describe("InventoryPage", () => {
     expect(checkedItems.length).toBeGreaterThan(0);
   });
 
-  it("creates a draft PO from selected low-stock items and navigates to it", async () => {
+  it("creates a Purchasing Draft from selected low-stock items and navigates to it", async () => {
     setAuthenticatedUser(authTestState, managerUser);
 
     // Set up an item with a preferredSupplierId so groupBySupplier works correctly.
@@ -646,21 +653,27 @@ describe("InventoryPage", () => {
     } as InventoryItem;
     mockListInventory.mockResolvedValue([eligibleWithSupplier]);
 
-    const createdDetail = {
-      purchaseOrder: {
-        id: "aaaaaaaa-1111-4111-8111-000000000001",
+    const pdId = "pd-aaaaaaaa-1111-4111-8111-000000000001";
+    const createdDraftResult = {
+      purchasingDraft: {
+        id: pdId,
         clinicId: TEST_CLINIC_ID,
-        status: "draft",
-        supplierId: "supplier-1",
-        notes: null,
-        poReference: "PO-TEST-001",
+        draftReference: "PD-20260727-0001",
         createdByUserId: "user-1",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
-      lines: [],
+      childPos: [
+        {
+          purchaseOrder: {
+            id: "po-child-1",
+            poReference: "PO-20260727-0001-01",
+          },
+          lines: [],
+        },
+      ],
     };
-    mockCreatePurchaseOrderWithLines.mockResolvedValue(createdDetail);
+    mockCreatePurchasingDraft.mockResolvedValue(createdDraftResult);
 
     renderInventoryPage("/inventory?focus=low-stock");
 
@@ -670,26 +683,26 @@ describe("InventoryPage", () => {
     const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
     fireEvent.click(selectAll);
 
-    // Click "Create Draft PO from selected".
-    const createBtn = await screen.findByRole("button", { name: /create draft po from selected/i });
+    // Click "Create Purchasing Draft (N supplier POs)".
+    const createBtn = await screen.findByRole("button", { name: /create purchasing draft/i });
     fireEvent.click(createBtn);
 
     await waitFor(() => {
-      const linesContaining = expect.arrayContaining([
+      const linesMatch = expect.arrayContaining([
         expect.objectContaining({ clinicInventoryItemId: eligibleWithSupplier.id }),
-      ]) as Array<Record<string, unknown>>;
-      expect(mockCreatePurchaseOrderWithLines).toHaveBeenCalledWith(
+      ]) as unknown;
+      const groupsMatch = expect.arrayContaining([
+        expect.objectContaining({ supplierId: "supplier-1", lines: linesMatch }),
+      ]) as unknown;
+      expect(mockCreatePurchasingDraft).toHaveBeenCalledWith(
         TEST_CLINIC_ID,
-        expect.objectContaining({
-          supplierId: "supplier-1",
-          lines: linesContaining,
-        }),
+        expect.objectContaining({ supplierGroups: groupsMatch }),
       );
     });
 
-    // Should navigate to the new PO's detail page.
+    // Should navigate to the Purchasing Draft page.
     await waitFor(() => {
-      expect(screen.getByTestId("po-detail-page")).toBeInTheDocument();
+      expect(screen.getByTestId("purchasing-draft-page")).toBeInTheDocument();
     });
   });
 
@@ -733,7 +746,7 @@ describe("InventoryPage", () => {
     fireEvent.click(selectAll);
 
     // Open the "Add to existing PO" section.
-    const addToExistingBtn = await screen.findByRole("button", { name: /add to existing draft po/i });
+    const addToExistingBtn = await screen.findByRole("button", { name: /add to existing draft supplier po/i });
     fireEvent.click(addToExistingBtn);
 
     // Should load existing draft POs.
@@ -921,5 +934,548 @@ describe("InventoryPage", () => {
     expect(screen.getByText("Select a clinic to receive stock")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Receive" })).not.toBeInTheDocument();
     expect(mockListInventory).not.toHaveBeenCalled();
+  });
+
+  // ── Low-stock cost visibility (Issue 1 / Finding 2) ───────────────────────
+
+  it("displays per-item estimated unit cost in the low-stock queue", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const itemWithCost = {
+      ...sampleInventory[0],
+      id: "cost-test-item-1",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      unitCostCents: 1899,
+      stockUnit: "Box",
+      quantityOnHand: 3,
+      reorderPoint: 10,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([itemWithCost]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // suggestedQty = 10 - 3 - 0 = 7
+    // lineCost = 1899 × 7 = 13293 cents = $132.93
+    // Unit cost label: "$18.99" visible (per Box)
+    const unitCostElements = await screen.findAllByText(/\$18\.99/i);
+    expect(unitCostElements.length).toBeGreaterThan(0);
+
+    // Estimated line total: $132.93
+    const lineTotalElements = screen.getAllByText(/\$132\.93/i);
+    expect(lineTotalElements.length).toBeGreaterThan(0);
+  });
+
+  it("displays supplier subtotal and overall estimated total in the group summary", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // Two items from two different suppliers
+    const itemA = {
+      ...sampleInventory[0],
+      id: "cost-test-item-a",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      unitCostCents: 1000, // $10.00 per unit
+      stockUnit: "Box",
+      quantityOnHand: 0,
+      reorderPoint: 5,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    const itemB = {
+      ...sampleInventory[1],
+      id: "cost-test-item-b",
+      preferredSupplierId: "supplier-2",
+      preferredSupplierName: "BurDirect",
+      isBelowReorderPoint: true,
+      unitCostCents: 2000, // $20.00 per unit
+      stockUnit: "Pack",
+      quantityOnHand: 0,
+      reorderPoint: 3,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    mockListInventory.mockResolvedValue([itemA, itemB]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "DentalCo AU", active: true },
+      { id: "supplier-2", supplierName: "BurDirect", active: true },
+    ]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Select all eligible items
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // itemA: suggestedQty = 5-0-0 = 5, lineCost = 1000×5 = 5000 = $50.00
+    // itemB: suggestedQty = 3-0-0 = 3, lineCost = 2000×3 = 6000 = $60.00
+    // overallTotal = 5000 + 6000 = 11000 = $110.00
+
+    // Supplier subtotals appear in group summary (group list items)
+    await waitFor(() => {
+      expect(screen.getAllByText(/\$50\.00/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/\$60\.00/i).length).toBeGreaterThan(0);
+    });
+
+    // Overall estimated total
+    const overallTotal = screen.getByTestId("overall-estimated-total");
+    expect(overallTotal).toHaveTextContent("$110.00");
+  });
+
+  it("recalculates overall total when selection changes", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const itemA = {
+      ...sampleInventory[0],
+      id: "recalc-item-a",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      unitCostCents: 1000,
+      stockUnit: "Box",
+      quantityOnHand: 0,
+      reorderPoint: 2,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    const itemB = {
+      ...sampleInventory[1],
+      id: "recalc-item-b",
+      preferredSupplierId: "supplier-2",
+      preferredSupplierName: "BurDirect",
+      isBelowReorderPoint: true,
+      unitCostCents: 3000,
+      stockUnit: "Pack",
+      quantityOnHand: 0,
+      reorderPoint: 1,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    mockListInventory.mockResolvedValue([itemA, itemB]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "DentalCo AU", active: true },
+      { id: "supplier-2", supplierName: "BurDirect", active: true },
+    ]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Select all
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // itemA: 2×1000 = 2000, itemB: 1×3000 = 3000 → overall $50.00
+    await waitFor(() => {
+      const total = screen.getByTestId("overall-estimated-total");
+      expect(total).toHaveTextContent("$50.00");
+    });
+
+    // Deselect all — overall total should disappear (group summary hidden when no selection)
+    fireEvent.click(selectAll);
+    await waitFor(() => {
+      expect(screen.queryByTestId("overall-estimated-total")).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Supplier-required guard (Issue 3) ─────────────────────────────────────
+
+  it("shows 'Supplier required' warning for items without a preferred supplier", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const noSupplierItem = {
+      ...sampleInventory[0],
+      id: "no-supplier-item",
+      preferredSupplierId: null,
+      preferredSupplierName: null,
+      isBelowReorderPoint: true,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([noSupplierItem]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Item must still be visible in the queue
+    expect(await screen.findByText(noSupplierItem.name, { selector: "strong" })).toBeInTheDocument();
+
+    // Supplier required warning must be visible
+    expect(screen.getByTestId("supplier-required")).toBeInTheDocument();
+  });
+
+  it("excludes no-supplier items from Purchasing Draft creation (only actionable groups sent)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const withSupplier = {
+      ...sampleInventory[0],
+      id: "with-supplier-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      unitCostCents: 500,
+      quantityOnHand: 0,
+      reorderPoint: 2,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    const noSupplier = {
+      ...sampleInventory[1],
+      id: "no-supplier-item-2",
+      preferredSupplierId: null,
+      preferredSupplierName: null,
+      isBelowReorderPoint: true,
+      unitCostCents: 300,
+      quantityOnHand: 0,
+      reorderPoint: 1,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    mockListInventory.mockResolvedValue([withSupplier, noSupplier]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "DentalCo AU", active: true },
+    ]);
+
+    const pdId = "pd-supplier-guard-test";
+    mockCreatePurchasingDraft.mockResolvedValue({
+      purchasingDraft: {
+        id: pdId,
+        clinicId: "11111111-1111-4111-8111-111111111111",
+        draftReference: "PD-20260727-GUARD",
+        createdByUserId: "user-1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      childPos: [],
+    });
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // Warning about no-supplier items should be visible in the group summary
+    await waitFor(() => {
+      expect(screen.getByTestId("no-supplier-warning")).toBeInTheDocument();
+    });
+
+    // Create Purchasing Draft button should still be visible for the actionable group
+    const createBtn = screen.getByRole("button", { name: /create purchasing draft/i });
+    fireEvent.click(createBtn);
+
+    await waitFor(() => {
+      // API must only be called with the supplier group that HAS a supplier
+      const call = mockCreatePurchasingDraft.mock.calls[0];
+      const body = (call as unknown[])[1] as { supplierGroups: Array<{ supplierId: string | null }> };
+      expect(body.supplierGroups).toHaveLength(1);
+      expect(body.supplierGroups[0]?.supplierId).toBe("supplier-1");
+    });
+  });
+
+  // ── Unit quantity safety — receiving unit conversion (Final Safety Fix) ─────
+
+  it("1:1 — stockUnit == receivingUnit keeps quantity unchanged and cost correct", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // stockUnit = Box, receivingUnit = Box, unitsPerReceivingUnit = 1 → 1:1
+    // shortfall = 5 - 0 - 0 = 5 → suggestedReceivingQty = ceil(5/1) = 5
+    // costPerReceivingUnit = 800 × 1 = 800 cents = $8.00
+    // lineCost = 5 × 1 × 800 = 4000 = $40.00
+    const item1to1 = {
+      ...sampleInventory[0],
+      id: "uom-1to1-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Box",
+      unitsPerReceivingUnit: 1,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 5,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item1to1]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Should show "Suggest: 5 Box" — no incoming note because same unit
+    expect(await screen.findByText(/Suggest:\s*5/)).toBeInTheDocument();
+    // Should NOT show an "(incoming)" note — receiving == stock
+    expect(screen.queryByText(/incoming/i)).not.toBeInTheDocument();
+    // Unit cost $8.00, line total $40.00
+    const unitCostEls = screen.getAllByText(/\$8\.00/i);
+    expect(unitCostEls.length).toBeGreaterThan(0);
+    const lineTotalEls = screen.getAllByText(/\$40\.00/i);
+    expect(lineTotalEls.length).toBeGreaterThan(0);
+  });
+
+  it("suggests 2 Carton when shortage is 20 Box (10 Box per Carton)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // shortfall = 20 - 0 - 0 = 20; ceil(20/10) = 2 Carton
+    const item20box = {
+      ...sampleInventory[0],
+      id: "uom-20box-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 20,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item20box]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Must show "2 Carton", NOT "20 Carton"
+    expect(await screen.findByText(/Suggest:\s*2/)).toBeInTheDocument();
+    // Must show the incoming note: 20 Box incoming
+    expect(screen.getByText(/20 Box incoming/i)).toBeInTheDocument();
+    // Must NOT suggest 20 in the Suggest label
+    expect(screen.queryByText(/Suggest:\s*20/)).not.toBeInTheDocument();
+  });
+
+  it("rounds up to 3 Carton when shortage is 21 Box (10 Box per Carton)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // shortfall = 21 - 0 - 0 = 21; ceil(21/10) = 3 Carton
+    const item21box = {
+      ...sampleInventory[0],
+      id: "uom-21box-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 21,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item21box]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Must suggest 3 (rounded up), not 2 (truncated) or 21 (raw stock units)
+    expect(await screen.findByText(/Suggest:\s*3/)).toBeInTheDocument();
+    // Must show 30 Box incoming (3 Carton × 10 Box)
+    expect(screen.getByText(/30 Box incoming/i)).toBeInTheDocument();
+  });
+
+  it("estimated cost: 2 Carton × 10 Box/Carton × $8/Box = $160 (NOT 2 × $8 = $16)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // 2 Carton, 10 Box/Carton, $8/Box → line total = 2 × 10 × 800 = 16000 = $160.00
+    // Cost per Carton = 800 × 10 = 8000 = $80.00
+    const item20box = {
+      ...sampleInventory[0],
+      id: "uom-cost-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 20,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item20box]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Cost per receiving unit: $80.00 (= 10 × $8)
+    const costPerUnitEls = await screen.findAllByText(/\$80\.00/i);
+    expect(costPerUnitEls.length).toBeGreaterThan(0);
+    // Line total: $160.00 (= 2 × $80)
+    const lineTotalEls = screen.getAllByText(/\$160\.00/i);
+    expect(lineTotalEls.length).toBeGreaterThan(0);
+    // Must NOT show the incorrect $16.00 (= 2 × $8)
+    expect(screen.queryByText(/\$16\.00/i)).not.toBeInTheDocument();
+  });
+
+  it("estimated cost for rounded-up case: 3 Carton × 10 Box × $8 = $240 (NOT 21 × $8 = $168)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // 21 Box shortfall → 3 Carton ordered; 3 × 10 × 800 = 24000 = $240.00
+    const item21box = {
+      ...sampleInventory[0],
+      id: "uom-rounded-cost-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 21,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item21box]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // Line total: $240.00 (= 3 × 10 × $8) — actual order cost
+    const lineTotalEls = await screen.findAllByText(/\$240\.00/i);
+    expect(lineTotalEls.length).toBeGreaterThan(0);
+    // Must NOT show $168.00 (= 21 × $8, the raw shortfall cost — wrong)
+    expect(screen.queryByText(/\$168\.00/i)).not.toBeInTheDocument();
+  });
+
+  it("supplier subtotal and overall total respect receiving-unit conversion", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // itemA: 20 Box shortfall, 10 per Carton → 2 Carton @ $80/Carton = $160
+    const itemA = {
+      ...sampleInventory[0],
+      id: "uom-subtotal-a",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 20,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    // itemB: 6 Pack shortfall, 6 per Case → 1 Case @ $27.54/Case = $27.54
+    // (unitsPerReceivingUnit=6, unitCostCents=459)
+    // suggestedReceivingQty = ceil(6/6) = 1 Case
+    // costPerCase = 459 × 6 = 2754 = $27.54
+    // lineTotal = 1 × 6 × 459 = 2754 = $27.54
+    const itemB = {
+      ...sampleInventory[1],
+      id: "uom-subtotal-b",
+      preferredSupplierId: "supplier-2",
+      preferredSupplierName: "BurDirect",
+      isBelowReorderPoint: true,
+      stockUnit: "Pack",
+      receivingUnit: "Case",
+      unitsPerReceivingUnit: 6,
+      unitCostCents: 459,
+      quantityOnHand: 0,
+      reorderPoint: 6,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+
+    mockListInventory.mockResolvedValue([itemA, itemB]);
+    mockListSuppliers.mockResolvedValue([
+      { id: "supplier-1", supplierName: "DentalCo AU", active: true },
+      { id: "supplier-2", supplierName: "BurDirect", active: true },
+    ]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    // Supplier A subtotal: $160.00
+    await waitFor(() => {
+      expect(screen.getAllByText(/\$160\.00/i).length).toBeGreaterThan(0);
+    });
+    // Supplier B subtotal: $27.54
+    expect(screen.getAllByText(/\$27\.54/i).length).toBeGreaterThan(0);
+    // Overall: $160 + $27.54 = $187.54
+    const overallTotal = screen.getByTestId("overall-estimated-total");
+    expect(overallTotal).toHaveTextContent("$187.54");
+  });
+
+  it("quantity sent to createPurchasingDraft is in receiving units (2 Cartons not 20 Boxes)", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // 20 Box shortfall, 10 per Carton → must send quantity: 2 (Cartons), not 20 (Boxes)
+    const item20box = {
+      ...sampleInventory[0],
+      id: "uom-api-qty-item",
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      isBelowReorderPoint: true,
+      stockUnit: "Box",
+      receivingUnit: "Carton",
+      unitsPerReceivingUnit: 10,
+      unitCostCents: 800,
+      quantityOnHand: 0,
+      reorderPoint: 20,
+      onOrderQuantity: 0,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([item20box]);
+
+    const pdId = "pd-uom-api-test";
+    mockCreatePurchasingDraft.mockResolvedValue({
+      purchasingDraft: {
+        id: pdId,
+        clinicId: TEST_CLINIC_ID,
+        draftReference: "PD-20260727-UOM1",
+        createdByUserId: "user-1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      childPos: [],
+    });
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    const selectAll = await screen.findByRole("checkbox", { name: /select all eligible/i });
+    fireEvent.click(selectAll);
+
+    const createBtn = await screen.findByRole("button", { name: /create purchasing draft/i });
+    fireEvent.click(createBtn);
+
+    await waitFor(() => {
+      const call = mockCreatePurchasingDraft.mock.calls[0];
+      const body = (call as unknown[])[1] as {
+        supplierGroups: Array<{ supplierId: string; lines: Array<{ quantity: number }> }>;
+      };
+      const sentQty = body.supplierGroups[0]?.lines[0]?.quantity;
+      // Must be 2 (receiving units = Cartons), NOT 20 (stock units = Boxes)
+      expect(sentQty).toBe(2);
+    });
+  });
+
+  it("prevents Purchasing Draft creation when ALL selected items lack a supplier", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const noSupplierItem = {
+      ...sampleInventory[0],
+      id: "no-supplier-only",
+      preferredSupplierId: null,
+      preferredSupplierName: null,
+      isBelowReorderPoint: true,
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([noSupplierItem]);
+
+    renderInventoryPage("/inventory?focus=low-stock");
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    const checkbox = await screen.findByRole("checkbox", { name: "" });
+    fireEvent.click(checkbox);
+
+    await waitFor(() => {
+      // "Create Purchasing Draft" button should NOT be present
+      expect(screen.queryByRole("button", { name: /create purchasing draft/i })).not.toBeInTheDocument();
+      // A helpful message should appear
+      expect(screen.getByText(/assign a preferred supplier/i)).toBeInTheDocument();
+    });
   });
 });

@@ -461,6 +461,51 @@ describe("receivePurchaseOrder", () => {
     expect(adj?.performedByUserId).toBe(ACTOR_ID);
     expect(adj?.performedByEmail).toBe(ACTOR_EMAIL);
   });
+
+  it("[Test 8] receiving 2 Cartons (nitrileGloves: 10 Box/Carton) adds 20 Box to inventory", async () => {
+    // This test validates the full unit-quantity round-trip for the safety fix:
+    //   Frontend computes: ceil(20 Box shortfall / 10 per Carton) = 2 Cartons
+    //   Frontend sends quantity: 2 (Cartons) to the PO line
+    //   On receiving: quantityDelta: 2 → backend converts 2 Cartons × 10 = 20 Boxes added
+    //
+    // nitrileGloves: stockUnit=Box, receivingUnit=Carton, unitsPerReceivingUnit=10
+    const { service, inventoryRepo } = makeService();
+
+    const GLOVES_MASTER_ID = SEED_MASTER_CATALOG_IDS.nitrileGloves;
+    const GLOVES_CLINIC_ID = SEED_CLINIC_INVENTORY_IDS.clinicAGloves;
+
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
+
+    // Quantity: 2 = suggested receiving units (Cartons) from the frontend.
+    const line = await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
+      masterCatalogItemId: GLOVES_MASTER_ID,
+      clinicInventoryItemId: GLOVES_CLINIC_ID,
+      quantity: 2,
+      receivingUnit: "Carton",
+    });
+
+    await service.submitPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
+
+    const qtyBefore = (await inventoryRepo.findClinicInventoryItem(CLINIC_A, GLOVES_CLINIC_ID))?.quantityOnHand ?? 0;
+
+    const detail = await service.getPurchaseOrderDetail(CLINIC_A, po.id);
+    const submittedLine = detail.lines[0] ?? line;
+
+    // Receive all 2 Cartons.
+    const result = await service.receivePurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, [
+      { poLineId: submittedLine.id, quantityDelta: 2 },
+    ]);
+
+    expect(result.adjustments.length).toBe(1);
+    const adj = result.adjustments[0];
+    expect(adj?.adjustmentType).toBe("receive");
+    // 2 Cartons × 10 Box/Carton = 20 Boxes added to stock
+    expect(adj?.quantityDelta).toBe(20);
+    expect(adj?.quantityBefore).toBe(qtyBefore);
+    expect(adj?.quantityAfter).toBe(qtyBefore + 20);
+  });
 });
 
 // ─── 6. Lifecycle transition enforcement ─────────────────────────────────────

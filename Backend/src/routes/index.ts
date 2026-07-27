@@ -35,7 +35,7 @@ import { createInventoryRouter } from "./inventoryRoutes.js";
 import { createStocktakeRouter } from "./stocktakeRoutes.js";
 import { createLeaveRouter, createTimesheetRouter } from "./payrollRoutes.js";
 import { createProductRouter } from "./productRoutes.js";
-import { createPurchaseOrderRouter } from "./purchaseOrderRoutes.js";
+import { createPurchaseOrderRouter, createPurchasingDraftRouter } from "./purchaseOrderRoutes.js";
 import { createRosterRouter } from "./rosterRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
@@ -168,6 +168,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId/users", createUserRouter(deps));
   router.use("/clinics/:clinicId/users", createPermissionRouter(deps));
   router.use("/clinics/:clinicId/purchase-orders", createPurchaseOrderRouter(deps));
+  router.use("/clinics/:clinicId/purchasing-drafts", createPurchasingDraftRouter(deps));
   router.use("/clinics/:clinicId/roster", createRosterRouter(deps));
   router.use("/clinics/:clinicId/forecast", createForecastRouter(deps));
   // Labor cost projection mounts at the same /forecast prefix — Express matches

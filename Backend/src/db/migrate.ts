@@ -2790,6 +2790,76 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE received_quantity > 0;
     `,
   },
+  {
+    /*
+     * 044_purchasing_drafts
+     *
+     * Workflow 1.1 – Operational Correction Sprint
+     *
+     * Introduces the Purchasing Draft parent concept (Finding 4).
+     * A Purchasing Draft represents one purchasing exercise by a clinic and may
+     * contain products from multiple suppliers.  Each supplier gets its own
+     * child draft_purchase_orders row (already one PO per supplier by design).
+     *
+     * The draft_purchase_orders.purchasing_draft_id column is NULLABLE so that
+     * legacy supplier POs created before this migration remain valid without
+     * any backfill.
+     *
+     * Status on purchasing_drafts is DERIVED (not stored) — the application
+     * computes it from the statuses of its child POs.
+     *
+     * Reference format examples:
+     *   Purchasing Draft:  PD-20260727-4521
+     *   Child supplier PO: PO-20260727-4521-01 (uses same numeric suffix)
+     *
+     * RLS: purchasing_drafts is clinic-scoped.  Row-level security is applied
+     * via the existing app_current_clinic_id() function used by other tables.
+     *
+     * Rollback:
+     *   ALTER TABLE draft_purchase_orders DROP COLUMN IF EXISTS purchasing_draft_id;
+     *   DROP TABLE IF EXISTS purchasing_drafts;
+     */
+    id: "044_purchasing_drafts",
+    sql: `
+      CREATE TABLE IF NOT EXISTS purchasing_drafts (
+        id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+        clinic_id            UUID         NOT NULL REFERENCES clinics (id) ON DELETE CASCADE,
+        draft_reference      VARCHAR(64)  NOT NULL,
+        created_by_user_id   UUID         NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+        created_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_purchasing_drafts_clinic_reference
+        ON purchasing_drafts (clinic_id, draft_reference);
+
+      CREATE INDEX IF NOT EXISTS idx_purchasing_drafts_clinic
+        ON purchasing_drafts (clinic_id);
+
+      -- Enable RLS (clinic-scoped like other operational tables)
+      ALTER TABLE purchasing_drafts ENABLE ROW LEVEL SECURITY;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_policies
+          WHERE tablename = 'purchasing_drafts' AND policyname = 'purchasing_drafts_clinic_isolation'
+        ) THEN
+          CREATE POLICY purchasing_drafts_clinic_isolation
+            ON purchasing_drafts
+            USING (clinic_id = app_current_clinic_id());
+        END IF;
+      END $$;
+
+      -- Link supplier POs to their parent Purchasing Draft (nullable for legacy POs)
+      ALTER TABLE draft_purchase_orders
+        ADD COLUMN IF NOT EXISTS purchasing_draft_id UUID
+          REFERENCES purchasing_drafts (id) ON DELETE SET NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_draft_po_purchasing_draft
+        ON draft_purchase_orders (purchasing_draft_id)
+        WHERE purchasing_draft_id IS NOT NULL;
+    `,
+  },
 ];
 
 /**

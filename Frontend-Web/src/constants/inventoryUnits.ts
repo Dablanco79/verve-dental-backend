@@ -11,12 +11,13 @@ export const STOCK_UNIT_OPTIONS = [
 ] as const;
 
 export const RECEIVING_UNIT_OPTIONS = [
+  "Unit",
   "Box",
+  "Bottle",
   "Carton",
   "Pack",
   "Case",
   "Pallet",
-  "Bottle",
 ] as const;
 
 export type StockUnitOption = (typeof STOCK_UNIT_OPTIONS)[number];

@@ -83,6 +83,17 @@ const batchAddLinesBodySchema = z.object({
   lines: z.array(poLineInputSchema).min(1),
 });
 
+const supplierGroupSchema = z.object({
+  supplierId: z.string().uuid().nullable().optional(),
+  supplierName: z.string().max(255).default("Unknown supplier"),
+  lines: z.array(poLineInputSchema).min(1),
+});
+
+const createPurchasingDraftBodySchema = z.object({
+  supplierGroups: z.array(supplierGroupSchema).min(1),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
 // ─── Handler factory ──────────────────────────────────────────────────────────
 
 export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
@@ -341,6 +352,41 @@ export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
       const detail = await service.addLinesToPurchaseOrder(
         clinicId, poId, req.user.id, req.user.email, parseResult.data.lines,
       );
+      res.status(200).json({ data: detail });
+    },
+
+    // ── Purchasing Drafts ───────────────────────────────────────────────────
+
+    async createPurchasingDraft(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const parseResult = createPurchasingDraftBodySchema.safeParse(req.body ?? {});
+      if (!parseResult.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parseResult.error));
+      }
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const result = await service.createPurchasingDraft(clinicId, req.user.id, req.user.email, {
+        supplierGroups: parseResult.data.supplierGroups.map((g) => ({
+          supplierId: g.supplierId ?? null,
+          supplierName: g.supplierName,
+          lines: g.lines,
+        })),
+        notes: parseResult.data.notes ?? null,
+      });
+      res.status(201).json({ data: result });
+    },
+
+    async listPurchasingDrafts(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const drafts = await service.listPurchasingDrafts(clinicId);
+      res.status(200).json({ data: drafts });
+    },
+
+    async getPurchasingDraftDetail(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const pdId = parseUuidParam(req.params.pdId, "pdId");
+      const detail = await service.getPurchasingDraftDetail(clinicId, pdId);
       res.status(200).json({ data: detail });
     },
   };

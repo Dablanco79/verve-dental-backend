@@ -735,6 +735,149 @@ export function createPurchaseOrderService(
       return { purchaseOrder: po, lines: enriched };
     },
 
+    // ── Purchasing Draft: parent concept containing multiple supplier POs ────────
+
+    /**
+     * Generate a shared numeric suffix for a Purchasing Draft and its child POs.
+     * Format: PD-YYYYMMDD-NNNN (parent) / PO-YYYYMMDD-NNNN-01 (first child)
+     */
+
+    async createPurchasingDraft(
+      clinicId: string,
+      userId: string,
+      actorEmail: string,
+      input: {
+        supplierGroups: Array<{
+          supplierId: string | null;
+          supplierName: string;
+          lines: Array<{
+            masterCatalogItemId: string;
+            clinicInventoryItemId: string;
+            quantity: number;
+            reason?: string;
+            unitCostCents?: number | null;
+            receivingUnit?: string | null;
+          }>;
+        }>;
+        notes?: string | null;
+      },
+    ) {
+      if (input.supplierGroups.length === 0) {
+        throw new AppError(400, "VALIDATION_ERROR", "At least one supplier group with lines is required");
+      }
+      for (const group of input.supplierGroups) {
+        if (group.lines.length === 0) {
+          throw new AppError(400, "VALIDATION_ERROR", "Each supplier group must have at least one line");
+        }
+        for (const l of group.lines) {
+          if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
+            throw new AppError(400, "VALIDATION_ERROR", "All line quantities must be positive whole numbers");
+          }
+        }
+      }
+
+      // Generate shared numeric suffix for reference linking
+      const d = new Date();
+      const datePart = `${String(d.getFullYear())}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+      const numericSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+      const draftReference = `PD-${datePart}-${numericSuffix}`;
+
+      // Create the parent Purchasing Draft
+      const pd = await inventoryRepository.createPurchasingDraft({
+        clinicId,
+        draftReference,
+        createdByUserId: userId,
+      });
+
+      auditService.logEvent("purchasing_draft.created", { userId, clinicId, resourceId: pd.id });
+      fireAudit(auditWriter, auditService, {
+        clinicId,
+        entityType: "purchasing_draft",
+        entityId: pd.id,
+        action: "created",
+        actorId: userId,
+        actorEmail,
+        metadata: { draftReference, supplierGroupCount: input.supplierGroups.length },
+      });
+
+      // Create one child supplier PO per group
+      const childPoDetails: Array<{ purchaseOrder: { id: string; poReference: string | null }; lines: unknown[] }> = [];
+
+      for (let i = 0; i < input.supplierGroups.length; i++) {
+        const group = input.supplierGroups[i];
+        if (!group) continue;
+        const childIndex = String(i + 1).padStart(2, "0");
+        const childPoReference = `PO-${datePart}-${numericSuffix}-${childIndex}`;
+
+        const childPo = await inventoryRepository.createManualPurchaseOrderForDraft({
+          clinicId,
+          createdByUserId: userId,
+          supplierId: group.supplierId,
+          notes: input.notes ?? null,
+          poReference: childPoReference,
+          purchasingDraftId: pd.id,
+        });
+
+        auditService.logEvent("purchase_order.created", { userId, clinicId, resourceId: childPo.id });
+        fireAudit(auditWriter, auditService, {
+          clinicId,
+          entityType: "purchase_order",
+          entityId: childPo.id,
+          action: "created",
+          actorId: userId,
+          actorEmail,
+          metadata: {
+            purchasingDraftId: pd.id,
+            draftReference,
+            poReference: childPoReference,
+            supplierId: group.supplierId,
+          },
+        });
+
+        const rawLines: RawPoLine[] = [];
+        for (const l of group.lines) {
+          const line = await inventoryRepository.addDraftPoLine({
+            draftPurchaseOrderId: childPo.id,
+            masterCatalogItemId: l.masterCatalogItemId,
+            clinicInventoryItemId: l.clinicInventoryItemId,
+            quantity: l.quantity,
+            reason: l.reason ?? "low_stock",
+            unitCostCents: l.unitCostCents ?? null,
+            receivingUnit: l.receivingUnit ?? null,
+          });
+          rawLines.push(line);
+          auditService.logEvent("purchase_order.line_added", { userId, clinicId, resourceId: childPo.id });
+        }
+
+        const poStatusMap = new Map<string, DraftPoStatus>([[childPo.id, childPo.status]]);
+        const enrichedPoLines = await enrichedLines(rawLines, poStatusMap);
+        childPoDetails.push({ purchaseOrder: { id: childPo.id, poReference: childPoReference }, lines: enrichedPoLines });
+      }
+
+      return { purchasingDraft: pd, childPos: childPoDetails };
+    },
+
+    async listPurchasingDrafts(clinicId: string) {
+      return inventoryRepository.listPurchasingDrafts(clinicId);
+    },
+
+    async getPurchasingDraftDetail(clinicId: string, pdId: string) {
+      const pd = await inventoryRepository.findPurchasingDraftById(clinicId, pdId);
+      if (!pd) throw new AppError(404, "PD_NOT_FOUND", "Purchasing draft not found");
+
+      // Load full line detail for each child PO
+      const childPoDetails = await Promise.all(
+        pd.childPos.map(async (po) => {
+          const rawLines = await inventoryRepository.listPoLinesByPoId(po.id);
+          const poStatusMap = new Map<string, DraftPoStatus>([[po.id, po.status]]);
+          const lines = await enrichedLines(rawLines, poStatusMap);
+          return { purchaseOrder: po, lines };
+        }),
+      );
+
+      return { purchasingDraft: pd, childPos: childPoDetails };
+    },
+
     // ── Batch-add lines to an existing draft PO ───────────────────────────────
     async addLinesToPurchaseOrder(
       clinicId: string,

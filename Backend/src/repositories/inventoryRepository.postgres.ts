@@ -31,6 +31,8 @@ import type {
   InventoryAdjustment,
   InventoryPage,
   ProductSupplier,
+  PurchasingDraft,
+  PurchasingDraftWithStatus,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -41,6 +43,7 @@ import {
 import { PO_VALID_TRANSITIONS } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
 import type { InventoryRepository } from "./inventoryRepository.js";
+import { derivePurchasingDraftStatus } from "./inventoryRepository.js";
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -68,6 +71,17 @@ type ClinicInventoryViewRow = ClinicInventoryRow & {
   is_below_reorder_point: boolean;
   preferred_supplier_id: string | null;
   preferred_supplier_name: string | null;
+  in_draft_quantity: number;
+  on_order_quantity: number;
+  active_purchasing_documents: Array<{
+    poId: string;
+    poReference: string | null;
+    purchasingDraftId: string | null;
+    draftReference: string | null;
+    status: DraftPoStatus;
+    quantity: number;
+    receivedQuantity: number;
+  }> | null;
 };
 
 type ProductSupplierRow = {
@@ -109,6 +123,16 @@ type DraftPoRow = {
   supplier_id: string | null;
   notes: string | null;
   po_reference: string | null;
+  purchasing_draft_id: string | null;
+  created_by_user_id: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type PurchasingDraftRow = {
+  id: string;
+  clinic_id: string;
+  draft_reference: string;
   created_by_user_id: string;
   created_at: Date;
   updated_at: Date;
@@ -157,6 +181,9 @@ function rowToClinicInventoryView(row: ClinicInventoryViewRow): ClinicInventoryI
     isBelowReorderPoint: row.is_below_reorder_point,
     preferredSupplierId: row.preferred_supplier_id,
     preferredSupplierName: row.preferred_supplier_name,
+    inDraftQuantity: row.in_draft_quantity,
+    onOrderQuantity: row.on_order_quantity,
+    activePurchasingDocuments: row.active_purchasing_documents ?? [],
   };
 }
 
@@ -204,6 +231,18 @@ function rowToDraftPo(row: DraftPoRow): DraftPurchaseOrder {
     supplierId: row.supplier_id,
     notes: row.notes,
     poReference: row.po_reference,
+    purchasingDraftId: row.purchasing_draft_id ?? null,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToPurchasingDraft(row: PurchasingDraftRow): PurchasingDraft {
+  return {
+    id: row.id,
+    clinicId: row.clinic_id,
+    draftReference: row.draft_reference,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -248,7 +287,46 @@ const INVENTORY_VIEW_SELECT = `
     COALESCE(ci.unit_cost_override_cents, mci.default_unit_cost_cents) AS unit_cost_cents,
     (ci.quantity_on_hand < ci.reorder_point)                         AS is_below_reorder_point,
     ps.supplier_id                                                   AS preferred_supplier_id,
-    COALESCE(s.supplier_name, ci.supplier_preference)                 AS preferred_supplier_name
+    COALESCE(s.supplier_name, ci.supplier_preference)                 AS preferred_supplier_name,
+
+    -- In-draft quantity (stock units): lines on draft POs not yet submitted
+    COALESCE((
+      SELECT SUM(dpl.quantity * COALESCE(mci.units_per_receiving_unit, 1))
+      FROM draft_po_lines dpl
+      JOIN draft_purchase_orders dpo ON dpo.id = dpl.draft_purchase_order_id
+      WHERE dpl.clinic_inventory_item_id = ci.id
+        AND dpo.clinic_id = ci.clinic_id
+        AND dpo.status = 'draft'
+    ), 0)::integer                                                   AS in_draft_quantity,
+
+    -- On-order quantity (stock units): outstanding (unreceived) on submitted/partially-received POs
+    COALESCE((
+      SELECT SUM(GREATEST(0, dpl.quantity - dpl.received_quantity) * COALESCE(mci.units_per_receiving_unit, 1))
+      FROM draft_po_lines dpl
+      JOIN draft_purchase_orders dpo ON dpo.id = dpl.draft_purchase_order_id
+      WHERE dpl.clinic_inventory_item_id = ci.id
+        AND dpo.clinic_id = ci.clinic_id
+        AND dpo.status IN ('submitted', 'partially_received')
+    ), 0)::integer                                                   AS on_order_quantity,
+
+    -- Active purchasing documents (excludes received/cancelled POs)
+    (
+      SELECT COALESCE(json_agg(json_build_object(
+        'poId',              dpo.id,
+        'poReference',       dpo.po_reference,
+        'purchasingDraftId', dpo.purchasing_draft_id,
+        'draftReference',    pd.draft_reference,
+        'status',            dpo.status,
+        'quantity',          dpl.quantity,
+        'receivedQuantity',  dpl.received_quantity
+      ) ORDER BY dpo.created_at DESC), '[]'::json)
+      FROM draft_po_lines dpl
+      JOIN draft_purchase_orders dpo ON dpo.id = dpl.draft_purchase_order_id
+      LEFT JOIN purchasing_drafts pd ON pd.id = dpo.purchasing_draft_id
+      WHERE dpl.clinic_inventory_item_id = ci.id
+        AND dpo.clinic_id = ci.clinic_id
+        AND dpo.status NOT IN ('received', 'cancelled')
+    )                                                                AS active_purchasing_documents
   FROM clinic_inventory_items ci
   JOIN master_catalog_items mci ON mci.id = ci.master_catalog_item_id
   LEFT JOIN product_suppliers ps
@@ -817,6 +895,121 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create product supplier");
       return rowToProductSupplier(row);
+    },
+
+    // ── Purchasing Drafts ─────────────────────────────────────────────────────
+
+    async createManualPurchaseOrderForDraft(input: {
+      clinicId: string;
+      createdByUserId: string;
+      supplierId: string | null;
+      notes: string | null;
+      poReference: string | null;
+      purchasingDraftId: string;
+    }): Promise<DraftPurchaseOrder> {
+      const { rows } = await pool.query<DraftPoRow>(
+        `INSERT INTO draft_purchase_orders
+           (clinic_id, status, created_by_user_id, supplier_id, notes, po_reference, purchasing_draft_id)
+         VALUES ($1, 'draft', $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [
+          input.clinicId,
+          input.createdByUserId,
+          input.supplierId,
+          input.notes,
+          input.poReference,
+          input.purchasingDraftId,
+        ],
+      );
+      const row = rows[0];
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create purchase order for draft");
+      return rowToDraftPo(row);
+    },
+
+    async createPurchasingDraft(input: {
+      clinicId: string;
+      draftReference: string;
+      createdByUserId: string;
+    }): Promise<PurchasingDraft> {
+      const { rows } = await pool.query<PurchasingDraftRow>(
+        `INSERT INTO purchasing_drafts (clinic_id, draft_reference, created_by_user_id)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [input.clinicId, input.draftReference, input.createdByUserId],
+      );
+      const row = rows[0];
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create purchasing draft");
+      return rowToPurchasingDraft(row);
+    },
+
+    async listPurchasingDrafts(clinicId: string): Promise<PurchasingDraftWithStatus[]> {
+      const { rows: pdRows } = await pool.query<PurchasingDraftRow>(
+        `SELECT * FROM purchasing_drafts WHERE clinic_id = $1 ORDER BY created_at DESC`,
+        [clinicId],
+      );
+      if (pdRows.length === 0) return [];
+
+      const { rows: poRows } = await pool.query<DraftPoRow & { line_count: string }>(
+        `SELECT dpo.*,
+                COUNT(dpl.id)::text AS line_count
+         FROM draft_purchase_orders dpo
+         LEFT JOIN draft_po_lines dpl ON dpl.draft_purchase_order_id = dpo.id
+         WHERE dpo.clinic_id = $1
+           AND dpo.purchasing_draft_id IS NOT NULL
+         GROUP BY dpo.id
+         ORDER BY dpo.created_at ASC`,
+        [clinicId],
+      );
+
+      return pdRows.map((pd) => {
+        const children = poRows
+          .filter((po) => po.purchasing_draft_id === pd.id)
+          .map(rowToDraftPo);
+        const derivedStatus = derivePurchasingDraftStatus(children.map((c) => c.status));
+        const totalItems = poRows
+          .filter((po) => po.purchasing_draft_id === pd.id)
+          .reduce((sum, po) => sum + parseInt(po.line_count, 10), 0);
+        return {
+          ...rowToPurchasingDraft(pd),
+          derivedStatus,
+          childPos: children,
+          totalItems,
+          supplierCount: children.filter((c) => c.supplierId !== null).length,
+        };
+      });
+    },
+
+    async findPurchasingDraftById(clinicId: string, pdId: string): Promise<PurchasingDraftWithStatus | null> {
+      const { rows: pdRows } = await pool.query<PurchasingDraftRow>(
+        `SELECT * FROM purchasing_drafts WHERE clinic_id = $1 AND id = $2 LIMIT 1`,
+        [clinicId, pdId],
+      );
+      const pd = pdRows[0];
+      if (!pd) return null;
+
+      const { rows: poRows } = await pool.query<DraftPoRow & { line_count: string }>(
+        `SELECT dpo.*,
+                COUNT(dpl.id)::text AS line_count
+         FROM draft_purchase_orders dpo
+         LEFT JOIN draft_po_lines dpl ON dpl.draft_purchase_order_id = dpo.id
+         WHERE dpo.clinic_id = $1
+           AND dpo.purchasing_draft_id = $2
+         GROUP BY dpo.id
+         ORDER BY dpo.created_at ASC`,
+        [clinicId, pdId],
+      );
+
+      const children = poRows.map(rowToDraftPo);
+      const derivedStatus = derivePurchasingDraftStatus(children.map((c) => c.status));
+      const totalItems = poRows.reduce((sum, po) => sum + parseInt(po.line_count, 10), 0);
+
+      return {
+        ...rowToPurchasingDraft(pd),
+        derivedStatus,
+        childPos: children,
+        totalItems,
+        supplierCount: children.filter((c) => c.supplierId !== null).length,
+      };
     },
   };
 }

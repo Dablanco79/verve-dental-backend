@@ -106,3 +106,39 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
 
   return router;
 }
+
+/**
+ * Purchasing Drafts router — mounted at /clinics/:clinicId/purchasing-drafts
+ *
+ * A Purchasing Draft is the parent concept for one purchasing exercise.
+ * It may span multiple suppliers; each supplier gets its own child PO.
+ */
+export function createPurchasingDraftRouter(deps: AppDependencies): Router {
+  const router = Router({ mergeParams: true });
+  const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+  const handlers = createPurchaseOrderHandlers(deps.purchaseOrderService);
+
+  router.use(authenticate);
+  router.use(enforceTenantParam("clinicId"));
+  router.use(requireRoles("owner_admin", "group_practice_manager"));
+
+  // List all Purchasing Drafts for the clinic.
+  router.get(
+    "/",
+    asyncHandler((req, res) => handlers.listPurchasingDrafts(req, res)),
+  );
+
+  // Create a Purchasing Draft with one child supplier PO per supplier group.
+  router.post(
+    "/",
+    asyncHandler((req, res) => handlers.createPurchasingDraft(req, res)),
+  );
+
+  // Get detail for a single Purchasing Draft (child POs + enriched lines).
+  router.get(
+    "/:pdId",
+    asyncHandler((req, res) => handlers.getPurchasingDraftDetail(req, res)),
+  );
+
+  return router;
+}

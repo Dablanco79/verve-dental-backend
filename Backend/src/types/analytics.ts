@@ -18,6 +18,7 @@ export const AUDIT_ENTITY_TYPES = [
   "timesheet_entry",
   "leave_request",
   "purchase_order",
+  "purchasing_draft",
   "user",
   "clinic",
   "product",
