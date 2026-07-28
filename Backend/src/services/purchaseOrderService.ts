@@ -185,6 +185,78 @@ export function createPurchaseOrderService(
     );
   }
 
+  // ─── Supplier compatibility guard (RULE 1 / RULE 2) ─────────────────────────
+
+  /**
+   * Verify that a product is compatible with the PO's supplier.
+   *
+   * Hierarchy (applied in order, first conclusive layer wins):
+   *
+   * LAYER 1 — product_suppliers (clinic-level explicit relationship):
+   *   Active product_suppliers records for (clinicId, masterCatalogItemId).
+   *   - Match found  → ALLOW (definitive explicit relationship)
+   *   - Records exist but no match → REJECT (explicit incompatibility)
+   *   - No records → fall through to layer 2
+   *
+   * LAYER 2 — supplier catalogue (cross-clinic relationship):
+   *   Active supplier_catalogue entries for masterCatalogItemId.
+   *   Catalogue entries establish a supplier-product relationship independent
+   *   of pricing — a null unitCostCents entry is still a valid relationship.
+   *   - Match found  → ALLOW (catalogue confirms this supplier supplies product)
+   *   - Entries exist but no match → REJECT (catalogue confirms incompatibility)
+   *   - No entries → fall through to layer 3
+   *
+   * LAYER 3 — no relationship data:
+   *   Neither product_suppliers nor supplier_catalogue has any record for this
+   *   product.  SOFT PASS: allow the addition.  Compatibility is unverified
+   *   but blocking would incorrectly prevent ordering of uncatalogued products.
+   *   This situation should be documented operationally.
+   */
+  async function checkSupplierCompatibility(
+    clinicId: string,
+    poSupplierId: string,
+    masterCatalogItemId: string,
+  ): Promise<void> {
+    // Layer 1: product_suppliers (clinic-level explicit relationship)
+    const productSuppliers = await inventoryRepository.findActiveProductSuppliers(
+      clinicId,
+      masterCatalogItemId,
+    );
+    if (productSuppliers.length > 0) {
+      const hasMatch = productSuppliers.some((ps) => ps.supplierId === poSupplierId);
+      if (!hasMatch) {
+        throw new AppError(
+          409,
+          "PO_SUPPLIER_MISMATCH",
+          "This product is explicitly assigned to a different supplier for this clinic. " +
+            "Products must belong to the same supplier as the purchase order.",
+        );
+      }
+      return; // explicit match — allow
+    }
+
+    // Layer 2: supplier catalogue (cross-clinic relationship)
+    if (supplierCatalogueRepository) {
+      const catalogueEntries = await supplierCatalogueRepository.listPricingForProduct(
+        masterCatalogItemId,
+      );
+      if (catalogueEntries.length > 0) {
+        const hasMatch = catalogueEntries.some((p) => p.supplierId === poSupplierId);
+        if (!hasMatch) {
+          throw new AppError(
+            409,
+            "PO_SUPPLIER_MISMATCH",
+            "This product is not in the supplier catalogue for this purchase order's supplier. " +
+              "Products must belong to the same supplier as the purchase order.",
+          );
+        }
+        return; // catalogue match — allow
+      }
+    }
+
+    // Layer 3: no relationship data — soft pass (unverified compatibility)
+  }
+
   return {
     async listPurchaseOrders(clinicId: string) {
       const [pos, lines] = await Promise.all([
@@ -238,10 +310,21 @@ export function createPurchaseOrderService(
         poReference?: string | null;
       },
     ) {
+      // RULE 3 — Manual PO creation requires a supplier.
+      // Legacy/historical POs with no supplier remain readable but NEW manual
+      // operational POs must always be associated with exactly one supplier.
+      if (!input.supplierId) {
+        throw new AppError(
+          400,
+          "PO_NO_SUPPLIER",
+          "A supplier must be selected before creating a purchase order",
+        );
+      }
+
       const po = await inventoryRepository.createManualPurchaseOrder({
         clinicId,
         createdByUserId: userId,
-        supplierId: input.supplierId ?? null,
+        supplierId: input.supplierId,
         notes: input.notes ?? null,
         poReference: input.poReference ?? null,
       });
@@ -323,6 +406,12 @@ export function createPurchaseOrderService(
 
       if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
         throw new AppError(400, "VALIDATION_ERROR", "Quantity must be a positive whole number");
+      }
+
+      // RULE 1 — Enforce one supplier per PO.
+      // If the PO has a supplier, verify the product belongs to that supplier.
+      if (po.supplierId) {
+        await checkSupplierCompatibility(clinicId, po.supplierId, input.masterCatalogItemId);
       }
 
       // Prevent duplicate product lines — consolidate with existing line if present
@@ -776,6 +865,22 @@ export function createPurchaseOrderService(
         }
       }
 
+      // RULE 4 — At least one resolved (non-null supplier) group is required to
+      // create a Purchasing Draft.  Null-supplier groups are identified but do
+      // NOT produce child POs — they are returned as unresolvedGroups so the
+      // frontend can prompt the user to assign suppliers before ordering.
+      const resolvedGroups = input.supplierGroups.filter((g) => g.supplierId !== null);
+      const unresolvedGroupInputs = input.supplierGroups.filter((g) => g.supplierId === null);
+
+      if (resolvedGroups.length === 0) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "At least one supplier group must have a resolved supplier. " +
+            "Assign preferred suppliers to products before creating a Purchasing Draft.",
+        );
+      }
+
       // Generate shared numeric suffix for reference linking
       const d = new Date();
       const datePart = `${String(d.getFullYear())}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -800,11 +905,11 @@ export function createPurchaseOrderService(
         metadata: { draftReference, supplierGroupCount: input.supplierGroups.length },
       });
 
-      // Create one child supplier PO per group
+      // Create one child supplier PO per RESOLVED group (non-null supplier only).
       const childPoDetails: Array<{ purchaseOrder: { id: string; poReference: string | null }; lines: unknown[] }> = [];
 
-      for (let i = 0; i < input.supplierGroups.length; i++) {
-        const group = input.supplierGroups[i];
+      for (let i = 0; i < resolvedGroups.length; i++) {
+        const group = resolvedGroups[i];
         if (!group) continue;
         const childIndex = String(i + 1).padStart(2, "0");
         const childPoReference = `PO-${datePart}-${numericSuffix}-${childIndex}`;
@@ -854,7 +959,33 @@ export function createPurchaseOrderService(
         childPoDetails.push({ purchaseOrder: { id: childPo.id, poReference: childPoReference }, lines: enrichedPoLines });
       }
 
-      return { purchasingDraft: pd, childPos: childPoDetails };
+      // Collect unresolved groups as actionable output for the frontend.
+      // Each item is enriched with product name and SKU via the existing catalogRepository
+      // so the user can identify exactly which products need supplier assignment without
+      // having to navigate away to Inventory.
+      const unresolvedGroups = await Promise.all(
+        unresolvedGroupInputs.map(async (g) => {
+          const enrichedItems = await Promise.all(
+            g.lines.map(async (l) => {
+              const catalogItem = await catalogRepository.findMasterItemById(l.masterCatalogItemId);
+              return {
+                masterCatalogItemId: l.masterCatalogItemId,
+                clinicInventoryItemId: l.clinicInventoryItemId,
+                productName: catalogItem?.name ?? "Unknown product",
+                sku: catalogItem?.sku ?? null,
+                reason: "No supplier relationship configured.",
+              };
+            }),
+          );
+          return {
+            supplierName: g.supplierName,
+            lineCount: g.lines.length,
+            items: enrichedItems,
+          };
+        }),
+      );
+
+      return { purchasingDraft: pd, childPos: childPoDetails, unresolvedGroups };
     },
 
     async listPurchasingDrafts(clinicId: string) {
@@ -911,8 +1042,15 @@ export function createPurchaseOrderService(
         );
       }
 
+      // RULE 1 — Enforce one supplier per PO for all lines in the batch.
+      if (po.supplierId) {
+        for (const l of lines) {
+          await checkSupplierCompatibility(clinicId, po.supplierId, l.masterCatalogItemId);
+        }
+      }
+
       if (pool) {
-        return executeAtomicAddLinesPg(clinicId, poId, userId, actorEmail, lines);
+        return executeAtomicAddLinesPg(clinicId, poId, userId, actorEmail, lines, po.supplierId ?? null);
       }
 
       // In-memory path: add each line with duplicate consolidation.
@@ -1398,6 +1536,7 @@ export function createPurchaseOrderService(
     userId: string,
     actorEmail: string,
     lines: BatchLineInput[],
+    poSupplierId: string | null = null,
   ) {
     if (!pool) {
       throw new AppError(500, "INTERNAL_ERROR", "Database pool is required for transactional line addition");
@@ -1414,8 +1553,8 @@ export function createPurchaseOrderService(
       };
 
       // Lock PO and verify status.
-      const lockedResult = await client.query<{ id: string; status: string }>(
-        `SELECT id, status FROM draft_purchase_orders WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
+      const lockedResult = await client.query<{ id: string; status: string; supplier_id: string | null }>(
+        `SELECT id, status, supplier_id FROM draft_purchase_orders WHERE id = $1 AND clinic_id = $2 FOR UPDATE`,
         [poId, clinicId],
       );
       const lockedPo = lockedResult.rows[0];
@@ -1423,6 +1562,14 @@ export function createPurchaseOrderService(
       if (lockedPo.status !== "draft") {
         throw new AppError(409, "PO_NOT_EDITABLE",
           `Purchase order in '${lockedPo.status}' status cannot be edited`);
+      }
+
+      // RULE 1 — Enforce one supplier per PO in the PG path.
+      const effectiveSupplierId = poSupplierId ?? lockedPo.supplier_id;
+      if (effectiveSupplierId) {
+        for (const l of lines) {
+          await checkSupplierCompatibility(clinicId, effectiveSupplierId, l.masterCatalogItemId);
+        }
       }
 
       // Load existing lines to handle duplicates.

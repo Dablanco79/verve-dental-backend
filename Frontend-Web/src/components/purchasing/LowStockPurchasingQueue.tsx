@@ -30,7 +30,12 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../../api/client.js";
 import { loadConfig } from "../../config/index.js";
-import type { InventoryItem, PurchaseOrder } from "../../types/inventory.js";
+import type {
+  InventoryItem,
+  PurchaseOrder,
+  UnresolvedSupplierGroup,
+  UnresolvedSupplierGroupItem,
+} from "../../types/inventory.js";
 import type { Supplier } from "../../types/supplier.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -160,11 +165,19 @@ type AddToExistingState =
   | { phase: "selecting"; draftPos: PurchaseOrder[] }
   | { phase: "adding"; targetPoId: string; draftPos: PurchaseOrder[] };
 
+type DraftCreatedResult = {
+  pdId: string;
+  pdReference: string;
+  resolvedCount: number;
+  unresolvedGroups: UnresolvedSupplierGroup[];
+};
+
 export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading }: Props) {
   const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [draftCreated, setDraftCreated] = useState<DraftCreatedResult | null>(null);
   const [addToExisting, setAddToExisting] = useState<AddToExistingState>({ phase: "idle" });
   const [selectedPoId, setSelectedPoId] = useState("");
 
@@ -176,6 +189,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
   useEffect(() => {
     setSelectedIds(new Set());
     setSaveError(null);
+    setDraftCreated(null);
     setAddToExisting({ phase: "idle" });
   }, [clinicId, items]);
 
@@ -231,8 +245,16 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
   // ── Create a Purchasing Draft with one child supplier PO per supplier ────────
 
   async function handleCreatePurchasingDraft() {
-    if (actionableGroups.length === 0) return;
+    if (actionableGroups.length === 0) {
+      // All selected items have no supplier — cannot create any child POs.
+      setSaveError(
+        "None of the selected products have a preferred supplier assigned. " +
+          "Assign a supplier to each product before creating a Purchasing Draft.",
+      );
+      return;
+    }
     setSaveError(null);
+    setDraftCreated(null);
     setIsSaving(true);
 
     try {
@@ -251,7 +273,21 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
         })),
       });
 
-      await navigate(`/purchasing-drafts/${result.purchasingDraft.id}`);
+      const unresolved = result.unresolvedGroups ?? [];
+      const resolvedCount = result.childPos.length;
+
+      if (unresolved.length > 0) {
+        // Partially resolved — show result inline rather than navigating away.
+        setDraftCreated({
+          pdId: result.purchasingDraft.id,
+          pdReference: result.purchasingDraft.draftReference,
+          resolvedCount,
+          unresolvedGroups: unresolved,
+        });
+      } else {
+        // Fully resolved — navigate to the new Purchasing Draft.
+        await navigate(`/purchasing-drafts/${result.purchasingDraft.id}`);
+      }
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : "Failed to create purchasing draft");
     } finally {
@@ -262,13 +298,37 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
   // ── Add selected items to an existing draft supplier PO ─────────────────────
 
   async function handleLoadDraftPos() {
+    // RULE 1 — Items from multiple suppliers cannot be added to a single PO.
+    // If the selected items span more than one supplier, require a Purchasing
+    // Draft instead of dumping them into one existing PO.
+    const selectedSupplierIds = new Set(
+      selectedItems.map((i) => i.preferredSupplierId ?? null),
+    );
+    // More than one unique supplier ID (ignoring null) means mixed suppliers.
+    const uniqueSupplierIds = [...selectedSupplierIds].filter(Boolean);
+    if (uniqueSupplierIds.length > 1) {
+      setSaveError(
+        `Selected items span ${String(uniqueSupplierIds.length)} suppliers. ` +
+          "Items from multiple suppliers cannot be added to a single purchase order. " +
+          'Use "Create Purchasing Draft" to split them into supplier-specific POs.',
+      );
+      return;
+    }
+
     setAddToExisting({ phase: "loading_pos" });
     setSaveError(null);
     try {
       const all = await apiClient.listPurchaseOrderHeaders(clinicId);
-      const drafts = all.filter((po) => po.status === "draft");
-      setAddToExisting({ phase: "selecting", draftPos: drafts });
-      setSelectedPoId(drafts[0]?.id ?? "");
+      // Only show draft POs that have the same supplier as the selected items
+      // (or no supplier for legacy POs created before the rule was enforced).
+      const selectedSupplierId = uniqueSupplierIds[0] ?? null;
+      const compatible = all.filter((po) => {
+        if (po.status !== "draft") return false;
+        if (!po.supplierId) return true; // legacy / unassigned — show but backend will enforce
+        return po.supplierId === selectedSupplierId;
+      });
+      setAddToExisting({ phase: "selecting", draftPos: compatible });
+      setSelectedPoId(compatible[0]?.id ?? "");
     } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : "Could not load existing purchase orders");
       setAddToExisting({ phase: "idle" });
@@ -564,17 +624,24 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           {addToExisting.phase === "selecting" && (
             <div className="low-stock-queue__add-to-existing">
               {addToExisting.draftPos.length === 0 ? (
-                <p className="inventory-table__meta">No draft supplier POs found for this clinic.</p>
+                <div>
+                  <p className="inventory-table__meta">
+                    No compatible draft supplier POs found for the selected items.
+                  </p>
+                  <p className="inventory-table__meta inventory-table__meta--warn">
+                    Use "Create Purchasing Draft" to generate a new supplier PO.
+                  </p>
+                </div>
               ) : (
                 <label className="product-form__field">
-                  Choose existing draft supplier PO
+                  Choose existing draft supplier PO (compatible with selected items)
                   <select
                     value={selectedPoId}
                     onChange={(e) => { setSelectedPoId(e.target.value); }}
                   >
                     {addToExisting.draftPos.map((po) => (
                       <option key={po.id} value={po.id}>
-                        {po.poReference ?? po.id.slice(0, 8)} — {po.supplierId ? "supplier assigned" : "no supplier"}
+                        {po.poReference ?? po.id.slice(0, 8)}{po.supplierId ? "" : " — no supplier (legacy)"}
                       </option>
                     ))}
                   </select>
@@ -606,6 +673,96 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
 
       {saveError ? (
         <p className="status-card__error" role="alert">{saveError}</p>
+      ) : null}
+
+      {/* Purchasing Draft creation result — shown when some products were unresolved */}
+      {draftCreated ? (
+        <div
+          className="inventory-notice inventory-notice--success"
+          role="status"
+          data-testid="draft-created-result"
+        >
+          <p>
+            <strong>Purchasing Draft created successfully.</strong>
+            {" "}
+            <Link
+              to={`/purchasing-drafts/${draftCreated.pdId}`}
+              className="inventory-table__link"
+              data-testid="draft-created-link"
+            >
+              {draftCreated.pdReference}
+            </Link>
+          </p>
+          <p>
+            {String(draftCreated.resolvedCount)}{" "}
+            {draftCreated.resolvedCount !== 1 ? "products were" : "product was"} added to supplier purchase orders.
+          </p>
+          {draftCreated.unresolvedGroups.length > 0 && (() => {
+            const allUnresolvedItems: UnresolvedSupplierGroupItem[] = draftCreated.unresolvedGroups.flatMap(
+              (g) => g.items,
+            );
+            return (
+              <div
+                className="inventory-notice inventory-notice--warn"
+                role="alert"
+                data-testid="unresolved-groups-notice"
+              >
+                <p>
+                  <strong>
+                    {"The following "}
+                    {allUnresolvedItems.length !== 1
+                      ? `${String(allUnresolvedItems.length)} products require`
+                      : "product requires"}
+                    {" supplier assignment before "}
+                    {allUnresolvedItems.length !== 1 ? "they" : "it"}
+                    {" can be ordered:"}
+                  </strong>
+                </p>
+                <ul
+                  className="low-stock-queue__unresolved-list"
+                  data-testid="unresolved-items-list"
+                >
+                  {allUnresolvedItems.map((item) => (
+                    <li
+                      key={item.masterCatalogItemId}
+                      className="low-stock-queue__unresolved-item"
+                      data-testid="unresolved-item"
+                    >
+                      <span className="low-stock-queue__unresolved-name">
+                        <Link
+                          to={`/inventory/products/${item.clinicInventoryItemId}`}
+                          className="inventory-table__link"
+                          data-testid="unresolved-product-link"
+                        >
+                          {item.productName}
+                        </Link>
+                      </span>
+                      {item.sku ? (
+                        <span
+                          className="inventory-table__meta"
+                          data-testid="unresolved-product-sku"
+                        >
+                          {"SKU: "}
+                          <code>{item.sku}</code>
+                        </span>
+                      ) : null}
+                      <span
+                        className="inventory-table__meta inventory-table__meta--warn"
+                        data-testid="unresolved-product-reason"
+                      >
+                        {"Reason: "}
+                        {item.reason}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="inventory-table__meta">
+                  Open each product above to assign a preferred supplier, then create a new Purchasing Draft or purchase order for them.
+                </p>
+              </div>
+            );
+          })()}
+        </div>
       ) : null}
     </div>
   );

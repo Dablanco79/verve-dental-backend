@@ -7,6 +7,7 @@ import {
   getInventoryStockUnit,
   getInventoryStockStatus,
   getInventorySupplierDisplay,
+  getInventoryZeroReorderWarning,
 } from "../../utils/inventoryDisplay.js";
 
 type InventoryTableProps = {
@@ -93,6 +94,7 @@ export function InventoryTable({
             <th scope="col">Current Quantity</th>
             <th scope="col">Reorder</th>
             <th scope="col">Unit cost</th>
+            <th scope="col">Purchasing</th>
             <th scope="col">Status</th>
             {showPurchaseActions ? <th scope="col">Action</th> : null}
           </tr>
@@ -102,6 +104,10 @@ export function InventoryTable({
             const purchaseHref = purchaseOrderHrefForItem?.(item);
             const detailHref = productDetailHrefForItem?.(item);
             const stockStatus = getInventoryStockStatus(item);
+            const zeroReorderWarning = getInventoryZeroReorderWarning(item);
+            const inDraft = item.inDraftQuantity ?? 0;
+            const onOrder = item.onOrderQuantity ?? 0;
+            const activeDocs = item.activePurchasingDocuments ?? [];
             return (
               <tr
                 key={item.id}
@@ -134,12 +140,73 @@ export function InventoryTable({
                 <td className="inventory-table__numeric">{item.quantityOnHand}</td>
                 <td className="inventory-table__numeric">{item.reorderPoint}</td>
                 <td className="inventory-table__numeric">{formatInventoryCurrency(item.unitCostCents)}</td>
+                <td className="inventory-table__purchasing">
+                  {inDraft > 0 ? (
+                    <span className="inventory-table__meta inventory-table__meta--warn" data-testid="in-draft-qty">
+                      In draft: {String(inDraft)} {item.stockUnit ?? "units"}
+                      {activeDocs.filter((d) => d.status === "draft").map((d) => (
+                        <span key={d.poId}>
+                          {" · "}
+                          {d.draftReference ? (
+                            <Link to={`/purchasing-drafts/${d.purchasingDraftId ?? ""}`} className="inventory-table__link">
+                              {d.draftReference}
+                            </Link>
+                          ) : (
+                            <Link to={`/purchase-orders/${d.poId}`} className="inventory-table__link">
+                              {d.poReference ?? d.poId.slice(0, 8)}
+                            </Link>
+                          )}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                  {onOrder > 0 ? (
+                    <span className="inventory-table__meta" data-testid="on-order-qty">
+                      On order: {String(onOrder)} {item.stockUnit ?? "units"}
+                      {activeDocs.filter((d) => d.status === "submitted" || d.status === "partially_received").map((d) => (
+                        <span key={d.poId}>
+                          {" · "}
+                          {d.draftReference ? (
+                            <Link to={`/purchasing-drafts/${d.purchasingDraftId ?? ""}`} className="inventory-table__link">
+                              {d.draftReference}
+                            </Link>
+                          ) : (
+                            <Link to={`/purchase-orders/${d.poId}`} className="inventory-table__link">
+                              {d.poReference ?? d.poId.slice(0, 8)}
+                            </Link>
+                          )}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                  {inDraft === 0 && onOrder === 0 ? (
+                    <span className="inventory-table__meta">—</span>
+                  ) : null}
+                </td>
                 <td>
                   <span className={stockStatus.className}>{stockStatus.label}</span>
+                  {zeroReorderWarning ? (
+                    <span className="inventory-table__meta inventory-table__meta--warn" data-testid="zero-reorder-warning">
+                      {" "}Reorder level not configured
+                    </span>
+                  ) : null}
                 </td>
                 {showPurchaseActions ? (
                   <td>
-                    {purchaseHref && item.isBelowReorderPoint ? (
+                    {zeroReorderWarning ? (
+                      <div className="po-row-actions">
+                        {detailHref ? (
+                          <Link to={detailHref} className="link-button" aria-label={`Set reorder level for ${item.name}`}>
+                            Set reorder level
+                          </Link>
+                        ) : null}
+                        {purchaseHref ? (
+                          <Link to={purchaseHref} className="link-button" aria-label={`Order ${item.name}`}>
+                            Order
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : purchaseHref && item.isBelowReorderPoint ? (
                       <Link to={purchaseHref} className="link-button">
                         Review PO
                         <span className="visually-hidden"> for {item.name}</span>

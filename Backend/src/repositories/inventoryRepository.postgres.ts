@@ -897,6 +897,24 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       return rowToProductSupplier(row);
     },
 
+    async findActiveProductSuppliers(
+      clinicId: string,
+      masterCatalogItemId: string,
+    ): Promise<ProductSupplier[]> {
+      const { rows } = await pool.query<ProductSupplierRow>(
+        `SELECT
+           product_suppliers.*,
+           (SELECT supplier_name FROM suppliers WHERE suppliers.id = product_suppliers.supplier_id)
+             AS supplier_name
+         FROM product_suppliers
+         WHERE clinic_id = $1
+           AND product_id = $2
+           AND active = true`,
+        [clinicId, masterCatalogItemId],
+      );
+      return rows.map(rowToProductSupplier);
+    },
+
     // ── Purchasing Drafts ─────────────────────────────────────────────────────
 
     async createManualPurchaseOrderForDraft(input: {

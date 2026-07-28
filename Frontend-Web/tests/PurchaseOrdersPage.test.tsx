@@ -358,7 +358,8 @@ describe("PurchaseOrdersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
 
     expect(await screen.findByRole("heading", { name: /new purchase order/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /create draft po/i })).toBeInTheDocument();
+    // Supplier is required — button is disabled until a supplier is selected.
+    expect(screen.getByRole("button", { name: /^create po$/i })).toBeDisabled();
   });
 
   it("shows a loading state and prevents double-submission while saving", async () => {
@@ -370,7 +371,14 @@ describe("PurchaseOrdersPage", () => {
     await screen.findByText("PO-SUBMITTED-001");
 
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
-    const createBtn = await screen.findByRole("button", { name: /create draft po/i });
+    await screen.findByRole("heading", { name: /new purchase order/i });
+
+    // Select a supplier — required before the Create PO button is enabled.
+    const supplierSelect = screen.getByRole("combobox");
+    fireEvent.change(supplierSelect, { target: { value: "supplier-1" } });
+
+    const createBtn = screen.getByRole("button", { name: /^create po$/i });
+    expect(createBtn).not.toBeDisabled();
     fireEvent.click(createBtn);
 
     await waitFor(() => {
@@ -398,7 +406,11 @@ describe("PurchaseOrdersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
     await screen.findByRole("heading", { name: /new purchase order/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /create draft po/i }));
+    // Select a supplier — required before the Create PO button is enabled.
+    const supplierSelect = screen.getByRole("combobox");
+    fireEvent.change(supplierSelect, { target: { value: "supplier-1" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^create po$/i }));
 
     await waitFor(() => {
       expect(screen.getByTestId("po-detail-page")).toBeInTheDocument();
@@ -406,7 +418,7 @@ describe("PurchaseOrdersPage", () => {
     const anyString = expect.any(String) as string;
     expect(mockCreatePurchaseOrder).toHaveBeenCalledWith(
       "11111111-1111-4111-8111-111111111111",
-      expect.objectContaining({ poReference: anyString }),
+      expect.objectContaining({ poReference: anyString, supplierId: "supplier-1" }),
     );
   });
 
@@ -419,18 +431,22 @@ describe("PurchaseOrdersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create PO" }));
     await screen.findByRole("heading", { name: /new purchase order/i });
 
+    // Select a supplier — required before the Create PO button is enabled.
+    const supplierSelect = screen.getByRole("combobox");
+    fireEvent.change(supplierSelect, { target: { value: "supplier-1" } });
+
     // Clear the auto-generated PO reference and type a known value.
     const poRefInput = screen.getByPlaceholderText(/e\.g\. PO-/i);
     fireEvent.change(poRefInput, { target: { value: "PO-RETAIN-001" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /create draft po/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^create po$/i }));
 
     // Error message must appear.
     expect(await screen.findByRole("alert")).toHaveTextContent("Supplier not found");
 
     // Form must still be visible with the entered value retained.
     expect(screen.getByDisplayValue("PO-RETAIN-001")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /create draft po/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^create po$/i })).toBeInTheDocument();
   });
 
   it("displays a Purchasing Drafts section when drafts are returned", async () => {

@@ -30,7 +30,8 @@ function parseUuidParam(raw: string | string[] | undefined, name: string): strin
 const submitPoBodySchema = z.object({}).strict();
 
 const createPoBodySchema = z.object({
-  supplierId: z.string().uuid().nullable().optional(),
+  // RULE 3 — Supplier is required for all new manual supplier POs.
+  supplierId: z.string().uuid({ message: "supplierId must be a valid UUID" }),
   notes: z.string().max(2000).nullable().optional(),
   poReference: z.string().max(128).nullable().optional(),
 });
@@ -141,7 +142,7 @@ export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
         req.user.id,
         req.user.email,
         {
-          supplierId: parseResult.data.supplierId ?? null,
+          supplierId: parseResult.data.supplierId,
           notes: parseResult.data.notes ?? null,
           poReference: parseResult.data.poReference ?? null,
         },

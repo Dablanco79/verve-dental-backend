@@ -908,7 +908,7 @@ describe("InventoryPage", () => {
 
     expect(
       await screen.findByText(
-        /Received VRV-BUR-001 — inventory is now 16 pack on hand\. Next: check adjustment history as the receiving log; PO status reconciliation is not automated yet\./i,
+        /Received VRV-BUR-001 — inventory is now 16 pack on hand\. Note: this manual\/scan-based receipt updates stock directly and is not automatically linked to a purchase order\./i,
       ),
     ).toBeInTheDocument();
   });

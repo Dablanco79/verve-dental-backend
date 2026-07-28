@@ -304,6 +304,64 @@ describe("PurchaseOrderDetailPage", () => {
   });
 });
 
+// ─── TEST 7: PO Detail cost display (Correction 5) ───────────────────────────
+
+describe("PurchaseOrderDetailPage — cost display (Correction 5)", () => {
+  it("shows actual cost without 'est.' label when unitCostCents is set", async () => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    const lineWithActualCost: PurchaseOrderLine = {
+      ...DRAFT_LINE,
+      unitCostCents: 4599,
+      estimatedUnitCostCents: null,
+    };
+    mockGetPurchaseOrderDetail.mockResolvedValue({
+      purchaseOrder: DRAFT_PO,
+      lines: [lineWithActualCost],
+    });
+    renderDetailPage();
+    await screen.findByText("Diamond Burs");
+    // Actual cost is shown (AUD $45.99)
+    expect(screen.getAllByText(/\$45\.99/)[0]).toBeInTheDocument();
+    // Must NOT show the "est." label for actual costs
+    expect(screen.queryByText(/est\./)).not.toBeInTheDocument();
+  });
+
+  it("shows estimated cost with 'est.' label when unitCostCents is null but estimatedUnitCostCents is set", async () => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    const lineWithEstimatedCost: PurchaseOrderLine = {
+      ...DRAFT_LINE,
+      unitCostCents: null,
+      estimatedUnitCostCents: 3250,
+    };
+    mockGetPurchaseOrderDetail.mockResolvedValue({
+      purchaseOrder: DRAFT_PO,
+      lines: [lineWithEstimatedCost],
+    });
+    renderDetailPage();
+    await screen.findByText("Diamond Burs");
+    // Estimated cost is shown
+    expect(screen.getAllByText(/\$32\.50/)[0]).toBeInTheDocument();
+    // Must show the "est." label
+    expect(screen.getByText("est.")).toBeInTheDocument();
+  });
+
+  it("shows 'Price unavailable' when both unitCostCents and estimatedUnitCostCents are null", async () => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    const lineWithNoCost: PurchaseOrderLine = {
+      ...DRAFT_LINE,
+      unitCostCents: null,
+      estimatedUnitCostCents: null,
+    };
+    mockGetPurchaseOrderDetail.mockResolvedValue({
+      purchaseOrder: DRAFT_PO,
+      lines: [lineWithNoCost],
+    });
+    renderDetailPage();
+    await screen.findByText("Diamond Burs");
+    expect(screen.getByText("Price unavailable")).toBeInTheDocument();
+  });
+});
+
 // ─── Disclaimer removal test ──────────────────────────────────────────────────
 
 describe("PurchaseOrderDetailPage — no operational disclaimer", () => {

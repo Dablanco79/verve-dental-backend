@@ -128,11 +128,15 @@ function CreatePoForm({ suppliers, clinicId, onCreated, onCancel }: CreatePoForm
   const [error, setError] = useState<string | null>(null);
 
   async function handleCreate() {
+    if (!supplierId) {
+      setError("A supplier must be selected before creating a purchase order.");
+      return;
+    }
     setError(null);
     setIsSaving(true);
     try {
       const po = await apiClient.createPurchaseOrder(clinicId, {
-        supplierId: supplierId || null,
+        supplierId,
         notes: notes.trim() || null,
         poReference: poReference.trim() || null,
       });
@@ -158,7 +162,7 @@ function CreatePoForm({ suppliers, clinicId, onCreated, onCancel }: CreatePoForm
             value={supplierId}
             onChange={(e) => { setSupplierId(e.target.value); }}
           >
-            <option value="">Select supplier (optional for draft)</option>
+            <option value="">— Select supplier (required) —</option>
             {activeSuppliers.map((s) => (
               <option key={s.id} value={s.id}>{s.supplierName}</option>
             ))}
@@ -185,14 +189,20 @@ function CreatePoForm({ suppliers, clinicId, onCreated, onCancel }: CreatePoForm
       {error ? (
         <p className="status-card__error" role="alert">{error}</p>
       ) : null}
+      {!supplierId && (
+        <p className="inventory-table__meta inventory-table__meta--warn" role="status">
+          Select a supplier to enable PO creation.
+        </p>
+      )}
       <div className="inventory-page__actions">
         <button
           type="button"
           className="button-link"
           onClick={() => { void handleCreate(); }}
-          disabled={isSaving}
+          disabled={isSaving || !supplierId}
+          title={!supplierId ? "A supplier must be selected before creating a purchase order" : undefined}
         >
-          {isSaving ? "Creating…" : "Create draft PO"}
+          {isSaving ? "Creating…" : "Create PO"}
         </button>
         <button type="button" className="link-button" onClick={onCancel}>
           Cancel
@@ -312,11 +322,17 @@ function PoCard({ po, submittingPoId, onSubmit, onCancelRequest }: PoCardProps) 
               type="button"
               className="button-link po-submit-btn"
               onClick={() => { onSubmit(po.poId); }}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !po.supplierId}
+              title={!po.supplierId ? "Set a supplier before submitting this purchase order" : undefined}
               aria-label={`Submit ${po.poReference ?? po.poId}`}
             >
               {isSubmitting ? "Submitting…" : "Submit PO"}
             </button>
+            {!po.supplierId && (
+              <span className="inventory-table__meta inventory-table__meta--warn" aria-live="polite">
+                No supplier — edit PO to assign one before submitting
+              </span>
+            )}
             <button
               type="button"
               className="link-button link-button--danger"

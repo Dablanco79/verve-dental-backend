@@ -143,6 +143,16 @@ export interface InventoryRepository {
   createProductSupplier(
     productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
   ): Promise<ProductSupplier>;
+  /**
+   * List all ACTIVE product-supplier relationships for a given (clinic, master
+   * catalog item) pair.  Used by checkSupplierCompatibility to apply the
+   * product_suppliers decision layer before falling back to the supplier
+   * catalogue (BLOCKER 1 resolution).
+   */
+  findActiveProductSuppliers(
+    clinicId: string,
+    masterCatalogItemId: string,
+  ): Promise<ProductSupplier[]>;
 
   // ── Purchasing Drafts ─────────────────────────────────────────────────────
 
@@ -713,6 +723,21 @@ export function createInMemoryInventoryRepository(
       };
       productSuppliers.push(record);
       return Promise.resolve({ ...record });
+    },
+
+    findActiveProductSuppliers(
+      clinicId: string,
+      masterCatalogItemId: string,
+    ): Promise<ProductSupplier[]> {
+      const result = productSuppliers
+        .filter(
+          (ps) =>
+            ps.clinicId === clinicId &&
+            ps.productId === masterCatalogItemId &&
+            ps.active,
+        )
+        .map((ps) => ({ ...ps }));
+      return Promise.resolve(result);
     },
 
     createPurchasingDraft(input: {

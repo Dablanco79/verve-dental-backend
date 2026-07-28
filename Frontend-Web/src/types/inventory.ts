@@ -182,12 +182,29 @@ export type CreatePurchasingDraftRequest = {
   notes?: string | null;
 };
 
+export type UnresolvedSupplierGroupItem = {
+  masterCatalogItemId: string;
+  /** Clinic inventory item ID — used to link to the Product Detail page. */
+  clinicInventoryItemId: string;
+  productName: string;
+  sku: string | null;
+  reason: string;
+};
+
+export type UnresolvedSupplierGroup = {
+  supplierName: string;
+  lineCount: number;
+  items: UnresolvedSupplierGroupItem[];
+};
+
 export type PurchasingDraftDetail = {
   purchasingDraft: PurchasingDraft;
   childPos: Array<{
     purchaseOrder: PurchaseOrder;
     lines: PurchaseOrderLine[];
   }>;
+  /** Products that could not be added to a child PO because no supplier was resolved. */
+  unresolvedGroups?: UnresolvedSupplierGroup[];
 };
 
 export type CreatePurchaseOrderRequest = {

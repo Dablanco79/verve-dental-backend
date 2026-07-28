@@ -49,7 +49,9 @@ function buildScanNotice(result: ScanResponse): ScanNotice {
   if (mode === "receive") {
     return {
       tone: "receive",
-      message: `Received ${item.masterSku} — inventory is now ${stockLabel}. Next: check adjustment history as the receiving log; PO status reconciliation is not automated yet.`,
+      message: `Received ${item.masterSku} — inventory is now ${stockLabel}. ` +
+        "Note: this manual/scan-based receipt updates stock directly and is not automatically linked to a purchase order. " +
+        "To receive against a PO and update its status, use the Receive Stock button on the purchase order.",
     };
   }
 
@@ -507,7 +509,11 @@ export function InventoryPage() {
               <p className="inventory-page__subtitle">
                 {isAllClinicsScope
                   ? "Select a clinic before receiving stock."
-                  : "Receiving stock updates inventory immediately. PO status reconciliation and auto-close are not automated yet, so use adjustment history as the receiving log."}
+                  : "Two receiving paths are available: " +
+                    "(1) PO-based receiving — use the Receive Stock button on a submitted purchase order. " +
+                    "This reconciles received quantities, updates PO status (partially received → received), and updates inventory automatically. " +
+                    "(2) Manual / scan-based receiving — use the scanner or adjustment form below. " +
+                    "This updates inventory directly and is not automatically linked to a purchase order."}
               </p>
             </div>
             {!isAllClinicsScope ? (
@@ -560,8 +566,10 @@ export function InventoryPage() {
                 <div className="inventory-receiving-list">
                   <h3>Submitted purchase orders</h3>
                   <p className="inventory-page__subtitle">
-                    These items appear on submitted purchase orders. Scan items to add them to stock.
-                    Purchase order status does not update automatically when items are received.
+                    These items appear on submitted purchase orders. To receive a full delivery
+                    and automatically update PO status, use the{" "}
+                    <strong>Receive Stock</strong> button on the purchase order.
+                    The scanner below updates inventory directly but does not link to a PO.
                   </p>
                   <ul>
                     {submittedPurchaseOrderLines.slice(0, 4).map((line) => (

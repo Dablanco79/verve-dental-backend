@@ -98,16 +98,18 @@ describe("createManualPurchaseOrder", () => {
     expect(po.notes).toBe("Urgent order");
   });
 
-  it("creates a draft PO with no supplier (header-only)", async () => {
+  it("rejects creating a draft PO without a supplier (RULE 3 enforcement)", async () => {
+    // Domain rule: new manual operational POs require a supplier at creation time.
+    // Legacy supplier-less POs remain READABLE but cannot be newly created.
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
-    expect(po.status).toBe("draft");
-    expect(po.supplierId == null).toBe(true);
+    await expect(
+      service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {}),
+    ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
   });
 
   it("records a purchase_order.created audit event", async () => {
     const { service, auditService } = makeService();
-    await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, { supplierId: "supplier-1" });
     const ev = auditService.getEvents().find((e) => e.event === "purchase_order.created");
     expect(ev).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -118,17 +120,13 @@ describe("createManualPurchaseOrder", () => {
 // ─── 2. Submit validation ─────────────────────────────────────────────────────
 
 describe("submitPurchaseOrder — validation", () => {
-  it("rejects submission when no supplier is set", async () => {
+  it("rejects submission when no supplier is set (now also enforced at creation)", async () => {
+    // Under RULE 3: creation itself rejects when supplierId is absent.
+    // This test confirms the PO_NO_SUPPLIER code is returned at either entry point.
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
-    // Add a line first so it's not rejected for that reason
-    await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
-      masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
-      clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
-      quantity: 5,
-    });
-    await expect(service.submitPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL))
-      .rejects.toMatchObject({ statusCode: 400 });
+    await expect(
+      service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {}),
+    ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
   });
 
   it("rejects submission when no lines exist", async () => {
@@ -266,7 +264,9 @@ describe("draft line management", () => {
 describe("cancelPurchaseOrder", () => {
   it("cancels a draft PO", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     const cancelled = await service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
     expect(cancelled.status).toBe("cancelled");
   });
@@ -309,7 +309,9 @@ describe("cancelPurchaseOrder", () => {
 
   it("rejects cancelling an already-cancelled PO", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     await service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
     await expect(service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL))
       .rejects.toBeDefined();
@@ -437,7 +439,9 @@ describe("receivePurchaseOrder", () => {
 
   it("rejects receiving against a cancelled PO", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     await service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
     await expect(service.receivePurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, [
       { poLineId: "some-line-id", quantityDelta: 1 },
@@ -579,14 +583,18 @@ describe("getPurchaseOrderDetail", () => {
 describe("clinic isolation", () => {
   it("cannot access a PO from a different clinic", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     await expect(service.getPurchaseOrderDetail(CLINIC_B, po.id))
       .rejects.toMatchObject({ statusCode: 404 });
   });
 
   it("cannot cancel a PO from a different clinic", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     await expect(service.cancelPurchaseOrder(CLINIC_B, po.id, ACTOR_ID, ACTOR_EMAIL))
       .rejects.toBeDefined();
   });
@@ -597,14 +605,14 @@ describe("clinic isolation", () => {
 describe("audit events", () => {
   it("records purchase_order.created with actorEmail", async () => {
     const { service, auditService } = makeService();
-    await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, { supplierId: "supplier-1" });
     const ev = auditService.getEvents().find((e) => e.event === "purchase_order.created");
     expect(ev).toBeDefined();
   });
 
   it("records purchase_order.line_added", async () => {
     const { service, auditService } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, { supplierId: "supplier-1" });
     await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
       masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
       clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
@@ -616,7 +624,7 @@ describe("audit events", () => {
 
   it("records purchase_order.cancelled", async () => {
     const { service, auditService } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, { supplierId: "supplier-1" });
     await service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
     const ev = auditService.getEvents().find((e) => e.event === "purchase_order.cancelled");
     expect(ev).toBeDefined();

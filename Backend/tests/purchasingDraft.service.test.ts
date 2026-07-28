@@ -564,6 +564,181 @@ describe("activePurchasingDocuments — inventory view", () => {
   });
 });
 
+// ─── ARCHITECTURAL CORRECTION SPRINT tests ───────────────────────────────────
+
+// TEST 1 — Manual PO requires supplier
+describe("createManualPurchaseOrder — supplier required (RULE 3)", () => {
+  it("rejects creating a manual PO without a supplierId", async () => {
+    const { service } = makeService();
+    await expect(
+      service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {}),
+    ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
+  });
+
+  it("rejects when supplierId is explicitly null", async () => {
+    const { service } = makeService();
+    await expect(
+      service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, { supplierId: null }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
+  });
+
+  // TEST 2 — Valid manual PO creation (supplier provided)
+  it("creates successfully when supplierId is provided", async () => {
+    const { service } = makeService();
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
+    expect(po.status).toBe("draft");
+    expect(po.supplierId).toBe("supplier-1");
+  });
+});
+
+// TEST 4 — Multi-supplier Purchasing Draft creates separate child POs
+describe("createPurchasingDraft — multi-supplier produces separate child POs", () => {
+  it("two supplier groups produce two child POs, no mixed supplier lines", async () => {
+    const { service, inventoryRepo } = makeService();
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [bursGroup(), glovesGroup()],
+    });
+    expect(result.childPos).toHaveLength(2);
+    const pos = await inventoryRepo.listPurchaseOrders(CLINIC_A);
+    const bursPos = pos.filter((p) => p.supplierId === "supplier-burs");
+    const glovePos = pos.filter((p) => p.supplierId === "supplier-gloves");
+    expect(bursPos).toHaveLength(1);
+    expect(glovePos).toHaveLength(1);
+    // Verify no mixed lines: burs PO only has burs lines
+    const bursPo = bursPos[0];
+    const glovesPo = glovePos[0];
+    if (!bursPo || !glovesPo) throw new Error("Expected exactly one PO per supplier group");
+    const bursLines = await inventoryRepo.listPoLinesByPoId(bursPo.id);
+    expect(bursLines.every((l) => l.masterCatalogItemId === BURS_CATALOG_ID)).toBe(true);
+    // Gloves PO only has gloves lines
+    const glovesLines = await inventoryRepo.listPoLinesByPoId(glovesPo.id);
+    expect(glovesLines.every((l) => l.masterCatalogItemId === GLOVES_CATALOG_ID)).toBe(true);
+  });
+});
+
+// TEST 5 — Unresolved supplier group in Purchasing Draft
+describe("createPurchasingDraft — unresolved supplier groups", () => {
+  it("skips null-supplier groups and returns them as unresolvedGroups", async () => {
+    const { service } = makeService();
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        bursGroup(),
+        {
+          supplierId: null,
+          supplierName: "No supplier assigned",
+          lines: [
+            { masterCatalogItemId: GLOVES_CATALOG_ID, clinicInventoryItemId: GLOVES_INV_ID, quantity: 1 },
+          ],
+        },
+      ],
+    });
+    // Only the resolved supplier group gets a child PO
+    expect(result.childPos).toHaveLength(1);
+    // The null-supplier group is returned for UI to handle
+    expect(result.unresolvedGroups).toHaveLength(1);
+    expect(result.unresolvedGroups[0]?.supplierName).toBe("No supplier assigned");
+    expect(result.unresolvedGroups[0]?.lineCount).toBe(1);
+  });
+
+  it("rejects when ALL groups are null-supplier", async () => {
+    const { service } = makeService();
+    await expect(
+      service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        supplierGroups: [
+          {
+            supplierId: null,
+            supplierName: "No supplier",
+            lines: [{ masterCatalogItemId: BURS_CATALOG_ID, clinicInventoryItemId: BURS_INV_ID, quantity: 1 }],
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("resolved groups produce child POs even when some groups are unresolved", async () => {
+    const { service, inventoryRepo } = makeService();
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        bursGroup(),
+        {
+          supplierId: null,
+          supplierName: "Unresolved supplier",
+          lines: [{ masterCatalogItemId: GLOVES_CATALOG_ID, clinicInventoryItemId: GLOVES_INV_ID, quantity: 2 }],
+        },
+      ],
+    });
+    expect(result.childPos).toHaveLength(1);
+    const pos = await inventoryRepo.listPurchaseOrders(CLINIC_A);
+    const bursPos = pos.find((p) => p.supplierId === "supplier-burs");
+    expect(bursPos).toBeDefined();
+    // Verify no supplier-less child PO was created for the unresolved group
+    const nullSupplierPos = pos.filter((p) => p.supplierId === null);
+    expect(nullSupplierPos).toHaveLength(0);
+  });
+});
+
+// TEST 7 — PO receiving lifecycle regression (Test 10 in spec)
+describe("PO receiving lifecycle — partial then full", () => {
+  it("transitions draft → submitted → partially_received → received", async () => {
+    const { service } = makeService();
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
+    const line = await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
+      masterCatalogItemId: BURS_CATALOG_ID,
+      clinicInventoryItemId: BURS_INV_ID,
+      quantity: 4,
+    });
+    const submitted = await service.submitPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
+    expect(submitted.purchaseOrder.status).toBe("submitted");
+
+    // Partial receipt
+    const partial = await service.receivePurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, [
+      { poLineId: line.id, quantityDelta: 2 },
+    ]);
+    expect(partial.purchaseOrder.status).toBe("partially_received");
+
+    // Remaining receipt
+    const full = await service.receivePurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, [
+      { poLineId: line.id, quantityDelta: 2 },
+    ]);
+    expect(full.purchaseOrder.status).toBe("received");
+  });
+});
+
+// TEST 8 — Unit conversion regression (Test 11 in spec)
+describe("Unit conversion regression — Carton to Box", () => {
+  it("2 Cartons of burs (6 packs/carton) = 12 stock units received", async () => {
+    const { service, inventoryRepo } = makeService();
+
+    // Get initial stock level for burs
+    const itemsBefore = await inventoryRepo.listClinicInventory(CLINIC_A);
+    const bursBefore = itemsBefore.find((i) => i.id === BURS_INV_ID);
+    const stockBefore = bursBefore?.quantityOnHand ?? 0;
+
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
+    const line = await service.addPoLine(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, {
+      masterCatalogItemId: BURS_CATALOG_ID,
+      clinicInventoryItemId: BURS_INV_ID,
+      quantity: 2, // 2 receiving units (Cases in seed data)
+    });
+    await service.submitPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
+    await service.receivePurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL, [
+      { poLineId: line.id, quantityDelta: 2 },
+    ]);
+
+    const itemsAfter = await inventoryRepo.listClinicInventory(CLINIC_A);
+    const bursAfter = itemsAfter.find((i) => i.id === BURS_INV_ID);
+    // Burs seed: receivingUnit=Case, unitsPerReceivingUnit=6, stockUnit=Pack
+    // 2 Cases × 6 packs/case = 12 stock units
+    expect(bursAfter?.quantityOnHand).toBe(stockBefore + 12);
+  });
+});
+
 // ─── Finding 3: "Unit" → "Unit" = 1:1 conversion ─────────────────────────────
 
 describe("resolveConversionFactorFromCatalogItem — Unit-to-Unit", () => {
@@ -692,7 +867,10 @@ describe("regression — standalone PO creation and lifecycle", () => {
 
   it("cancelPurchaseOrder still works on a standalone draft PO", async () => {
     const { service } = makeService();
-    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {});
+    // Supplier is now required for new manual POs (RULE 3).
+    const po = await service.createManualPurchaseOrder(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierId: "supplier-1",
+    });
     const result = await service.cancelPurchaseOrder(CLINIC_A, po.id, ACTOR_ID, ACTOR_EMAIL);
     expect(result.status).toBe("cancelled");
   });

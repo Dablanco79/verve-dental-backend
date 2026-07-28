@@ -60,6 +60,10 @@ function formatDate(iso: string): string {
 
 type AddLineFormProps = {
   inventoryItems: InventoryItem[];
+  /** PO reference shown in the form heading to make clear which PO is being edited. */
+  poReference?: string | null;
+  /** Supplier name shown in the form heading to make clear which supplier PO this is. */
+  supplierName?: string | null;
   onAdd: (values: {
     clinicInventoryItemId: string;
     masterCatalogItemId: string;
@@ -71,7 +75,7 @@ type AddLineFormProps = {
   onCancel: () => void;
 };
 
-function AddLineForm({ inventoryItems, onAdd, onCancel }: AddLineFormProps) {
+function AddLineForm({ inventoryItems, poReference, supplierName, onAdd, onCancel }: AddLineFormProps) {
   const [search, setSearch] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -114,7 +118,17 @@ function AddLineForm({ inventoryItems, onAdd, onCancel }: AddLineFormProps) {
 
   return (
     <div className="po-add-line-form">
-      <h4>Add product line</h4>
+      <h4>
+        {"Add product line"}
+        {(poReference ?? supplierName) ? (
+          <span className="inventory-table__meta po-add-line-form__context">
+            {" — "}
+            {poReference ? <strong>{poReference}</strong> : null}
+            {poReference && supplierName ? " · " : null}
+            {supplierName ? <span>{supplierName}</span> : null}
+          </span>
+        ) : null}
+      </h4>
       <div className="product-form__grid">
         <label className="product-form__field product-form__full">
           Product search
@@ -347,6 +361,8 @@ export function PurchaseOrderDetailPage() {
   const isDraft = po?.status === "draft";
   const activeSuppliers = suppliers.filter((s) => s.active).sort((a, b) => a.supplierName.localeCompare(b.supplierName));
   const supplierName = activeSuppliers.find((s) => s.id === po?.supplierId)?.supplierName;
+  // Pre-extracted for the AddLineForm context display — the direct status check narrows po to non-null.
+  const addLinePoRef = po?.status === "draft" ? po.poReference : null;
 
   async function handleSaveHeader() {
     if (!selectedClinicId || !poId) return;
@@ -547,6 +563,8 @@ export function PurchaseOrderDetailPage() {
               {showAddLine && isDraft ? (
                 <AddLineForm
                   inventoryItems={inventoryItems}
+                  poReference={addLinePoRef}
+                  supplierName={supplierName}
                   onAdd={handleAddLine}
                   onCancel={() => { setShowAddLine(false); }}
                 />
@@ -601,7 +619,14 @@ export function PurchaseOrderDetailPage() {
                           <td className="inventory-table__numeric">
                             {line.unitCostCents != null
                               ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(line.unitCostCents / 100)
-                              : "—"}
+                              : line.estimatedUnitCostCents != null
+                                ? (
+                                  <em title="Estimated from supplier catalogue — not authoritative invoice pricing">
+                                    {new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(line.estimatedUnitCostCents / 100)}{" "}
+                                    <span className="inventory-table__meta">est.</span>
+                                  </em>
+                                )
+                                : <span className="inventory-table__meta">Price unavailable</span>}
                           </td>
                           {isDraft && canWrite ? (
                             <td>
