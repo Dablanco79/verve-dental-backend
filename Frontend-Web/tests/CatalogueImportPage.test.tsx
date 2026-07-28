@@ -1240,4 +1240,277 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByText("Inventory quantity changes")).toBeInTheDocument();
     expect(screen.getAllByText("0").length).toBeGreaterThan(0);
   });
+
+  // ─── Regression: OCR ready_for_review status must enable Import ──────────────
+  //
+  // Production invoices uploaded via PDF/OCR are placed in "ready_for_review"
+  // status by the backend.  Previously the canConfirmImport guard checked only
+  // invoice.status === "pending_review", so the Import button was ALWAYS
+  // disabled for real OCR invoices regardless of review state.
+
+  describe("OCR invoice (ready_for_review status) — catalogue import regression", () => {
+    // Shared OCR-status invoice fixture (status: "ready_for_review" not "pending_review").
+    const ocrInvoice: SupplierInvoice = {
+      ...invoiceImport,
+      id: "ocr-invoice-1",
+      status: "ready_for_review",
+      originalFilename: "dentavision-invoice.pdf",
+    };
+
+    function buildUnmatchedLine(id: string, description: string): SupplierInvoiceLine {
+      return { ...unmatchedLine, id, invoiceId: ocrInvoice.id, ocrDescription: description };
+    }
+
+    // TEST 1 — Ready to Create counts as resolved
+    it("TEST 1: Ready to Create counts as resolved — button becomes enabled after one Create new product click", async () => {
+      mockGetSupplierInvoice.mockResolvedValue({
+        invoice: ocrInvoice,
+        lines: [buildUnmatchedLine("line-ocr-1", "Prophy Paste Mint")],
+      });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste Mint");
+      const importBtn = screen.getByRole("button", { name: "Import Reviewed Products" });
+      expect(importBtn).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+
+      expect(importBtn).toBeEnabled();
+    });
+
+    // TEST 2 — Seven Ready to Create rows → Still Requiring Review = 0, New Products = 7, button enabled
+    it("TEST 2: Seven Ready to Create rows → Still Requiring Review = 0, New Products = 7, Import enabled", async () => {
+      const sevenLines = Array.from({ length: 7 }, (_, i) =>
+        buildUnmatchedLine(`line-ocr-${String(i + 1)}`, `Product ${String(i + 1)}`),
+      );
+      mockGetSupplierInvoice.mockResolvedValue({ invoice: ocrInvoice, lines: sevenLines });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      // Wait for lines to render
+      await screen.findByText("Product 1");
+
+      // Mark all 7 as "Create new product"
+      const createButtons = screen.getAllByRole("button", { name: "Create new product" });
+      expect(createButtons).toHaveLength(7);
+      for (const btn of createButtons) {
+        fireEvent.click(btn);
+      }
+
+      // Import button must be enabled
+      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+
+      // Review Summary: Still Requiring Review = 0
+      await waitFor(() => {
+        const dlContent = document.querySelector("dl.po-summary__stats");
+        expect(dlContent?.textContent).toContain("Still requiring review");
+        expect(dlContent?.textContent).toContain("0");
+      });
+
+      // Review Summary: New products = 7
+      await waitFor(() => {
+        const dlContent = document.querySelector("dl.po-summary__stats");
+        expect(dlContent?.textContent).toContain("New products");
+        expect(dlContent?.textContent).toContain("7");
+      });
+    });
+
+    // TEST 3 — Mixed resolved states → Import enabled
+    it("TEST 3: Mixed resolved states (Ready to Create + Matched + Skipped) → Import enabled", async () => {
+      const readyLine = buildUnmatchedLine("line-ready", "Prophy Paste Mint");
+      const skipLine = buildUnmatchedLine("line-skip", "Unknown Item");
+      const alreadyMatchedLine: SupplierInvoiceLine = {
+        ...matchedLine,
+        id: "line-matched",
+        invoiceId: ocrInvoice.id,
+      };
+      mockGetSupplierInvoice.mockResolvedValue({
+        invoice: ocrInvoice,
+        lines: [readyLine, skipLine, alreadyMatchedLine],
+      });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste Mint");
+
+      // Mark ready line as Ready to Create
+      for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 1)) {
+        fireEvent.click(btn);
+      }
+
+      // Mark skip line as Skipped
+      for (const btn of screen.getAllByRole("button", { name: "Skip" }).slice(0, 1)) {
+        fireEvent.click(btn);
+      }
+
+      // alreadyMatchedLine starts as "Matched Existing Product" (isMatched: true)
+      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    });
+
+    // TEST 4 — One Needs Review row → Import disabled
+    it("TEST 4: One Needs Review row → Import remains disabled", async () => {
+      const lines = [
+        buildUnmatchedLine("line-ready", "Prophy Paste Mint"),
+        buildUnmatchedLine("line-still-needs-review", "Etch Gel 37%"),
+      ];
+      mockGetSupplierInvoice.mockResolvedValue({ invoice: ocrInvoice, lines });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste Mint");
+
+      // Resolve only the first row
+      for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 1)) {
+        fireEvent.click(btn);
+      }
+
+      // Second row still in "Needs Review" — button must stay disabled
+      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+    });
+
+    // TEST 5 — Ready to Create survives page reload (localStorage persistence)
+    it("TEST 5: Ready to Create decision persists across simulated page reload", async () => {
+      window.localStorage.clear();
+      mockGetSupplierInvoice.mockResolvedValue({
+        invoice: ocrInvoice,
+        lines: [buildUnmatchedLine("line-ocr-persist", "Prophy Paste Mint")],
+      });
+
+      // First render — user marks as Ready to Create
+      const { unmount } = renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+      await screen.findByText("Prophy Paste Mint");
+      fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+
+      // Simulate reload — unmount and re-render with same invoice
+      unmount();
+
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+      await screen.findByText("Prophy Paste Mint");
+
+      // After reload, the state should be restored from localStorage
+      expect(screen.getByText("Ready to Create")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+    });
+
+    // TEST 6 — Import payload contains every Ready to Create row
+    it("TEST 6: Import payload includes all Ready to Create line IDs", async () => {
+      const line1 = buildUnmatchedLine("line-payload-1", "Prophy Paste");
+      const line2 = buildUnmatchedLine("line-payload-2", "Etch Gel");
+      mockGetSupplierInvoice.mockResolvedValue({ invoice: ocrInvoice, lines: [line1, line2] });
+      mockConfirmSupplierInvoice.mockResolvedValue({
+        invoice: { ...ocrInvoice, status: "imported", confirmedAt: "2026-07-01T03:00:00.000Z" },
+        priceUpdates: 0,
+        createdProducts: 2,
+      } satisfies ConfirmImportResult);
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste");
+      for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 2)) {
+        fireEvent.click(btn);
+      }
+
+      fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
+
+      await waitFor(() => {
+        expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(
+          TEST_CLINIC_ID,
+          ocrInvoice.id,
+          expect.objectContaining({
+            readyToCreateLineIds: expect.arrayContaining(["line-payload-1", "line-payload-2"]) as unknown,
+            skippedLineIds: [],
+          }),
+        );
+      });
+    });
+
+    // TEST 7+10 — Successful import creates products and displays success confirmation
+    it("TEST 7+10: Successful import triggers confirmSupplierInvoice and shows success message", async () => {
+      mockGetSupplierInvoice.mockResolvedValue({
+        invoice: ocrInvoice,
+        lines: [buildUnmatchedLine("line-success", "Prophy Paste Mint")],
+      });
+      mockConfirmSupplierInvoice.mockResolvedValue({
+        invoice: { ...ocrInvoice, status: "imported", confirmedAt: "2026-07-01T03:00:00.000Z" },
+        priceUpdates: 0,
+        createdProducts: 1,
+      } satisfies ConfirmImportResult);
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste Mint");
+      fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+      fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
+
+      // confirmSupplierInvoice called with readyToCreateLineIds
+      await waitFor(() => {
+        expect(mockConfirmSupplierInvoice).toHaveBeenCalledWith(
+          TEST_CLINIC_ID,
+          ocrInvoice.id,
+          { readyToCreateLineIds: ["line-success"], skippedLineIds: [] },
+        );
+      });
+
+      // Success message displayed
+      expect(
+        await screen.findByText("Catalogue imported. 1 products created and 0 price updates applied."),
+      ).toBeInTheDocument();
+
+      // No stock adjustments made (TEST 8)
+      expect(mockAdjustInventory).not.toHaveBeenCalled();
+      expect(mockHandleScan).not.toHaveBeenCalled();
+    });
+
+    // TEST 8 — Inventory quantity remains unchanged (explicit assertion)
+    it("TEST 8: Import does not trigger any inventory adjustment API calls", async () => {
+      mockGetSupplierInvoice.mockResolvedValue({
+        invoice: ocrInvoice,
+        lines: [buildUnmatchedLine("line-no-stock", "Prophy Paste Mint")],
+      });
+      mockConfirmSupplierInvoice.mockResolvedValue({
+        invoice: { ...ocrInvoice, status: "imported", confirmedAt: "2026-07-01T03:00:00.000Z" },
+        priceUpdates: 0,
+        createdProducts: 1,
+      } satisfies ConfirmImportResult);
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Prophy Paste Mint");
+      fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+      fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
+
+      await waitFor(() => {
+        expect(mockConfirmSupplierInvoice).toHaveBeenCalled();
+      });
+
+      expect(mockAdjustInventory).not.toHaveBeenCalled();
+      expect(mockHandleScan).not.toHaveBeenCalled();
+      // Inventory quantity changes shows 0
+      expect(screen.getByText("Inventory quantity changes")).toBeInTheDocument();
+    });
+
+    // TEST 9 — Review Summary correctly displays New Products count
+    it("TEST 9: Review Summary shows New Products = 7 when 7 rows are marked Ready to Create", async () => {
+      const sevenLines = Array.from({ length: 7 }, (_, i) =>
+        buildUnmatchedLine(`line-np-${String(i + 1)}`, `Product ${String(i + 1)}`),
+      );
+      mockGetSupplierInvoice.mockResolvedValue({ invoice: ocrInvoice, lines: sevenLines });
+      renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
+
+      await screen.findByText("Product 1");
+      const createButtons = screen.getAllByRole("button", { name: "Create new product" });
+      for (const btn of createButtons) {
+        fireEvent.click(btn);
+      }
+
+      // "New products" metric in the Review Summary must show "7", not "Missing".
+      // Note: table cells may legitimately contain "Missing" for other fields (e.g. unit price),
+      // so we scope the check to the Review Summary <dl> element only.
+      await waitFor(() => {
+        const summaryDl = document.querySelector("dl.po-summary__stats");
+        expect(summaryDl).not.toBeNull();
+        const newProductsTerm = Array.from(summaryDl?.querySelectorAll("dt") ?? []).find(
+          (dt) => dt.textContent === "New products",
+        );
+        expect(newProductsTerm).toBeDefined();
+        const valueDd = newProductsTerm?.nextElementSibling;
+        expect(valueDd?.textContent).toBe("7");
+      });
+    });
+  });
 });

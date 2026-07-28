@@ -298,13 +298,18 @@ export function CatalogueImportReviewPage() {
   const matchedLineCount = reviewStates.filter((state) => state === "Matched Existing Product").length;
   const approvedLines = reviewStates.filter((state) => state === "Approved" || state === "Matched Existing Product").length;
   const skippedLines = reviewStates.filter((state) => state === "Skipped").length;
+  const newProductsToCreate = reviewStates.filter((state) => state === "Ready to Create").length;
   const stillRequiringReview = reviewStates.filter((state) => !isImportReadyState(state)).length;
   const hasOnlySafelyImportableStates = reviewStates.every(
     (state) => isImportReadyState(state),
   );
+  // Accept both "ready_for_review" (set by OCR processing) and "pending_review" (legacy status).
+  // The backend assertPendingReview() accepts both; the frontend guard must match.
+  const isReviewableStatus =
+    invoice?.status === "pending_review" || invoice?.status === "ready_for_review";
   const canConfirmImport =
     !!invoice &&
-    invoice.status === "pending_review" &&
+    isReviewableStatus &&
     hasLineData &&
     stillRequiringReview === 0 &&
     hasOnlySafelyImportableStates &&
@@ -338,10 +343,14 @@ export function CatalogueImportReviewPage() {
       const initialStates = Object.fromEntries(
         importData.lines.map((line) => [line.id, initialReviewStateForLine(line)]),
       );
-      const persistedStates =
-        importData.invoice.status === "pending_review"
-          ? readPersistedLineReviewStates(clinicId, user.id, importId)
-          : null;
+      // Restore persisted review decisions for both OCR ("ready_for_review") and
+      // legacy ("pending_review") statuses so page reloads do not lose selections.
+      const isReviewableStatus =
+        importData.invoice.status === "pending_review" ||
+        importData.invoice.status === "ready_for_review";
+      const persistedStates = isReviewableStatus
+        ? readPersistedLineReviewStates(clinicId, user.id, importId)
+        : null;
       setLineReviewStates({ ...initialStates, ...(persistedStates ?? {}) });
       setEditingLineId(null);
       setEditDraft(null);
@@ -981,7 +990,7 @@ export function CatalogueImportReviewPage() {
                 <SummaryMetric label="Skipped" value={hasLineData ? String(skippedLines) : "Missing"} />
                 <SummaryMetric label="Still requiring review" value={hasLineData ? String(stillRequiringReview) : "Missing"} />
                 <SummaryMetric label="Products detected" value={hasLineData ? String(lines.length) : "Missing"} />
-                <SummaryMetric label="New products" value="Missing" />
+                <SummaryMetric label="New products" value={hasLineData ? String(newProductsToCreate) : "Missing"} />
                 <SummaryMetric label="Possible matches" value={hasLineData ? String(matchedLineCount) : "Missing"} />
                 <SummaryMetric label="Price updates" value="Missing" />
                 <SummaryMetric label="Pack-size changes" value="Missing" />
