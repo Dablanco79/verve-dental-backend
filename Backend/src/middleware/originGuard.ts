@@ -3,11 +3,19 @@
  *
  * Motivation
  * ──────────
- * The refresh token is stored in an HttpOnly SameSite=Strict cookie, which
- * prevents most CSRF attacks by default.  This middleware adds an explicit
- * second layer: it checks that the request comes from a known, configured
- * HTTPS origin so that even edge-case browser or embedded-webview requests
- * that bypass SameSite cannot trigger cookie-bearing mutations.
+ * In production the refresh-token cookie uses SameSite=None so that the
+ * browser includes it on cross-site POST /auth/refresh requests (the
+ * frontend and backend are deployed on different *.onrender.com subdomains,
+ * which the Public Suffix List classifies as distinct sites).
+ *
+ * SameSite=None means the browser will send the cookie on ANY cross-site
+ * request, including forged ones.  This middleware is therefore the PRIMARY
+ * CSRF protection layer in staging and production: it validates the Origin
+ * header (or Referer fallback) against the configured CORS_ORIGIN allow-list
+ * before any cookie-authenticated handler runs.
+ *
+ * In development the Vite proxy makes every request same-origin, so
+ * SameSite=Strict is used there and no Origin check is required.
  *
  * Behaviour by environment
  * ────────────────────────
@@ -26,9 +34,8 @@
  *        • The origin is not HTTPS (http:// origins are never allowed)
  *   4. Allows only exact matches of configured HTTPS origins.
  *
- * No CSRF token double-submit is required because:
- *   • SameSite=Strict already blocks cross-site cookie delivery.
- *   • Origin checking closes the residual browser-level gap.
+ * No CSRF token double-submit is required because Origin checking combined
+ * with HttpOnly prevents both forged requests and token exfiltration.
  */
 
 import type { NextFunction, Request, RequestHandler, Response } from "express";

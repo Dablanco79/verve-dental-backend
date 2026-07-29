@@ -27,6 +27,25 @@ const mfaConfirmSchema = z.object({
 
 const REFRESH_COOKIE_NAME = "refreshToken";
 
+/**
+ * SameSite policy for the refresh-token cookie.
+ *
+ * "none" (+ Secure) is required in production because the frontend and backend
+ * are deployed on different *.onrender.com subdomains.  onrender.com appears on
+ * the Public Suffix List, so the browser treats each subdomain as a distinct
+ * "site".  SameSite=Strict (or Lax) cookies are silently dropped on cross-site
+ * subresource requests — including the POST /auth/refresh fetch — which is
+ * exactly the MISSING_REFRESH_TOKEN failure observed in production.
+ *
+ * SameSite=None requires Secure=true.  The secure flag below is already set to
+ * true in production, so the combination is always valid.
+ *
+ * In development the Vite proxy rewrites /api/* to the local backend, so every
+ * request is same-origin from the browser's perspective.  SameSite=Strict is
+ * therefore correct and tighter for local development.
+ */
+type CookieSameSite = "none" | "strict";
+
 /** Parse a JWT expiry string like "7d", "15m", "3600s" into milliseconds. */
 function parseTtlMs(ttl: string): number {
   const match = /^(\d+)([smhd])$/.exec(ttl);
@@ -51,12 +70,18 @@ function auditContext(req: Request) {
 
 export function createAuthHandlers(authService: AuthService, config: EnvConfig) {
   const cookieMaxAge = parseTtlMs(config.JWT_REFRESH_EXPIRES_IN);
+  const isProduction = config.NODE_ENV === "production";
+
+  // Cross-site deployments (production) require SameSite=None so the browser
+  // includes the cookie on POST /auth/refresh requests from the frontend origin.
+  // Same-site deployments (development, test) keep SameSite=Strict.
+  const sameSite: CookieSameSite = isProduction ? "none" : "strict";
 
   function setRefreshCookie(res: Response, token: string): void {
     res.cookie(REFRESH_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: config.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: isProduction,
+      sameSite,
       // Scoped to auth endpoints — covers /auth/refresh and /auth/logout.
       path: "/api/v1/auth",
       maxAge: cookieMaxAge,
@@ -66,8 +91,8 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
   function clearRefreshCookie(res: Response): void {
     res.clearCookie(REFRESH_COOKIE_NAME, {
       httpOnly: true,
-      secure: config.NODE_ENV === "production",
-      sameSite: "strict",
+      secure: isProduction,
+      sameSite,
       path: "/api/v1/auth",
     });
   }
