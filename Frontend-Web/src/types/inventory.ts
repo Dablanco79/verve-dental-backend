@@ -85,6 +85,16 @@ export type CreateProductRequest = {
   supplierId: string;
 };
 
+export type UpdateClinicProductRequest = {
+  reorderPoint?: number;
+  unitCostOverrideCents?: number | null;
+  supplierId?: string | null;
+};
+
+export type UpdateClinicProductResponse = {
+  clinicItem: InventoryItem;
+};
+
 export type CreateProductResponse = {
   masterItem: {
     id: string;

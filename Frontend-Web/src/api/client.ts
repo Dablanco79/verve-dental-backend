@@ -21,6 +21,8 @@ import type {
   AddPoLineRequest,
   CreateProductRequest,
   CreateProductResponse,
+  UpdateClinicProductRequest,
+  UpdateClinicProductResponse,
   CreatePurchaseOrderRequest,
   CreatePurchaseOrderWithLinesRequest,
   BatchAddLinesRequest,
@@ -438,6 +440,31 @@ export function createApiClient(config: AppConfig) {
         method: "POST",
         body: JSON.stringify(body),
       },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateClinicProduct(
+    clinicId: string,
+    inventoryItemId: string,
+    body: UpdateClinicProductRequest,
+  ): Promise<UpdateClinicProductResponse> {
+    return request<UpdateClinicProductResponse>(
+      config,
+      `/api/v1/clinics/${clinicId}/products/${inventoryItemId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+      requireAccessToken(),
+    );
+  }
+
+  async function listCategories(): Promise<string[]> {
+    return request<string[]>(
+      config,
+      "/api/v1/master-products/categories",
+      {},
       requireAccessToken(),
     );
   }
@@ -2271,6 +2298,8 @@ export function createApiClient(config: AppConfig) {
     listAdjustments,
     handleScan,
     createProduct,
+    updateClinicProduct,
+    listCategories,
     listUsers,
     createUser,
     updateUser,

@@ -16,6 +16,7 @@ import {
   getInventorySupplierDisplay,
   getInventoryUnitsPerReceivingUnit,
 } from "../utils/inventoryDisplay.js";
+import { canManageProducts } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -315,7 +316,17 @@ export function ProductDetailPage() {
               {selectedClinic?.name ?? user?.homeClinicName ?? "Clinic inventory"} product workspace
             </p>
           </div>
-          <span className={stockStatus.className}>{stockStatus.label}</span>
+          <div className="inventory-page__actions">
+            <span className={stockStatus.className}>{stockStatus.label}</span>
+            {canManageProducts(user?.role ?? "clinical_staff") ? (
+              <Link
+                to={`/inventory/products/${product.id}/edit`}
+                className="button-link"
+              >
+                Edit settings
+              </Link>
+            ) : null}
+          </div>
         </div>
         <dl className="product-detail__header-grid">
           <DetailMetric label="SKU" value={product.masterSku} />
@@ -340,7 +351,25 @@ export function ProductDetailPage() {
             <DetailMetric label="Current Stock" value={product.quantityOnHand} />
             <DetailMetric label="Reorder Point" value={product.reorderPoint} />
             <DetailMetric label="Unit Cost" value={formatInventoryCurrency(product.unitCostCents)} />
+            {product.unitCostOverrideCents !== null ? (
+              <DetailMetric
+                label="Clinic Unit Cost Override"
+                value={formatInventoryCurrency(product.unitCostOverrideCents)}
+              />
+            ) : null}
             <DetailMetric label="Stock Status" value={stockStatus.label} />
+            {(product.onOrderQuantity ?? 0) > 0 ? (
+              <DetailMetric
+                label="On Order"
+                value={`${String(product.onOrderQuantity)} ${product.stockUnit ?? "units"}`}
+              />
+            ) : null}
+            {(product.inDraftQuantity ?? 0) > 0 ? (
+              <DetailMetric
+                label="In Draft POs"
+                value={`${String(product.inDraftQuantity)} ${product.stockUnit ?? "units"}`}
+              />
+            ) : null}
           </dl>
         </article>
 
@@ -348,8 +377,15 @@ export function ProductDetailPage() {
           <h3>Supplier</h3>
           <dl className="product-detail__metric-list">
             <DetailMetric label="Preferred Supplier" value={supplierDisplay} />
-            <DetailMetric label="Supplier Name" value={supplierDisplay} />
           </dl>
+          {canManageProducts(user?.role ?? "clinical_staff") ? (
+            <Link
+              to={`/inventory/products/${product.id}/edit`}
+              className="link-button"
+            >
+              Change supplier / reorder point
+            </Link>
+          ) : null}
         </article>
       </section>
 

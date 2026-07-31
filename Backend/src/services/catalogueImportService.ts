@@ -28,6 +28,7 @@ import type {
   ReviewedCatalogueImportResult,
   ReviewedCatalogueImportRow,
 } from "../types/supplier.js";
+import { VALID_CREATION_CATEGORY_SET } from "../types/inventory.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
 
 // ─── Supported file formats ───────────────────────────────────────────────────
@@ -357,11 +358,21 @@ export function createCatalogueImportService(
 
     const stockUnit = row.unitOfMeasure?.trim() || "unit";
     const sku = await buildUniqueImportedSku(row);
+
+    const rawCategory = row.category ?? null;
+    if (!rawCategory || !VALID_CREATION_CATEGORY_SET.has(rawCategory)) {
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        `Row ${String(row.rowNumber)}: a valid category must be selected before a new product can be created. Got: "${rawCategory ?? "none"}".`,
+      );
+    }
+
     const masterItem = await catalogRepository.createMasterItem({
       sku,
       name: row.description.trim(),
       description: row.description.trim(),
-      category: "Imported Catalogue",
+      category: rawCategory,
       stockUnit,
       receivingUnit: stockUnit,
       unitsPerReceivingUnit: 1,

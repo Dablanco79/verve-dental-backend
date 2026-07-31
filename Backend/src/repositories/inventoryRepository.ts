@@ -12,6 +12,7 @@ import type {
   ProductSupplier,
   PurchasingDraft,
   PurchasingDraftWithStatus,
+  UpdateClinicInventoryItemInput,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -41,6 +42,16 @@ export interface InventoryRepository {
     clinicId: string,
     itemId: string,
     newQuantity: number,
+  ): Promise<ClinicInventoryItem>;
+  /**
+   * Partial update of operational settings on a clinic inventory item.
+   * Never touches quantityOnHand — use adjustStock / receiveStock for that.
+   * Throws NOT_FOUND (404) if the item does not exist for this clinic.
+   */
+  updateClinicInventoryItem(
+    clinicId: string,
+    itemId: string,
+    patch: UpdateClinicInventoryItemInput,
   ): Promise<ClinicInventoryItem>;
   recordAdjustment(
     adjustment: Omit<InventoryAdjustment, "id" | "createdAt">,
@@ -142,6 +153,19 @@ export interface InventoryRepository {
   ): Promise<ClinicInventoryItem>;
   createProductSupplier(
     productSupplier: Omit<ProductSupplier, "id" | "createdAt" | "updatedAt">,
+  ): Promise<ProductSupplier>;
+  /**
+   * Designates `supplierId` as the preferred supplier for a clinic product.
+   * Clears isPreferred on all existing active product_suppliers rows for this
+   * (clinicId, masterCatalogItemId) pair, then sets isPreferred=true on the
+   * matching row — creating one if none exists.
+   * Returns the updated (or newly created) preferred ProductSupplier row.
+   */
+  setPreferredProductSupplier(
+    clinicId: string,
+    masterCatalogItemId: string,
+    supplierId: string,
+    supplierName: string | null,
   ): Promise<ProductSupplier>;
   /**
    * List all ACTIVE product-supplier relationships for a given (clinic, master
@@ -343,6 +367,41 @@ export function createInMemoryInventoryRepository(
       const updated: ClinicInventoryItem = {
         ...existing,
         quantityOnHand: newQuantity,
+        updatedAt: new Date(),
+      };
+
+      clinicInventory[index] = updated;
+      return Promise.resolve({ ...updated });
+    },
+
+    updateClinicInventoryItem(
+      clinicId: string,
+      itemId: string,
+      patch: UpdateClinicInventoryItemInput,
+    ): Promise<ClinicInventoryItem> {
+      const index = clinicInventory.findIndex(
+        (entry) => entry.clinicId === clinicId && entry.id === itemId,
+      );
+
+      if (index === -1) {
+        return Promise.reject(new Error(`Clinic inventory item not found: ${itemId}`));
+      }
+
+      const existing = clinicInventory[index];
+
+      if (!existing) {
+        return Promise.reject(new Error(`Clinic inventory item not found: ${itemId}`));
+      }
+
+      const updated: ClinicInventoryItem = {
+        ...existing,
+        ...(patch.reorderPoint !== undefined && { reorderPoint: patch.reorderPoint }),
+        ...(patch.unitCostOverrideCents !== undefined && {
+          unitCostOverrideCents: patch.unitCostOverrideCents,
+        }),
+        ...(patch.supplierPreference !== undefined && {
+          supplierPreference: patch.supplierPreference,
+        }),
         updatedAt: new Date(),
       };
 
@@ -718,6 +777,70 @@ export function createInMemoryInventoryRepository(
       const record: ProductSupplier = {
         ...productSupplier,
         id: randomUUID(),
+        createdAt: now,
+        updatedAt: now,
+      };
+      productSuppliers.push(record);
+      return Promise.resolve({ ...record });
+    },
+
+    setPreferredProductSupplier(
+      clinicId: string,
+      masterCatalogItemId: string,
+      supplierId: string,
+      supplierName: string | null,
+    ): Promise<ProductSupplier> {
+      const now = new Date();
+
+      // Clear existing preferred flag for all active product_suppliers in this clinic+product
+      for (const ps of productSuppliers) {
+        if (
+          ps.clinicId === clinicId &&
+          ps.productId === masterCatalogItemId &&
+          ps.active
+        ) {
+          ps.isPreferred = false;
+          ps.updatedAt = now;
+        }
+      }
+
+      // Find existing row for this supplier
+      const existingIndex = productSuppliers.findIndex(
+        (ps) =>
+          ps.clinicId === clinicId &&
+          ps.productId === masterCatalogItemId &&
+          ps.supplierId === supplierId,
+      );
+
+      if (existingIndex !== -1) {
+        const existing = productSuppliers[existingIndex];
+        if (!existing) {
+          return Promise.reject(new Error("Internal error: product supplier not found after findIndex"));
+        }
+        const updated: ProductSupplier = {
+          ...existing,
+          isPreferred: true,
+          active: true,
+          supplierName: supplierName ?? existing.supplierName,
+          updatedAt: now,
+        };
+        productSuppliers[existingIndex] = updated;
+        return Promise.resolve({ ...updated });
+      }
+
+      // Create a new row
+      const record: ProductSupplier = {
+        id: randomUUID(),
+        clinicId,
+        productId: masterCatalogItemId,
+        supplierId,
+        supplierName,
+        supplierSku: null,
+        supplierBarcode: null,
+        unitCostCents: null,
+        packSize: null,
+        isPreferred: true,
+        active: true,
         createdAt: now,
         updatedAt: now,
       };

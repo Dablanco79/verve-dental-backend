@@ -293,6 +293,15 @@ describe("supplierInvoiceService — Invoice Review workflow", () => {
 
     await service.updateLine(admin, CLINIC_ID, uploadResult.invoice.id, firstLine.id, {
       reviewDecision: "create_product",
+      productCreationData: {
+        productName: firstLine.ocrDescription,
+        category: "Consumables",
+        supplierSku: null,
+        stockUnit: "Each",
+        receivingUnit: "Each",
+        unitsPerReceivingUnit: 1,
+        unitCostCents: 0,
+      },
     });
 
     const result = await service.confirmImport(admin, CLINIC_ID, uploadResult.invoice.id, {});

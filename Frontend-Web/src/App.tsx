@@ -13,6 +13,7 @@ import { InventoryReceivingPage } from "./pages/InventoryReceivingPage.js";
 import { PilotSetupPage } from "./pages/PilotSetupPage.js";
 import { ProductDetailPage } from "./pages/ProductDetailPage.js";
 import { ProductManagementPage } from "./pages/ProductManagementPage.js";
+import { ClinicProductEditPage } from "./pages/ClinicProductEditPage.js";
 import { MasterProductLibraryImportPage } from "./pages/MasterProductLibraryImportPage.js";
 import { MasterProductsPage } from "./pages/MasterProductsPage.js";
 import { LoginPage } from "./pages/LoginPage.js";
@@ -62,6 +63,7 @@ export function App() {
               />
               <Route path="/inventory/master-products" element={<MasterProductsPage />} />
               <Route path="/inventory/products/new" element={<AddProductPage />} />
+              <Route path="/inventory/products/:productId/edit" element={<ClinicProductEditPage />} />
               <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
               <Route path="/inventory/receiving" element={<InventoryReceivingPage />} />
               <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />

@@ -33,6 +33,18 @@ export type CreateProductResult = {
   clinicItem: ClinicInventoryItemView;
 };
 
+export type UpdateClinicProductInput = {
+  clinicId: string;
+  inventoryItemId: string;
+  reorderPoint?: number;
+  unitCostOverrideCents?: number | null;
+  supplierId?: string | null;
+};
+
+export type UpdateClinicProductResult = {
+  clinicItem: ClinicInventoryItemView;
+};
+
 export function createProductService(
   catalogRepository: CatalogRepository,
   inventoryRepository: InventoryRepository,
@@ -161,6 +173,82 @@ export function createProductService(
         barcodeMapping,
         clinicItem,
       };
+    },
+
+    async updateClinicProduct(input: UpdateClinicProductInput): Promise<UpdateClinicProductResult> {
+      const inventoryItem = await inventoryRepository.findClinicInventoryItem(
+        input.clinicId,
+        input.inventoryItemId,
+      );
+
+      if (!inventoryItem) {
+        throw new AppError(404, "NOT_FOUND", "Clinic inventory item not found");
+      }
+
+      if (
+        input.reorderPoint !== undefined &&
+        (!Number.isInteger(input.reorderPoint) || input.reorderPoint < 0)
+      ) {
+        throw new AppError(400, "VALIDATION_ERROR", "reorderPoint must be a non-negative integer");
+      }
+
+      if (
+        input.unitCostOverrideCents !== undefined &&
+        input.unitCostOverrideCents !== null &&
+        (!Number.isInteger(input.unitCostOverrideCents) || input.unitCostOverrideCents < 0)
+      ) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "unitCostOverrideCents must be a non-negative integer",
+        );
+      }
+
+      // Apply clinic inventory patch
+      const patch: import("../types/inventory.js").UpdateClinicInventoryItemInput = {};
+      if (input.reorderPoint !== undefined) patch.reorderPoint = input.reorderPoint;
+      if (input.unitCostOverrideCents !== undefined)
+        patch.unitCostOverrideCents = input.unitCostOverrideCents;
+
+      if (Object.keys(patch).length > 0) {
+        await inventoryRepository.updateClinicInventoryItem(
+          input.clinicId,
+          input.inventoryItemId,
+          patch,
+        );
+      }
+
+      // Update preferred supplier when requested
+      if (input.supplierId !== undefined && input.supplierId !== null) {
+        const supplier = await supplierRepository.findSupplierById(input.supplierId);
+        if (!supplier || !supplier.active) {
+          throw new AppError(400, "INVALID_SUPPLIER", "Select an active supplier");
+        }
+        await inventoryRepository.setPreferredProductSupplier(
+          input.clinicId,
+          inventoryItem.masterCatalogItemId,
+          supplier.id,
+          supplier.supplierName,
+        );
+      } else if (input.supplierId === null) {
+        // null means "clear preferred supplier" — not yet exposed in UI but safe to handle
+        await inventoryRepository.updateClinicInventoryItem(
+          input.clinicId,
+          input.inventoryItemId,
+          { supplierPreference: null },
+        );
+      }
+
+      const updated = await inventoryRepository.findClinicInventoryItem(
+        input.clinicId,
+        input.inventoryItemId,
+      );
+
+      if (!updated) {
+        throw new AppError(500, "INTERNAL_ERROR", "Failed to reload updated inventory item");
+      }
+
+      return { clinicItem: updated };
     },
   };
 }

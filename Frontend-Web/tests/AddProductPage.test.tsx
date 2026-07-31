@@ -10,9 +10,14 @@ import {
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockCreateProduct, mockListSuppliers } = vi.hoisted(() => {
+const { authTestState, mockCreateProduct, mockListSuppliers, mockListCategories } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
-  return { authTestState, mockCreateProduct: vi.fn(), mockListSuppliers: vi.fn() };
+  return {
+    authTestState,
+    mockCreateProduct: vi.fn(),
+    mockListSuppliers: vi.fn(),
+    mockListCategories: vi.fn(),
+  };
 });
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -35,6 +40,7 @@ vi.mock("../src/api/client.js", () => ({
     getMe: vi.fn(),
     listInventory: vi.fn(),
     listSuppliers: mockListSuppliers,
+    listCategories: mockListCategories,
     handleScan: vi.fn(),
     createProduct: mockCreateProduct,
   }),
@@ -52,7 +58,12 @@ describe("AddProductPage", () => {
     clearAuthenticatedUser(authTestState);
     mockCreateProduct.mockReset();
     mockListSuppliers.mockReset();
+    mockListCategories.mockReset();
     mockListSuppliers.mockResolvedValue([activeSupplier]);
+    mockListCategories.mockResolvedValue([
+      "Consumables", "Dental Supplies", "Medications", "PPE", "Restorative",
+      "Sterilisation", "Endodontics", "Preventive", "Uncategorised",
+    ]);
     setAuthenticatedUser(authTestState, managerUser);
   });
 
@@ -157,7 +168,7 @@ describe("AddProductPage", () => {
       target: { value: "Dental Anaesthetic Cartridges" },
     });
     fireEvent.change(screen.getByLabelText("Supplier"), { target: { value: activeSupplier.id } });
-    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Pharmacy" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "Medications" } });
     fireEvent.change(screen.getByLabelText("Stock Unit"), { target: { value: "Box" } });
     fireEvent.change(screen.getByLabelText("Receiving Unit"), { target: { value: "Carton" } });
     fireEvent.change(screen.getByLabelText("Units Per Receiving Unit"), { target: { value: "10" } });
@@ -171,7 +182,7 @@ describe("AddProductPage", () => {
         expect.objectContaining({
           sku: "VRV-ANE-001",
           name: "Dental Anaesthetic Cartridges",
-          category: "Pharmacy",
+          category: "Medications",
           stockUnit: "Box",
           receivingUnit: "Carton",
           unitsPerReceivingUnit: 10,

@@ -115,17 +115,6 @@ export function ProductManagementPage() {
           </div>
         </div>
 
-        <div className="inventory-receiving-callout" role="status">
-          <h3>Product edit/deactivate backend gap</h3>
-          <p>
-            Product creation is supported. Editing product name, SKU/code, barcode, unit,
-            reorder threshold, and active/inactive status is not exposed by the current backend.
-            Required backend change: add authenticated Owner/Admin and Practice Manager endpoints
-            to update master catalogue fields, primary barcode mapping, clinic reorder threshold,
-            and product active status, then return the updated clinic inventory view.
-          </p>
-        </div>
-
         {isAllClinicsScope ? (
           <p className="inventory-page__subtitle">
             Product rows are clinic-specific in the current API. Choose one clinic from Clinic scope.
@@ -187,15 +176,15 @@ export function ProductManagementPage() {
                 </div>
                 <table className="inventory-table">
                   <thead>
-                    <tr>
-                      <th scope="col">Product</th>
-                      <th scope="col">SKU/code</th>
-                      <th scope="col">Unit</th>
-                      <th scope="col" className="inventory-table__numeric">Reorder threshold</th>
-                      <th scope="col" className="inventory-table__numeric">On hand</th>
-                      <th scope="col" className="inventory-table__numeric">Unit cost</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Action</th>
+                      <tr>
+                          <th scope="col">Product</th>
+                          <th scope="col">SKU/code</th>
+                          <th scope="col">Unit</th>
+                          <th scope="col" className="inventory-table__numeric">Reorder threshold</th>
+                          <th scope="col" className="inventory-table__numeric">On hand</th>
+                          <th scope="col" className="inventory-table__numeric">Unit cost</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -214,12 +203,20 @@ export function ProductManagementPage() {
                           <span className="inventory-badge inventory-badge--ok">Active in clinic</span>
                         </td>
                         <td>
-                          <Link
-                            to={`/inventory/adjust?mode=opening&item=${encodeURIComponent(product.id)}`}
-                            className="link-button"
-                          >
-                            Opening count
-                          </Link>
+                          <div className="po-row-actions">
+                            <Link
+                              to={`/inventory/products/${encodeURIComponent(product.id)}/edit`}
+                              className="link-button"
+                            >
+                              Edit settings
+                            </Link>
+                            <Link
+                              to={`/inventory/adjust?mode=opening&item=${encodeURIComponent(product.id)}`}
+                              className="link-button"
+                            >
+                              Opening count
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))}

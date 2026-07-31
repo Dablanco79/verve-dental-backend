@@ -36,5 +36,11 @@ export function createProductRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.createProduct(req, res)),
   );
 
+  router.patch(
+    "/:inventoryItemId",
+    requireRoles(...PRODUCT_MANAGE_ROLES),
+    asyncHandler((req, res) => handlers.updateClinicProduct(req, res)),
+  );
+
   return router;
 }

@@ -279,6 +279,12 @@ export type ReviewedCatalogueImportRow = {
   unitCostCents: number | null;
   unitOfMeasure: string | null;
   matchedProductId: string | null;
+  /**
+   * Required for state "Ready to Create".  Must be a value from the canonical
+   * MASTER_PRODUCT_CATEGORIES list.  The backend rejects null or invalid values
+   * with a 422 error.
+   */
+  category?: string | null;
 };
 
 export type ReviewedCatalogueImportResult = ImportConfirmResult & {

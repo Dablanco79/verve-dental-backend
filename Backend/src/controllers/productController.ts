@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 import type { ProductService } from "../services/productService.js";
-import { BARCODE_FORMATS } from "../types/inventory.js";
+import { BARCODE_FORMATS, VALID_CREATION_CATEGORY_SET } from "../types/inventory.js";
 import type {
   BarcodeMapping,
   ClinicInventoryItemView,
@@ -15,7 +15,15 @@ const createProductSchema = z.object({
   sku: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(500).optional(),
-  category: z.string().trim().min(1).max(128),
+  category: z
+    .string()
+    .trim()
+    .min(1, "category is required")
+    .max(128)
+    .refine(
+      (val) => VALID_CREATION_CATEGORY_SET.has(val),
+      { message: `Category must be one of the canonical categories. "Uncategorised" and "Imported Catalogue" are not accepted for new products.` },
+    ),
   stockUnit: z.string().trim().min(1).max(32),
   receivingUnit: z.string().trim().min(1).max(32),
   unitsPerReceivingUnit: z.number().int().positive(),
@@ -28,6 +36,21 @@ const createProductSchema = z.object({
   unitCostOverrideCents: z.number().int().nonnegative().optional(),
   supplierId: z.string().uuid(),
 });
+
+const updateClinicProductSchema = z
+  .object({
+    reorderPoint: z.number().int().nonnegative().optional(),
+    unitCostOverrideCents: z.number().int().nonnegative().nullable().optional(),
+    supplierId: z.string().uuid().nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (data) =>
+      data.reorderPoint !== undefined ||
+      data.unitCostOverrideCents !== undefined ||
+      data.supplierId !== undefined,
+    { message: "At least one field must be provided for update" },
+  );
 
 function serializeMasterItem(item: MasterCatalogItem) {
   return {
@@ -129,6 +152,31 @@ export function createProductHandlers(productService: ProductService) {
           clinicItem: serializeInventoryItem(result.clinicItem),
         },
       });
+    },
+
+    async updateClinicProduct(req: Request, res: Response): Promise<void> {
+      if (!req.user) {
+        throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      }
+
+      const clinicId = routeParam(req.params.clinicId);
+      const inventoryItemId = routeParam(req.params.inventoryItemId);
+
+      if (!inventoryItemId) {
+        throw new AppError(400, "VALIDATION_ERROR", "inventoryItemId is required");
+      }
+
+      const body = parseBody(updateClinicProductSchema, req.body);
+
+      const result = await productService.updateClinicProduct({
+        clinicId,
+        inventoryItemId,
+        reorderPoint: body.reorderPoint,
+        unitCostOverrideCents: body.unitCostOverrideCents,
+        supplierId: body.supplierId,
+      });
+
+      res.status(200).json({ data: { clinicItem: serializeInventoryItem(result.clinicItem) } });
     },
   };
 }

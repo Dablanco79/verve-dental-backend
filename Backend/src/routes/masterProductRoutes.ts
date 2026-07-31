@@ -72,6 +72,14 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => matchHandlers.confirmMatch(req, res)),
   );
 
+  // ── Categories — must be before /:id to avoid matching "/categories" as id ─
+
+  router.get(
+    "/categories",
+    authenticate,
+    (req, res) => { handlers.listCategories(req, res); },
+  );
+
   // ── Master Products CRUD/list ─────────────────────────────────────────────
 
   router.get(

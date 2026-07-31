@@ -33,7 +33,7 @@ describe("Product API", () => {
         sku: "VRV-ANE-001",
         name: "Dental Anaesthetic Cartridges (Box 50)",
         description: "Lidocaine 2% with epinephrine",
-        category: "Pharmacy",
+        category: "Medications",
         stockUnit: "Box",
         receivingUnit: "Carton",
         unitsPerReceivingUnit: 10,

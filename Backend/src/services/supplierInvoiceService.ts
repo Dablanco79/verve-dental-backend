@@ -47,6 +47,7 @@ import type {
 } from "../types/supplierInvoice.js";
 import type { OcrInvoiceResult } from "../types/supplierInvoice.js";
 import type { InventoryAdjustment } from "../types/inventory.js";
+import { VALID_CREATION_CATEGORY_SET } from "../types/inventory.js";
 import type { DatabasePool } from "../db/pool.js";
 import { withTenantContext } from "../db/tenantContext.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
@@ -119,11 +120,21 @@ export function createSupplierInvoiceService(
     const sku = await buildUniqueImportedSku(line);
     // Prefer operator-reviewed data over raw OCR text.
     const reviewed = line.productCreationData;
+    const rawCategory: string | null = reviewed !== null ? reviewed.category : null;
+    if (!rawCategory || !VALID_CREATION_CATEGORY_SET.has(rawCategory)) {
+      const lineLabel = (reviewed?.productName ?? line.ocrDescription).slice(0, 80);
+      const gotCategory = rawCategory === null ? "none" : rawCategory;
+      throw new AppError(
+        422,
+        "VALIDATION_ERROR",
+        `Line "${lineLabel}": a valid category must be selected before a new product can be created. Got: "${gotCategory}".`,
+      );
+    }
     const masterItem = await catalogRepository.createMasterItem({
       sku,
       name: (reviewed?.productName ?? line.ocrDescription).trim() || sku,
       description: (reviewed?.productName ?? line.ocrDescription).trim() || null,
-      category: reviewed?.category ?? "Imported Catalogue",
+      category: rawCategory,
       stockUnit: reviewed?.stockUnit ?? "unit",
       receivingUnit: reviewed?.receivingUnit ?? "unit",
       unitsPerReceivingUnit: reviewed?.unitsPerReceivingUnit ?? 1,

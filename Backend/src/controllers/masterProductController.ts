@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { MasterProductService } from "../services/masterProductService.js";
 import { AppError } from "../types/errors.js";
 import type { MasterCatalogItem } from "../types/inventory.js";
+import { MASTER_PRODUCT_CATEGORIES, VALID_CREATION_CATEGORY_SET } from "../types/inventory.js";
 import { zodToDetails } from "../utils/validation.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -24,7 +25,15 @@ const createMasterProductBodySchema = z
   .object({
     displayName: z.string().trim().min(1, "displayName is required").max(255),
     sku: z.string().trim().min(1).max(64).optional(),
-    category: z.string().trim().min(1, "category is required").max(128),
+    category: z
+      .string()
+      .trim()
+      .min(1, "category is required")
+      .max(128)
+      .refine(
+        (val) => VALID_CREATION_CATEGORY_SET.has(val),
+        { message: `Category must be one of the canonical categories. "Uncategorised" and "Imported Catalogue" are not accepted for new products.` },
+      ),
     subcategory: nullableTrimmedString(128),
     brand: nullableTrimmedString(255),
     variantAttributes: nullableTrimmedString(2000),
@@ -79,6 +88,10 @@ export function createMasterProductHandlers(service: MasterProductService) {
   }
 
   return {
+    listCategories(_req: Request, res: Response): void {
+      res.status(200).json({ data: [...MASTER_PRODUCT_CATEGORIES] });
+    },
+
     async listMasterProducts(req: Request, res: Response): Promise<void> {
       requireUser(req);
 

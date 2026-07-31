@@ -79,6 +79,9 @@ vi.mock("../src/api/client.js", () => ({
     suggestMasterProductMatch: vi.fn().mockResolvedValue({ suggestions: [] }),
     confirmMasterProductMatch: vi.fn().mockResolvedValue({}),
     listMasterProducts: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    listCategories: vi.fn().mockResolvedValue([
+      "Consumables", "Dental Supplies", "Medications", "PPE", "Restorative", "Uncategorised",
+    ]),
     getHealth: vi.fn(),
     login: vi.fn(),
     verifyMfa: vi.fn(),
@@ -845,6 +848,11 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
     await user.click(screen.getByRole("button", { name: "Create new product" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByLabelText(/product name/i)).toBeInTheDocument();
+
+    // Select a valid category (required since no category is pre-selected)
+    const categorySelect = screen.getByLabelText(/category/i);
+    await waitFor(() => expect(categorySelect).toBeEnabled());
+    await user.selectOptions(categorySelect, "Consumables");
 
     // Submit the modal (pre-filled name should already be valid)
     await user.click(screen.getByRole("button", { name: /Save and Mark Ready to Create/i }));

@@ -8,6 +8,7 @@ import { ProductCreationReviewModal } from "../components/invoice/ProductCreatio
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
 import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
+import { useCategories } from "../hooks/useCategories.js";
 import { loadConfig } from "../config/index.js";
 import type { MasterProduct, ProductMatchSuggestion } from "../types/masterProduct.js";
 import type {
@@ -689,6 +690,7 @@ export function SupplierInvoiceReviewPage() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const { user } = useAuth();
   const { clinicId, isAllClinicsScope } = useOperationalClinic();
+  const { categories, error: categoriesError } = useCategories({ allowFallback: false });
   const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as LocationState | null;
@@ -1439,6 +1441,8 @@ export function SupplierInvoiceReviewPage() {
         <ProductCreationReviewModal
           line={productCreationTargetLine}
           initialData={productCreationTargetLine.productCreationData}
+          categories={categories}
+          categoriesError={categoriesError}
           isSaving={isSavingProductCreation}
           onClose={() => { setProductCreationTargetLine(null); }}
           onSave={(data) => {

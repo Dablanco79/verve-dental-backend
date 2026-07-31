@@ -242,6 +242,7 @@ describe("CatalogueImportService — confirm", () => {
         unitCostCents: 1670,
         unitOfMeasure: "unit",
         matchedProductId: null,
+        category: "Consumables",
       },
       {
         rowNumber: 3,

@@ -94,6 +94,9 @@ vi.mock("../src/api/client.js", () => ({
     adjustInventory: mockAdjustInventory,
     handleScan: mockHandleScan,
     listMasterProducts: mockListMasterProducts,
+    listCategories: vi.fn().mockResolvedValue([
+      "Consumables", "Dental Supplies", "Medications", "PPE", "Restorative", "Uncategorised",
+    ]),
   }),
 }));
 
@@ -636,6 +639,11 @@ describe("CatalogueImportPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
 
+    // Select a category in the inline dropdown before checking the import button
+    const categorySelect = await screen.findByLabelText(/category/i);
+    await waitFor(() => expect(categorySelect).toBeEnabled());
+    fireEvent.change(categorySelect, { target: { value: "Consumables" } });
+
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
     rendered.unmount();
     renderCatalogueImportPage();
@@ -679,6 +687,11 @@ describe("CatalogueImportPage", () => {
     });
     expect(await screen.findByText("Supplier Matched")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create Product" }));
+
+    // Select a category in the inline category dropdown that appears for "Ready to Create" rows
+    const categorySelect = await screen.findByLabelText(/category/i);
+    await waitFor(() => expect(categorySelect).toBeEnabled());
+    fireEvent.change(categorySelect, { target: { value: "Consumables" } });
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
     expect(mockAdjustInventory).not.toHaveBeenCalled();
@@ -766,6 +779,11 @@ describe("CatalogueImportPage", () => {
     expect(selectedRow).not.toBeNull();
     fireEvent.click(createProductButton);
 
+    // Select a category in the inline dropdown (required for "Ready to Create" rows)
+    const categorySelect = await screen.findByLabelText(/category/i);
+    await waitFor(() => expect(categorySelect).toBeEnabled());
+    fireEvent.change(categorySelect, { target: { value: "Consumables" } });
+
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
 
     const selectedRowQueries = within(selectedRow as HTMLElement);
@@ -802,6 +820,11 @@ describe("CatalogueImportPage", () => {
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
     fireEvent.click(screen.getAllByRole("button", { name: "Skip" })[0] as HTMLElement);
     fireEvent.click(screen.getAllByRole("button", { name: "Create Product" })[1] as HTMLElement);
+
+    // Select a category in the inline dropdown before the import button becomes enabled
+    const categorySelect = await screen.findByLabelText(/category/i);
+    await waitFor(() => expect(categorySelect).toBeEnabled());
+    fireEvent.change(categorySelect, { target: { value: "Consumables" } });
 
     expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
@@ -967,6 +990,32 @@ describe("CatalogueImportPage", () => {
     expect(screen.getAllByText("Skipped").length).toBeGreaterThan(0);
   });
 
+  /**
+   * Helper: after clicking "Create new product" the ProductCreationReviewModal opens.
+   * Wait for categories to load (select becomes enabled), submit the modal, then
+   * wait for the dialog to close.  The updateSupplierInvoiceLine mock resolves to
+   * undefined (no explicit return value), which is fine for `await undefined`.
+   */
+  async function completeCreateProductModal(): Promise<void> {
+    const saveBtn = await screen.findByRole("button", { name: /save and mark ready to create/i });
+    // Wait until the category select is enabled (categories fetched from API)
+    const categorySelect = await screen.findByLabelText(/category/i);
+    await waitFor(() => {
+      expect(categorySelect).toBeEnabled();
+    });
+    // Select the first real category option (not the placeholder)
+    const firstRealOption = Array.from(
+      (categorySelect as HTMLSelectElement).options,
+    ).find((o) => o.value !== "");
+    if (firstRealOption) {
+      fireEvent.change(categorySelect, { target: { value: firstRealOption.value } });
+    }
+    fireEvent.click(saveBtn);
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  }
+
   it("replaces invoice line create-product action with undo after selection", async () => {
     mockGetSupplierInvoice.mockResolvedValue({ invoice: invoiceImport, lines: [unmatchedLine] });
     renderCatalogueImportRoutes("/inventory/catalogue-import/invoice-1/review");
@@ -976,9 +1025,12 @@ describe("CatalogueImportPage", () => {
     const selectedRow = createProductButton.closest("tr");
     expect(selectedRow).not.toBeNull();
     fireEvent.click(createProductButton);
+    await completeCreateProductModal();
 
     const selectedRowQueries = within(selectedRow as HTMLElement);
-    expect(selectedRowQueries.getByText("Ready to Create")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(selectedRowQueries.getByText("Ready to Create")).toBeInTheDocument();
+    });
     expect(selectedRowQueries.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(selectedRowQueries.getByRole("button", { name: "Undo" })).toBeInTheDocument();
     expect(selectedRowQueries.queryByRole("button", { name: "Create new product" })).not.toBeInTheDocument();
@@ -990,6 +1042,7 @@ describe("CatalogueImportPage", () => {
 
     await screen.findByText("Unknown bonding agent");
     fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+    await completeCreateProductModal();
     await waitFor(() => {
       expect(window.localStorage.length).toBeGreaterThan(0);
       expect(
@@ -1022,7 +1075,8 @@ describe("CatalogueImportPage", () => {
     expect(finalButton).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
-    expect(finalButton).toBeEnabled();
+    await completeCreateProductModal();
+    await waitFor(() => { expect(finalButton).toBeEnabled(); });
     fireEvent.click(finalButton);
 
     await waitFor(() => {
@@ -1274,8 +1328,8 @@ describe("CatalogueImportPage", () => {
       expect(importBtn).toBeDisabled();
 
       fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
-
-      expect(importBtn).toBeEnabled();
+      await completeCreateProductModal();
+      await waitFor(() => { expect(importBtn).toBeEnabled(); });
     });
 
     // TEST 2 — Seven Ready to Create rows → Still Requiring Review = 0, New Products = 7, button enabled
@@ -1294,6 +1348,7 @@ describe("CatalogueImportPage", () => {
       expect(createButtons).toHaveLength(7);
       for (const btn of createButtons) {
         fireEvent.click(btn);
+        await completeCreateProductModal();
       }
 
       // Import button must be enabled
@@ -1334,6 +1389,7 @@ describe("CatalogueImportPage", () => {
       // Mark ready line as Ready to Create
       for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 1)) {
         fireEvent.click(btn);
+        await completeCreateProductModal();
       }
 
       // Mark skip line as Skipped
@@ -1342,7 +1398,9 @@ describe("CatalogueImportPage", () => {
       }
 
       // alreadyMatchedLine starts as "Matched Existing Product" (isMatched: true)
-      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      });
     });
 
     // TEST 4 — One Needs Review row → Import disabled
@@ -1359,10 +1417,13 @@ describe("CatalogueImportPage", () => {
       // Resolve only the first row
       for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 1)) {
         fireEvent.click(btn);
+        await completeCreateProductModal();
       }
 
       // Second row still in "Needs Review" — button must stay disabled
-      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeDisabled();
+      });
     });
 
     // TEST 5 — Ready to Create survives page reload (localStorage persistence)
@@ -1377,7 +1438,10 @@ describe("CatalogueImportPage", () => {
       const { unmount } = renderCatalogueImportRoutes("/inventory/catalogue-import/ocr-invoice-1/review");
       await screen.findByText("Prophy Paste Mint");
       fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
-      expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      await completeCreateProductModal();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      });
 
       // Simulate reload — unmount and re-render with same invoice
       unmount();
@@ -1405,6 +1469,7 @@ describe("CatalogueImportPage", () => {
       await screen.findByText("Prophy Paste");
       for (const btn of screen.getAllByRole("button", { name: "Create new product" }).slice(0, 2)) {
         fireEvent.click(btn);
+        await completeCreateProductModal();
       }
 
       fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
@@ -1436,6 +1501,10 @@ describe("CatalogueImportPage", () => {
 
       await screen.findByText("Prophy Paste Mint");
       fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+      await completeCreateProductModal();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      });
       fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
 
       // confirmSupplierInvoice called with readyToCreateLineIds
@@ -1472,6 +1541,10 @@ describe("CatalogueImportPage", () => {
 
       await screen.findByText("Prophy Paste Mint");
       fireEvent.click(screen.getByRole("button", { name: "Create new product" }));
+      await completeCreateProductModal();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Import Reviewed Products" })).toBeEnabled();
+      });
       fireEvent.click(screen.getByRole("button", { name: "Import Reviewed Products" }));
 
       await waitFor(() => {
@@ -1496,6 +1569,7 @@ describe("CatalogueImportPage", () => {
       const createButtons = screen.getAllByRole("button", { name: "Create new product" });
       for (const btn of createButtons) {
         fireEvent.click(btn);
+        await completeCreateProductModal();
       }
 
       // "New products" metric in the Review Summary must show "7", not "Missing".

@@ -726,6 +726,11 @@ export function InventoryPage() {
               hasActiveFilters={hasActiveWorkspaceFilters}
               productDetailHrefForItem={(item) =>
                 `/inventory/products/${encodeURIComponent(item.id)}`}
+              productEditHrefForItem={
+                user && canManageProducts(user.role)
+                  ? (item) => `/inventory/products/${encodeURIComponent(item.id)}/edit`
+                  : undefined
+              }
               purchaseOrderHrefForItem={
                 canReviewPurchaseOrders
                   ? (item) =>

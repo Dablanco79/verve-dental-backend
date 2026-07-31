@@ -7,10 +7,12 @@ import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
 import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
+import { ProductCreationReviewModal } from "../components/invoice/ProductCreationReviewModal.js";
 import { ConfirmModal } from "../components/supplier/ConfirmModal.js";
 import { loadConfig } from "../config/index.js";
+import { useCategories } from "../hooks/useCategories.js";
+import type { ProductCreationData, Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/supplier.js";
 import type { ProductMatchSuggestion } from "../types/masterProduct.js";
-import type { Supplier, SupplierInvoice, SupplierInvoiceLine } from "../types/supplier.js";
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -259,6 +261,7 @@ export function CatalogueImportReviewPage() {
   const canUseCatalogueImport = user
     ? canManageProducts(user.role) || canManageSuppliers(user.role)
     : false;
+  const { categories, error: categoriesError } = useCategories({ allowFallback: false });
 
   const [invoice, setInvoice] = useState<SupplierInvoice | null>(null);
   const [lines, setLines] = useState<SupplierInvoiceLine[]>([]);
@@ -285,6 +288,9 @@ export function CatalogueImportReviewPage() {
   const [supplierSearchQuery, setSupplierSearchQuery] = useState("");
   const [isLinkingSupplier, setIsLinkingSupplier] = useState(false);
   const supplierSearchRef = useRef<HTMLInputElement>(null);
+  // Product creation category review modal
+  const [creationReviewModalLine, setCreationReviewModalLine] = useState<SupplierInvoiceLine | null>(null);
+  const [savingCreationDataForLineId, setSavingCreationDataForLineId] = useState<string | null>(null);
 
   const matchedSupplier = useMemo(
     () => suppliers.find((supplier) => supplier.id === invoice?.supplierId) ?? null,
@@ -469,6 +475,27 @@ export function CatalogueImportReviewPage() {
       setLineSuggestions((current) => ({ ...current, [line.id]: null }));
     } finally {
       setFetchingSuggestionForLine(null);
+    }
+  }
+
+  async function handleProductCreationSave(data: ProductCreationData): Promise<void> {
+    const line = creationReviewModalLine;
+    if (!line || !clinicId || !invoice) return;
+
+    setSavingCreationDataForLineId(line.id);
+    try {
+      await apiClient.updateSupplierInvoiceLine(clinicId, invoice.id, line.id, {
+        reviewDecision: "create_product",
+        productCreationData: data,
+      });
+      setLineState(line.id, "Ready to Create");
+      setCreationReviewModalLine(null);
+    } catch (err: unknown) {
+      setImportError(
+        err instanceof Error ? err.message : "Could not save product creation data.",
+      );
+    } finally {
+      setSavingCreationDataForLineId(null);
     }
   }
 
@@ -893,7 +920,7 @@ export function CatalogueImportReviewPage() {
                                           setMatchSearchTargetLineId(line.id);
                                         }}
                                         onCreateNew={() => {
-                                          setLineState(line.id, "Ready to Create");
+                                          setCreationReviewModalLine(line);
                                         }}
                                         onSkip={() => {
                                           setLineState(line.id, "Skipped");
@@ -936,7 +963,7 @@ export function CatalogueImportReviewPage() {
                                           type="button"
                                           className="link-button"
                                           onClick={() => {
-                                            setLineState(line.id, "Ready to Create");
+                                            setCreationReviewModalLine(line);
                                           }}
                                         >
                                           Create new product
@@ -1046,6 +1073,17 @@ export function CatalogueImportReviewPage() {
               if (!isCancelling) setIsCancelModalOpen(false);
             }}
             onConfirm={handleCancelImport}
+          />
+        ) : null}
+        {creationReviewModalLine !== null ? (
+          <ProductCreationReviewModal
+            line={creationReviewModalLine}
+            initialData={creationReviewModalLine.productCreationData}
+            categories={categories}
+            categoriesError={categoriesError}
+            isSaving={savingCreationDataForLineId === creationReviewModalLine.id}
+            onSave={(data) => { void handleProductCreationSave(data); }}
+            onClose={() => { setCreationReviewModalLine(null); }}
           />
         ) : null}
         <MasterProductSearchModal

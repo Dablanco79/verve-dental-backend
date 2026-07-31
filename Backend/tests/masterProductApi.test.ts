@@ -62,7 +62,7 @@ async function createProduct(
 ) {
   const body = {
     displayName: overrides.displayName ?? uniqueName("Test Product"),
-    category: overrides.category ?? uniqueName("Test Category"),
+    category: overrides.category ?? "Consumables",
     ...overrides,
   };
   return request(app)
@@ -262,14 +262,14 @@ describe("Master Products — create", () => {
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const displayName = uniqueName("Surgical Suction Tips");
-    const category = "Surgical";
+    const category = "Sterilisation";
 
     const first = await createProduct(app, token, { displayName, category });
     expect(first.status).toBe(201);
 
     const second = await createProduct(app, token, {
       displayName: `  ${displayName.toLowerCase()}  `,
-      category: category.toUpperCase(),
+      category,
     });
 
     expect(second.status).toBe(409);
@@ -281,7 +281,7 @@ describe("Master Products — create", () => {
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const displayName = uniqueName("Bite Blocks");
-    const category = "Restorative Accessories";
+    const category = "Restorative";
 
     const first = await createProduct(app, token, { displayName, category });
     expect(first.status).toBe(201);
@@ -356,7 +356,7 @@ describe("Master Products — update", () => {
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const existingName = uniqueName("Cotton Rolls");
-    const existingCategory = "Consumables Test";
+    const existingCategory = "Consumables";
     await createProduct(app, token, { displayName: existingName, category: existingCategory });
 
     const other = await createProduct(app, token);

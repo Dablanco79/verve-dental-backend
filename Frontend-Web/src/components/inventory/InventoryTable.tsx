@@ -15,6 +15,7 @@ type InventoryTableProps = {
   allItemsCount?: number;
   hasActiveFilters?: boolean;
   productDetailHrefForItem?: (item: InventoryItem) => string | undefined;
+  productEditHrefForItem?: (item: InventoryItem) => string | undefined;
   purchaseOrderHrefForItem?: (item: InventoryItem) => string;
 };
 
@@ -37,6 +38,7 @@ export function InventoryTable({
   allItemsCount = items.length,
   hasActiveFilters = false,
   productDetailHrefForItem,
+  productEditHrefForItem,
   purchaseOrderHrefForItem,
 }: InventoryTableProps) {
   const sortedItems = [...items].sort(compareItems);
@@ -103,6 +105,7 @@ export function InventoryTable({
           {sortedItems.map((item) => {
             const purchaseHref = purchaseOrderHrefForItem?.(item);
             const detailHref = productDetailHrefForItem?.(item);
+            const editHref = productEditHrefForItem?.(item);
             const stockStatus = getInventoryStockStatus(item);
             const zeroReorderWarning = getInventoryZeroReorderWarning(item);
             const inDraft = item.inDraftQuantity ?? 0;
@@ -195,7 +198,11 @@ export function InventoryTable({
                   <td>
                     {zeroReorderWarning ? (
                       <div className="po-row-actions">
-                        {detailHref ? (
+                        {editHref ? (
+                          <Link to={editHref} className="link-button" aria-label={`Set reorder level for ${item.name}`}>
+                            Set reorder level
+                          </Link>
+                        ) : detailHref ? (
                           <Link to={detailHref} className="link-button" aria-label={`Set reorder level for ${item.name}`}>
                             Set reorder level
                           </Link>

@@ -33,6 +33,7 @@ import type {
   ProductSupplier,
   PurchasingDraft,
   PurchasingDraftWithStatus,
+  UpdateClinicInventoryItemInput,
 } from "../types/inventory.js";
 import {
   PoAlreadySubmittedError,
@@ -406,6 +407,45 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
          WHERE clinic_id = $2 AND id = $3
          RETURNING *`,
         [newQuantity, clinicId, itemId],
+      );
+
+      const row = rows[0];
+      if (!row) throw new AppError(404, "NOT_FOUND", `Inventory item not found: ${itemId}`);
+      return rowToClinicInventoryItem(row);
+    },
+
+    async updateClinicInventoryItem(
+      clinicId: string,
+      itemId: string,
+      patch: UpdateClinicInventoryItemInput,
+    ): Promise<ClinicInventoryItem> {
+      const setClauses: string[] = ["updated_at = now()"];
+      const params: Array<unknown> = [];
+
+      if (patch.reorderPoint !== undefined) {
+        params.push(patch.reorderPoint);
+        setClauses.push(`reorder_point = $${String(params.length)}`);
+      }
+      if (patch.unitCostOverrideCents !== undefined) {
+        params.push(patch.unitCostOverrideCents);
+        setClauses.push(`unit_cost_override_cents = $${String(params.length)}`);
+      }
+      if (patch.supplierPreference !== undefined) {
+        params.push(patch.supplierPreference);
+        setClauses.push(`supplier_preference = $${String(params.length)}`);
+      }
+
+      params.push(clinicId);
+      const clinicParam = params.length;
+      params.push(itemId);
+      const idParam = params.length;
+
+      const { rows } = await pool.query<ClinicInventoryRow>(
+        `UPDATE clinic_inventory_items
+         SET ${setClauses.join(", ")}
+         WHERE clinic_id = $${String(clinicParam)} AND id = $${String(idParam)}
+         RETURNING *`,
+        params,
       );
 
       const row = rows[0];
@@ -894,6 +934,42 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
 
       const row = rows[0];
       if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create product supplier");
+      return rowToProductSupplier(row);
+    },
+
+    async setPreferredProductSupplier(
+      clinicId: string,
+      masterCatalogItemId: string,
+      supplierId: string,
+      supplierName: string | null,
+    ): Promise<ProductSupplier> {
+      // Clear preferred flag on all active rows for this clinic+product
+      await pool.query(
+        `UPDATE product_suppliers
+         SET is_preferred = false, updated_at = now()
+         WHERE clinic_id = $1 AND product_id = $2 AND active = true`,
+        [clinicId, masterCatalogItemId],
+      );
+
+      // Upsert: update existing row if present, otherwise insert
+      const { rows } = await pool.query<ProductSupplierRow>(
+        `INSERT INTO product_suppliers
+           (clinic_id, product_id, supplier_id, supplier_sku, supplier_barcode,
+            unit_cost_cents, pack_size, is_preferred, active)
+         VALUES ($1, $2, $3, NULL, NULL, NULL, NULL, true, true)
+         ON CONFLICT (clinic_id, product_id, supplier_id)
+         DO UPDATE SET
+           is_preferred = true,
+           active       = true,
+           updated_at   = now()
+         RETURNING
+           product_suppliers.*,
+           $4::text AS supplier_name`,
+        [clinicId, masterCatalogItemId, supplierId, supplierName],
+      );
+
+      const row = rows[0];
+      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to set preferred supplier");
       return rowToProductSupplier(row);
     },
 

@@ -9,6 +9,7 @@ import {
   RECEIVING_UNIT_OPTIONS,
   STOCK_UNIT_OPTIONS,
 } from "../constants/inventoryUnits.js";
+import { useCategories } from "../hooks/useCategories.js";
 import { loadConfig } from "../config/index.js";
 import type { BarcodeFormat } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
@@ -59,6 +60,7 @@ export function AddProductPage() {
   const { user } = useAuth();
   const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
   const navigate = useNavigate();
+  const { categories, isLoading: isCategoriesLoading, error: categoriesError } = useCategories({ allowFallback: false });
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -177,6 +179,8 @@ export function AddProductPage() {
     }
     if (!category.trim()) {
       errors.category = "Category is required.";
+    } else if (!categories.includes(category)) {
+      errors.category = "Select a valid category from the list.";
     }
     if (!STOCK_UNIT_OPTIONS.some((unit) => unit === stockUnit)) {
       errors.stockUnit = "Select a valid stock unit.";
@@ -345,14 +349,28 @@ export function AddProductPage() {
               <div className="product-form__field">
                 <label>
                   Category
-                  <input
+                  <select
                     value={category}
                     onChange={(event) => { setCategory(event.target.value); }}
-                    placeholder="PPE"
                     aria-invalid={fieldErrors.category ? true : undefined}
+                    disabled={isCategoriesLoading}
                     required
-                  />
+                  >
+                    <option value="">
+                      {isCategoriesLoading ? "Loading categories…" : "Select category…"}
+                    </option>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+                {categoriesError ? (
+                  <p className="product-form__field-error" role="alert">
+                    Categories could not be loaded. Refresh the page and try again.
+                  </p>
+                ) : null}
                 {fieldErrors.category ? (
                   <p className="product-form__field-error" role="alert">{fieldErrors.category}</p>
                 ) : null}
@@ -544,7 +562,7 @@ export function AddProductPage() {
           </fieldset>
 
           <div className="product-form__actions">
-            <button type="submit" disabled={isSubmitting}>
+            <button type="submit" disabled={isSubmitting || !!categoriesError}>
               {isSubmitting ? "Creating…" : "Create product"}
             </button>
           </div>

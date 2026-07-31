@@ -26,6 +26,7 @@ import {
   type StructuredSupplierGroup,
 } from "../utils/catalogueStructuredImport.js";
 import { canManageProducts, canManageSuppliers } from "../utils/roles.js";
+import { useCategories } from "../hooks/useCategories.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -87,6 +88,8 @@ type StructuredRowDraft = {
   unitPrice: string;
   gst: string;
   supplierSku: string;
+  /** Required when state is "Ready to Create". Must be a canonical category. */
+  category: string;
 };
 
 type StructuredReviewDisplayRow = {
@@ -355,6 +358,7 @@ function buildStructuredRowDraft(row: StructuredReviewDisplayRow): StructuredRow
     unitPrice: row.sourceRow?.unitPrice ?? row.previewRow?.rawUnitCost ?? "",
     gst: row.sourceRow?.gst ?? "",
     supplierSku: row.sourceRow?.supplierSku ?? row.previewRow?.supplierSku ?? "",
+    category: "",
   };
 }
 
@@ -378,6 +382,8 @@ export function CatalogueImportPage() {
   const canUseCatalogueImport = user
     ? canManageProducts(user.role) || canManageSuppliers(user.role)
     : false;
+
+  const { categories: creationCategories, error: categoriesError } = useCategories({ allowFallback: false });
 
   const [selectedSourceId, setSelectedSourceId] = useState<ImportSourceId>("supplier_invoice_pdf");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -433,15 +439,32 @@ export function CatalogueImportPage() {
         return !isStructuredTerminalState(state);
       }),
     );
+  const hasUncategorisedReadyToCreateRows =
+    hasStructuredReview &&
+    structuredReviewGroups.some((group) =>
+      buildStructuredDisplayRows(group).some((row) => {
+        const key = structuredRowKey(group.supplierName, row.rowNumber);
+        const state = structuredRowStates[key] ?? defaultStructuredRowState(row);
+        if (state !== "Ready to Create") return false;
+        const draft = structuredRowDrafts[key] ?? buildStructuredRowDraft(row);
+        return !draft.category || !creationCategories.includes(draft.category);
+      }),
+    );
   const canProcessStructuredReview =
     hasStructuredReview &&
     !hasUnresolvedStructuredSuppliers &&
-    !hasUnreviewedStructuredRows;
+    !hasUnreviewedStructuredRows &&
+    !hasUncategorisedReadyToCreateRows &&
+    !categoriesError;
   const structuredImportDisabledReason = !hasStructuredReview || canProcessStructuredReview
     ? null
-    : hasUnresolvedStructuredSuppliers
-      ? "Resolve supplier review before importing products."
-      : "Review all product rows before importing products.";
+    : categoriesError
+      ? "Categories could not be loaded. Refresh the page and try again."
+      : hasUnresolvedStructuredSuppliers
+        ? "Resolve supplier review before importing products."
+        : hasUncategorisedReadyToCreateRows
+          ? "Select a category for all new products before importing."
+          : "Review all product rows before importing products.";
   const canUpload =
     hasStructuredReview
       ? canUseCatalogueImport && canProcessStructuredReview && !isUploading && !isAllClinicsScope
@@ -730,7 +753,7 @@ export function CatalogueImportPage() {
     setStructuredRowDrafts((current) => ({
       ...current,
       [key]: {
-        ...(current[key] ?? { productName: "", quantity: "", unitPrice: "", gst: "", supplierSku: "" }),
+        ...(current[key] ?? { productName: "", quantity: "", unitPrice: "", gst: "", supplierSku: "", category: "" }),
         [field]: value,
       },
     }));
@@ -938,6 +961,7 @@ export function CatalogueImportPage() {
         unitCostCents: parseMoneyToCents(draft.unitPrice) ?? row.previewRow?.unitCostCents ?? null,
         unitOfMeasure: draft.quantity.trim() || (row.previewRow?.unitOfMeasure ?? null),
         matchedProductId,
+        category: draft.category || null,
       };
     });
   }
@@ -1633,9 +1657,37 @@ export function CatalogueImportPage() {
                                 {state}
                               </span>
                               {state === "Ready to Create" ? (
-                                <span className="catalogue-structured-review__create-note">
-                                  Creates catalogue product only. Does not change stock.
-                                </span>
+                                <>
+                                  <span className="catalogue-structured-review__create-note">
+                                    Creates catalogue product only. Does not change stock.
+                                  </span>
+                                  <div className="catalogue-structured-review__category-row">
+                                    <label
+                                      className="catalogue-structured-review__category-label"
+                                      htmlFor={`cat-${key}`}
+                                    >
+                                      Category <span aria-hidden="true">*</span>
+                                    </label>
+                                    <select
+                                      id={`cat-${key}`}
+                                      className="catalogue-review__edit-input catalogue-review__category-select"
+                                      value={draft.category}
+                                      onChange={(event) => {
+                                        updateStructuredRowDraft(key, "category", event.target.value);
+                                      }}
+                                      aria-required="true"
+                                      aria-invalid={!draft.category ? true : undefined}
+                                      disabled={creationCategories.length === 0}
+                                    >
+                                      <option value="">
+                                        {categoriesError ? "Categories unavailable" : "Select category…"}
+                                      </option>
+                                      {creationCategories.map((cat) => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </>
                               ) : null}
                             </td>
                             <td>

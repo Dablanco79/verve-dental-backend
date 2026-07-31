@@ -4,19 +4,6 @@ import type { ProductCreationData, SupplierInvoiceLine } from "../../types/suppl
 
 // ── Static reference data ─────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  "Dental Supplies",
-  "Medical Supplies",
-  "Consumables",
-  "Medications",
-  "Hygiene Products",
-  "PPE",
-  "Equipment",
-  "Laboratory",
-  "Imported Catalogue",
-  "Other",
-];
-
 const UNITS = [
   "unit",
   "each",
@@ -38,6 +25,10 @@ type Props = {
   line: SupplierInvoiceLine;
   /** Pre-populated when the user is editing a previously saved decision. */
   initialData?: ProductCreationData | null;
+  /** Canonical category list fetched from the backend. Must not include "Imported Catalogue" or "Uncategorised". */
+  categories: string[];
+  /** Non-null when the categories API call failed. Disables submission. */
+  categoriesError?: string | null;
   isSaving: boolean;
   onSave: (data: ProductCreationData) => void;
   onClose: () => void;
@@ -48,6 +39,8 @@ type Props = {
 export function ProductCreationReviewModal({
   line,
   initialData,
+  categories,
+  categoriesError,
   isSaving,
   onSave,
   onClose,
@@ -55,7 +48,12 @@ export function ProductCreationReviewModal({
   const [productName, setProductName] = useState(
     initialData?.productName ?? (line.ocrDescription ?? "").trim(),
   );
-  const [category, setCategory] = useState(initialData?.category ?? "Dental Supplies");
+  // Start with empty string (placeholder) — the user must make a deliberate
+  // category choice.  Pre-population is only allowed when editing an existing
+  // saved decision that already carries a canonical category.
+  const [category, setCategory] = useState(
+    initialData?.category ?? "",
+  );
   const [supplierSku, setSupplierSku] = useState(
     initialData?.supplierSku ?? (line.ocrSku ?? ""),
   );
@@ -82,6 +80,10 @@ export function ProductCreationReviewModal({
     const trimmedCategory = category.trim();
     if (!trimmedCategory) {
       setValidationError("Category is required.");
+      return;
+    }
+    if (!categories.includes(trimmedCategory)) {
+      setValidationError("Select a valid category from the list.");
       return;
     }
 
@@ -172,14 +174,22 @@ export function ProductCreationReviewModal({
               className="supplier-form__input"
               value={category}
               onChange={(e) => { setCategory(e.target.value); }}
-              disabled={isSaving}
+              disabled={isSaving || categories.length === 0}
             >
-              {CATEGORIES.map((c) => (
+              <option value="">
+                {categoriesError ? "Categories unavailable — refresh" : (categories.length === 0 ? "Loading categories…" : "Select category…")}
+              </option>
+              {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
             </select>
+            {categoriesError ? (
+              <p className="status-card__error" role="alert">
+                Categories could not be loaded. Close this dialog, refresh the page, and try again.
+              </p>
+            ) : null}
           </div>
 
           <div className="supplier-form__row">
@@ -278,7 +288,7 @@ export function ProductCreationReviewModal({
             <button
               type="submit"
               className="supplier-form__submit"
-              disabled={isSaving}
+              disabled={isSaving || !!categoriesError}
             >
               {isSaving ? "Saving…" : "Save and Mark Ready to Create"}
             </button>

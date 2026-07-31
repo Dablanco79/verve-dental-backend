@@ -1,3 +1,43 @@
+/**
+ * Canonical global product categories for new Master Product creation.
+ * These are the ONLY values accepted when creating or updating a Master Product.
+ *
+ * Rules:
+ * - "Imported Catalogue" is excluded — must never be persisted.
+ * - "Uncategorised" is excluded — users must make a deliberate choice.
+ *   Historical records that carry "Uncategorised" are not auto-migrated; they
+ *   remain readable but cannot be created via any current code path.
+ * - Categories are owned by Master Products and inherited by Clinic Inventory
+ *   Products.  Clinics must not create local categories.
+ */
+export const MASTER_PRODUCT_CATEGORIES = [
+  "Consumables",
+  "Dental Supplies",
+  "Endodontics",
+  "Equipment Consumables",
+  "Hygiene Products",
+  "Laboratory",
+  "Medications",
+  "Office Supplies",
+  "Orthodontics",
+  "PPE",
+  "Preventive",
+  "Prosthodontics",
+  "Restorative",
+  "Rotary",
+  "Sterilisation",
+] as const;
+
+export type MasterProductCategory = (typeof MASTER_PRODUCT_CATEGORIES)[number];
+
+/**
+ * Runtime Set for O(1) category validation.  Use this instead of `.includes()`
+ * to avoid linear scans in hot paths.
+ */
+export const VALID_CREATION_CATEGORY_SET: ReadonlySet<string> = new Set<string>(
+  MASTER_PRODUCT_CATEGORIES,
+);
+
 export const BARCODE_FORMATS = [
   "gs1",
   "ean13",
@@ -147,6 +187,17 @@ export type ClinicInventoryItemView = ClinicInventoryItem & {
     receivedQuantity: number;
   }>;
 };
+
+/**
+ * Partial-update input for a clinic inventory item's operational settings.
+ * Only supplied keys are written — undefined means "leave unchanged".
+ * quantityOnHand is intentionally excluded; use adjustStock/receiveStock instead.
+ */
+export type UpdateClinicInventoryItemInput = Partial<{
+  reorderPoint: number;
+  unitCostOverrideCents: number | null;
+  supplierPreference: string | null;
+}>;
 
 export type InventoryAdjustment = {
   id: string;

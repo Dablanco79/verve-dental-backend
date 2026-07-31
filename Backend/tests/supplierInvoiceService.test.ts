@@ -510,6 +510,18 @@ describe("SupplierInvoiceService", () => {
       invoiceDate: "2026-06-01",
     });
 
+    await service.updateLine(caller, CLINIC_A, invoice.id, line.id, {
+      productCreationData: {
+        productName: "Imported Bonding Agent",
+        category: "Consumables",
+        supplierSku: "BOND-4",
+        stockUnit: "Each",
+        receivingUnit: "Each",
+        unitsPerReceivingUnit: 1,
+        unitCostCents: 1_000,
+      },
+    });
+
     const result = await service.confirmImport(caller, CLINIC_A, invoice.id, {
       readyToCreateLineIds: [line.id],
     });
