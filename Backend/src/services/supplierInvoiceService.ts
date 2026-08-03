@@ -159,6 +159,22 @@ export function createSupplierInvoiceService(
       unitOfMeasure: reviewed?.stockUnit ?? "unit",
     });
 
+    // Assign the invoice supplier as the preferred supplier for the new product.
+    // Uses the shared setPreferredProductSupplier domain path so the same
+    // invariant (clear existing preferred → set new one atomically) applies
+    // across OCR import, manual creation, and product editing.
+    const supplierInfo = await supplierRepo.findSupplierById(supplierId);
+    await inventoryRepository.setPreferredProductSupplier(
+      clinicId,
+      masterItem.id,
+      supplierId,
+      supplierInfo?.supplierName ?? null,
+      {
+        supplierSku: reviewed?.supplierSku ?? line.ocrSku,
+        unitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
+      },
+    );
+
     return masterItem.id;
   }
 

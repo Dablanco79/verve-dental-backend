@@ -382,4 +382,116 @@ describe("Clinic Product Maintenance API", () => {
       expect(body.data).not.toContain("Imported Catalogue");
     });
   });
+
+  // ── Preferred Supplier regression — Bugs 1 & 2 ────────────────────────────
+  // Bug 1: PATCH with a supplierId that has never been in product_suppliers
+  //        previously threw HTTP 500 (ON CONFLICT clause had no matching
+  //        unique constraint).  These tests confirm 200 is returned and the
+  //        correct preferredSupplierId is reflected.
+  //
+  // Bug 2: OCR product creation did not create a product_suppliers row, so
+  //        preferredSupplierId was always null after import.
+
+  describe("Preferred Supplier integration (Bug 1 & 2 regression)", () => {
+    it("PATCH sets preferred supplier to a brand-new supplier (was HTTP 500)", async () => {
+      const testApp = await createTestApp();
+      const token = await loginAndGetAccessToken(testApp, "admin@clinic-a.au");
+
+      // Create a supplier that has never been linked to this product
+      const supplierRes = await request(testApp)
+        .post("/api/v1/suppliers")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierName: "Bug1 Fresh Supplier" });
+      expect(supplierRes.status).toBe(201);
+      const freshSupplierId = (supplierRes.body as ApiData<{ id: string }>).data.id;
+
+      // PATCH preferred supplier — previously returned 500, must now return 200
+      const patchRes = await request(testApp)
+        .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/products/${GLOVES_ITEM_ID}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierId: freshSupplierId });
+
+      expect(patchRes.status).toBe(200);
+      const body = patchRes.body as ApiData<{
+        clinicItem: { preferredSupplierId: string | null; preferredSupplierName: string | null };
+      }>;
+      expect(body.data.clinicItem.preferredSupplierId).toBe(freshSupplierId);
+    });
+
+    it("PATCH updates preferred supplier when product already has a different preferred supplier", async () => {
+      const testApp = await createTestApp();
+      const token = await loginAndGetAccessToken(testApp, "admin@clinic-a.au");
+
+      const s1Res = await request(testApp)
+        .post("/api/v1/suppliers")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierName: "Bug1 Supplier A" });
+      expect(s1Res.status).toBe(201);
+      const suppA = (s1Res.body as ApiData<{ id: string }>).data.id;
+
+      const s2Res = await request(testApp)
+        .post("/api/v1/suppliers")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierName: "Bug1 Supplier B" });
+      expect(s2Res.status).toBe(201);
+      const suppB = (s2Res.body as ApiData<{ id: string }>).data.id;
+
+      // Set supplier A as preferred first
+      const patchA = await request(testApp)
+        .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/products/${GLOVES_ITEM_ID}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierId: suppA });
+      expect(patchA.status).toBe(200);
+      expect(
+        (patchA.body as ApiData<{ clinicItem: { preferredSupplierId: string | null } }>).data.clinicItem.preferredSupplierId,
+      ).toBe(suppA);
+
+      // Now switch to supplier B — verifies clearing the old preferred flag
+      const patchB = await request(testApp)
+        .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/products/${GLOVES_ITEM_ID}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierId: suppB });
+      expect(patchB.status).toBe(200);
+      expect(
+        (patchB.body as ApiData<{ clinicItem: { preferredSupplierId: string | null } }>).data.clinicItem.preferredSupplierId,
+      ).toBe(suppB);
+    });
+
+    it("manual product creation sets preferred supplier on the created item", async () => {
+      const testApp = await createTestApp();
+      const token = await loginAndGetAccessToken(testApp, "admin@clinic-a.au");
+
+      const supplierRes = await request(testApp)
+        .post("/api/v1/suppliers")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ supplierName: "Manual Creation Supplier" });
+      expect(supplierRes.status).toBe(201);
+      const supplierId = (supplierRes.body as ApiData<{ id: string }>).data.id;
+
+      const ts = String(Date.now());
+      const createRes = await request(testApp)
+        .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/products`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          sku: `PREF-SUP-${ts}`,
+          name: "Preferred Supplier Test Product",
+          category: "Consumables",
+          stockUnit: "Each",
+          receivingUnit: "Box",
+          unitsPerReceivingUnit: 10,
+          defaultUnitCostCents: 500,
+          barcodeValue: `930${ts.slice(-10)}`,
+          barcodeFormat: "ean13",
+          initialQuantity: 0,
+          reorderPoint: 5,
+          supplierId,
+        });
+
+      expect(createRes.status).toBe(201);
+      const body = createRes.body as ApiData<{
+        clinicItem: { preferredSupplierId: string | null };
+      }>;
+      expect(body.data.clinicItem.preferredSupplierId).toBe(supplierId);
+    });
+  });
 });

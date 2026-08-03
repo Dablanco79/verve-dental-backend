@@ -543,6 +543,71 @@ describe("SupplierInvoiceService", () => {
     expect(createdInventoryItem?.quantityOnHand).toBe(0);
   });
 
+  // ── 16b. OCR preferred supplier — Bug 2 regression ───────────────────────
+  it("OCR product creation assigns the invoice supplier as preferred supplier", async () => {
+    const baseLine = MOCK_OCR_RESULT.lines[0];
+    if (!baseLine) throw new Error("Expected mock OCR line");
+    const ocrResult: OcrInvoiceResult = {
+      ...MOCK_OCR_RESULT,
+      lines: [
+        {
+          ...baseLine,
+          description: "Preferred Supplier Gauge",
+          sku: "PSG-1",
+          quantity: 1,
+          unitPriceCents: 500,
+          subtotalCents: 500,
+          taxRateBasisPoints: 0,
+          taxCents: 0,
+          totalCents: 500,
+        },
+      ],
+    };
+    const { service, catalogRepo, inventoryRepo } = makeService(makeMockOcrProvider(ocrResult));
+    const caller = makeManager();
+    const { invoice, lines } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    const line = lines[0];
+    if (!line) throw new Error("Expected imported line");
+
+    const supplierId = "00000000-0000-0000-0000-000000000010";
+    await service.updateInvoice(caller, CLINIC_A, invoice.id, {
+      supplierId,
+      invoiceNumber: "PREF-SUP-001",
+      invoiceDate: "2026-06-01",
+    });
+
+    await service.updateLine(caller, CLINIC_A, invoice.id, line.id, {
+      productCreationData: {
+        productName: "Preferred Supplier Gauge",
+        category: "Consumables",
+        supplierSku: "PSG-1",
+        stockUnit: "Each",
+        receivingUnit: "Each",
+        unitsPerReceivingUnit: 1,
+        unitCostCents: 500,
+      },
+    });
+
+    const result = await service.confirmImport(caller, CLINIC_A, invoice.id, {
+      readyToCreateLineIds: [line.id],
+    });
+
+    expect(result.createdProducts).toBe(1);
+
+    const createdMasterItem = (await catalogRepo.listMasterItems()).find(
+      (item) => item.name === "Preferred Supplier Gauge",
+    );
+    expect(createdMasterItem).toBeDefined();
+
+    const inventoryItems = await inventoryRepo.listClinicInventory(CLINIC_A);
+    const createdClinicItem = inventoryItems.find(
+      (item) => item.masterCatalogItemId === createdMasterItem?.id,
+    );
+    expect(createdClinicItem).toBeDefined();
+    // Bug 2: preferred supplier must be set automatically from the invoice supplier
+    expect(createdClinicItem?.preferredSupplierId).toBe(supplierId);
+  });
+
   // ── 17. confirmImport — rejects already-confirmed ─────────────────────────
   it("confirmImport rejects an already-confirmed invoice", async () => {
     const { service } = makeService();

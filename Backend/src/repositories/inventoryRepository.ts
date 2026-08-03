@@ -24,6 +24,18 @@ import { PO_VALID_TRANSITIONS } from "../types/inventory.js";
 import type { CatalogRepository } from "./catalogRepository.js";
 import { buildClinicInventorySeed } from "./seed/inventorySeed.js";
 
+/**
+ * Optional relationship metadata that can accompany a `setPreferredProductSupplier` call.
+ * Fields that are `undefined` (i.e. omitted) leave the existing column value unchanged
+ * when updating an existing row; they are written as `null` only for a brand-new INSERT.
+ */
+export type PreferredSupplierMetadata = {
+  supplierSku?: string | null;
+  supplierBarcode?: string | null;
+  unitCostCents?: number | null;
+  packSize?: number | null;
+};
+
 export interface InventoryRepository {
   listClinicInventory(clinicId: string): Promise<ClinicInventoryItemView[]>;
   listClinicInventoryPage(
@@ -156,16 +168,27 @@ export interface InventoryRepository {
   ): Promise<ProductSupplier>;
   /**
    * Designates `supplierId` as the preferred supplier for a clinic product.
-   * Clears isPreferred on all existing active product_suppliers rows for this
-   * (clinicId, masterCatalogItemId) pair, then sets isPreferred=true on the
-   * matching row — creating one if none exists.
-   * Returns the updated (or newly created) preferred ProductSupplier row.
+   *
+   * This operation is atomic: all three steps (clear existing preferred flags,
+   * update-or-insert the chosen relationship, return the result) execute inside
+   * a single transaction.  A failure at any step rolls back so no preference
+   * state changes.
+   *
+   * Optional `metadata` fields are written to the relationship row when
+   * provided; existing values are preserved when fields are omitted.  This lets
+   * OCR import and manual creation supply supplier-specific metadata (SKU,
+   * cost, barcode) through the same code path as a bare preference change.
+   *
+   * Concurrent calls on the same (clinicId, masterCatalogItemId) are serialised
+   * by PostgreSQL row locks acquired during the clearing UPDATE, preventing two
+   * transactions from each believing they are the sole active-preferred row.
    */
   setPreferredProductSupplier(
     clinicId: string,
     masterCatalogItemId: string,
     supplierId: string,
     supplierName: string | null,
+    metadata?: PreferredSupplierMetadata,
   ): Promise<ProductSupplier>;
   /**
    * List all ACTIVE product-supplier relationships for a given (clinic, master
@@ -789,6 +812,7 @@ export function createInMemoryInventoryRepository(
       masterCatalogItemId: string,
       supplierId: string,
       supplierName: string | null,
+      metadata?: PreferredSupplierMetadata,
     ): Promise<ProductSupplier> {
       const now = new Date();
 
@@ -822,6 +846,12 @@ export function createInMemoryInventoryRepository(
           isPreferred: true,
           active: true,
           supplierName: supplierName ?? existing.supplierName,
+          ...(metadata?.supplierSku !== undefined && { supplierSku: metadata.supplierSku }),
+          ...(metadata?.supplierBarcode !== undefined && {
+            supplierBarcode: metadata.supplierBarcode,
+          }),
+          ...(metadata?.unitCostCents !== undefined && { unitCostCents: metadata.unitCostCents }),
+          ...(metadata?.packSize !== undefined && { packSize: metadata.packSize }),
           updatedAt: now,
         };
         productSuppliers[existingIndex] = updated;
@@ -835,10 +865,10 @@ export function createInMemoryInventoryRepository(
         productId: masterCatalogItemId,
         supplierId,
         supplierName,
-        supplierSku: null,
-        supplierBarcode: null,
-        unitCostCents: null,
-        packSize: null,
+        supplierSku: metadata?.supplierSku ?? null,
+        supplierBarcode: metadata?.supplierBarcode ?? null,
+        unitCostCents: metadata?.unitCostCents ?? null,
+        packSize: metadata?.packSize ?? null,
         isPreferred: true,
         active: true,
         createdAt: now,

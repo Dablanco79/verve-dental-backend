@@ -45,6 +45,7 @@ import { PO_VALID_TRANSITIONS } from "../types/inventory.js";
 import { AppError } from "../types/errors.js";
 import type { InventoryRepository } from "./inventoryRepository.js";
 import { derivePurchasingDraftStatus } from "./inventoryRepository.js";
+import type { PreferredSupplierMetadata } from "./inventoryRepository.js";
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
@@ -941,36 +942,92 @@ export function createPostgresInventoryRepository(pool: DatabasePool): Inventory
       clinicId: string,
       masterCatalogItemId: string,
       supplierId: string,
-      supplierName: string | null,
+      _supplierName: string | null,
+      metadata?: PreferredSupplierMetadata,
     ): Promise<ProductSupplier> {
-      // Clear preferred flag on all active rows for this clinic+product
-      await pool.query(
-        `UPDATE product_suppliers
-         SET is_preferred = false, updated_at = now()
-         WHERE clinic_id = $1 AND product_id = $2 AND active = true`,
-        [clinicId, masterCatalogItemId],
-      );
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
 
-      // Upsert: update existing row if present, otherwise insert
-      const { rows } = await pool.query<ProductSupplierRow>(
-        `INSERT INTO product_suppliers
-           (clinic_id, product_id, supplier_id, supplier_sku, supplier_barcode,
-            unit_cost_cents, pack_size, is_preferred, active)
-         VALUES ($1, $2, $3, NULL, NULL, NULL, NULL, true, true)
-         ON CONFLICT (clinic_id, product_id, supplier_id)
-         DO UPDATE SET
-           is_preferred = true,
-           active       = true,
-           updated_at   = now()
-         RETURNING
-           product_suppliers.*,
-           $4::text AS supplier_name`,
-        [clinicId, masterCatalogItemId, supplierId, supplierName],
-      );
+        // Lock + clear the preferred flag on every active row for this (clinic, product).
+        // The row locks prevent two concurrent transactions from both believing they
+        // are the sole active-preferred row, ensuring compatibility with the partial
+        // unique index: idx_product_suppliers_active_preferred (clinic_id, product_id)
+        // WHERE active = true AND is_preferred = true.
+        await client.query(
+          `UPDATE product_suppliers
+           SET is_preferred = false, updated_at = now()
+           WHERE clinic_id = $1 AND product_id = $2 AND active = true`,
+          [clinicId, masterCatalogItemId],
+        );
 
-      const row = rows[0];
-      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to set preferred supplier");
-      return rowToProductSupplier(row);
+        // Build SET clause — include only the metadata fields that were explicitly supplied
+        // so that an edit-only call (no metadata) never overwrites existing SKU / cost data.
+        const setClauses = ["is_preferred = true", "active = true", "updated_at = now()"];
+        const params: unknown[] = [clinicId, masterCatalogItemId, supplierId];
+        if (metadata?.supplierSku !== undefined) {
+          params.push(metadata.supplierSku);
+          setClauses.push(`supplier_sku = $${String(params.length)}`);
+        }
+        if (metadata?.supplierBarcode !== undefined) {
+          params.push(metadata.supplierBarcode);
+          setClauses.push(`supplier_barcode = $${String(params.length)}`);
+        }
+        if (metadata?.unitCostCents !== undefined) {
+          params.push(metadata.unitCostCents);
+          setClauses.push(`unit_cost_cents = $${String(params.length)}`);
+        }
+        if (metadata?.packSize !== undefined) {
+          params.push(metadata.packSize);
+          setClauses.push(`pack_size = $${String(params.length)}`);
+        }
+
+        const SUPPLIER_NAME_SUB = `(SELECT supplier_name FROM suppliers WHERE suppliers.id = product_suppliers.supplier_id)`;
+
+        // Attempt to update an existing relationship row for this supplier
+        const updateResult = await client.query<ProductSupplierRow>(
+          `UPDATE product_suppliers
+           SET ${setClauses.join(", ")}
+           WHERE clinic_id = $1 AND product_id = $2 AND supplier_id = $3
+           RETURNING product_suppliers.*, ${SUPPLIER_NAME_SUB} AS supplier_name`,
+          params,
+        );
+
+        let row: ProductSupplierRow | undefined = updateResult.rows[0];
+
+        if (!row) {
+          // No existing row — insert a brand-new preferred relationship
+          const insertResult = await client.query<ProductSupplierRow>(
+            `INSERT INTO product_suppliers
+               (clinic_id, product_id, supplier_id, supplier_sku, supplier_barcode,
+                unit_cost_cents, pack_size, is_preferred, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, true, true)
+             RETURNING product_suppliers.*, ${SUPPLIER_NAME_SUB} AS supplier_name`,
+            [
+              clinicId,
+              masterCatalogItemId,
+              supplierId,
+              metadata?.supplierSku ?? null,
+              metadata?.supplierBarcode ?? null,
+              metadata?.unitCostCents ?? null,
+              metadata?.packSize ?? null,
+            ],
+          );
+          row = insertResult.rows[0];
+        }
+
+        if (!row) {
+          throw new AppError(500, "INTERNAL_ERROR", "Failed to set preferred supplier");
+        }
+
+        await client.query("COMMIT");
+        return rowToProductSupplier(row);
+      } catch (err) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
     },
 
     async findActiveProductSuppliers(

@@ -625,12 +625,17 @@ describe("createSupplierContractPriceService", () => {
     // Expire the existing nitrile gloves contract price first
     await service.expire(makeOwnerAdmin(), SEED_CONTRACT_PRICE_GLOVES_ID);
 
+    // Use tomorrow as effectiveFrom so it is always strictly after the expiry date
+    // (expire() sets effectiveTo = today, so tomorrow guarantees no overlap).
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
     // Now create a new price with a future date range — should succeed
     const created = await service.create(makeOwnerAdmin(), CONTRACT_DD, {
       masterCatalogItemId: CATALOG_NITRILE,
       priceType: "contract",
       unitPriceCents: 1350,
-      effectiveFrom: new Date("2026-08-01"),
+      effectiveFrom: tomorrow,
       effectiveTo: new Date("2026-12-31"),
     });
     expect(created.unitPriceCents).toBe(1350);

@@ -139,18 +139,16 @@ export function createProductService(
         supplierPreference: null,
       });
 
-      await inventoryRepository.createProductSupplier({
-        clinicId: input.clinicId,
-        productId: masterItem.id,
-        supplierId: supplier.id,
-        supplierName: supplier.supplierName,
-        supplierSku: null,
-        supplierBarcode: barcodeValue,
-        unitCostCents: input.defaultUnitCostCents,
-        packSize: null,
-        isPreferred: true,
-        active: true,
-      });
+      await inventoryRepository.setPreferredProductSupplier(
+        input.clinicId,
+        masterItem.id,
+        supplier.id,
+        supplier.supplierName,
+        {
+          supplierBarcode: barcodeValue,
+          unitCostCents: input.defaultUnitCostCents,
+        },
+      );
 
       let clinicItem = await inventoryRepository.findClinicInventoryItem(
         input.clinicId,
