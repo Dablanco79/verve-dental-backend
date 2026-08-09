@@ -22,6 +22,7 @@ function formatCurrency(cents: number): string {
 type FieldErrors = Partial<{
   reorderPoint: string;
   supplierId: string;
+  unitCostOverride: string;
 }>;
 
 export function ClinicProductEditPage() {
@@ -38,6 +39,7 @@ export function ClinicProductEditPage() {
 
   const [reorderPoint, setReorderPoint] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [unitCostOverride, setUnitCostOverride] = useState("");
 
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [apiError, setApiError] = useState<string | null>(null);
@@ -77,6 +79,11 @@ export function ClinicProductEditPage() {
         setSuppliers(supplierList);
         setReorderPoint(String(item.reorderPoint));
         setSupplierId(item.preferredSupplierId ?? "");
+        setUnitCostOverride(
+          item.unitCostOverrideCents !== null
+            ? String(item.unitCostOverrideCents / 100)
+            : "",
+        );
       }
     } catch {
       if (requestId === requestIdRef.current.id) {
@@ -140,6 +147,20 @@ export function ClinicProductEditPage() {
       errors.reorderPoint = "Reorder point must be a non-negative whole number.";
     }
 
+    // Unit cost override: optional; if provided must be a valid positive dollar amount.
+    let unitCostOverrideCents: number | null | undefined;
+    if (unitCostOverride.trim() === "") {
+      // Empty = clear the override (use master product default cost)
+      unitCostOverrideCents = null;
+    } else {
+      const parsed = parseFloat(unitCostOverride.replace(/[$,]/g, ""));
+      if (isNaN(parsed) || parsed < 0) {
+        errors.unitCostOverride = "Unit cost override must be a positive dollar amount, or leave blank to use the default.";
+      } else {
+        unitCostOverrideCents = Math.round(parsed * 100);
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       return;
@@ -149,8 +170,9 @@ export function ClinicProductEditPage() {
     setIsSubmitting(true);
 
     try {
-      const patch: { reorderPoint?: number; supplierId?: string | null } = {};
+      const patch: { reorderPoint?: number; supplierId?: string | null; unitCostOverrideCents?: number | null } = {};
       patch.reorderPoint = parsedReorderPoint;
+      patch.unitCostOverrideCents = unitCostOverrideCents;
       if (supplierId) {
         patch.supplierId = supplierId;
       } else if (!supplierId && product.preferredSupplierId) {
@@ -161,6 +183,11 @@ export function ClinicProductEditPage() {
       setProduct(result.clinicItem);
       setReorderPoint(String(result.clinicItem.reorderPoint));
       setSupplierId(result.clinicItem.preferredSupplierId ?? "");
+      setUnitCostOverride(
+        result.clinicItem.unitCostOverrideCents !== null
+          ? String(result.clinicItem.unitCostOverrideCents / 100)
+          : "",
+      );
       setSaveSuccess(true);
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : "Failed to save changes");
@@ -262,6 +289,33 @@ export function ClinicProductEditPage() {
                 {fieldErrors.reorderPoint ? (
                   <p className="product-form__field-error" role="alert">
                     {fieldErrors.reorderPoint}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="product-form__field">
+                <label>
+                  Unit cost override
+                  <div className="product-form__currency-input">
+                    <span className="product-form__currency-symbol">$</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={unitCostOverride}
+                      onChange={(event) => { setUnitCostOverride(event.target.value); }}
+                      placeholder={(product.unitCostCents / 100).toFixed(2)}
+                      aria-invalid={fieldErrors.unitCostOverride ? true : undefined}
+                    />
+                  </div>
+                </label>
+                <p className="product-form__hint">
+                  Overrides the default unit cost for this clinic only. Leave blank to use the master
+                  product default ({formatCurrency(product.unitCostCents)}).
+                </p>
+                {fieldErrors.unitCostOverride ? (
+                  <p className="product-form__field-error" role="alert">
+                    {fieldErrors.unitCostOverride}
                   </p>
                 ) : null}
               </div>

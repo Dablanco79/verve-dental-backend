@@ -124,9 +124,9 @@ export function createInMemoryCatalogRepository(): CatalogRepository {
       }
 
       if (options.category) {
-        const normalizedCategory = normaliseMasterProductText(options.category);
+        const term = options.category.trim().toLowerCase();
         filtered = filtered.filter(
-          (item) => normaliseMasterProductText(item.category) === normalizedCategory,
+          (item) => normaliseMasterProductText(item.category).includes(term),
         );
       }
 

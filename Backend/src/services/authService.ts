@@ -188,12 +188,17 @@ export function createAuthService(
     return jwt.sign(payload, config.JWT_ACCESS_SECRET, signOptions);
   }
 
-  async function signRefreshToken(userId: string): Promise<string> {
+  async function signRefreshToken(userId: string, sessionStartAt?: number): Promise<string> {
     const jti = randomUUID();
+    const now = Math.floor(Date.now() / 1000);
     const payload: RefreshTokenPayload = {
       sub: userId,
       jti,
       type: "refresh",
+      // On the first issuance (login) we set sessionStartAt to now.
+      // On every rotation we carry forward the original value so the absolute
+      // session cap is measured from the original login, not from each refresh.
+      sessionStartAt: sessionStartAt ?? now,
     };
 
     const signOptions: SignOptions = {
@@ -213,7 +218,7 @@ export function createAuthService(
     return token;
   }
 
-  async function issueTokens(user: UserRecord): Promise<AuthTokens> {
+  async function issueTokens(user: UserRecord, sessionStartAt?: number): Promise<AuthTokens> {
     // Build effective permissions: role defaults ∪ active explicit grants.
     const roleDefaults: string[] = DEFAULT_PERMISSIONS[user.role];
     const explicitGrants: string[] = permissionRepository
@@ -222,7 +227,7 @@ export function createAuthService(
     const permissions = Array.from(new Set([...roleDefaults, ...explicitGrants]));
 
     const accessToken = signAccessToken(user, permissions);
-    const refreshToken = await signRefreshToken(user.id);
+    const refreshToken = await signRefreshToken(user.id, sessionStartAt);
     const decoded = jwt.decode(accessToken) as { exp?: number; iat?: number } | null;
     const expiresIn =
       decoded?.exp && decoded.iat ? decoded.exp - decoded.iat : 900;
@@ -476,6 +481,26 @@ export function createAuthService(
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
       }
 
+      // Enforce absolute session max-age.  Each rotation carries forward the
+      // original sessionStartAt so this check is always relative to login time.
+      const sessionStartAt =
+        typeof refreshPayload.sessionStartAt === "number"
+          ? refreshPayload.sessionStartAt
+          : // Legacy tokens that pre-date this field get one final rotation.
+            // On the next refresh the new token will carry sessionStartAt and
+            // the hard cap will apply from that point forward.
+            Math.floor(Date.now() / 1000) - config.SESSION_MAX_AGE_SECONDS + 60;
+
+      const sessionAgeSeconds = Math.floor(Date.now() / 1000) - sessionStartAt;
+      if (sessionAgeSeconds > config.SESSION_MAX_AGE_SECONDS) {
+        await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+        audit.logAuthEvent("auth.refresh.session_expired", {
+          userId: refreshPayload.sub,
+          ...auditContext,
+        });
+        throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
+      }
+
       // Enforce MFA enrollment on refresh: a privileged user who somehow holds
       // a refresh token (e.g. token pre-dates enforcement) cannot silently
       // bypass the requirement by skipping the login gate.
@@ -492,7 +517,8 @@ export function createAuthService(
       }
 
       await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
-      const tokens = await issueTokens(user);
+      // Pass through the original session start so the absolute cap is preserved.
+      const tokens = await issueTokens(user, sessionStartAt);
 
       audit.logAuthEvent("auth.refresh.success", {
         userId: user.id,

@@ -758,6 +758,7 @@ describe("createPurchaseOrderWithLines", () => {
     const { service } = makeService();
     await expect(
       service.createPurchaseOrderWithLines(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        supplierId: "supplier-1",
         lines: [
           {
             masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
@@ -774,6 +775,7 @@ describe("createPurchaseOrderWithLines", () => {
     await service.createPurchaseOrderWithLines(
       CLINIC_A, ACTOR_ID, ACTOR_EMAIL,
       {
+        supplierId: "supplier-audit",
         lines: [
           {
             masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
@@ -787,6 +789,22 @@ describe("createPurchaseOrderWithLines", () => {
     const lineEv = auditService.getEvents().find((e) => e.event === "purchase_order.line_added");
     expect(createdEv).toBeDefined();
     expect(lineEv).toBeDefined();
+  });
+
+  it("rejects when no supplierId is provided", async () => {
+    const { service } = makeService();
+    await expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      service.createPurchaseOrderWithLines(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        lines: [
+          {
+            masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
+            clinicInventoryItemId: CLINIC_INVENTORY_ITEM_ID,
+            quantity: 3,
+          },
+        ],
+      } as any),
+    ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
   });
 });
 

@@ -82,6 +82,10 @@ export type RefreshTokenPayload = {
   sub: string;
   jti: string;
   type: "refresh";
+  /** Unix timestamp (seconds) of the original login that initiated this session.
+   *  Carried forward unchanged through every refresh rotation so the backend
+   *  can enforce an absolute session max-age (SESSION_MAX_AGE_SECONDS). */
+  sessionStartAt: number;
 };
 
 export type MfaChallengePayload = {

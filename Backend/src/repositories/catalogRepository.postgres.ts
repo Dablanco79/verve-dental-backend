@@ -115,8 +115,8 @@ export function createPostgresCatalogRepository(pool: DatabasePool): CatalogRepo
       }
 
       if (options.category) {
-        params.push(options.category.trim());
-        conditions.push(`LOWER(category) = LOWER($${String(params.length)})`);
+        params.push(`%${options.category.trim().toLowerCase()}%`);
+        conditions.push(`LOWER(category) LIKE $${String(params.length)}`);
       }
 
       if (options.search) {

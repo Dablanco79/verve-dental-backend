@@ -256,6 +256,7 @@ describe("createOcrProvider", () => {
       JWT_REFRESH_SECRET: "test-refresh-secret-minimum-32-characters-long",
       JWT_ACCESS_EXPIRES_IN: "15m",
       JWT_REFRESH_EXPIRES_IN: "7d",
+      SESSION_MAX_AGE_SECONDS: 43200,
       DATABASE_SSL: "auto",
       REDIS_TLS: "auto",
       MFA_ENCRYPTION_KEY: "0".repeat(64),

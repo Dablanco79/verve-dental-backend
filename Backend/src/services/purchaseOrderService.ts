@@ -763,7 +763,7 @@ export function createPurchaseOrderService(
       userId: string,
       actorEmail: string,
       input: {
-        supplierId?: string | null;
+        supplierId: string;
         notes?: string | null;
         poReference?: string | null;
         lines: Array<{
@@ -779,6 +779,9 @@ export function createPurchaseOrderService(
       if (input.lines.length === 0) {
         throw new AppError(400, "VALIDATION_ERROR", "At least one line is required");
       }
+      if (!input.supplierId) {
+        throw new AppError(400, "PO_NO_SUPPLIER", "A supplier must be specified for a purchase order");
+      }
       for (const l of input.lines) {
         if (!Number.isInteger(l.quantity) || l.quantity <= 0) {
           throw new AppError(400, "VALIDATION_ERROR", "All line quantities must be positive whole numbers");
@@ -793,7 +796,7 @@ export function createPurchaseOrderService(
       const po = await inventoryRepository.createManualPurchaseOrder({
         clinicId,
         createdByUserId: userId,
-        supplierId: input.supplierId ?? null,
+        supplierId: input.supplierId,
         notes: input.notes ?? null,
         poReference: input.poReference ?? null,
       });

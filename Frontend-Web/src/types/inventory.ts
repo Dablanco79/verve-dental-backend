@@ -224,7 +224,7 @@ export type CreatePurchaseOrderRequest = {
 };
 
 export type CreatePurchaseOrderWithLinesRequest = {
-  supplierId?: string | null;
+  supplierId: string;
   notes?: string | null;
   poReference?: string | null;
   lines: Array<{

@@ -354,7 +354,7 @@ function PoCard({ po, submittingPoId, onSubmit, onCancelRequest }: PoCardProps) 
               View lines
             </Link>
             <Link
-              to={`/inventory?mode=receive&poId=${encodeURIComponent(po.poId)}`}
+              to={`/inventory/receiving?poId=${encodeURIComponent(po.poId)}`}
               className="button-link"
               aria-label={`Receive stock for ${po.poReference ?? po.poId}`}
             >
@@ -411,6 +411,7 @@ export function PurchaseOrdersPage() {
 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [cancelConfirmPoId, setCancelConfirmPoId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const loadData = useCallback(async () => {
     if (!user || !canManageUsers(user.role)) return;
@@ -517,16 +518,41 @@ export function PurchaseOrdersPage() {
   }, [lines, pdByPoId, supplierMap]);
 
   const visiblePoSummaries = useMemo(() => {
-    if (!focusedItemId) return allPoSummaries;
-    return allPoSummaries.filter((po) => po.masterCatalogItemIds.includes(focusedItemId));
-  }, [allPoSummaries, focusedItemId]);
+    let result = allPoSummaries;
+    if (focusedItemId) {
+      result = result.filter((po) => po.masterCatalogItemIds.includes(focusedItemId));
+    }
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      result = result.filter((po) =>
+        (po.poReference?.toLowerCase().includes(term) ?? false) ||
+        (po.supplierName?.toLowerCase().includes(term) ?? false) ||
+        (po.parentPd?.draftReference.toLowerCase().includes(term) ?? false) ||
+        po.poId.toLowerCase().startsWith(term),
+      );
+    }
+    return result;
+  }, [allPoSummaries, focusedItemId, searchTerm]);
+
+  const visibleDrafts = useMemo(() => {
+    if (!searchTerm.trim()) return purchasingDrafts;
+    const term = searchTerm.trim().toLowerCase();
+    return purchasingDrafts.filter((pd) =>
+      pd.draftReference.toLowerCase().includes(term) ||
+      pd.childPos.some(
+        (po) =>
+          (po.poReference?.toLowerCase().includes(term) ?? false) ||
+          po.id.toLowerCase().startsWith(term),
+      ),
+    );
+  }, [purchasingDrafts, searchTerm]);
 
   const focusedFirstLine = focusedItemId
     ? lines.find((l) => l.masterCatalogItemId === focusedItemId)
     : undefined;
 
   const submittedReceiveHref = recentlySubmittedPoId
-    ? `/inventory?mode=receive&poId=${encodeURIComponent(recentlySubmittedPoId)}`
+    ? `/inventory/receiving?poId=${encodeURIComponent(recentlySubmittedPoId)}`
     : null;
 
   const cancellingPoRef = cancelConfirmPoId
@@ -689,6 +715,21 @@ export function PurchaseOrdersPage() {
           </div>
         ) : null}
 
+        {/* PD/PO cross-reference search */}
+        {!focusedItemId && (allPoSummaries.length > 0 || purchasingDrafts.length > 0) && (
+          <label className="supplier-search-bar__field" style={{ display: "block", marginBottom: "1rem" }}>
+            <span className="supplier-search-bar__label">Search</span>
+            <input
+              type="text"
+              className="supplier-search-bar__control"
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); }}
+              placeholder="PD reference, PO reference, or supplier name…"
+              aria-label="Search purchase orders and purchasing drafts"
+            />
+          </label>
+        )}
+
         {focusedItemId ? (
           <div className="po-workflow-callout">
             <div>
@@ -712,7 +753,10 @@ export function PurchaseOrdersPage() {
             <p className="inventory-page__subtitle">
               A Purchasing Draft represents one purchasing exercise. Each draft contains one supplier PO per supplier.
             </p>
-            {purchasingDrafts.map((pd) => (
+            {visibleDrafts.length === 0 && searchTerm.trim() && (
+              <p className="inventory-page__subtitle">No purchasing drafts match &ldquo;{searchTerm}&rdquo;.</p>
+            )}
+            {visibleDrafts.map((pd) => (
               <div key={pd.id} className="pd-list__item">
                 <div className="pd-list__item-info">
                   <Link to={`/purchasing-drafts/${encodeURIComponent(pd.id)}`} className="inventory-table__name">
@@ -796,12 +840,16 @@ export function PurchaseOrdersPage() {
               </ol>
             </div>
 
-            {/* ── Supplier Purchase Orders (document-oriented) ── */}
+              {/* ── Supplier Purchase Orders (document-oriented) ── */}
             <div className="pd-list">
               <h3>Supplier purchase orders</h3>
               <p className="inventory-page__subtitle">
                 Each row is one Purchase Order document. Product lines are inside the order detail.
               </p>
+
+              {visiblePoSummaries.length === 0 && searchTerm.trim() && (
+                <p className="inventory-page__subtitle">No purchase orders match &ldquo;{searchTerm}&rdquo;.</p>
+              )}
 
               {draftPoSummaries.length > 0 && (
                 <>

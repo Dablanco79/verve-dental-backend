@@ -265,7 +265,7 @@ describe("PurchaseOrderDetailPage", () => {
     });
     renderDetailPage();
     const link = await screen.findByRole("link", { name: /Receive stock/i });
-    expect(link).toHaveAttribute("href", "/inventory?mode=receive&poId=po-detail-1");
+    expect(link).toHaveAttribute("href", "/inventory/receiving?poId=po-detail-1");
   });
 
   it("shows fully received message for received PO", async () => {

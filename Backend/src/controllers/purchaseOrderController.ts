@@ -74,7 +74,7 @@ const poLineInputSchema = z.object({
 });
 
 const createPoWithLinesBodySchema = z.object({
-  supplierId: z.string().uuid().nullable().optional(),
+  supplierId: z.string().uuid("supplierId must be a valid UUID"),
   notes: z.string().max(2000).nullable().optional(),
   poReference: z.string().max(128).nullable().optional(),
   lines: z.array(poLineInputSchema).min(1),

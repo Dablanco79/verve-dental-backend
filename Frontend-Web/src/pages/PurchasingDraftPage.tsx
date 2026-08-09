@@ -305,7 +305,7 @@ export function PurchasingDraftPage() {
                         {(po.status === "submitted" || po.status === "partially_received") && (
                           <>
                             <Link
-                              to={`/inventory?mode=receive&poId=${encodeURIComponent(po.id)}`}
+                              to={`/inventory/receiving?poId=${encodeURIComponent(po.id)}`}
                               className="button-link"
                             >
                               Receive stock

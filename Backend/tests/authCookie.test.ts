@@ -367,6 +367,7 @@ describe("Cookie SameSite — production vs. non-production (P1 regression)", ()
     return {
       NODE_ENV: nodeEnv,
       JWT_REFRESH_EXPIRES_IN: "7d",
+      SESSION_MAX_AGE_SECONDS: 43200,
     } as unknown as EnvConfig;
   }
 

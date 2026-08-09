@@ -214,7 +214,7 @@ describe("PurchaseOrdersPage", () => {
     });
     expect(receiveLink).toHaveAttribute(
       "href",
-      `/inventory?mode=receive&poId=po-123`,
+      `/inventory/receiving?poId=po-123`,
     );
   });
 
@@ -284,7 +284,7 @@ describe("PurchaseOrdersPage", () => {
     expect(await screen.findByText(/Purchase order submitted/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Receive stock now" })).toHaveAttribute(
       "href",
-      "/inventory?mode=receive&poId=po-draft-1",
+      "/inventory/receiving?poId=po-draft-1",
     );
   });
 
@@ -481,6 +481,270 @@ describe("PurchaseOrdersPage", () => {
   });
 
   // ── Product lines belong in the detail view, not the list ─────────────────
+
+  // ── PD / PO Search Regression ────────────────────────────────────────────
+
+  describe("search", () => {
+    const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
+
+    // PD-TEST-001: two child POs — one per supplier
+    const pdTest001: PurchasingDraft = {
+      id: "pd-test-001",
+      clinicId: CLINIC_ID,
+      draftReference: "PD-TEST-001",
+      derivedStatus: "draft",
+      childPos: [
+        {
+          id: "po-test-001-01",
+          clinicId: CLINIC_ID,
+          status: "submitted",
+          supplierId: "sup-dentavision",
+          notes: null,
+          poReference: "PO-TEST-001-01",
+          purchasingDraftId: "pd-test-001",
+          createdByUserId: "user-1",
+          createdAt: "2026-06-25T00:00:00.000Z",
+          updatedAt: "2026-06-25T00:00:00.000Z",
+        },
+        {
+          id: "po-test-001-02",
+          clinicId: CLINIC_ID,
+          status: "submitted",
+          supplierId: "sup-adam",
+          notes: null,
+          poReference: "PO-TEST-001-02",
+          purchasingDraftId: "pd-test-001",
+          createdByUserId: "user-1",
+          createdAt: "2026-06-25T00:00:00.000Z",
+          updatedAt: "2026-06-25T00:00:00.000Z",
+        },
+      ],
+      totalItems: 2,
+      supplierCount: 2,
+      createdByUserId: "user-1",
+      createdAt: "2026-06-25T00:00:00.000Z",
+      updatedAt: "2026-06-25T00:00:00.000Z",
+    };
+
+    // PD-TEST-002: one child PO — unrelated supplier
+    const pdTest002: PurchasingDraft = {
+      id: "pd-test-002",
+      clinicId: CLINIC_ID,
+      draftReference: "PD-TEST-002",
+      derivedStatus: "draft",
+      childPos: [
+        {
+          id: "po-test-002-01",
+          clinicId: CLINIC_ID,
+          status: "submitted",
+          supplierId: "sup-other",
+          notes: null,
+          poReference: "PO-TEST-002-01",
+          purchasingDraftId: "pd-test-002",
+          createdByUserId: "user-1",
+          createdAt: "2026-06-25T00:00:00.000Z",
+          updatedAt: "2026-06-25T00:00:00.000Z",
+        },
+      ],
+      totalItems: 1,
+      supplierCount: 1,
+      createdByUserId: "user-1",
+      createdAt: "2026-06-25T00:00:00.000Z",
+      updatedAt: "2026-06-25T00:00:00.000Z",
+    };
+
+    const lineDentavision: PurchaseOrderLine = {
+      ...submittedLine,
+      id: "line-t-001-01",
+      draftPurchaseOrderId: "po-test-001-01",
+      masterCatalogItemId: "master-t1",
+      poReference: "PO-TEST-001-01",
+      poSupplierId: "sup-dentavision",
+      orderStatus: "submitted",
+      supplierPricing: [
+        { supplierProductId: "sp-den", supplierId: "sup-dentavision", supplierName: "Dentavision", supplierCode: "DEN", unitCostCents: 5000, supplierSku: "DEN-001" },
+      ],
+      estimatedUnitCostCents: 5000,
+      estimatedLineCostCents: 5000,
+    };
+
+    const lineAdamDental: PurchaseOrderLine = {
+      ...submittedLine,
+      id: "line-t-001-02",
+      draftPurchaseOrderId: "po-test-001-02",
+      masterCatalogItemId: "master-t2",
+      poReference: "PO-TEST-001-02",
+      poSupplierId: "sup-adam",
+      orderStatus: "submitted",
+      supplierPricing: [
+        { supplierProductId: "sp-adm", supplierId: "sup-adam", supplierName: "Adam Dental", supplierCode: "ADM", unitCostCents: 3000, supplierSku: "ADM-002" },
+      ],
+      estimatedUnitCostCents: 3000,
+      estimatedLineCostCents: 3000,
+    };
+
+    const lineOther: PurchaseOrderLine = {
+      ...submittedLine,
+      id: "line-t-002-01",
+      draftPurchaseOrderId: "po-test-002-01",
+      masterCatalogItemId: "master-t3",
+      poReference: "PO-TEST-002-01",
+      poSupplierId: "sup-other",
+      orderStatus: "submitted",
+      supplierPricing: [
+        { supplierProductId: "sp-oth", supplierId: "sup-other", supplierName: "Other Supplier", supplierCode: "OTH", unitCostCents: 2000, supplierSku: "OTH-003" },
+      ],
+      estimatedUnitCostCents: 2000,
+      estimatedLineCostCents: 2000,
+    };
+
+    beforeEach(() => {
+      mockListPurchasingDrafts.mockResolvedValue([pdTest001, pdTest002]);
+      mockListPurchaseOrders.mockResolvedValue([lineDentavision, lineAdamDental, lineOther]);
+      mockListSuppliers.mockResolvedValue([
+        { id: "sup-dentavision", supplierName: "Dentavision", active: true },
+        { id: "sup-adam", supplierName: "Adam Dental", active: true },
+        { id: "sup-other", supplierName: "Other Supplier", active: true },
+      ]);
+    });
+
+    it("TEST 1 — searching by PD reference shows that PD and its child POs; unrelated documents are hidden", async () => {
+      renderPurchaseOrdersPage();
+      // Use a unique individual PO card link as the page-load sentinel
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+      fireEvent.change(searchInput, { target: { value: "PD-TEST-001" } });
+
+      // PD-TEST-001 appears as both the PD card header link and inline parent badges on each child PO card
+      const pdLinks = screen.getAllByRole("link", { name: "PD-TEST-001" });
+      expect(pdLinks.length).toBeGreaterThan(0);
+
+      // The PD card header link's containing card lists both child PO references as text
+      const pdHeaderLink = pdLinks.find((el) => el.classList.contains("inventory-table__name"));
+      const pdCard = pdHeaderLink?.closest(".pd-list__item");
+      expect(pdCard?.textContent).toContain("PO-TEST-001-01");
+      expect(pdCard?.textContent).toContain("PO-TEST-001-02");
+
+      // Both child POs also appear as individual document cards in the PO section
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "PO-TEST-001-02" })).toBeInTheDocument();
+
+      // Unrelated PD and its child PO are not visible
+      expect(screen.queryByRole("link", { name: "PD-TEST-002" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+    });
+
+    it("TEST 2 — searching by child PO reference shows that PO and its parent PD; sibling PO is discoverable through the PD card", async () => {
+      renderPurchaseOrdersPage();
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+      fireEvent.change(searchInput, { target: { value: "PO-TEST-001-01" } });
+
+      // The searched PO is visible as an individual document card
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+
+      // The parent PD appears in the drafts section (header) AND as an inline badge on the PO card
+      const pdLinks = screen.getAllByRole("link", { name: "PD-TEST-001" });
+      expect(pdLinks.length).toBeGreaterThan(0);
+
+      // The sibling PO-TEST-001-02 is listed as text on the PD card — not as a separate card link
+      const pdHeaderLink = pdLinks.find((el) => el.classList.contains("inventory-table__name"));
+      const pdCard = pdHeaderLink?.closest(".pd-list__item");
+      expect(pdCard?.textContent).toContain("PO-TEST-001-02");
+      expect(screen.queryByRole("link", { name: "PO-TEST-001-02" })).not.toBeInTheDocument();
+
+      // Unrelated documents remain hidden
+      expect(screen.queryByRole("link", { name: "PD-TEST-002" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+    });
+
+    it("TEST 3 — searching by supplier name shows matching POs; parent PD context remains discoverable via the PO card", async () => {
+      renderPurchaseOrdersPage();
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+      fireEvent.change(searchInput, { target: { value: "Dentavision" } });
+
+      // The Dentavision PO card is visible
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+
+      // Parent PD context is preserved via an inline link on the PO card
+      // ("Dentavision" is not a PD/PO reference, so the PD card itself is filtered out;
+      //  the link here is the inline parent-PD badge on the matching PO card)
+      expect(screen.getByRole("link", { name: "PD-TEST-001" })).toBeInTheDocument();
+
+      // Unrelated POs and PDs are hidden
+      expect(screen.queryByRole("link", { name: "PO-TEST-001-02" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PD-TEST-002" })).not.toBeInTheDocument();
+    });
+
+    it("TEST 4 — search is case-insensitive for supplier names and document references", async () => {
+      renderPurchaseOrdersPage();
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+
+      // lowercase supplier name
+      fireEvent.change(searchInput, { target: { value: "dentavision" } });
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+
+      // UPPERCASE supplier name
+      fireEvent.change(searchInput, { target: { value: "DENTAVISION" } });
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+
+      // lowercase PD reference — PD card header plus inline badges yield multiple links
+      fireEvent.change(searchInput, { target: { value: "pd-test-001" } });
+      expect(screen.getAllByRole("link", { name: "PD-TEST-001" }).length).toBeGreaterThan(0);
+      expect(screen.queryByRole("link", { name: "PD-TEST-002" })).not.toBeInTheDocument();
+    });
+
+    it("TEST 5 — clearing the search field restores all PDs and POs", async () => {
+      renderPurchaseOrdersPage();
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+
+      // Apply a filter that narrows results to Dentavision only
+      fireEvent.change(searchInput, { target: { value: "Dentavision" } });
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+
+      // Clear the filter
+      fireEvent.change(searchInput, { target: { value: "" } });
+
+      // All individual PO cards are restored
+      expect(screen.getByRole("link", { name: "PO-TEST-001-01" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "PO-TEST-001-02" })).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "PO-TEST-002-01" })).toBeInTheDocument();
+
+      // All PD references are restored (each appears multiple times: header + inline on PO cards)
+      expect(screen.getAllByRole("link", { name: "PD-TEST-001" }).length).toBeGreaterThan(0);
+      expect(screen.getAllByRole("link", { name: "PD-TEST-002" }).length).toBeGreaterThan(0);
+    });
+
+    it("TEST 6 — searching a non-existent reference hides all POs and PDs and shows a no-results state", async () => {
+      renderPurchaseOrdersPage();
+      await screen.findByRole("link", { name: "PO-TEST-001-01" });
+
+      const searchInput = screen.getByRole("textbox", { name: /search purchase orders/i });
+      fireEvent.change(searchInput, { target: { value: "NONEXISTENT-REFERENCE" } });
+
+      // No PO document cards visible
+      expect(screen.queryByRole("link", { name: "PO-TEST-001-01" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-001-02" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PO-TEST-002-01" })).not.toBeInTheDocument();
+      // No PD links visible (neither header cards nor inline parent badges)
+      expect(screen.queryByRole("link", { name: "PD-TEST-001" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "PD-TEST-002" })).not.toBeInTheDocument();
+      // No-results messages are shown for both document sections
+      expect(screen.getByText(/no purchase orders match/i)).toBeInTheDocument();
+      expect(screen.getByText(/no purchasing drafts match/i)).toBeInTheDocument();
+    });
+  });
 
   it("does NOT show product line details (item names, SKUs) in the PO list view", async () => {
     renderPurchaseOrdersPage();

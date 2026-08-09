@@ -311,7 +311,7 @@ export function AddProductPage() {
                   <input
                     value={sku}
                     onChange={(event) => { setSku(event.target.value); }}
-                    placeholder="VRV-ANE-001"
+                    placeholder="e.g. DEN-GLOVES-L (or leave to auto-generate)"
                     aria-invalid={fieldErrors.sku ? true : undefined}
                     required
                   />
@@ -489,7 +489,7 @@ export function AddProductPage() {
                   <input
                     value={barcodeValue}
                     onChange={(event) => { setBarcodeValue(event.target.value); }}
-                    placeholder="9301234567899"
+                    placeholder="Scan barcode or enter supplier barcode"
                     aria-invalid={fieldErrors.barcodeValue ? true : undefined}
                     required
                   />

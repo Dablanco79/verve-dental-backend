@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -15,6 +16,20 @@ import type { AuthContextValue } from "./AuthContext.js";
 
 const apiClient = createApiClient(loadConfig());
 const SESSION_EXPIRED_EVENT = "verve:session-expired";
+
+/**
+ * Idle timeout in milliseconds.  After this period of no user interaction the
+ * session is explicitly invalidated and the user is redirected to the login
+ * screen.  Defaults to 60 minutes.  Can be overridden by setting
+ * VITE_IDLE_TIMEOUT_MINUTES at build time.
+ */
+const IDLE_TIMEOUT_MS = (() => {
+  const raw: unknown = import.meta.env.VITE_IDLE_TIMEOUT_MINUTES;
+  const parsed = typeof raw === "string" ? parseFloat(raw) : NaN;
+  return (isNaN(parsed) || parsed <= 0 ? 60 : parsed) * 60 * 1000;
+})();
+
+const IDLE_ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"] as const;
 
 function persistSession(
   accessToken: string,
@@ -30,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   // Stored in React state (memory only) — never persisted to localStorage.
   const [enrollmentToken, setEnrollmentToken] = useState<string | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +148,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [enrollmentToken]);
 
   const logout = useCallback(async () => {
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
     try {
       await apiClient.logout();
     } finally {
@@ -140,6 +160,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setEnrollmentToken(null);
     }
   }, []);
+
+  // ── Idle timeout ──────────────────────────────────────────────────────────
+  // Only active while a user is logged in.  Each user-interaction event resets
+  // the timer.  When the timer fires the session is explicitly invalidated so
+  // the HttpOnly refresh cookie cannot silently restore it on next page load.
+  useEffect(() => {
+    if (!user) return;
+
+    function resetTimer(): void {
+      if (idleTimerRef.current !== null) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(() => {
+        void logout();
+        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+      }, IDLE_TIMEOUT_MS);
+    }
+
+    resetTimer();
+
+    for (const event of IDLE_ACTIVITY_EVENTS) {
+      window.addEventListener(event, resetTimer, { passive: true });
+    }
+
+    return () => {
+      if (idleTimerRef.current !== null) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      for (const event of IDLE_ACTIVITY_EVENTS) {
+        window.removeEventListener(event, resetTimer);
+      }
+    };
+  }, [user, logout]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

@@ -20,6 +20,14 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
+  /**
+   * Hard absolute cap on how long a single login session may live, regardless
+   * of ongoing refresh activity.  Expressed in seconds.  A user who has been
+   * continuously active for longer than this is required to log in again.
+   *
+   * Default: 43200 s = 12 hours.  Override with SESSION_MAX_AGE_SECONDS=<n>.
+   */
+  SESSION_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(43200),
   DATABASE_URL: z.string().url().optional(),
   // auto: enable SSL for remote hosts / sslmode=require URLs; true/false to force.
   DATABASE_SSL: z.enum(["auto", "true", "false"]).default("auto"),
