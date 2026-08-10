@@ -794,8 +794,8 @@ describe("createPurchaseOrderWithLines", () => {
   it("rejects when no supplierId is provided", async () => {
     const { service } = makeService();
     await expect(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       service.createPurchaseOrderWithLines(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+        supplierId: "",
         lines: [
           {
             masterCatalogItemId: MASTER_CATALOG_ITEM_ID,
@@ -803,7 +803,7 @@ describe("createPurchaseOrderWithLines", () => {
             quantity: 3,
           },
         ],
-      } as any),
+      }),
     ).rejects.toMatchObject({ statusCode: 400, code: "PO_NO_SUPPLIER" });
   });
 });
