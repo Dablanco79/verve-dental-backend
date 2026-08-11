@@ -82,11 +82,41 @@ async function enrichLines(
 
 // ─── Cost estimation ──────────────────────────────────────────────────────────
 
+/**
+ * Pricing hierarchy for PO line display:
+ *
+ * PRIORITY 1 — Stored snapshot (line.unitCostCents)
+ *   When a Purchasing Draft is created from the Low Stock queue, the frontend
+ *   passes the clinic's configured unit cost (per stock unit) as unitCostCents.
+ *   This value is persisted on the draft_po_lines row and represents the best
+ *   known price at creation time.  It is the authoritative price for that line
+ *   and must not be overwritten by later catalogue changes (snapshot semantics).
+ *
+ *   Formula:
+ *     estimatedUnitCostCents (per receiving unit) = unitCostCents × convFactor
+ *     estimatedLineCostCents                      = estimatedUnitCostCents × quantity
+ *
+ *   Example: stock-unit cost $8, 10 boxes/carton, 3 cartons ordered
+ *     estimatedUnitCostCents = 800 × 10 = 8000  ($80/carton)
+ *     estimatedLineCostCents = 8000 × 3 = 24000 ($240 total)
+ *
+ * PRIORITY 2 — Supplier catalogue fallback
+ *   Used only when no stored snapshot exists (e.g. manually-created PO lines
+ *   that were added without a cost context).  Only applied when exactly one
+ *   supplier has pricing — ambiguous multi-supplier pricing is not guessed.
+ *
+ * PRIORITY 3 — null (no pricing available)
+ *   Displayed as "Price unavailable" in the UI.
+ */
 async function enrichWithCostEstimation(
   line: {
     id: string;
     masterCatalogItemId: string;
     quantity: number;
+    /** Stored snapshot cost per stock unit — captured at PD/PO line creation. */
+    unitCostCents?: number | null;
+    /** Units per receiving unit from the master catalog — used for unit conversion. */
+    unitsPerReceivingUnit?: number | null;
     [key: string]: unknown;
   },
   supplierCatalogueRepo: SupplierCatalogueRepository,
@@ -96,19 +126,17 @@ async function enrichWithCostEstimation(
   estimatedUnitCostCents: number | null;
   estimatedLineCostCents: number | null;
 }> {
+  // Conversion factor: how many stock units equal one receiving unit.
+  const convFactor =
+    typeof line.unitsPerReceivingUnit === "number" && line.unitsPerReceivingUnit > 0
+      ? line.unitsPerReceivingUnit
+      : 1;
+
+  // ── Supplier catalogue (always loaded for supplierPricing display) ────────
   const pricing = await supplierCatalogueRepo.listPricingForProduct(
     line.masterCatalogItemId,
   );
 
-  if (pricing.length === 0) {
-    return {
-      supplierPricing: [],
-      estimatedUnitCostCents: null,
-      estimatedLineCostCents: null,
-    };
-  }
-
-  // Resolve supplier names for all priced entries
   const supplierPricing: SupplierPricingEntry[] = await Promise.all(
     pricing.map(async (p) => {
       const supplier = await supplierRepo.findSupplierById(p.supplierId);
@@ -123,14 +151,27 @@ async function enrichWithCostEstimation(
     }),
   );
 
-  // Only estimate when exactly one supplier has pricing — do not guess when
-  // multiple options exist without a preferred-supplier selection in place.
+  // ── PRIORITY 1: Stored snapshot cost ──────────────────────────────────────
+  // line.unitCostCents is the cost per STOCK UNIT persisted at line creation.
+  // Convert to per-receiving-unit cost for display, then multiply by quantity.
+  if (line.unitCostCents !== null && line.unitCostCents !== undefined) {
+    const estimatedUnitCostCents = line.unitCostCents * convFactor;
+    const estimatedLineCostCents = estimatedUnitCostCents * line.quantity;
+    return { supplierPricing, estimatedUnitCostCents, estimatedLineCostCents };
+  }
+
+  // ── PRIORITY 2: Supplier catalogue fallback ───────────────────────────────
+  // Only when exactly one supplier has pricing — do not guess when multiple
+  // options exist without a preferred-supplier context.
+  if (pricing.length === 0) {
+    return { supplierPricing: [], estimatedUnitCostCents: null, estimatedLineCostCents: null };
+  }
+
   const singlePrice = pricing.length === 1 ? pricing[0] : null;
-  const estimatedUnitCostCents = singlePrice?.unitCostCents ?? null;
+  const catalogUnitCost = singlePrice?.unitCostCents ?? null;
+  const estimatedUnitCostCents = catalogUnitCost !== null ? catalogUnitCost * convFactor : null;
   const estimatedLineCostCents =
-    estimatedUnitCostCents !== null
-      ? estimatedUnitCostCents * line.quantity
-      : null;
+    estimatedUnitCostCents !== null ? estimatedUnitCostCents * line.quantity : null;
 
   return { supplierPricing, estimatedUnitCostCents, estimatedLineCostCents };
 }

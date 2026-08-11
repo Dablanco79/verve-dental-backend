@@ -34,6 +34,8 @@
 
 import { createInMemoryInventoryRepository } from "../src/repositories/inventoryRepository.js";
 import { createInMemoryCatalogRepository } from "../src/repositories/catalogRepository.js";
+import { createInMemorySupplierCatalogueRepository } from "../src/repositories/supplierCatalogueRepository.js";
+import { createInMemorySupplierRepository } from "../src/repositories/supplierRepository.js";
 import { createPurchaseOrderService } from "../src/services/purchaseOrderService.js";
 import { derivePurchasingDraftStatus } from "../src/repositories/inventoryRepository.js";
 import { resolveConversionFactorFromCatalogItem } from "../src/services/receivingEngine.js";
@@ -79,6 +81,29 @@ function makeService() {
     auditWriter,
   );
   return { service, inventoryRepo, auditService };
+}
+
+/**
+ * Service variant with a real supplier catalogue and supplier repos wired in.
+ * Required for tests that verify estimatedUnitCostCents / estimatedLineCostCents
+ * enrichment from either the stored snapshot or the supplier catalogue fallback.
+ */
+function makeServiceWithPricing() {
+  const catalogRepo = createInMemoryCatalogRepository();
+  const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
+  const supplierCatalogueRepo = createInMemorySupplierCatalogueRepository();
+  const supplierRepo = createInMemorySupplierRepository();
+  const auditService = makeFakeAuditService();
+  const auditWriter = { recordEvent: (): Promise<void> => Promise.resolve() };
+  const service = createPurchaseOrderService(
+    inventoryRepo,
+    catalogRepo,
+    auditService as unknown as Parameters<typeof createPurchaseOrderService>[2],
+    auditWriter,
+    supplierCatalogueRepo,
+    supplierRepo,
+  );
+  return { service, inventoryRepo, catalogRepo, supplierCatalogueRepo, supplierRepo, auditService };
 }
 
 /** Minimum valid supplier group for burs */
@@ -830,6 +855,193 @@ describe("createPurchasingDraft — low-stock queue service reuse", () => {
     expect(detail.purchasingDraft.id).toBe(result.purchasingDraft.id);
     expect(detail.childPos).toHaveLength(1);
     expect(detail.childPos[0]?.lines.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── SPRINT TEST 7 — Bibs pricing: stored snapshot used for estimatedCost ──────
+//
+// Root cause: enrichWithCostEstimation previously ignored line.unitCostCents and
+// went straight to the supplier catalogue, returning null if no entry existed.
+// After the fix, the stored snapshot is priority 1.
+
+describe("SPRINT TEST 7 — pricing snapshot: stored unitCostCents drives estimatedLineCostCents", () => {
+  it("uses stored unitCostCents (2625) from the PD line when no supplier catalogue entry exists", async () => {
+    const { service } = makeServiceWithPricing();
+
+    // Create a PD with a known unit cost on the line (simulates Bibs at $26.25)
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        {
+          supplierId: "supplier-burs",
+          supplierName: "Adam Dental",
+          lines: [
+            {
+              masterCatalogItemId: BURS_CATALOG_ID,
+              clinicInventoryItemId: BURS_INV_ID,
+              quantity: 1,
+              unitCostCents: 2625,  // $26.25 per stock unit (Bibs scenario)
+            },
+          ],
+        },
+      ],
+    });
+
+    // Load the full PD detail — this triggers enrichWithCostEstimation
+    const detail = await service.getPurchasingDraftDetail(CLINIC_A, result.purchasingDraft.id);
+    const firstChild = detail.childPos[0];
+    if (!firstChild) throw new Error("Expected at least one child PO");
+    const line = firstChild.lines[0];
+    if (!line) throw new Error("Expected at least one PO line");
+
+    // Burs: stockUnit=Pack, receivingUnit=Case, unitsPerReceivingUnit=6
+    // estimatedUnitCostCents = 2625 × 6 = 15750 ($157.50 per Case)
+    // estimatedLineCostCents = 15750 × 1 = 15750
+    expect(line.estimatedUnitCostCents).toBe(2625 * 6); // per receiving unit (Case)
+    expect(line.estimatedLineCostCents).toBe(2625 * 6 * 1); // qty=1 Case
+    expect(line.estimatedUnitCostCents).not.toBeNull();
+    expect(line.estimatedLineCostCents).not.toBeNull();
+  });
+
+  it("uses 1:1 conversion when receivingUnit equals stockUnit (Bibs box=box scenario)", async () => {
+    // Build a fresh service backed by a catalogue repo that has a 1:1 Bibs item
+    const catalogRepo = createInMemoryCatalogRepository();
+    const inventoryRepo = createInMemoryInventoryRepository(catalogRepo);
+    const supplierCatalogueRepo = createInMemorySupplierCatalogueRepository();
+    const supplierRepo = createInMemorySupplierRepository();
+    const auditWriter = { recordEvent: (): Promise<void> => Promise.resolve() };
+    const svc = createPurchaseOrderService(
+      inventoryRepo,
+      catalogRepo,
+      makeFakeAuditService() as unknown as Parameters<typeof createPurchaseOrderService>[2],
+      auditWriter,
+      supplierCatalogueRepo,
+      supplierRepo,
+    );
+
+    // Create a catalog item with 1:1 unit conversion (Bibs: Box = Box)
+    const bibs = await catalogRepo.createMasterItem({
+      sku: "ADA201",
+      name: "Bibs",
+      description: "Dental bibs",
+      category: "Consumables",
+      stockUnit: "Box",
+      receivingUnit: "Box",
+      unitsPerReceivingUnit: 1,
+      defaultUnitCostCents: 2625,
+    });
+
+    const result = await svc.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        {
+          supplierId: "supplier-adam-dental",
+          supplierName: "Adam Dental",
+          lines: [
+            {
+              masterCatalogItemId: bibs.id,
+              clinicInventoryItemId: "bibs-clinic-inv-id",
+              quantity: 1,
+              unitCostCents: 2625, // $26.25 per Box — the stored snapshot
+            },
+          ],
+        },
+      ],
+    });
+
+    const detail = await svc.getPurchasingDraftDetail(CLINIC_A, result.purchasingDraft.id);
+    const line = detail.childPos[0]?.lines[0];
+    if (!line) throw new Error("Expected PO line");
+
+    // 1:1 conversion: estimatedUnitCostCents = 2625 × 1 = 2625
+    // estimatedLineCostCents = 2625 × 1 = 2625
+    expect(line.estimatedUnitCostCents).toBe(2625);
+    expect(line.estimatedLineCostCents).toBe(2625);
+  });
+
+  it("estimated total is correct with conversion factor (Box/Carton scenario)", async () => {
+    const { service } = makeServiceWithPricing();
+
+    // Burs: unitsPerReceivingUnit=6 (Case), unitCostCents=800 per Pack (stock unit)
+    // Order 3 Cases: estimatedUnitCost = 800×6 = 4800, estimatedLine = 4800×3 = 14400
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        {
+          supplierId: "supplier-burs",
+          supplierName: "BurDirect",
+          lines: [
+            {
+              masterCatalogItemId: BURS_CATALOG_ID,
+              clinicInventoryItemId: BURS_INV_ID,
+              quantity: 3,
+              unitCostCents: 800, // $8.00 per stock unit (Pack)
+            },
+          ],
+        },
+      ],
+    });
+
+    const detail = await service.getPurchasingDraftDetail(CLINIC_A, result.purchasingDraft.id);
+    const line = detail.childPos[0]?.lines[0];
+    if (!line) throw new Error("Expected PO line");
+
+    // 3 Cases × 6 Packs/Case × $8/Pack = $144 total
+    expect(line.estimatedUnitCostCents).toBe(800 * 6);   // $48/Case
+    expect(line.estimatedLineCostCents).toBe(800 * 6 * 3); // $144 total
+  });
+});
+
+// ─── SPRINT TEST 8 — Pricing snapshot: altering source cost does not change PO ─
+
+describe("SPRINT TEST 8 — pricing snapshot stability: existing PO lines are unaffected by catalogue changes", () => {
+  it("changing a supplier catalogue price after PD creation does not alter existing PO lines", async () => {
+    const { service, supplierCatalogueRepo } = makeServiceWithPricing();
+
+    // Step 1: Add a catalogue entry at $26.25
+    await supplierCatalogueRepo.createSupplierProduct({
+      supplierId: "supplier-burs",
+      productId: BURS_CATALOG_ID,
+      unitCostCents: 2625,
+      supplierSku: "ADA201",
+    });
+
+    // Step 2: Create PD with stored snapshot of $26.25
+    const result = await service.createPurchasingDraft(CLINIC_A, ACTOR_ID, ACTOR_EMAIL, {
+      supplierGroups: [
+        {
+          supplierId: "supplier-burs",
+          supplierName: "Adam Dental",
+          lines: [
+            {
+              masterCatalogItemId: BURS_CATALOG_ID,
+              clinicInventoryItemId: BURS_INV_ID,
+              quantity: 1,
+              unitCostCents: 2625,
+            },
+          ],
+        },
+      ],
+    });
+
+    // Step 3: Change the catalogue price to $50.00
+    const entries = await supplierCatalogueRepo.listSupplierProducts({
+      supplierId: "supplier-burs",
+      productId: BURS_CATALOG_ID,
+    });
+    if (entries[0]) {
+      await supplierCatalogueRepo.updateSupplierProduct(entries[0].id, {
+        unitCostCents: 5000,
+      });
+    }
+
+    // Step 4: Reload the PD — the existing line must still show $26.25 (snapshot preserved)
+    const detail = await service.getPurchasingDraftDetail(CLINIC_A, result.purchasingDraft.id);
+    const line = detail.childPos[0]?.lines[0];
+    if (!line) throw new Error("Expected PO line");
+
+    // The stored snapshot (2625 × convFactor) must win over the updated catalogue (5000)
+    // Burs convFactor = 6, so: estimatedUnitCostCents = 2625 × 6 = 15750
+    expect(line.estimatedUnitCostCents).toBe(2625 * 6);
+    expect(line.estimatedLineCostCents).toBe(2625 * 6 * 1);
+    expect(line.estimatedUnitCostCents).not.toBe(5000 * 6);
   });
 });
 

@@ -320,7 +320,7 @@ describe("InventoryPage", () => {
     expect(within(workspace).getByText("Low Stock")).toBeInTheDocument();
     expect(within(workspace).getByText("Healthy")).toBeInTheDocument();
     expect(within(workspace).getByText("Out of Stock")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Review PO" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Add to Order" })).not.toBeInTheDocument();
     expect(
       within(workspace).getByRole("link", { name: "Nitrile Examination Gloves (Box 100)" }),
     ).toHaveAttribute(
@@ -1453,9 +1453,9 @@ describe("InventoryPage", () => {
     });
   });
 
-  // ── SPRINT TEST 3 — Inventory "Review PO" preselects the item in the queue ──
+  // ── SPRINT TEST 3 — Inventory "Add to Order" preselects the item in the queue ──
 
-  it("SPRINT TEST 3: clicking Review PO for a low-stock item preselects it in the low-stock queue", async () => {
+  it("SPRINT TEST 3: clicking Add to Order for a low-stock item preselects it in the low-stock queue", async () => {
     setAuthenticatedUser(authTestState, managerUser);
 
     const lowStockItem = {
@@ -1478,8 +1478,8 @@ describe("InventoryPage", () => {
     // Wait for inventory to load and the item to appear (may appear in table + queue panel).
     await screen.findAllByText("Bibs — Adam Dental");
 
-    // The "Review PO" link should navigate to the low-stock queue with the item preselected.
-    const reviewPoLink = screen.getByRole("link", { name: /Review PO/i });
+    // The "Add to Order" link should navigate to the low-stock queue with the item preselected.
+    const reviewPoLink = screen.getByRole("link", { name: /Add to Order/i });
     expect(reviewPoLink).toHaveAttribute(
       "href",
       `/inventory?focus=low-stock&preselect=${encodeURIComponent(lowStockItem.id)}`,

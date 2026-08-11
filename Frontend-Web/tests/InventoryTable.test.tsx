@@ -222,7 +222,7 @@ describe("InventoryTable — Correction 7: zero stock / zero reorder state", () 
     expect(screen.queryByText("No action")).not.toBeInTheDocument();
   });
 
-  it("regular below-reorder-point item still shows 'Review PO' action (not regression)", () => {
+  it("regular below-reorder-point item shows 'Add to Order' action (TEST 1 — terminology)", () => {
     const item: InventoryItem = {
       ...baseItem,
       quantityOnHand: 2,
@@ -230,6 +230,7 @@ describe("InventoryTable — Correction 7: zero stock / zero reorder state", () 
       isBelowReorderPoint: true,
     };
     renderTable([item], true);
-    expect(screen.getByRole("link", { name: /Review PO/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Add to Order/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Review PO/i })).not.toBeInTheDocument();
   });
 });

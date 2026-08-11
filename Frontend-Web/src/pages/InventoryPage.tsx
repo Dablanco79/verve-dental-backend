@@ -354,7 +354,7 @@ export function InventoryPage() {
   const hasActiveWorkspaceFilters =
     workspaceSearch.trim().length > 0 || supplierFilter.length > 0 || categoryFilter.length > 0;
   const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
-  // Item ID to pre-check in the low-stock queue (set by clicking "Review PO" on a row).
+  // Item ID to pre-check in the low-stock queue (set by clicking "Add to Order" on a row).
   const preselectId = searchParams.get("preselect") ?? undefined;
   const itemNameById = useMemo(
     () => new Map(items.map((item) => [item.id, item.name])),

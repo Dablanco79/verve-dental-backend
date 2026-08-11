@@ -635,7 +635,7 @@ describe("SPRINT TEST 5: Quantity editing recalculates totals and payload uses e
     });
 
     // Change qty to 3 → line total = 3 × 10 × 800 = 24000 = $240.00.
-    const qtyInput = screen.getByRole("spinbutton", { name: /Order quantity for Sprint5 Item/i });
+    const qtyInput = screen.getByRole("spinbutton", { name: /Qty to order for Sprint5 Item/i });
     fireEvent.change(qtyInput, { target: { value: "3" } });
 
     await waitFor(() => {
@@ -673,7 +673,7 @@ describe("SPRINT TEST 5: Quantity editing recalculates totals and payload uses e
     const cb = await screen.findByRole("checkbox", { name: "" });
     fireEvent.click(cb);
 
-    const qtyInput = screen.getByRole("spinbutton", { name: /Order quantity for Sprint5 Payload Item/i });
+    const qtyInput = screen.getByRole("spinbutton", { name: /Qty to order for Sprint5 Payload Item/i });
     fireEvent.change(qtyInput, { target: { value: "5" } });
 
     const createBtn = screen.getByRole("button", { name: /Create Purchasing Draft/i });
@@ -911,7 +911,7 @@ describe("SPRINT TEST 10: Selection persistence — edited qty preserved after d
     fireEvent.click(selectAll);
 
     // Edit B's quantity to 7.
-    const qtyInputB = await screen.findByRole("spinbutton", { name: /Order quantity for Item B Sprint10/i });
+    const qtyInputB = await screen.findByRole("spinbutton", { name: /Qty to order for Item B Sprint10/i });
     fireEvent.change(qtyInputB, { target: { value: "7" } });
 
     // Deselect A: allCbs[0]=select-all, allCbs[1]=Item A, allCbs[2]=Item B.
@@ -925,7 +925,7 @@ describe("SPRINT TEST 10: Selection persistence — edited qty preserved after d
     });
 
     // B's qty input should still show 7 (selection state preserved).
-    const qtyInputBAfter = screen.getByRole("spinbutton", { name: /Order quantity for Item B Sprint10/i });
+    const qtyInputBAfter = screen.getByRole("spinbutton", { name: /Qty to order for Item B Sprint10/i });
     expect((qtyInputBAfter as HTMLInputElement).value).toBe("7");
   });
 });

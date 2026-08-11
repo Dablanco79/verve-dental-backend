@@ -27,7 +27,7 @@
  *
  * initialSelectedId (optional):
  *   When provided, the matching eligible item is pre-checked on mount and
- *   whenever the prop changes (e.g. the user navigated from "Review PO").
+ *   whenever the prop changes (e.g. the user clicked "Add to Order" for a row).
  *   The user can add/deselect additional items freely.
  *
  * Editable quantities:
@@ -178,7 +178,7 @@ type Props = {
   items: InventoryItem[];
   suppliers: Supplier[];
   isLoading: boolean;
-  /** Clinic inventory item ID to pre-check on mount (from "Review PO" navigation). */
+  /** Clinic inventory item ID to pre-check on mount (from "Add to Order" navigation). */
   initialSelectedId?: string;
 };
 
@@ -212,7 +212,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading,
   const allItems = useMemo(() => items.slice().sort((a, b) => a.name.localeCompare(b.name)), [items]);
 
   // Reset selection when clinic changes or when the initial preselection changes
-  // (e.g. user clicked "Review PO" for a different item).
+  // (e.g. user clicked "Add to Order" for a different item).
   // Items are intentionally NOT in the deps so that inventory refreshes
   // do not silently discard in-progress selections.
   useEffect(() => {
@@ -501,10 +501,10 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading,
                       </>}
                 </span>
 
-                {/* Editable order quantity — shown when item is selected and eligible */}
+                {/* Qty to Order — editable input shown when item is selected and eligible */}
                 {checked && eligible && (
                   <label className="low-stock-queue__qty-label">
-                    Order quantity:
+                    Qty to Order:
                     <input
                       type="number"
                       min={1}
@@ -514,7 +514,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading,
                         if (!isNaN(val)) handleQtyChange(item.id, val);
                       }}
                       className="low-stock-queue__qty-input"
-                      aria-label={`Order quantity for ${item.name}`}
+                      aria-label={`Qty to order for ${item.name}`}
                       data-testid={`qty-input-${item.id}`}
                     />
                     {item.receivingUnit ?? item.stockUnit ?? "unit"}
