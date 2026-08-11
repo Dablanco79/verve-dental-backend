@@ -476,7 +476,9 @@ describe("AddProductPage — category select", () => {
       expect(mockListCategories).toHaveBeenCalledTimes(1);
     });
 
-    const categorySelect = screen.getByRole("combobox", { name: /category/i });
+    // findByRole retries until the form (and its combobox) is rendered — i.e.
+    // until both listSuppliers AND listCategories have resolved.
+    const categorySelect = await screen.findByRole("combobox", { name: /category/i });
     const options = Array.from(
       categorySelect.querySelectorAll("option"),
     ).map((o) => o.textContent);
@@ -499,9 +501,12 @@ describe("AddProductPage — category select", () => {
       expect(mockListCategories).toHaveBeenCalled();
     });
 
-    // The category combobox should show the placeholder, not a real category
-    const categorySelect = screen.getByRole("combobox", { name: /category/i });
-    expect(categorySelect).toHaveDisplayValue(/select category/i);
+    // findByRole retries until the form renders (suppliers loaded); then wait
+    // for categories to finish loading so the placeholder text is stable.
+    const categorySelect = await screen.findByRole("combobox", { name: /category/i });
+    await waitFor(() => {
+      expect(categorySelect).toHaveDisplayValue(/select category/i);
+    });
   });
 
   it("does not include 'Imported Catalogue' in the category dropdown", async () => {
@@ -519,7 +524,9 @@ describe("AddProductPage — category select", () => {
       expect(mockListCategories).toHaveBeenCalled();
     });
 
-    const categorySelect = screen.getByRole("combobox", { name: /category/i });
+    // findByRole retries until the form (and its combobox) is rendered — i.e.
+    // until both listSuppliers AND listCategories have resolved.
+    const categorySelect = await screen.findByRole("combobox", { name: /category/i });
     const options = Array.from(
       categorySelect.querySelectorAll("option"),
     ).map((o) => o.textContent);
@@ -542,7 +549,9 @@ describe("AddProductPage — category select", () => {
       expect(mockListCategories).toHaveBeenCalled();
     });
 
-    const categorySelect = screen.getByRole("combobox", { name: /category/i });
+    // findByRole retries until the form (and its combobox) is rendered — i.e.
+    // until both listSuppliers AND listCategories have resolved.
+    const categorySelect = await screen.findByRole("combobox", { name: /category/i });
     const options = Array.from(
       categorySelect.querySelectorAll("option"),
     ).map((o) => o.textContent);
