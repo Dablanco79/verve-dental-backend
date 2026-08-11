@@ -1453,6 +1453,82 @@ describe("InventoryPage", () => {
     });
   });
 
+  // ── SPRINT TEST 3 — Inventory "Review PO" preselects the item in the queue ──
+
+  it("SPRINT TEST 3: clicking Review PO for a low-stock item preselects it in the low-stock queue", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    const lowStockItem = {
+      ...sampleInventory[0],
+      id: "review-po-preselect-item",
+      masterCatalogItemId: "cat-review-po-preselect",
+      isBelowReorderPoint: true,
+      reorderPoint: 5,
+      quantityOnHand: 1,
+      onOrderQuantity: 0,
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+      name: "Bibs — Adam Dental",
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([lowStockItem]);
+
+    // Render at plain /inventory (no focus or preselect params yet).
+    renderInventoryPage("/inventory");
+
+    // Wait for inventory to load and the item to appear (may appear in table + queue panel).
+    await screen.findAllByText("Bibs — Adam Dental");
+
+    // The "Review PO" link should navigate to the low-stock queue with the item preselected.
+    const reviewPoLink = screen.getByRole("link", { name: /Review PO/i });
+    expect(reviewPoLink).toHaveAttribute(
+      "href",
+      `/inventory?focus=low-stock&preselect=${encodeURIComponent(lowStockItem.id)}`,
+    );
+
+    // Clicking the link navigates within the same InventoryPage (MemoryRouter).
+    fireEvent.click(reviewPoLink);
+
+    // The low-stock queue section appears with a focused heading.
+    await screen.findByRole("heading", { name: "Low stock purchasing queue" });
+
+    // The item's checkbox must be pre-checked (the item is preselected via initialSelectedId).
+    await waitFor(() => {
+      const checkboxes = screen.getAllByRole("checkbox");
+      const checkedItemCbs = checkboxes.filter(
+        (cb) => (cb as HTMLInputElement).checked && !/select all/i.test(cb.closest("label")?.textContent ?? ""),
+      );
+      expect(checkedItemCbs.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── SPRINT TEST 4 — Purchase Orders "Review Low Stock" links to the shared queue ──
+
+  it("SPRINT TEST 4: low-stock purchasing queue is accessible from Purchase Orders page header", async () => {
+    setAuthenticatedUser(authTestState, managerUser);
+
+    // Render InventoryPage at the focus=low-stock URL that the PO page links to.
+    const lowStockItem = {
+      ...sampleInventory[0],
+      id: "po-page-low-stock-item",
+      isBelowReorderPoint: true,
+      preferredSupplierId: "supplier-1",
+      preferredSupplierName: "DentalCo AU",
+    } as InventoryItem;
+    mockListInventory.mockResolvedValue([lowStockItem]);
+
+    // The PurchaseOrdersPage "Low stock" link navigates to /inventory?focus=low-stock.
+    // Render InventoryPage at that URL to confirm the same shared queue is shown.
+    renderInventoryPage("/inventory?focus=low-stock");
+
+    // The shared low-stock purchasing queue must appear (same component, same experience).
+    expect(await screen.findByRole("heading", { name: "Low stock purchasing queue" })).toBeInTheDocument();
+
+    // Selection checkboxes are present (shared purchasing experience).
+    const checkboxes = await screen.findAllByRole("checkbox");
+    expect(checkboxes.length).toBeGreaterThan(0);
+    expect(screen.getByText(/Select all eligible/i)).toBeInTheDocument();
+  });
+
   it("prevents Purchasing Draft creation when ALL selected items lack a supplier", async () => {
     setAuthenticatedUser(authTestState, managerUser);
 

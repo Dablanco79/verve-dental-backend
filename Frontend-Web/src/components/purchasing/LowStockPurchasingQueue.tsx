@@ -24,6 +24,16 @@
  * Suggested order quantity accounts for confirmed on-order stock (submitted POs)
  * to prevent duplicate ordering.  Draft quantities are shown as a warning but
  * are NOT treated as confirmed incoming stock.
+ *
+ * initialSelectedId (optional):
+ *   When provided, the matching eligible item is pre-checked on mount and
+ *   whenever the prop changes (e.g. the user navigated from "Review PO").
+ *   The user can add/deselect additional items freely.
+ *
+ * Editable quantities:
+ *   Each selected item shows a numeric input.  Editing updates line cost,
+ *   supplier subtotal, and overall estimated total in real-time.
+ *   Edited quantities are preserved when the user deselects and reselects the same item.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -72,6 +82,17 @@ function suggestedReceivingQty(item: InventoryItem): number {
 }
 
 /**
+ * Effective order quantity for a given item, respecting any user edit.
+ * Falls back to Math.max(1, suggestedReceivingQty) so the minimum sent
+ * to the API is always 1 receiving unit.
+ */
+function getEffectiveQty(item: InventoryItem, editedQtys: Map<string, number>): number {
+  const edited = editedQtys.get(item.id);
+  if (edited !== undefined) return Math.max(1, edited);
+  return Math.max(1, suggestedReceivingQty(item));
+}
+
+/**
  * Estimated line total in CENTS for a given receiving-unit quantity.
  *
  * Formula: receivingQty × unitsPerReceivingUnit × unitCostCents
@@ -88,11 +109,11 @@ function estimatedLineCostCents(item: InventoryItem, receivingQty: number): numb
 }
 
 /**
- * Supplier subtotal (in cents) for a group of items.
+ * Supplier subtotal (in cents) for a group of items, using effective quantities.
  */
-function groupSubtotalCents(items: InventoryItem[]): number {
+function groupSubtotalCents(items: InventoryItem[], editedQtys: Map<string, number>): number {
   return items.reduce((total, item) => {
-    const qty = suggestedReceivingQty(item);
+    const qty = getEffectiveQty(item, editedQtys);
     return total + estimatedLineCostCents(item, qty);
   }, 0);
 }
@@ -157,6 +178,8 @@ type Props = {
   items: InventoryItem[];
   suppliers: Supplier[];
   isLoading: boolean;
+  /** Clinic inventory item ID to pre-check on mount (from "Review PO" navigation). */
+  initialSelectedId?: string;
 };
 
 type AddToExistingState =
@@ -172,9 +195,12 @@ type DraftCreatedResult = {
   unresolvedGroups: UnresolvedSupplierGroup[];
 };
 
-export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading }: Props) {
+export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading, initialSelectedId }: Props) {
   const navigate = useNavigate();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(
+    () => (initialSelectedId ? new Set([initialSelectedId]) : new Set()),
+  );
+  const [editedQtys, setEditedQtys] = useState<Map<string, number>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftCreated, setDraftCreated] = useState<DraftCreatedResult | null>(null);
@@ -185,13 +211,17 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
   const allEligible = useMemo(() => items.filter(isEligible), [items]);
   const allItems = useMemo(() => items.slice().sort((a, b) => a.name.localeCompare(b.name)), [items]);
 
-  // Reset selection when clinic or items change.
+  // Reset selection when clinic changes or when the initial preselection changes
+  // (e.g. user clicked "Review PO" for a different item).
+  // Items are intentionally NOT in the deps so that inventory refreshes
+  // do not silently discard in-progress selections.
   useEffect(() => {
-    setSelectedIds(new Set());
+    setSelectedIds(initialSelectedId ? new Set([initialSelectedId]) : new Set());
+    setEditedQtys(new Map());
     setSaveError(null);
     setDraftCreated(null);
     setAddToExisting({ phase: "idle" });
-  }, [clinicId, items]);
+  }, [clinicId, initialSelectedId]);
 
   const handleToggle = useCallback((id: string, eligible: boolean) => {
     if (!eligible) return;
@@ -212,6 +242,14 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
 
   const handleClearAll = useCallback(() => {
     setSelectedIds(new Set());
+  }, []);
+
+  const handleQtyChange = useCallback((id: string, value: number) => {
+    setEditedQtys((prev) => {
+      const next = new Map(prev);
+      next.set(id, value);
+      return next;
+    });
   }, []);
 
   const selectedItems = useMemo(
@@ -237,10 +275,10 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
     [groupSummary],
   );
 
-  // Overall estimated total for the actionable selected items (stock-unit basis).
+  // Overall estimated total for the actionable selected items (respects edited qtys).
   const overallEstimatedCents = useMemo((): number => {
-    return actionableGroups.reduce((total, group) => total + groupSubtotalCents(group.items), 0);
-  }, [actionableGroups]);
+    return actionableGroups.reduce((total, group) => total + groupSubtotalCents(group.items, editedQtys), 0);
+  }, [actionableGroups, editedQtys]);
 
   // ── Create a Purchasing Draft with one child supplier PO per supplier ────────
 
@@ -265,7 +303,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           lines: g.items.map((item) => ({
             masterCatalogItemId: item.masterCatalogItemId,
             clinicInventoryItemId: item.id,
-            quantity: Math.max(1, suggestedReceivingQty(item)),
+            quantity: getEffectiveQty(item, editedQtys),
             reason: "low_stock",
             receivingUnit: item.receivingUnit ?? null,
             unitCostCents: item.unitCostCents,
@@ -346,7 +384,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
         lines: selectedItems.map((item) => ({
           masterCatalogItemId: item.masterCatalogItemId,
           clinicInventoryItemId: item.id,
-          quantity: Math.max(1, suggestedReceivingQty(item)),
+          quantity: getEffectiveQty(item, editedQtys),
           reason: "low_stock",
           receivingUnit: item.receivingUnit ?? null,
           unitCostCents: item.unitCostCents,
@@ -415,8 +453,10 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           const eligible = isEligible(item);
           const reason = getIneligibleReason(item);
           const checked = selectedIds.has(item.id);
-          // qty is in RECEIVING UNITS (ceil of stock-unit shortfall / conversionFactor).
-          const qty = suggestedReceivingQty(item);
+          // Raw suggested qty (in receiving units); may be 0 when covered by on-order stock.
+          const suggestedQty = suggestedReceivingQty(item);
+          // Effective qty: user-edited value if set, otherwise max(1, suggested).
+          const effectiveQtyVal = getEffectiveQty(item, editedQtys);
           const supplierName = item.preferredSupplierName ?? (item.supplierPreference ?? null);
           const itemHasSupplier = hasSupplier(item);
           const inDraft = item.inDraftQuantity ?? 0;
@@ -425,9 +465,9 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
           const conversionFactor = item.unitsPerReceivingUnit ?? 1;
 
           // Cost per RECEIVING UNIT = unitCostCents (per stock unit) × conversionFactor.
-          // Estimated line total = receivingQty × conversionFactor × unitCostCents.
+          // Estimated line total uses the effective (possibly edited) qty.
           const costPerReceivingUnitCents = item.unitCostCents * conversionFactor;
-          const lineCostEstimate = estimatedLineCostCents(item, qty);
+          const lineCostEstimate = estimatedLineCostCents(item, effectiveQtyVal);
 
           return (
             <div
@@ -450,20 +490,40 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
                   {" · "}On hand: <strong>{String(item.quantityOnHand)}</strong>
                   {" · "}Reorder at: {String(item.reorderPoint)}
                   {" · "}
-                  {qty === 0 && onOrder > 0
+                  {suggestedQty === 0 && onOrder > 0
                     ? <><strong>Covered</strong> — {String(onOrder)} {item.stockUnit ?? "units"} on order</>
                     : <>
-                        <strong>Suggest: {String(Math.max(1, qty))}</strong>
+                        <strong>Suggest: {String(Math.max(1, suggestedQty))}</strong>
                         {item.receivingUnit ? ` ${item.receivingUnit}` : ""}
                         {item.receivingUnit && item.stockUnit && item.receivingUnit !== item.stockUnit && conversionFactor > 1
-                          ? ` (${String(Math.max(1, qty) * conversionFactor)} ${item.stockUnit} incoming)`
+                          ? ` (${String(Math.max(1, suggestedQty) * conversionFactor)} ${item.stockUnit} incoming)`
                           : ""}
                       </>}
                 </span>
 
-                {/* Estimated cost — qty in receiving units; cost per receiving unit = stockCost × conversionFactor */}
+                {/* Editable order quantity — shown when item is selected and eligible */}
+                {checked && eligible && (
+                  <label className="low-stock-queue__qty-label">
+                    Order quantity:
+                    <input
+                      type="number"
+                      min={1}
+                      value={editedQtys.has(item.id) ? (editedQtys.get(item.id) ?? effectiveQtyVal) : Math.max(1, suggestedQty)}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) handleQtyChange(item.id, val);
+                      }}
+                      className="low-stock-queue__qty-input"
+                      aria-label={`Order quantity for ${item.name}`}
+                      data-testid={`qty-input-${item.id}`}
+                    />
+                    {item.receivingUnit ?? item.stockUnit ?? "unit"}
+                  </label>
+                )}
+
+                {/* Estimated cost — uses effective qty (edited if set, suggested otherwise) */}
                 <span className="inventory-table__meta">
-                  Estimated: {String(Math.max(1, qty))} × {item.receivingUnit ?? item.stockUnit ?? "unit"} @ {formatCurrency(costPerReceivingUnitCents)} = <strong>{formatCurrency(lineCostEstimate)}</strong>
+                  Estimated: {String(effectiveQtyVal)} × {item.receivingUnit ?? item.stockUnit ?? "unit"} @ {formatCurrency(costPerReceivingUnitCents)} = <strong>{formatCurrency(lineCostEstimate)}</strong>
                 </span>
 
                 {supplierName ? (
@@ -549,7 +609,7 @@ export function LowStockPurchasingQueue({ clinicId, items, suppliers, isLoading 
               </p>
               <ul className="low-stock-queue__group-list">
                 {actionableGroups.map((g, i) => {
-                  const subtotal = groupSubtotalCents(g.items);
+                  const subtotal = groupSubtotalCents(g.items, editedQtys);
                   return (
                     <li key={i}>
                       <strong>{g.supplierName}</strong>

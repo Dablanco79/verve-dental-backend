@@ -354,6 +354,8 @@ export function InventoryPage() {
   const hasActiveWorkspaceFilters =
     workspaceSearch.trim().length > 0 || supplierFilter.length > 0 || categoryFilter.length > 0;
   const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
+  // Item ID to pre-check in the low-stock queue (set by clicking "Review PO" on a row).
+  const preselectId = searchParams.get("preselect") ?? undefined;
   const itemNameById = useMemo(
     () => new Map(items.map((item) => [item.id, item.name])),
     [items],
@@ -497,6 +499,7 @@ export function InventoryPage() {
             items={lowStockItems}
             suppliers={suppliers}
             isLoading={isLoading}
+            initialSelectedId={preselectId}
           />
         </section>
       ) : null}
@@ -734,7 +737,7 @@ export function InventoryPage() {
               purchaseOrderHrefForItem={
                 canReviewPurchaseOrders
                   ? (item) =>
-                      `/purchase-orders?item=${encodeURIComponent(item.masterCatalogItemId)}`
+                      `/inventory?focus=low-stock&preselect=${encodeURIComponent(item.id)}`
                   : undefined
               }
             />
