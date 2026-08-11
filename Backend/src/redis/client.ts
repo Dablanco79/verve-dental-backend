@@ -26,6 +26,7 @@ type IORedisInstance = {
   set(key: string, value: string, expiryMode: "EX", ttl: number): Promise<"OK" | null>;
   get(key: string): Promise<string | null>;
   del(key: string): Promise<number>;
+  ttl(key: string): Promise<number>;
 
   // Standalone set commands — smembers still used as a standalone read in revokeAllUserTokens.
   sadd(key: string, member: string): Promise<number>;

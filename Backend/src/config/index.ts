@@ -87,6 +87,24 @@ const envSchema = z.object({
    * the OCR pipeline.
    */
   OCR_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(20_971_520),
+
+  /**
+   * Pilot Reset Utility feature gate.
+   *
+   * When "true", the POST /api/v1/admin/pilot-reset/preview and
+   * POST /api/v1/admin/pilot-reset/execute endpoints are available to
+   * owner_admin users.  Removing this variable (or setting it to anything
+   * other than "true") makes the feature completely inaccessible at both the
+   * API and UI layers.
+   *
+   * NEVER enable this in production without an explicit controlled-test plan.
+   *
+   * Set via environment variable:   PILOT_RESET_ENABLED=true
+   */
+  PILOT_RESET_ENABLED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

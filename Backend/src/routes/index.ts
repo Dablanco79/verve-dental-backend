@@ -65,6 +65,7 @@ import {
   createContractPriceSubRouter,
   createSupplierContractPriceRouter,
 } from "./supplierContractPriceRoutes.js";
+import { createPilotResetRouter } from "./pilotResetRoutes.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createApiRouter(deps: AppDependencies, config: EnvConfig): Router {
@@ -289,6 +290,15 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
     authenticate,
     requireRoles("owner_admin"),
     createLegalEntityRouter(deps),
+  );
+
+  // Pilot Reset Utility — owner_admin only, gated by PILOT_RESET_ENABLED.
+  // Routes are registered unconditionally; the feature flag is enforced inside
+  // each handler so that removing the env variable makes the feature inaccessible
+  // without a code change.
+  router.use(
+    "/admin/pilot-reset",
+    createPilotResetRouter(deps, config),
   );
 
   return router;

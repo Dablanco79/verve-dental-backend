@@ -15,7 +15,7 @@ import { createApiClient } from "../src/api/client.js";
 // Config
 // ---------------------------------------------------------------------------
 
-const CONFIG = { apiBaseUrl: "https://api.test" };
+const CONFIG = { apiBaseUrl: "https://api.test", pilotResetEnabled: false };
 
 // ---------------------------------------------------------------------------
 // localStorage stub

@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth.js";
 import { ALL_CLINICS_DASHBOARD_SCOPE } from "../../clinic/clinicContext.js";
 import { useSelectedClinic } from "../../clinic/useSelectedClinic.js";
+import { loadConfig } from "../../config/index.js";
 import {
   canManageBilling,
   canManageClinics,
@@ -36,6 +37,7 @@ type NavGroup = {
 
 export function AppShell({ children }: AppShellProps) {
   const { user, logout } = useAuth();
+  const appConfig = loadConfig();
   const {
     selectedClinic,
     selectedDashboardScope,
@@ -141,6 +143,9 @@ export function AppShell({ children }: AppShellProps) {
             ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users", icon: "US" }] : []),
             ...(canViewClinicSettings(user.role)
               ? [{ to: "/settings/clinic", label: "Clinic Settings", icon: "CS" }]
+              : []),
+            ...(appConfig.pilotResetEnabled && user.role === "owner_admin"
+              ? [{ to: "/admin/pilot-reset", label: "Pilot Reset", icon: "PR" }]
               : []),
           ],
         },

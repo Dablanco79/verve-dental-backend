@@ -64,13 +64,20 @@ export type SupplierInvoiceAuditEvent =
 export type PurchasingDraftAuditEvent =
   | "purchasing_draft.created";
 
+export type PilotResetAuditEvent =
+  | "pilot_reset.previewed"
+  | "pilot_reset.started"
+  | "pilot_reset.executed"
+  | "pilot_reset.failed";
+
 export type AuditEvent =
   | AuthAuditEvent
   | PurchaseOrderAuditEvent
   | PurchasingDraftAuditEvent
   | SupplierAuditEvent
   | SupplierInvoiceAuditEvent
-  | MasterProductAuditEvent;
+  | MasterProductAuditEvent
+  | PilotResetAuditEvent;
 
 export type AuditContext = {
   userId?: string;
@@ -119,6 +126,7 @@ function entityTypeForEvent(event: AuditEvent): AuditEntityType {
   }
   if (event.startsWith("purchase_order.")) return "purchase_order";
   if (event.startsWith("purchasing_draft.")) return "purchasing_draft";
+  if (event.startsWith("pilot_reset.")) return "auth";
   if (event.startsWith("user.")) return "user";
   return "auth";
 }

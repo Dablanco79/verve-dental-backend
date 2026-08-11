@@ -162,6 +162,57 @@ import type {
 
 type ApiEnvelope<T> = { data: T };
 
+// ─── Pilot Reset types ────────────────────────────────────────────────────────
+
+export type PilotResetMode = "operational" | "full_pilot";
+
+export type PilotResetDeleteCounts = {
+  purchasingDrafts: number;
+  draftPurchaseOrders: number;
+  draftPoLines: number;
+  stocktakeSessions: number;
+  stocktakeLines: number;
+  supplierInvoices: number;
+  supplierInvoiceLines: number;
+  supplierPriceHistory: number;
+  productSuppliers: number;
+  supplierContractPrices: number;
+  supplierContracts: number;
+  procurementPolicies: number;
+  supplierRelationships: number;
+  clinicInventoryItemsDeleted: number;
+  clinicInventoryItemsSoftZeroed: number;
+};
+
+export type PilotResetPreviewData = {
+  clinic: { id: string; name: string };
+  mode: PilotResetMode;
+  deleteCounts: PilotResetDeleteCounts;
+  orphanCounts: { orphanMasterProductCandidates: number };
+  preserved: string[];
+  blockers: Array<{ type: string; message: string }>;
+  warnings: string[];
+  previewExpiresAt: string;
+  previewToken: string;
+  expectedConfirmationPhrase: string;
+};
+
+export type PostResetCheck = {
+  name: string;
+  passed: boolean;
+  detail?: string;
+};
+
+export type PilotResetExecuteData = {
+  clinic: { id: string; name: string };
+  mode: PilotResetMode;
+  deletedCounts: PilotResetDeleteCounts;
+  preserved: string[];
+  postResetChecks: PostResetCheck[];
+  auditReference: string;
+  completedAt: string;
+};
+
 /** Default request timeout in milliseconds (30 s). */
 const REQUEST_TIMEOUT_MS = 30_000;
 const SESSION_EXPIRED_EVENT = "verve:session-expired";
@@ -2423,7 +2474,38 @@ export function createApiClient(config: AppConfig) {
     completeStocktakeSession,
     listStocktakeLines,
     updateStocktakeLine,
+    previewPilotReset,
+    executePilotReset,
   };
+
+  // ─── Pilot Reset ─────────────────────────────────────────────────────────────
+
+  async function previewPilotReset(input: {
+    clinicId: string;
+    mode: "operational" | "full_pilot";
+  }): Promise<PilotResetPreviewData> {
+    return request<PilotResetPreviewData>(
+      config,
+      "/api/v1/admin/pilot-reset/preview",
+      { method: "POST", body: JSON.stringify(input) },
+      requireAccessToken(),
+    );
+  }
+
+  async function executePilotReset(input: {
+    clinicId: string;
+    mode: "operational" | "full_pilot";
+    previewToken: string;
+    mfaCode: string;
+    confirmationPhrase: string;
+  }): Promise<PilotResetExecuteData> {
+    return request<PilotResetExecuteData>(
+      config,
+      "/api/v1/admin/pilot-reset/execute",
+      { method: "POST", body: JSON.stringify(input) },
+      requireAccessToken(),
+    );
+  }
 }
 
 export type ApiClient = ReturnType<typeof createApiClient>;

@@ -42,6 +42,7 @@ import { SupplierInvoiceReviewPage } from "./pages/SupplierInvoiceReviewPage.js"
 import { SupplierIntelligencePage } from "./pages/SupplierIntelligencePage.js";
 import { StocktakeListPage } from "./pages/StocktakeListPage.js";
 import { StocktakeSessionPage } from "./pages/StocktakeSessionPage.js";
+import { PilotResetPage } from "./pages/PilotResetPage.js";
 
 export function App() {
   return (
@@ -93,6 +94,7 @@ export function App() {
               <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
               <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
               <Route path="/supplier-intelligence" element={<SupplierIntelligencePage />} />
+              <Route path="/admin/pilot-reset" element={<PilotResetPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
