@@ -22,6 +22,7 @@ import {
   requireRoles,
 } from "../middleware/authMiddleware.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
 import { createPilotResetHandlers } from "../controllers/pilotResetController.js";
 import { createPilotResetService } from "../services/pilotResetService.js";
 import {
@@ -36,6 +37,26 @@ export function createPilotResetRouter(
   const router = Router();
 
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+
+  // rlsTenantContextMiddleware must run AFTER authenticate so req.user is set.
+  //
+  // For /admin/pilot-reset routes there is no :clinicId in the URL.
+  // rlsTenantContextMiddleware therefore resolves clinicId from req.user.homeClinicId.
+  // Because the actor is always owner_admin, ownerAdmin=true is propagated into
+  // AsyncLocalStorage, causing installRlsPoolHook to inject:
+  //   app.owner_admin_mode = 'true'
+  // on every pool connection checked out during this request.
+  //
+  // With app_is_owner_admin()=true, FORCE ROW LEVEL SECURITY is satisfied for
+  // all FORCE-RLS tables (clinic_inventory_items, draft_purchase_orders,
+  // supplier_invoices, product_suppliers, audit_events, etc.), making
+  // getPreviewCounts() and verifyPostReset() counts accurate.
+  //
+  // The destructive boundary is NOT the RLS clinic_id — it is always the explicit
+  // WHERE clinic_id = $selectedClinicId predicate in every DELETE/UPDATE/COUNT
+  // query.  The selected clinic from the request body remains the sole
+  // authoritative reset target.
+  const rlsContext = rlsTenantContextMiddleware();
 
   const pilotResetRepository = deps.databasePool
     ? createPostgresPilotResetRepository(deps.databasePool)
@@ -57,6 +78,7 @@ export function createPilotResetRouter(
     "/preview",
     authenticate,
     requireRoles("owner_admin"),
+    rlsContext,
     asyncHandler((req, res) => handlers.preview(req, res)),
   );
 
@@ -64,6 +86,7 @@ export function createPilotResetRouter(
     "/execute",
     authenticate,
     requireRoles("owner_admin"),
+    rlsContext,
     asyncHandler((req, res) => handlers.execute(req, res)),
   );
 

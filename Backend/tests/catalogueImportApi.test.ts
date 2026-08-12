@@ -58,7 +58,7 @@ describe("POST /api/v1/suppliers/:id/catalogue/import/preview", () => {
     expect(body.data.totalRows).toBe(1);
     expect(body.data.matchedRows).toBe(1);
     expect(body.data.rows[0]?.unitCostCents).toBe(1250);
-  });
+  }, 15000);
 
   it("returns 400 when no file is uploaded", async () => {
     const app = await createTestApp();

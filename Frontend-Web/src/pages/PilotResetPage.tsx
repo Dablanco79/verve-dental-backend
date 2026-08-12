@@ -385,8 +385,7 @@ export function PilotResetPage() {
                     <CountRow label="Supplier Contracts" value={preview.deleteCounts.supplierContracts} />
                     <CountRow label="Procurement Policies" value={preview.deleteCounts.procurementPolicies} />
                     <CountRow label="Supplier Relationships" value={preview.deleteCounts.supplierRelationships} />
-                    <CountRow label="Clinic Products (deleted)" value={preview.deleteCounts.clinicInventoryItemsDeleted} />
-                    <CountRow label="Clinic Products (soft-zeroed)" value={preview.deleteCounts.clinicInventoryItemsSoftZeroed} />
+                    <CountRow label="Clinic Products (permanently removed)" value={preview.deleteCounts.clinicInventoryItemsDeleted} />
                   </>
                 )}
               </div>
@@ -399,6 +398,19 @@ export function PilotResetPage() {
                 ))}
               </div>
             </div>
+
+            {mode === "full_pilot" && preview.deleteCounts.clinicInventoryItemsSoftZeroed > 0 && (
+              <div style={{ border: "1px solid #e67e22", borderRadius: "6px", padding: "16px", marginBottom: "16px", background: "#fef9f0" }}>
+                <h3 style={{ margin: "0 0 6px", color: "#e67e22" }}>WILL BE SOFT-ZEROED (rows retained)</h3>
+                <p style={{ margin: "0 0 10px", fontSize: "13px", color: "#555" }}>
+                  These clinic inventory records <strong>cannot be permanently removed</strong> because they are
+                  referenced by append-only inventory adjustment history (required for audit compliance).
+                  The <strong>row is kept</strong> but all operational values — current quantity, reorder point,
+                  cost overrides, and supplier preference — will be <strong>reset to zero or cleared</strong>.
+                </p>
+                <CountRow label="Clinic Products (soft-zeroed — row retained, inventory cleared)" value={preview.deleteCounts.clinicInventoryItemsSoftZeroed} />
+              </div>
+            )}
 
             {mode === "full_pilot" && preview.orphanCounts.orphanMasterProductCandidates > 0 && (
               <WarningBanner>
