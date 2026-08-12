@@ -15,6 +15,7 @@
     "lint": "node ../node_modules/eslint/bin/eslint.js src tests",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js",
     "test:receiving-integration": "node -e \"if(!process.env.DATABASE_URL){process.stderr.write('FATAL: DATABASE_URL must be set to run receiving integration tests.\\nRun test:db:setup first, then set DATABASE_URL.\\n');process.exit(1)}\" && node --experimental-vm-modules ../node_modules/jest/bin/jest.js tests/supplierInvoiceReceiving.integration.test.ts --forceExit --verbose",
+    "test:pilotresetrls-integration": "node -e \"if(!process.env.DATABASE_URL){process.stderr.write('FATAL: DATABASE_URL must be set to run Pilot Reset RLS integration tests.\\nThese tests prove FORCE RLS enforcement via verve_app NOSUPERUSER role.\\nRun test:db:setup first, then set DATABASE_URL.\\n');process.exit(1)}\" && node --experimental-vm-modules ../node_modules/jest/bin/jest.js tests/pilotResetRls.integration.test.ts --runInBand --forceExit --verbose",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/runMigrate.ts",
     "bootstrap:admin": "node ./node_modules/tsx/dist/cli.mjs src/db/runBootstrapAdmin.ts",
     "test:db:setup": "node ./node_modules/tsx/dist/cli.mjs src/db/setupTestDb.ts",

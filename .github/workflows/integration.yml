@@ -73,14 +73,26 @@ jobs:
             sleep 2
           done
 
-      # ── P0 explicit gate ──────────────────────────────────────────────────────
-      # Run the six supplier-invoice receiving integration tests as a dedicated
-      # named step.  If any of A–F fail, or if DATABASE_URL were somehow absent,
-      # CI fails here with a clear label — it cannot silently skip.
-      # The DATABASE_URL job-level env guarantees the pre-check in the script
-      # always passes, so skipping is structurally impossible in this workflow.
+      # ── P0 explicit gates ─────────────────────────────────────────────────────
+      # Each named step is a hard gate: if the targeted suite fails, registers
+      # zero tests, or is somehow skipped, CI fails with a clear label.
+      # The DATABASE_URL job-level env guarantees both pre-checks always pass,
+      # making silent skipping structurally impossible in this workflow.
+
       - name: "P0 — Receiving integration tests (A–F: atomic, rollback, lifecycle, concurrent, RLS, audit)"
         run: npm run test:receiving-integration --workspace=@verve/backend
+
+      # ── Pilot Reset RLS gate ──────────────────────────────────────────────────
+      # Runs all 31 FORCE ROW LEVEL SECURITY regression tests using the verve_app
+      # NOSUPERUSER role.  These tests prove that the production RLS defect
+      # (getPreviewCounts/verifyPostReset returning 0 rows when no GUC context
+      # was set) is fixed and cannot regress silently.
+      #
+      # --runInBand is required: the 8 test suites share fixture state.
+      # The DATABASE_URL pre-check in the script means this step CANNOT be green
+      # unless a real PostgreSQL database is present and all 31 assertions pass.
+      - name: "P0 — Pilot Reset RLS integration tests (31 FORCE-RLS regression tests, verve_app NOSUPERUSER)"
+        run: npm run test:pilotresetrls-integration --workspace=@verve/backend
 
       - name: Run full test suite with real infrastructure
         run: npm run test --workspace=@verve/backend -- --forceExit

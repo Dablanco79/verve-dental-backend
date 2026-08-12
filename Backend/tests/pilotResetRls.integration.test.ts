@@ -58,6 +58,14 @@ import { SEED_USER_IDS } from "../src/repositories/userRepository.js";
 const DB_URL = process.env["DATABASE_URL"];
 const SKIP = !DB_URL;
 
+// When DATABASE_URL is absent every suite is registered as skipped (not omitted).
+// Jest requires at least one test per file; omitting describe blocks entirely
+// (via `if (SKIP) return` at describe level) violates that rule and causes:
+// "Your test suite must contain at least one test."
+// Using describe.skip registers the suites as pending — normal CI sees them as
+// skipped, integration CI (with DATABASE_URL) runs them in full.
+const suite = SKIP ? describe.skip : describe;
+
 // ── Test-specific IDs — prefix "b0c0" to avoid any collision with other suites ─
 
 const RLS_CLINIC_A_ID = "b0c00000-0000-4000-8000-000000000001";
@@ -412,8 +420,7 @@ afterAll(async () => {
 // TEST 1 — FORCE RLS regression proof (NOSUPERUSER, no GUC → 0 rows)
 // =============================================================================
 
-describe("Test 1: FORCE RLS blocks NOSUPERUSER queries without GUC tenant context", () => {
-  if (SKIP) return;
+suite("Test 1: FORCE RLS blocks NOSUPERUSER queries without GUC tenant context", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -510,8 +517,7 @@ describe("Test 1: FORCE RLS blocks NOSUPERUSER queries without GUC tenant contex
 // TEST 2 — Correct preview counts via fixed middleware path
 // =============================================================================
 
-describe("Test 2: getPreviewCounts() returns accurate counts with owner-admin pool-hook context", () => {
-  if (SKIP) return;
+suite("Test 2: getPreviewCounts() returns accurate counts with owner-admin pool-hook context", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -548,8 +554,7 @@ describe("Test 2: getPreviewCounts() returns accurate counts with owner-admin po
 // TEST 3 — Preview / Execute consistency
 // =============================================================================
 
-describe("Test 3: Preview counts match actual execute row counts", () => {
-  if (SKIP) return;
+suite("Test 3: Preview counts match actual execute row counts", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -599,8 +604,7 @@ describe("Test 3: Preview counts match actual execute row counts", () => {
 // TEST 4 — Other-clinic isolation
 // =============================================================================
 
-describe("Test 4: Resetting Clinic A leaves Clinic B completely unchanged", () => {
-  if (SKIP) return;
+suite("Test 4: Resetting Clinic A leaves Clinic B completely unchanged", () => {
 
   beforeEach(async () => {
     await insertClinicAFixtures();
@@ -679,8 +683,7 @@ describe("Test 4: Resetting Clinic A leaves Clinic B completely unchanged", () =
 // TEST 5 — Global data preservation
 // =============================================================================
 
-describe("Test 5: Global/master data preserved after full pilot reset", () => {
-  if (SKIP) return;
+suite("Test 5: Global/master data preserved after full pilot reset", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -775,8 +778,7 @@ describe("Test 5: Global/master data preserved after full pilot reset", () => {
 // TEST 6 — Audit event verification
 // =============================================================================
 
-describe("Test 6: verifyPostReset() audit-event check with and without owner-admin context", () => {
-  if (SKIP) return;
+suite("Test 6: verifyPostReset() audit-event check with and without owner-admin context", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -852,8 +854,7 @@ describe("Test 6: verifyPostReset() audit-event check with and without owner-adm
 // TEST 7 — Clinic inventory hard-delete / soft-zero semantics
 // =============================================================================
 
-describe("Test 7: clinic_inventory_items hard-delete/soft-zero semantics are preserved", () => {
-  if (SKIP) return;
+suite("Test 7: clinic_inventory_items hard-delete/soft-zero semantics are preserved", () => {
 
   beforeEach(async () => { await insertClinicAFixtures(); });
   afterEach(async () => { await cleanupClinicAFixtures(); });
@@ -952,8 +953,7 @@ describe("Test 7: clinic_inventory_items hard-delete/soft-zero semantics are pre
 // TEST 8 — Preview selected-clinic scoping
 // =============================================================================
 
-describe("Test 8: Preview scoping — ownerAdmin sees all clinics; WHERE clause scopes to selected clinic", () => {
-  if (SKIP) return;
+suite("Test 8: Preview scoping — ownerAdmin sees all clinics; WHERE clause scopes to selected clinic", () => {
 
   beforeEach(async () => {
     await insertClinicAFixtures();
