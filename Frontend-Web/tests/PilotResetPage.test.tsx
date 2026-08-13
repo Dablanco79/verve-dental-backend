@@ -87,7 +87,11 @@ const MOCK_PREVIEW: PilotResetPreviewData = {
   deleteCounts: {
     purchasingDrafts: 3,
     draftPurchaseOrders: 7,
+    draftPurchaseOrdersOperational: 5, // 5 POs with lines (visible in PO UI)
+    draftPurchaseOrdersEmpty: 2,       // 2 empty / abandoned POs (invisible in UI)
     draftPoLines: 34,
+    draftPoLinesActive: 32,            // lines on non-cancelled/received POs
+    draftPoLinesHistorical: 2,         // lines on cancelled/received POs
     stocktakeSessions: 2,
     stocktakeLines: 94,
     supplierInvoices: 12,
@@ -234,6 +238,17 @@ describe("T61: Counts render in preview results", () => {
     });
 
     expect(screen.getByText("12")).toBeInTheDocument(); // supplier invoices
+
+    // PO breakdown labels (new clarity fields)
+    expect(screen.getByText("Purchase Orders (total DB records)")).toBeInTheDocument();
+    expect(screen.getByText("↳ Operational (with product lines)")).toBeInTheDocument();
+    // draftPurchaseOrdersEmpty: 2 > 0, so the empty row is rendered
+    expect(screen.getByText("↳ Empty / abandoned records")).toBeInTheDocument();
+    expect(screen.getByText("PO Lines (total DB records)")).toBeInTheDocument();
+    expect(screen.getByText("↳ Active product lines")).toBeInTheDocument();
+    // draftPoLinesHistorical: 2 > 0, so the historical row is rendered
+    expect(screen.getByText("↳ Historical (cancelled / received)")).toBeInTheDocument();
+
     expect(screen.getByText("WILL BE PRESERVED")).toBeInTheDocument();
     expect(screen.getByText(/Global Suppliers/i)).toBeInTheDocument();
   });

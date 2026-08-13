@@ -89,6 +89,15 @@ function CountRow({ label, value }: { label: string; value: number }) {
   );
 }
 
+function SubCountRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0 2px 16px", borderBottom: "1px dashed #f0f0f0", fontSize: "12px", color: "#555" }}>
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function PilotResetPage() {
@@ -371,8 +380,16 @@ export function PilotResetPage() {
               <div style={{ border: "1px solid #ccc", borderRadius: "6px", padding: "16px" }}>
                 <h3 style={{ margin: "0 0 12px", color: "#c0392b" }}>WILL BE DELETED</h3>
                 <CountRow label="Purchasing Drafts" value={preview.deleteCounts.purchasingDrafts} />
-                <CountRow label="Purchase Orders" value={preview.deleteCounts.draftPurchaseOrders} />
-                <CountRow label="PO Lines" value={preview.deleteCounts.draftPoLines} />
+                <CountRow label="Purchase Orders (total DB records)" value={preview.deleteCounts.draftPurchaseOrders} />
+                <SubCountRow label="↳ Operational (with product lines)" value={preview.deleteCounts.draftPurchaseOrdersOperational} />
+                {preview.deleteCounts.draftPurchaseOrdersEmpty > 0 && (
+                  <SubCountRow label="↳ Empty / abandoned records" value={preview.deleteCounts.draftPurchaseOrdersEmpty} />
+                )}
+                <CountRow label="PO Lines (total DB records)" value={preview.deleteCounts.draftPoLines} />
+                <SubCountRow label="↳ Active product lines" value={preview.deleteCounts.draftPoLinesActive} />
+                {preview.deleteCounts.draftPoLinesHistorical > 0 && (
+                  <SubCountRow label="↳ Historical (cancelled / received)" value={preview.deleteCounts.draftPoLinesHistorical} />
+                )}
                 <CountRow label="Stocktake Sessions" value={preview.deleteCounts.stocktakeSessions} />
                 <CountRow label="Stocktake Lines" value={preview.deleteCounts.stocktakeLines} />
                 <CountRow label="Supplier Invoices" value={preview.deleteCounts.supplierInvoices} />

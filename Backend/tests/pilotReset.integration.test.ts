@@ -1137,3 +1137,200 @@ describe("TEST 6 — Tenant Context & Connection Safety", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 7 — PO and PO-line breakdown counts (operational vs empty, active vs historical)
+//
+// Verifies the four new breakdown fields added to PilotResetDeleteCounts:
+//   draftPurchaseOrdersOperational — POs with ≥1 line (visible in PO UI)
+//   draftPurchaseOrdersEmpty       — POs with 0 lines  (invisible in PO UI)
+//   draftPoLinesActive             — lines on non-cancelled/received POs (UI "Total Product Lines")
+//   draftPoLinesHistorical         — lines on cancelled/received POs (excluded from UI stat)
+//
+// Uses a dedicated BD_CLINIC_ID to avoid fixture conflicts with Tests 1–6.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BD_CLINIC_ID = "a9d00000-0000-4000-8000-000000000001";
+
+// Fixed UUIDs — prefix "a9d" is visually distinct from all other test fixtures
+const BD = {
+  cii1:          "a9d00000-0000-4000-8000-100000000001", // clinic_inventory_item (masterProduct)
+  draftPo1:      "a9d00000-0000-4000-8000-200000000001", // operational — 1 active line
+  draftPo2:      "a9d00000-0000-4000-8000-200000000002", // operational — 1 active line
+  draftPo3:      "a9d00000-0000-4000-8000-200000000003", // operational — 1 active line
+  cancelledPo:   "a9d00000-0000-4000-8000-200000000004", // operational — 1 historical line
+  emptyPo:       "a9d00000-0000-4000-8000-200000000005", // empty / abandoned — no lines
+  poLine1:       "a9d00000-0000-4000-8000-300000000001",
+  poLine2:       "a9d00000-0000-4000-8000-300000000002",
+  poLine3:       "a9d00000-0000-4000-8000-300000000003",
+  cancelledLine: "a9d00000-0000-4000-8000-300000000004",
+} as const;
+
+// Expected breakdown for BD_CLINIC_ID:
+//   5 POs total  = 4 operational (have lines) + 1 empty
+//   4 lines total = 3 active (on draft POs) + 1 historical (on cancelled PO)
+const BD_EXPECTED = {
+  totalPos: 5,
+  operationalPos: 4,
+  emptyPos: 1,
+  totalLines: 4,
+  activeLines: 3,
+  historicalLines: 1,
+} as const;
+
+async function insertBdFixtures(): Promise<void> {
+  const userId = SEED_USER_IDS.clinicAAdmin;
+
+  await pool.query(
+    `INSERT INTO clinics (id, name, timezone, subscription_tier, is_active)
+     VALUES ($1, 'Breakdown Count Test Clinic', 'Australia/Sydney', 'standard', true)
+     ON CONFLICT (id) DO NOTHING`,
+    [BD_CLINIC_ID],
+  );
+
+  await asOwnerAdmin(BD_CLINIC_ID, async (c) => {
+    // One CII for BD_CLINIC — all PO lines reference it (lines on different POs = no unique conflict)
+    await c.query(
+      `INSERT INTO clinic_inventory_items
+         (id, clinic_id, master_catalog_item_id, quantity_on_hand, reorder_point)
+       VALUES ($1, $2, $3, 10, 2)
+       ON CONFLICT (id) DO NOTHING`,
+      [BD.cii1, BD_CLINIC_ID, FX.masterProduct],
+    );
+
+    // 3 draft POs each with 1 active line
+    for (const [poId, lineId] of [
+      [BD.draftPo1, BD.poLine1],
+      [BD.draftPo2, BD.poLine2],
+      [BD.draftPo3, BD.poLine3],
+    ] as const) {
+      await c.query(
+        `INSERT INTO draft_purchase_orders (id, clinic_id, status, created_by_user_id)
+         VALUES ($1, $2, 'draft', $3)
+         ON CONFLICT (id) DO NOTHING`,
+        [poId, BD_CLINIC_ID, userId],
+      );
+      await c.query(
+        `INSERT INTO draft_po_lines
+           (id, draft_purchase_order_id, master_catalog_item_id, clinic_inventory_item_id, quantity, reason)
+         VALUES ($1, $2, $3, $4, 1, 'BD breakdown test — active')
+         ON CONFLICT (id) DO NOTHING`,
+        [lineId, poId, FX.masterProduct, BD.cii1],
+      );
+    }
+
+    // 1 cancelled PO with 1 historical line
+    await c.query(
+      `INSERT INTO draft_purchase_orders (id, clinic_id, status, created_by_user_id)
+       VALUES ($1, $2, 'cancelled', $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [BD.cancelledPo, BD_CLINIC_ID, userId],
+    );
+    await c.query(
+      `INSERT INTO draft_po_lines
+         (id, draft_purchase_order_id, master_catalog_item_id, clinic_inventory_item_id, quantity, reason)
+       VALUES ($1, $2, $3, $4, 1, 'BD breakdown test — historical (cancelled PO)')
+       ON CONFLICT (id) DO NOTHING`,
+      [BD.cancelledLine, BD.cancelledPo, FX.masterProduct, BD.cii1],
+    );
+
+    // 1 empty draft PO (no lines)
+    await c.query(
+      `INSERT INTO draft_purchase_orders (id, clinic_id, status, created_by_user_id)
+       VALUES ($1, $2, 'draft', $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [BD.emptyPo, BD_CLINIC_ID, userId],
+    );
+  });
+}
+
+async function cleanupBdFixtures(): Promise<void> {
+  await pool.query(
+    `DELETE FROM draft_po_lines WHERE id IN ($1, $2, $3, $4)`,
+    [BD.poLine1, BD.poLine2, BD.poLine3, BD.cancelledLine],
+  );
+  await pool.query(
+    `DELETE FROM draft_purchase_orders WHERE id IN ($1, $2, $3, $4, $5)`,
+    [BD.draftPo1, BD.draftPo2, BD.draftPo3, BD.cancelledPo, BD.emptyPo],
+  );
+  await pool.query(`DELETE FROM clinic_inventory_items WHERE id = $1`, [BD.cii1]);
+  await pool.query(`DELETE FROM clinics WHERE id = $1`, [BD_CLINIC_ID]);
+}
+
+describe("TEST 7 — PO and line breakdown counts (operational vs empty, active vs historical)", () => {
+  const repo = () => createPostgresPilotResetRepository(pool);
+
+  beforeAll(async () => {
+    if (SKIP) return;
+    await insertBdFixtures();
+  });
+
+  afterAll(async () => {
+    if (SKIP) return;
+    await cleanupBdFixtures().catch(() => undefined);
+  });
+
+  it("TEST 7.A: getPreviewCounts returns correct operational/empty PO breakdown", async () => {
+    if (SKIP) return;
+
+    const counts = await repo().getPreviewCounts(BD_CLINIC_ID, "operational");
+
+    expect(counts.draftPurchaseOrders).toBe(BD_EXPECTED.totalPos);
+    expect(counts.draftPurchaseOrdersOperational).toBe(BD_EXPECTED.operationalPos);
+    expect(counts.draftPurchaseOrdersEmpty).toBe(BD_EXPECTED.emptyPos);
+    // Invariant: total = operational + empty
+    expect(counts.draftPurchaseOrders).toBe(
+      counts.draftPurchaseOrdersOperational + counts.draftPurchaseOrdersEmpty,
+    );
+  });
+
+  it("TEST 7.B: getPreviewCounts returns correct active/historical line breakdown", async () => {
+    if (SKIP) return;
+
+    const counts = await repo().getPreviewCounts(BD_CLINIC_ID, "operational");
+
+    expect(counts.draftPoLines).toBe(BD_EXPECTED.totalLines);
+    expect(counts.draftPoLinesActive).toBe(BD_EXPECTED.activeLines);
+    expect(counts.draftPoLinesHistorical).toBe(BD_EXPECTED.historicalLines);
+    // Invariant: total = active + historical
+    expect(counts.draftPoLines).toBe(
+      counts.draftPoLinesActive + counts.draftPoLinesHistorical,
+    );
+  });
+
+  it("TEST 7.C: execute still deletes all POs including empty ones — total matches preview total", async () => {
+    if (SKIP) return;
+
+    // Confirm preview total before execute
+    const preview = await repo().getPreviewCounts(BD_CLINIC_ID, "operational");
+    expect(preview.draftPurchaseOrders).toBe(BD_EXPECTED.totalPos);
+
+    // Execute removes all rows
+    const executed = await withTenantContext(
+      pool,
+      BD_CLINIC_ID,
+      (client) => repo().executeOperationalReset(client, BD_CLINIC_ID),
+      true,
+    );
+
+    // Execute total matches preview total — the breakdown is informational only
+    expect(executed.draftPurchaseOrders).toBe(preview.draftPurchaseOrders);
+    expect(executed.draftPoLines).toBe(preview.draftPoLines);
+
+    // Nothing remains
+    const remainingPos = await countRows(
+      `SELECT COUNT(*)::text AS count FROM draft_purchase_orders WHERE clinic_id = $1`,
+      [BD_CLINIC_ID],
+    );
+    const remainingLines = await countRows(
+      `SELECT COUNT(*)::text AS count FROM draft_po_lines
+       WHERE draft_purchase_order_id IN (
+         SELECT id FROM draft_purchase_orders WHERE clinic_id = $1
+       )`,
+      [BD_CLINIC_ID],
+    );
+
+    expect(remainingPos).toBe(0);
+    expect(remainingLines).toBe(0);
+  });
+});

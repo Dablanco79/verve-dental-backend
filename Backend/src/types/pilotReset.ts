@@ -18,8 +18,36 @@ export type PilotResetClinic = {
  */
 export type PilotResetDeleteCounts = {
   purchasingDrafts: number;
+  /** Total draft_purchase_orders rows for this clinic. Equal to operational + empty. */
   draftPurchaseOrders: number;
+  /**
+   * POs that have at least one row in draft_po_lines.
+   * These are the POs visible in the Purchase Orders UI.
+   * Set to 0 in execute response (breakdown not tracked post-delete).
+   */
+  draftPurchaseOrdersOperational: number;
+  /**
+   * POs with zero rows in draft_po_lines.
+   * These POs are invisible in the Purchase Orders UI because the UI
+   * builds summaries from line groupings — a PO without lines is never
+   * included in allPoSummaries.  They are still deleted by execute.
+   * Set to 0 in execute response.
+   */
+  draftPurchaseOrdersEmpty: number;
+  /** Total draft_po_lines rows for this clinic. Equal to active + historical. */
   draftPoLines: number;
+  /**
+   * Lines whose parent PO status is NOT 'cancelled' or 'received'.
+   * Matches the Purchase Orders UI's "Total Product Lines" statistic.
+   * Set to 0 in execute response.
+   */
+  draftPoLinesActive: number;
+  /**
+   * Lines whose parent PO status IS 'cancelled' or 'received'.
+   * Excluded from the UI's "Total Product Lines" stat but still deleted.
+   * Set to 0 in execute response.
+   */
+  draftPoLinesHistorical: number;
   stocktakeSessions: number;
   stocktakeLines: number;
   supplierInvoices: number;

@@ -83,7 +83,19 @@ function rowCount(result: { rowCount: number | null }): number {
 async function deleteOperationalRecords(
   client: PoolClient,
   clinicId: string,
-): Promise<Omit<PilotResetDeleteCounts, "productSuppliers" | "supplierContractPrices" | "supplierContracts" | "procurementPolicies" | "supplierRelationships" | "clinicInventoryItemsDeleted" | "clinicInventoryItemsSoftZeroed">> {
+): Promise<Omit<PilotResetDeleteCounts,
+  | "productSuppliers"
+  | "supplierContractPrices"
+  | "supplierContracts"
+  | "procurementPolicies"
+  | "supplierRelationships"
+  | "clinicInventoryItemsDeleted"
+  | "clinicInventoryItemsSoftZeroed"
+  | "draftPurchaseOrdersOperational"
+  | "draftPurchaseOrdersEmpty"
+  | "draftPoLinesActive"
+  | "draftPoLinesHistorical"
+>> {
   // 1. PO lines (no clinic_id; scoped via parent PO)
   const poLines = await client.query(
     `DELETE FROM draft_po_lines
@@ -218,6 +230,10 @@ export function createPostgresPilotResetRepository(
         supplierPriceHistoryResult,
         invoiceLinesResult,
         invoicesResult,
+        posWithLinesResult,
+        emptyPosResult,
+        activeLinesResult,
+        historicalLinesResult,
       ] = await Promise.all([
         pool.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count FROM draft_po_lines
@@ -257,11 +273,52 @@ export function createPostgresPilotResetRepository(
           `SELECT COUNT(*)::text AS count FROM supplier_invoices WHERE clinic_id = $1`,
           [clinicId],
         ),
+        // POs that have at least one line — visible as PO cards in the Purchase Orders UI
+        pool.query<{ count: string }>(
+          `SELECT COUNT(DISTINCT dpo.id)::text AS count
+           FROM draft_purchase_orders dpo
+           JOIN draft_po_lines dpl ON dpl.draft_purchase_order_id = dpo.id
+           WHERE dpo.clinic_id = $1`,
+          [clinicId],
+        ),
+        // POs with zero lines — invisible in the UI (built from line groupings); still deleted
+        pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM draft_purchase_orders dpo
+           WHERE dpo.clinic_id = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM draft_po_lines dpl
+               WHERE dpl.draft_purchase_order_id = dpo.id
+             )`,
+          [clinicId],
+        ),
+        // Lines on non-cancelled, non-received POs — matches the UI's "Total Product Lines" stat
+        pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM draft_po_lines dpl
+           JOIN draft_purchase_orders dpo ON dpo.id = dpl.draft_purchase_order_id
+           WHERE dpo.clinic_id = $1
+             AND dpo.status NOT IN ('cancelled', 'received')`,
+          [clinicId],
+        ),
+        // Lines on cancelled or received POs — excluded from the UI stat but still deleted
+        pool.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM draft_po_lines dpl
+           JOIN draft_purchase_orders dpo ON dpo.id = dpl.draft_purchase_order_id
+           WHERE dpo.clinic_id = $1
+             AND dpo.status IN ('cancelled', 'received')`,
+          [clinicId],
+        ),
       ]);
 
       const baseResult: PilotResetDeleteCounts = {
         draftPoLines: parseInt(poLinesResult.rows[0]?.count ?? "0", 10),
         draftPurchaseOrders: parseInt(draftPosResult.rows[0]?.count ?? "0", 10),
+        draftPurchaseOrdersOperational: parseInt(posWithLinesResult.rows[0]?.count ?? "0", 10),
+        draftPurchaseOrdersEmpty: parseInt(emptyPosResult.rows[0]?.count ?? "0", 10),
+        draftPoLinesActive: parseInt(activeLinesResult.rows[0]?.count ?? "0", 10),
+        draftPoLinesHistorical: parseInt(historicalLinesResult.rows[0]?.count ?? "0", 10),
         purchasingDrafts: parseInt(purchasingDraftsResult.rows[0]?.count ?? "0", 10),
         stocktakeLines: parseInt(stocktakeLinesResult.rows[0]?.count ?? "0", 10),
         stocktakeSessions: parseInt(stocktakeSessionsResult.rows[0]?.count ?? "0", 10),
@@ -380,6 +437,12 @@ export function createPostgresPilotResetRepository(
 
       return {
         ...operational,
+        // Breakdown fields are 0 in the execute response: the delete removes all rows
+        // atomically, so per-category breakdowns no longer apply post-delete.
+        draftPurchaseOrdersOperational: 0,
+        draftPurchaseOrdersEmpty: 0,
+        draftPoLinesActive: 0,
+        draftPoLinesHistorical: 0,
         productSuppliers: 0,
         supplierContractPrices: 0,
         supplierContracts: 0,
@@ -468,6 +531,10 @@ export function createPostgresPilotResetRepository(
 
       return {
         ...operational,
+        draftPurchaseOrdersOperational: 0,
+        draftPurchaseOrdersEmpty: 0,
+        draftPoLinesActive: 0,
+        draftPoLinesHistorical: 0,
         productSuppliers: rowCount(productSuppliers),
         supplierContractPrices: rowCount(contractPrices),
         supplierContracts: rowCount(contracts),
@@ -689,6 +756,10 @@ export function createInMemoryPilotResetRepository(): PilotResetRepository {
   const zeroCounts: PilotResetDeleteCounts = {
     draftPoLines: 0,
     draftPurchaseOrders: 0,
+    draftPurchaseOrdersOperational: 0,
+    draftPurchaseOrdersEmpty: 0,
+    draftPoLinesActive: 0,
+    draftPoLinesHistorical: 0,
     purchasingDrafts: 0,
     stocktakeLines: 0,
     stocktakeSessions: 0,

@@ -168,8 +168,18 @@ export type PilotResetMode = "operational" | "full_pilot";
 
 export type PilotResetDeleteCounts = {
   purchasingDrafts: number;
+  /** Total draft_purchase_orders rows. Equal to operational + empty. */
   draftPurchaseOrders: number;
+  /** POs with at least one line (visible in Purchase Orders UI). 0 in execute response. */
+  draftPurchaseOrdersOperational: number;
+  /** POs with zero lines (invisible in Purchase Orders UI). 0 in execute response. */
+  draftPurchaseOrdersEmpty: number;
+  /** Total draft_po_lines rows. Equal to active + historical. */
   draftPoLines: number;
+  /** Lines on non-cancelled, non-received POs — matches UI "Total Product Lines". 0 in execute response. */
+  draftPoLinesActive: number;
+  /** Lines on cancelled or received POs — excluded from UI stat but still deleted. 0 in execute response. */
+  draftPoLinesHistorical: number;
   stocktakeSessions: number;
   stocktakeLines: number;
   supplierInvoices: number;

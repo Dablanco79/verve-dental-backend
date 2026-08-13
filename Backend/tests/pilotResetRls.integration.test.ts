@@ -535,6 +535,20 @@ suite("Test 2: getPreviewCounts() returns accurate counts with owner-admin pool-
     expect(counts.supplierInvoices).toBe(1);
     expect(counts.supplierInvoiceLines).toBe(1);
     expect(counts.productSuppliers).toBe(1);
+
+    // PO breakdown: the fixture creates draftPoA with NO lines, so it is empty.
+    // Operational = POs with ≥1 line; Empty = POs with 0 lines.
+    expect(counts.draftPurchaseOrdersOperational).toBe(0);
+    expect(counts.draftPurchaseOrdersEmpty).toBeGreaterThanOrEqual(1); // at least draftPoA
+    expect(counts.draftPurchaseOrders).toBe(
+      counts.draftPurchaseOrdersOperational + counts.draftPurchaseOrdersEmpty,
+    );
+
+    // Line breakdown: no lines exist in these fixtures
+    expect(counts.draftPoLines).toBe(0);
+    expect(counts.draftPoLinesActive).toBe(0);
+    expect(counts.draftPoLinesHistorical).toBe(0);
+    expect(counts.draftPoLines).toBe(counts.draftPoLinesActive + counts.draftPoLinesHistorical);
   });
 
   it("operational preview counts zero for inventory (operational mode preserves inventory)", async () => {
