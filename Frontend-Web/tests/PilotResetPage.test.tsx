@@ -505,3 +505,191 @@ describe("T68: Full vs Operational reset explanation is clear", () => {
     expect(fullPilotDesc).toBeInTheDocument();
   });
 });
+
+// ─── Helper: advance through all steps to Step 5 ─────────────────────────────
+
+async function advanceToStep5() {
+  setAuthenticatedUser(authTestState, createAdminUser());
+  renderPage();
+
+  await userEvent.click(screen.getByRole("button", { name: new RegExp(TEST_CLINIC_NAME) }));
+  await userEvent.click(screen.getByText("OPERATIONAL RESET"));
+  await userEvent.click(screen.getByRole("button", { name: /Preview Reset/i }));
+
+  await waitFor(() => {
+    expect(screen.getByPlaceholderText("000000")).toBeInTheDocument();
+  });
+
+  await userEvent.type(screen.getByPlaceholderText("000000"), "123456");
+  await userEvent.click(screen.getByRole("button", { name: /Verify MFA/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+  });
+
+  const expectedPhrase = `RESET ${TEST_CLINIC_NAME.toUpperCase()} PILOT DATA`;
+  await userEvent.type(screen.getByPlaceholderText(/Type the phrase/i), expectedPhrase);
+}
+
+// T69: Execute failure — error remains visible on Step 5
+
+describe("T69: Execute failure — error banner visible and survives step transition", () => {
+  it("shows error on Step 5 when execute rejects with INVALID_PREVIEW_TOKEN", async () => {
+    mockExecutePilotReset.mockRejectedValueOnce(
+      new Error("Preview token is invalid or has expired. Run preview again before executing."),
+    );
+
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      // Must be back on Step 5, not on the result screen
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    // Error banner MUST be visible — the useEffect must NOT have cleared it
+    expect(
+      screen.getByText(/Preview token is invalid or has expired/i),
+    ).toBeInTheDocument();
+
+    // Result screen must NOT be shown
+    expect(screen.queryByText(/Pilot Reset Completed/i)).toBeNull();
+  });
+
+  it("shows error on Step 5 when execute rejects with PREVIEW_TOKEN_EXPIRED", async () => {
+    mockExecutePilotReset.mockRejectedValueOnce(
+      new Error("Preview token has expired. Run preview again before executing."),
+    );
+
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(/Preview token has expired/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Pilot Reset Completed/i)).toBeNull();
+  });
+
+  it("shows error on Step 5 when execute rejects with a generic failure", async () => {
+    mockExecutePilotReset.mockRejectedValueOnce(
+      new Error("Execution failed. Please try again."),
+    );
+
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Execution failed\. Please try again\./i)).toBeInTheDocument();
+  });
+
+  it("confirmation phrase input is preserved after execute failure so user does not need to retype", async () => {
+    mockExecutePilotReset.mockRejectedValueOnce(
+      new Error("Preview token is invalid or has expired. Run preview again before executing."),
+    );
+
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    const expectedPhrase = `RESET ${TEST_CLINIC_NAME.toUpperCase()} PILOT DATA`;
+    const phraseInput = screen.getByPlaceholderText(/Type the phrase/i);
+    expect(phraseInput).toHaveValue(expectedPhrase);
+  });
+});
+
+// T70: Execute fails with INVALID_MFA_CODE — user stays in workflow
+
+describe("T70: INVALID_MFA_CODE error is surfaced without logging the user out", () => {
+  it("shows MFA error on Step 5 without redirecting to login", async () => {
+    mockExecutePilotReset.mockRejectedValueOnce(
+      new Error("Invalid MFA code for Pilot Reset execution"),
+    );
+
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    // Error is visible
+    expect(screen.getByText(/Invalid MFA code for Pilot Reset execution/i)).toBeInTheDocument();
+
+    // User is NOT logged out — the Pilot Reset page is still rendered
+    expect(screen.getByText(/PILOT RESET — DESTRUCTIVE TEST UTILITY/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Pilot Reset Completed/i)).toBeNull();
+  });
+});
+
+// T71: Preview expiry shown on Step 5
+
+describe("T71: Preview expiry timestamp is visible on Step 5", () => {
+  it("shows preview expiry time on the confirmation step", async () => {
+    await advanceToStep5();
+
+    // The expiry timestamp should appear on Step 5 (previously only on Step 4)
+    expect(screen.getByText(/Preview expires at:/i)).toBeInTheDocument();
+  });
+
+  it("disables Execute and shows expired banner when preview has expired client-side", async () => {
+    // Set previewExpiresAt in the past so the component sees it as already expired
+    mockPreviewPilotReset.mockResolvedValueOnce({
+      ...MOCK_PREVIEW,
+      previewExpiresAt: new Date(Date.now() - 1000).toISOString(), // 1 second in the past
+    });
+
+    setAuthenticatedUser(authTestState, createAdminUser());
+    renderPage();
+
+    await userEvent.click(screen.getByRole("button", { name: new RegExp(TEST_CLINIC_NAME) }));
+    await userEvent.click(screen.getByText("OPERATIONAL RESET"));
+    await userEvent.click(screen.getByRole("button", { name: /Preview Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("000000")).toBeInTheDocument();
+    });
+
+    await userEvent.type(screen.getByPlaceholderText("000000"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: /Verify MFA/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Typed Confirmation/i)).toBeInTheDocument();
+    });
+
+    // Expiry banner must appear immediately
+    await waitFor(() => {
+      expect(screen.getByText(/Preview expired\. Re-run Preview before executing\./i)).toBeInTheDocument();
+    });
+
+    // Execute button must be disabled
+    const executeButton = screen.getByRole("button", { name: /Execute Pilot Reset/i });
+    expect(executeButton).toBeDisabled();
+  });
+});
+
+// T72: Successful execute still reaches result screen (regression guard)
+
+describe("T72: Successful execute still navigates to result screen", () => {
+  it("shows result screen after successful execute", async () => {
+    await advanceToStep5();
+    await userEvent.click(screen.getByRole("button", { name: /Execute Pilot Reset/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Pilot Reset Completed/i)).toBeInTheDocument();
+    });
+
+    // Error banner must NOT appear after success
+    expect(screen.queryByText(/expired/i)).toBeNull();
+    expect(screen.queryByText(/failed/i)).toBeNull();
+  });
+});

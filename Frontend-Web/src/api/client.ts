@@ -312,6 +312,15 @@ async function request<T>(
     const code = errorBody?.error.code ?? null;
 
     if (response.status === 401 && accessToken && !options.skipAuthRetry) {
+      // MFA-specific 401 codes are credential errors (wrong/expired TOTP code),
+      // not JWT session expiry. Surfacing them directly prevents an incorrect
+      // token-refresh attempt followed by a false session-logout when the real
+      // issue is that the user's authenticator code timed out.
+      const mfaErrorCodes = new Set(["INVALID_MFA_CODE", "MFA_REQUIRED"]);
+      if (code !== null && mfaErrorCodes.has(code)) {
+        throw new ApiRequestError(message, response.status, code);
+      }
+
       try {
         const session = await refreshAccessToken(config);
         tokenStorage.setAccessToken(session.accessToken);

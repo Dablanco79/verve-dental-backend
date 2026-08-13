@@ -115,11 +115,26 @@ export function PilotResetPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PilotResetExecuteData | null>(null);
+  // Tracks whether the preview nonce has expired client-side while on Step 5.
+  // The backend is always authoritative; this is a UX-only guard.
+  const [previewExpired, setPreviewExpired] = useState(false);
 
-  // Clear error when step changes
+  // Arm a countdown timer whenever the user reaches the confirmation step.
+  // Cleared when they leave the step so no timer leaks exist.
   useEffect(() => {
-    setError(null);
-  }, [step]);
+    if (step !== "confirm" || !preview) {
+      setPreviewExpired(false);
+      return;
+    }
+    const expiresAt = Date.parse(preview.previewExpiresAt);
+    if (Date.now() >= expiresAt) {
+      setPreviewExpired(true);
+      return;
+    }
+    const msUntilExpiry = expiresAt - Date.now();
+    const timer = setTimeout(() => { setPreviewExpired(true); }, msUntilExpiry);
+    return () => { clearTimeout(timer); };
+  }, [step, preview]);
 
   // Guard: feature flag + role (after all hooks)
   if (!config.pilotResetEnabled || user?.role !== "owner_admin") {
@@ -129,6 +144,8 @@ export function PilotResetPage() {
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
   function handleSelectClinic(clinic: ClinicOption) {
+    setError(null);
+    setPreviewExpired(false);
     setSelectedClinic(clinic);
     setPreview(null);
     setMfaCode("");
@@ -137,6 +154,7 @@ export function PilotResetPage() {
   }
 
   function handleSelectMode(selectedMode: PilotResetMode) {
+    setError(null);
     setMode(selectedMode);
     setPreview(null);
     setStep("preview");
@@ -176,6 +194,15 @@ export function PilotResetPage() {
       return;
     }
 
+    // Client-side expiry guard — avoids a network round-trip when the user
+    // has already been shown the "Preview expired" banner. The backend is
+    // always the authoritative validator; this only improves UX.
+    if (Date.now() >= Date.parse(preview.previewExpiresAt)) {
+      setPreviewExpired(true);
+      setError("Preview has expired. Please re-run Preview before executing.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setStep("executing");
@@ -191,6 +218,10 @@ export function PilotResetPage() {
       setResult(data);
       setStep("result");
     } catch (err) {
+      // Return to Step 5. confirmationPhrase is preserved so the user does
+      // not need to retype it. The error banner is set BEFORE setStep so
+      // that both state updates are batched into the same render, and no
+      // separate effect clears the message before the user sees it.
       setError(err instanceof Error ? err.message : "Execution failed. Please try again.");
       setStep("confirm");
     } finally {
@@ -301,7 +332,7 @@ export function PilotResetPage() {
             </div>
             <button
               type="button"
-              onClick={() => { setStep("select_clinic"); }}
+              onClick={() => { setError(null); setStep("select_clinic"); }}
               style={{ marginTop: "16px", padding: "8px 16px" }}
             >
               ← Back
@@ -325,7 +356,7 @@ export function PilotResetPage() {
             <div style={{ display: "flex", gap: "12px" }}>
               <button
                 type="button"
-                onClick={() => { setStep("select_mode"); }}
+                onClick={() => { setError(null); setStep("select_mode"); }}
                 style={{ padding: "10px 20px" }}
               >
                 ← Back
@@ -486,7 +517,7 @@ export function PilotResetPage() {
 
             <button
               type="button"
-              onClick={() => { setStep("preview"); setPreview(null); setMfaCode(""); }}
+              onClick={() => { setError(null); setPreviewExpired(false); setStep("preview"); setPreview(null); setMfaCode(""); }}
               style={{ marginTop: "16px", padding: "8px 16px" }}
             >
               ← Re-run Preview
@@ -504,6 +535,21 @@ export function PilotResetPage() {
               <br />
               This action CANNOT be undone.
             </DangerBanner>
+
+            {previewExpired ? (
+              <DangerBanner>
+                Preview expired. Re-run Preview before executing.
+              </DangerBanner>
+            ) : (
+              <p style={{ fontSize: "12px", color: "#666", marginBottom: "12px" }}>
+                Preview expires at:{" "}
+                <strong>{new Date(preview.previewExpiresAt).toLocaleTimeString()}</strong>
+                {" "}— complete this step before then.
+              </p>
+            )}
+
+            {error && <DangerBanner>{error}</DangerBanner>}
+
             <p>Type exactly:</p>
             <div
               style={{
@@ -520,12 +566,12 @@ export function PilotResetPage() {
             >
               {preview.expectedConfirmationPhrase}
             </div>
-            {error && <DangerBanner>{error}</DangerBanner>}
             <input
               type="text"
               value={confirmationPhrase}
               onChange={(e) => { setConfirmationPhrase(e.target.value); }}
               placeholder="Type the phrase above exactly…"
+              disabled={previewExpired}
               style={{
                 width: "100%",
                 padding: "10px 14px",
@@ -535,12 +581,13 @@ export function PilotResetPage() {
                 marginBottom: "16px",
                 fontFamily: "monospace",
                 boxSizing: "border-box",
+                opacity: previewExpired ? 0.5 : 1,
               }}
             />
             <div style={{ display: "flex", gap: "12px" }}>
               <button
                 type="button"
-                onClick={() => { setStep("mfa"); setConfirmationPhrase(""); }}
+                onClick={() => { setError(null); setStep("mfa"); setConfirmationPhrase(""); }}
                 style={{ padding: "10px 20px" }}
               >
                 ← Back
@@ -548,16 +595,22 @@ export function PilotResetPage() {
               <button
                 type="button"
                 onClick={() => { void handleExecute(); }}
-                disabled={confirmationPhrase !== preview.expectedConfirmationPhrase || isLoading}
+                disabled={
+                  previewExpired ||
+                  confirmationPhrase !== preview.expectedConfirmationPhrase ||
+                  isLoading
+                }
                 style={{
                   padding: "10px 24px",
                   background:
-                    confirmationPhrase === preview.expectedConfirmationPhrase ? "#c0392b" : "#ccc",
+                    !previewExpired && confirmationPhrase === preview.expectedConfirmationPhrase
+                      ? "#c0392b"
+                      : "#ccc",
                   color: "#fff",
                   border: "none",
                   borderRadius: "6px",
                   cursor:
-                    confirmationPhrase === preview.expectedConfirmationPhrase
+                    !previewExpired && confirmationPhrase === preview.expectedConfirmationPhrase
                       ? "pointer"
                       : "not-allowed",
                   fontWeight: 700,

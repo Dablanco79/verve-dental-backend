@@ -13,9 +13,13 @@
  *     5. Fresh TOTP/MFA code (verified against user's stored secret)
  *     6. Exact typed confirmation phrase
  *     7. No active blockers
+ *     8. Atomic token claim (SET NX / in-memory Set) — first caller wins
  * • All destructive SQL runs in ONE explicit PostgreSQL transaction.
  * • On ANY error, the transaction is rolled back.
- * • Preview nonces are invalidated after first execute attempt.
+ * • Preview nonces are atomically claimed before any destructive work.
+ *   Concurrent duplicate requests receive PREVIEW_TOKEN_ALREADY_CLAIMED (409).
+ *   Used/claimed tokens cannot be replayed.
+ * • Steps 1–7 are non-destructive; a failure there does NOT consume the token.
  * • MFA codes are NEVER logged or stored.
  */
 
@@ -41,7 +45,7 @@ import type {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PREVIEW_NONCE_TTL_SECONDS = 300; // 5 minutes
+const PREVIEW_NONCE_TTL_SECONDS = 600; // 10 minutes — enough for preview review + MFA + typed confirmation
 
 const PRESERVED_OPERATIONAL = [
   "Clinic",
@@ -101,6 +105,11 @@ export function createPilotResetService(
   // In-memory fallback nonce store when Redis is unavailable
   const nonceStore = new Map<string, NonceEntry>();
 
+  // In-memory fallback for atomic token claim.
+  // Node.js is single-threaded: the synchronous Set.has() + Set.add() pair
+  // executes without any await between them, so it is race-free in-process.
+  const claimedTokens = new Set<string>();
+
   // ─── Nonce helpers ─────────────────────────────────────────────────────────
 
   async function saveNonce(token: string, data: PreviewNonceData): Promise<void> {
@@ -156,6 +165,39 @@ export function createPilotResetService(
         nonceStore.set(token, { data: serialized, expiresAt: entry.expiresAt });
       }
     }
+  }
+
+  /**
+   * Atomically claims the execute slot for this preview token.
+   *
+   * Returns true  — this call is the first and only claimant; proceed to execute.
+   * Returns false — another request already claimed the token; the caller must
+   *                 throw PREVIEW_TOKEN_ALREADY_CLAIMED (409).
+   *
+   * Redis path:    SET pilot_reset_nonce_claim:<token> 1 EX <remaining_ttl> NX
+   *   • Exactly one concurrent caller receives "OK"; all others receive null.
+   *   • The claim key TTL matches the nonce TTL so it self-cleans on expiry.
+   *
+   * In-memory path: synchronous Set.has / Set.add — no await between them.
+   *   • Effectively atomic within a single Node.js process.
+   */
+  async function claimNonce(token: string, nonce: PreviewNonceData): Promise<boolean> {
+    if (redisClient) {
+      const remainingMs = nonce.expiresAt - Date.now();
+      const ttlSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+      const result = await redisClient.set(
+        `pilot_reset_nonce_claim:${token}`,
+        "1",
+        "EX",
+        ttlSeconds,
+        "NX",
+      );
+      return result === "OK";
+    }
+    // In-memory: has() + add() executes without any await — race-free in-process.
+    if (claimedTokens.has(token)) return false;
+    claimedTokens.add(token);
+    return true;
   }
 
   // ─── TOTP step-up verification ─────────────────────────────────────────────
@@ -314,13 +356,24 @@ export function createPilotResetService(
         );
       }
 
-      // 2. Invalidate nonce immediately — prevent duplicate execution
-      await markNonceUsed(previewToken, nonce);
-
-      // 3. Verify MFA step-up (NEVER log mfaCode)
+      // 2. Verify MFA step-up BEFORE consuming the nonce.
+      //
+      // Rationale for ordering: marking the nonce "used" before verifying MFA
+      // meant that an expired TOTP code silently burned the preview token,
+      // forcing the user to re-run Preview even though no destructive work had
+      // started.  The atomic claimNonce (step 6) and markNonceUsed (step 7)
+      // both occur after all non-destructive validation, so a user whose TOTP
+      // code timed out during the confirmation step can re-enter a fresh code
+      // and retry without re-running Preview.
+      //
+      // Security note: the nonce is now "probe-able" for MFA codes, but only
+      // by a caller who (a) already holds a valid owner_admin JWT and (b) knows
+      // the previewToken UUID.  The 10-minute TTL caps the window; TOTP codes
+      // change every 30 s and are 6-digit (1 in 1,000,000 per guess), making
+      // exhaustive probing within the TTL window impractical.
       await verifyMfaStepUp(actorUserId, mfaCode);
 
-      // 4. Verify exact confirmation phrase
+      // 3. Verify exact confirmation phrase
       const expectedPhrase = buildConfirmationPhrase(nonce.clinicName);
       if (confirmationPhrase !== expectedPhrase) {
         throw new AppError(
@@ -330,13 +383,13 @@ export function createPilotResetService(
         );
       }
 
-      // 5. Verify clinic still exists
+      // 4. Verify clinic still exists
       const clinic = await pilotResetRepository.findClinicById(clinicId);
       if (!clinic) {
         throw new AppError(404, "NOT_FOUND", `Clinic ${clinicId} not found`);
       }
 
-      // 6. Re-check active blockers before destructive work
+      // 5. Re-check active blockers before destructive work
       const blockers = await pilotResetRepository.checkActiveBlockers(clinicId);
       if (blockers.length > 0) {
         throw new AppError(
@@ -346,7 +399,31 @@ export function createPilotResetService(
         );
       }
 
-      // 7. Audit: pilot_reset.started
+      // 6. Atomically claim the nonce — the single irrevocable gate.
+      //
+      //    All prior steps (MFA, phrase, clinic, blockers) are non-destructive
+      //    and run BEFORE this claim, so any failure in steps 2–5 does NOT
+      //    consume the token — the user can correct the error and retry.
+      //
+      //    Redis:     SET pilot_reset_nonce_claim:<token> 1 EX <ttl> NX
+      //      → returns "OK" for the first caller (winner).
+      //      → returns null for every subsequent caller (loser → 409).
+      //    In-memory: synchronous Set.has/add — no await between them → race-free.
+      const claimed = await claimNonce(previewToken, nonce);
+      if (!claimed) {
+        throw new AppError(
+          409,
+          "PREVIEW_TOKEN_ALREADY_CLAIMED",
+          "Another execute request has already claimed this preview token. Re-run Preview and try again.",
+        );
+      }
+
+      // 7. Mark nonce used — defense-in-depth: if the claim key were somehow
+      //    evicted from Redis before the transaction completes, this second
+      //    flag in the nonce itself prevents a replay via the getNonce check.
+      await markNonceUsed(previewToken, nonce);
+
+      // 8. Audit: pilot_reset.started
       auditService.logEvent("pilot_reset.started", {
         userId: actorUserId,
         email: actorEmail,
@@ -355,7 +432,7 @@ export function createPilotResetService(
         reason: `mode=${mode}`,
       });
 
-      // 8. Execute within a single PostgreSQL transaction
+      // 9. Execute within a single PostgreSQL transaction
       let deletedCounts: import("../types/pilotReset.js").PilotResetDeleteCounts;
       let auditEventId: string;
 

@@ -23,7 +23,13 @@ type IORedisInstance = {
   on(event: "error", listener: (err: Error & { code?: string }) => void): IORedisInstance;
 
   // Standalone key–value commands.
-  set(key: string, value: string, expiryMode: "EX", ttl: number): Promise<"OK" | null>;
+  /**
+   * SET key value EX ttl [NX]
+   * Without `nx`: always sets the key; returns "OK".
+   * With `nx`:    sets only if the key does not exist (atomic); returns "OK" on
+   *               success, null when the key already exists.
+   */
+  set(key: string, value: string, expiryMode: "EX", ttl: number, nx?: "NX"): Promise<"OK" | null>;
   get(key: string): Promise<string | null>;
   del(key: string): Promise<number>;
   ttl(key: string): Promise<number>;

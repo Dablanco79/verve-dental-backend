@@ -250,11 +250,12 @@ describe("Pilot Reset — Preview Endpoint", () => {
     const body = res.body as ApiData<{ previewToken: string; previewExpiresAt: string }>;
     expect(body.data.previewToken).toBeTruthy();
     expect(body.data.previewExpiresAt).toBeTruthy();
-    // Token should expire ~5 minutes in the future
+    // Token should expire ~10 minutes in the future (PREVIEW_NONCE_TTL_SECONDS = 600).
+    // Allow ±1 minute of tolerance to accommodate slow CI environments.
     const expiresAt = new Date(body.data.previewExpiresAt).getTime();
     const now = Date.now();
-    expect(expiresAt).toBeGreaterThan(now + 4 * 60 * 1000);
-    expect(expiresAt).toBeLessThan(now + 6 * 60 * 1000);
+    expect(expiresAt).toBeGreaterThan(now + 9 * 60 * 1000);
+    expect(expiresAt).toBeLessThan(now + 11 * 60 * 1000);
   });
 
   it("T17: nonce is tied to clinic+mode", async () => {
@@ -708,5 +709,298 @@ describe("buildConfirmationPhrase", () => {
   it("generates expected phrase format", () => {
     expect(buildConfirmationPhrase("Bentleigh East")).toBe("RESET BENTLEIGH EAST PILOT DATA");
     expect(buildConfirmationPhrase("Verve Dental Clinic A")).toBe("RESET VERVE DENTAL CLINIC A PILOT DATA");
+  });
+});
+
+// ─── Nonce lifecycle (T-nonce-1 … T-nonce-9) ─────────────────────────────────
+//
+// These tests verify the preview-nonce security properties via the real HTTP
+// stack (in-memory repositories, no database required).
+//
+// T-nonce-8: wrong phrase does NOT burn token (claimNonce runs AFTER phrase check)
+// T-nonce-9: concurrent valid executes — exactly one wins (atomic claim gate)
+
+describe("Pilot Reset — Nonce lifecycle and security", () => {
+  it("T-nonce-1: unknown preview token returns INVALID_PREVIEW_TOKEN (400)", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+    const mfaCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+
+    const res = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken: "ffffffff-ffff-4fff-8fff-ffffffffffff", // valid UUID format, never issued
+        mfaCode,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe("INVALID_PREVIEW_TOKEN");
+  });
+
+  it("T-nonce-2: used preview token cannot execute again (PREVIEW_TOKEN_USED)", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+
+    // First execute — succeeds (or may fail for other reasons like in-memory mode, but consumes nonce)
+    const mfaCode1 = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: mfaCode1,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    // Second execute with the SAME token — must fail with PREVIEW_TOKEN_USED
+    const mfaCode2 = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const res2 = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: mfaCode2,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(res2.status).toBe(400);
+    expect((res2.body as { error: { code: string } }).error.code).toBe("PREVIEW_TOKEN_USED");
+  });
+
+  it("T-nonce-3: preview token is clinic-bound (PREVIEW_TOKEN_CLINIC_MISMATCH)", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    // Preview for Clinic A
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+    const mfaCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+
+    // Execute for Clinic B using Clinic A's token
+    const res = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_B_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic B"),
+      });
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe("PREVIEW_TOKEN_CLINIC_MISMATCH");
+  });
+
+  it("T-nonce-4: preview token is mode-bound (PREVIEW_TOKEN_MODE_MISMATCH)", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    // Preview for operational mode
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID, "operational");
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+    const mfaCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+
+    // Execute for full_pilot using operational token
+    const res = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "full_pilot",
+        previewToken,
+        mfaCode,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe("PREVIEW_TOKEN_MODE_MISMATCH");
+  });
+
+  it("T-nonce-5: invalid MFA code returns INVALID_MFA_CODE (401) without logging user out", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+
+    const res = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: "000000", // deliberately wrong code
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(res.status).toBe(401);
+    expect((res.body as { error: { code: string } }).error.code).toBe("INVALID_MFA_CODE");
+  });
+
+  it("T-nonce-6: invalid MFA does NOT burn the nonce — valid retry succeeds (ordering fix)", async () => {
+    // This test verifies the new nonce ordering:
+    //   OLD: markNonceUsed BEFORE verifyMfaStepUp → bad MFA burns preview token
+    //   NEW: markNonceUsed AFTER  verifyMfaStepUp → bad MFA leaves token intact
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+
+    // First attempt — deliberately wrong MFA code
+    const fail = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: "000000",
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+    expect(fail.status).toBe(401);
+    expect((fail.body as { error: { code: string } }).error.code).toBe("INVALID_MFA_CODE");
+
+    // Second attempt — correct MFA code, SAME previewToken.
+    // Must SUCCEED (not fail with PREVIEW_TOKEN_USED).
+    const mfaCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const ok = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(ok.status).toBe(200);
+  });
+
+  it("T-nonce-8: wrong confirmation phrase does NOT burn the nonce — valid retry succeeds", async () => {
+    // Proves that claimNonce (step 6) runs AFTER phrase validation (step 3).
+    // A CONFIRMATION_PHRASE_MISMATCH must not consume the preview token.
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+
+    // First attempt — deliberately wrong phrase
+    const mfaCode1 = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const fail = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: mfaCode1,
+        confirmationPhrase: "WRONG PHRASE",
+      });
+    expect(fail.status).toBe(400);
+    expect((fail.body as { error: { code: string } }).error.code).toBe("CONFIRMATION_PHRASE_MISMATCH");
+
+    // Second attempt — correct phrase, same previewToken.
+    // Must SUCCEED (not fail with PREVIEW_TOKEN_USED or PREVIEW_TOKEN_ALREADY_CLAIMED).
+    const mfaCode2 = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const ok = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        clinicId: SEED_CLINIC_A_ID,
+        mode: "operational",
+        previewToken,
+        mfaCode: mfaCode2,
+        confirmationPhrase: buildConfirmationPhrase("Verve Dental Clinic A"),
+      });
+
+    expect(ok.status).toBe(200);
+  });
+
+  it("T-nonce-9: concurrent valid execute calls — exactly one proceeds, the other is rejected", async () => {
+    // Proves the atomic claimNonce gate.  Two requests that both pass all
+    // non-destructive checks (nonce, MFA, phrase, clinic, blockers) arrive
+    // simultaneously.  Exactly one must win (200); the other must be rejected
+    // before reaching the destructive transaction (409 PREVIEW_TOKEN_ALREADY_CLAIMED
+    // if the race is detected by claimNonce, or 400 PREVIEW_TOKEN_USED if one
+    // request completes fully before the second reaches nonce validation).
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+
+    const previewRes = await doPreview(app, token, SEED_CLINIC_A_ID);
+    const { previewToken } = (previewRes.body as ApiData<{ previewToken: string }>).data;
+
+    // Both requests use the same valid MFA code — both will pass verifyMfaStepUp.
+    const mfaCode = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const confirmationPhrase = buildConfirmationPhrase("Verve Dental Clinic A");
+    const executeBody = {
+      clinicId: SEED_CLINIC_A_ID,
+      mode: "operational" as const,
+      previewToken,
+      mfaCode,
+      confirmationPhrase,
+    };
+
+    // Fire both requests at the same time.
+    const [res1, res2] = await Promise.all([
+      request(app)
+        .post("/api/v1/admin/pilot-reset/execute")
+        .set("Authorization", `Bearer ${token}`)
+        .send(executeBody),
+      request(app)
+        .post("/api/v1/admin/pilot-reset/execute")
+        .set("Authorization", `Bearer ${token}`)
+        .send(executeBody),
+    ]);
+
+    // Exactly one request must succeed.
+    const successCount = [res1, res2].filter((r) => r.status === 200).length;
+    expect(successCount).toBe(1);
+
+    // The loser must be blocked — either by:
+    // • PREVIEW_TOKEN_ALREADY_CLAIMED (409) — claimNonce detected the race.
+    // • PREVIEW_TOKEN_USED (400) — the winner completed before the loser
+    //   reached nonce validation (sequential behaviour in in-memory mode).
+    const loser = res1.status !== 200 ? res1 : res2;
+    const loserCode = (loser.body as { error: { code: string } }).error.code;
+    expect(["PREVIEW_TOKEN_ALREADY_CLAIMED", "PREVIEW_TOKEN_USED"]).toContain(loserCode);
+
+    // Confirm that the token is now fully consumed — a third request must fail.
+    const mfaCode3 = generateSync({ secret: SEED_ADMIN_TOTP_SECRET });
+    const replay = await request(app)
+      .post("/api/v1/admin/pilot-reset/execute")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ ...executeBody, mfaCode: mfaCode3 });
+    expect(replay.status).not.toBe(200);
+    const replayCode = (replay.body as { error: { code: string } }).error.code;
+    expect(["PREVIEW_TOKEN_ALREADY_CLAIMED", "PREVIEW_TOKEN_USED"]).toContain(replayCode);
+  });
+
+  it("T-nonce-7: preview returns previewExpiresAt that is in the future", async () => {
+    const app = await createPilotResetApp();
+    const token = await getAdminToken(app);
+    const res = await doPreview(app, token, SEED_CLINIC_A_ID);
+
+    expect(res.status).toBe(200);
+    const body = res.body as ApiData<{ previewExpiresAt: string }>;
+    const expiresAt = Date.parse(body.data.previewExpiresAt);
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    // TTL is 600 s — the expiry must be at least 590 s in the future
+    expect(expiresAt).toBeGreaterThan(Date.now() + 590_000);
   });
 });
