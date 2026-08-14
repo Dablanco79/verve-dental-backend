@@ -88,6 +88,14 @@ let pool: pg.Pool;
 let itemAId: string = ""; // first seeded clinic_inventory_item for Clinic A
 let itemBId: string = ""; // second seeded clinic_inventory_item for Clinic A
 
+// Effective conversion factors resolved from master_catalog_items in beforeAll.
+// These mirror the lookupConversionFactor logic: if stock_unit == receiving_unit
+// the factor is 1; otherwise it is units_per_receiving_unit.
+// Used by Integration A and D assertions so the tests verify correct stock-unit
+// arithmetic rather than the former hardcoded conversionFactor: 1 behaviour.
+let convFactorA: number = 1;
+let convFactorB: number = 1;
+
 beforeAll(async () => {
   if (SKIP) return;
 
@@ -121,6 +129,41 @@ beforeAll(async () => {
         `Run: DATABASE_URL=<url> npm run test:db:setup --workspace=@verve/backend`,
     );
   }
+
+  // Resolve effective conversion factors for the two seeded items.
+  // This mirrors lookupConversionFactor: if stock_unit == receiving_unit the
+  // factor is 1 (1:1 product); otherwise it is units_per_receiving_unit.
+  // Seeded products have distinct stock/receiving units so both factors > 1.
+  type ConvRow = {
+    id: string;
+    stock_unit: string;
+    receiving_unit: string;
+    units_per_receiving_unit: number;
+  };
+  const { rows: convRows } = await withTenantContext(
+    pool,
+    SEED_CLINIC_A_ID,
+    (c) =>
+      c.query<ConvRow>(
+        `SELECT ci.id,
+                mc.stock_unit,
+                mc.receiving_unit,
+                mc.units_per_receiving_unit
+           FROM clinic_inventory_items ci
+           JOIN master_catalog_items mc ON mc.id = ci.master_catalog_item_id
+          WHERE ci.id IN ($1, $2)`,
+        [itemAId, itemBId],
+      ),
+  );
+
+  const rowA = convRows.find((r) => r.id === itemAId);
+  const rowB = convRows.find((r) => r.id === itemBId);
+  convFactorA = rowA && rowA.stock_unit !== rowA.receiving_unit
+    ? rowA.units_per_receiving_unit
+    : 1;
+  convFactorB = rowB && rowB.stock_unit !== rowB.receiving_unit
+    ? rowB.units_per_receiving_unit
+    : 1;
 });
 
 afterAll(async () => {
@@ -264,6 +307,7 @@ describe("Integration A — Successful atomic receive", () => {
       expect(result.invoice.receivedReference).toBe("REF-INTG-A");
 
       // 2. Both inventory quantities updated.
+      // stockQtyDelta = receivingQty × conversionFactor (mirrors receiveInventoryLine).
       const { rows: after } = await withTenantContext(
         pool,
         SEED_CLINIC_A_ID,
@@ -273,8 +317,8 @@ describe("Integration A — Successful atomic receive", () => {
             [itemAId, itemBId],
           ),
       );
-      expect(after.find((r) => r.id === itemAId)?.quantity_on_hand).toBe(qtyBeforeA + 3);
-      expect(after.find((r) => r.id === itemBId)?.quantity_on_hand).toBe(qtyBeforeB + 5);
+      expect(after.find((r) => r.id === itemAId)?.quantity_on_hand).toBe(qtyBeforeA + 3 * convFactorA);
+      expect(after.find((r) => r.id === itemBId)?.quantity_on_hand).toBe(qtyBeforeB + 5 * convFactorB);
 
       // 3. Both adjustment rows exist.
       const { rows: adjs } = await withTenantContext(
@@ -290,8 +334,9 @@ describe("Integration A — Successful atomic receive", () => {
           ),
       );
       expect(adjs).toHaveLength(2);
-      expect(adjs.find((a) => a.clinic_inventory_item_id === itemAId)?.quantity_delta).toBe(3);
-      expect(adjs.find((a) => a.clinic_inventory_item_id === itemBId)?.quantity_delta).toBe(5);
+      // quantity_delta is stored in stock units (receiveInventoryLine applies conversionFactor).
+      expect(adjs.find((a) => a.clinic_inventory_item_id === itemAId)?.quantity_delta).toBe(3 * convFactorA);
+      expect(adjs.find((a) => a.clinic_inventory_item_id === itemBId)?.quantity_delta).toBe(5 * convFactorB);
 
       // 4. Audit event committed inside the same transaction.
       const { rows: auditRows } = await pool.query<{ action: string }>(
@@ -514,6 +559,7 @@ describe("Integration D — Concurrent receiving", () => {
       }
 
       // Inventory increased exactly once.
+      // stockQtyDelta = 7 × convFactorA (mirrors receiveInventoryLine behaviour).
       const { rows: after } = await withTenantContext(
         pool,
         SEED_CLINIC_A_ID,
@@ -523,7 +569,7 @@ describe("Integration D — Concurrent receiving", () => {
             [itemAId],
           ),
       );
-      expect(after[0]?.quantity_on_hand).toBe(qtyBefore + 7);
+      expect(after[0]?.quantity_on_hand).toBe(qtyBefore + 7 * convFactorA);
 
       // Exactly one adjustment row.
       const { rows: adjs } = await withTenantContext(
