@@ -161,6 +161,7 @@ export type UpdateSupplierProductInput = {
 // ─── Product matching ─────────────────────────────────────────────────────────
 
 export const PRODUCT_MATCH_STATUSES = [
+  "supplier_mapping",
   "barcode",
   "sku",
   "name",

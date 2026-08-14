@@ -51,7 +51,11 @@ import { VALID_CREATION_CATEGORY_SET } from "../types/inventory.js";
 import type { DatabasePool } from "../db/pool.js";
 import { withTenantContext } from "../db/tenantContext.js";
 import { normaliseImportRow } from "./catalogueImportNormalisation.js";
-import { receiveInventoryLine } from "./receivingEngine.js";
+import {
+  lookupConversionFactor,
+  receiveInventoryLine,
+  resolveConversionFactorFromCatalogItem,
+} from "./receivingEngine.js";
 
 export function createSupplierInvoiceService(
   repo: SupplierInvoiceRepository,
@@ -457,15 +461,16 @@ export function createSupplierInvoiceService(
         let isMatched = false;
         let matchMethod: "exact_sku" | "name_match" | "manual" | null = null;
 
-        if (normalizedLine.supplierSku) {
-          const sku = normalizedLine.supplierSku;
-          const catalogueEntries = await supplierCatalogueRepo.listSupplierProducts({
-            active: true,
-          });
-          const exactMatch = catalogueEntries.find(
-            (e) =>
-              e.supplierSku?.toLowerCase() === sku.toLowerCase(),
-          );
+        // Supplier-scoped SKU lookup — requires a resolved supplierId.
+        // Without a resolved supplier we cannot safely identify which mapping
+        // applies: Supplier A's SKU "12345" may be a completely different
+        // product from Supplier B's SKU "12345".
+        if (normalizedLine.supplierSku && resolvedSupplierId) {
+          const exactMatch =
+            await supplierCatalogueRepo.findSupplierProductBySupplierSku(
+              resolvedSupplierId,
+              normalizedLine.supplierSku,
+            );
           if (exactMatch) {
             masterCatalogItemId = exactMatch.productId;
             supplierCatalogueId = exactMatch.id;
@@ -473,6 +478,9 @@ export function createSupplierInvoiceService(
             matchMethod = "exact_sku";
           }
         }
+        // If resolvedSupplierId is null: skip supplier-SKU auto-match entirely.
+        // The reviewer will resolve the supplier during review, and the line
+        // can be re-matched at that point via the review UI.
 
         return {
           ocrLine,
@@ -1101,13 +1109,42 @@ export function createSupplierInvoiceService(
       const reason = `Received against invoice ${invRow.invoice_number ?? invoiceId}${receivedReference ? ` (ref: ${receivedReference})` : ""}`;
 
       for (const line of lines) {
+        // Resolve the master_catalog_item_id for this clinic inventory item
+        // so we can look up the authoritative unit conversion factor.
+        // This pre-query does not lock the row — the FOR UPDATE lock is
+        // acquired inside receiveInventoryLine, which is the authoritative
+        // serialisation point for inventory mutations.
+        type InvItemRow = { master_catalog_item_id: string };
+        const { rows: invItemRows } = await client.query<InvItemRow>(
+          `SELECT master_catalog_item_id
+           FROM clinic_inventory_items
+           WHERE id = $1 AND clinic_id = $2`,
+          [line.itemId, clinicId],
+        );
+        const invItemRow = invItemRows[0];
+        if (!invItemRow) {
+          throw new AppError(
+            404,
+            "INVENTORY_ITEM_NOT_FOUND",
+            `Inventory item not found: ${line.itemId}`,
+          );
+        }
+
+        // Resolve conversion factor using the same logic as PO receiving.
+        // Passing null for lineReceivingUnit uses the catalog's default
+        // receiving_unit, which is the unit the invoice quantity represents.
+        const { conversionFactor } = await lookupConversionFactor(
+          client,
+          invItemRow.master_catalog_item_id,
+          null,
+        );
+
         // Delegate inventory locking, mutation, and adjustment recording to the
-        // shared receiving engine.  Invoice receiving uses conversionFactor=1
-        // because invoice quantityDelta values are already in stock units.
+        // shared receiving engine with the correct unit conversion applied.
         const adjustment = await receiveInventoryLine(client, clinicId, {
           clinicInventoryItemId: line.itemId,
           quantityDeltaInReceivingUnits: line.quantityDelta,
-          conversionFactor: 1,
+          conversionFactor,
           reason,
           performedByUserId: caller.id,
           performedByEmail: caller.email,
@@ -1251,7 +1288,17 @@ export function createSupplierInvoiceService(
       const line = lines[i];
       const existing = existingItems[i];
       if (!line || !existing) continue; // TypeScript safety — arrays were validated above
-      const quantityAfter = existing.quantityOnHand + line.quantityDelta;
+
+      // Resolve unit conversion factor using the same logic as PO receiving.
+      // ClinicInventoryItemView already carries stockUnit, receivingUnit, and
+      // unitsPerReceivingUnit from the master catalog — no extra DB query needed.
+      const { conversionFactor } = resolveConversionFactorFromCatalogItem(
+        existing,
+        null,
+      );
+
+      const stockQtyDelta = line.quantityDelta * conversionFactor;
+      const quantityAfter = existing.quantityOnHand + stockQtyDelta;
 
       await invRepo.updateQuantity(clinicId, line.itemId, quantityAfter);
       const adjustment = await invRepo.recordAdjustment({
@@ -1259,7 +1306,7 @@ export function createSupplierInvoiceService(
         clinicInventoryItemId: line.itemId,
         masterCatalogItemId: existing.masterCatalogItemId,
         adjustmentType: "receive",
-        quantityDelta: line.quantityDelta,
+        quantityDelta: stockQtyDelta,
         quantityBefore: existing.quantityOnHand,
         quantityAfter,
         reason,

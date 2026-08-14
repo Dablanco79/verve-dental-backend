@@ -450,6 +450,7 @@ export function createCatalogueImportService(
           }
 
           const match = await productMatchingService.matchProduct({
+            supplierId,
             supplierSku: raw.supplierSku,
             description: raw.description,
             barcodeValue: raw.barcodeValue,
@@ -540,6 +541,7 @@ export function createCatalogueImportService(
 
         const manualProductId = manualMappings?.[raw.rowNumber] ?? null;
         const match = await productMatchingService.matchProduct({
+          supplierId,
           supplierSku: raw.supplierSku,
           description: raw.description,
           barcodeValue: raw.barcodeValue,

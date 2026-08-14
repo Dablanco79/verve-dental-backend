@@ -564,11 +564,12 @@ export function InventoryReceivingPage() {
       });
 
       if (invoiceId) {
-        // Invoice-linked receiving — single atomic request that marks the
-        // invoice as received and creates all adjustments together.
+        // Invoice-linked receiving — send RAW receiving-unit quantity.
+        // The backend applies lookupConversionFactor (same as PO receiving),
+        // so we must NOT pre-multiply here — that would cause double conversion.
         const lines = lineItems.map((line) => ({
           itemId: line.item.id,
-          quantityDelta: calculateStockIncrease(line.item, Number(line.quantity)),
+          quantityDelta: Number(line.quantity),
         }));
         await apiClient.receiveSupplierInvoice(selectedClinicId, invoiceId, {
           lines,
@@ -1197,6 +1198,10 @@ export function InventoryReceivingPage() {
                                   updateLineQuantity(line.item.id, event.target.value);
                                 }}
                               />
+                              {" "}
+                              <span className="inventory-table__unit">
+                                {getInventoryReceivingUnit(line.item)}
+                              </span>
                             </td>
                             <td>{line.item.quantityOnHand} {getInventoryStockUnit(line.item)}</td>
                             <td>{stockIncrease} {getInventoryStockUnit(line.item)}</td>

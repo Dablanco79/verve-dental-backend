@@ -1,11 +1,12 @@
 /**
  * Product Matching Service — v1 (Product Matching Engine).
  *
- * matchProduct — original Sprint O strategy (used by catalogue import preview):
- *   1. Barcode match  — most reliable (unique barcode → item)
- *   2. SKU match      — reliable if supplier uses our master SKU
- *   3. Exact name     — normalised case-insensitive equality
- *   4. Manual         — returned when caller provides an explicit productId
+ * matchProduct — unified product resolution (used by catalogue import and invoice):
+ *   0. Manual         — returned when caller provides an explicit productId
+ *   1. Supplier mapping — supplierId + supplierSku → supplier_catalogue (strongest)
+ *   2. Barcode match  — unique barcode → canonical master item
+ *   3. SKU match      — supplier SKU treated as potential master SKU (active only)
+ *   4. Exact name     — normalised case-insensitive equality (active only)
  *   5. Unmatched      — no match found; row needs manual intervention
  *
  * suggestMatches — new ranked suggestion engine:
@@ -20,6 +21,8 @@
  * Safety invariants:
  *   — Never touches clinic_inventory_items, inventory_adjustments, or stock qty.
  *   — Never calls inventoryRepository, scan, or receiving APIs.
+ *   — Archived products are never returned as active matches.
+ *   — Supplier-SKU matching is always scoped to the specific supplier.
  */
 
 import type { CatalogRepository } from "../repositories/catalogRepository.js";
@@ -75,16 +78,22 @@ export function createProductMatchingService(
 ) {
   return {
     /**
-     * Sprint O strategy: barcode → SKU → exact name → manual → unmatched.
-     * Used by structured catalogue import preview.
+     * Unified product resolution — supplier mapping → barcode → SKU → exact
+     * name → manual override → unmatched.
+     *
+     * Used by both structured catalogue import and supplier invoice OCR.
+     * Archived master products are never returned as active matches.
+     * Supplier-SKU matching is always scoped to the specific supplierId.
      */
     async matchProduct(row: {
+      /** Caller-resolved supplierId — required for Step 1 supplier mapping. */
+      supplierId?: string | null;
       supplierSku?: string | null;
       description?: string | null;
       barcodeValue?: string | null;
       manualProductId?: string | null;
     }): Promise<ProductMatchResult> {
-      // Strategy 4 — manual mapping (explicit caller override)
+      // Step 0 — manual mapping (explicit caller override, e.g. from review UI)
       if (row.manualProductId) {
         const item = await catalogRepository.findMasterItemById(
           row.manualProductId,
@@ -99,7 +108,35 @@ export function createProductMatchingService(
         }
       }
 
-      // Strategy 1 — barcode match
+      // Step 1 — known supplier mapping (supplierId + supplierSku → supplier_catalogue).
+      // This is the highest-confidence automated signal and MUST be checked first.
+      // Matching is scoped to the specific supplier — never cross-supplier.
+      if (
+        supplierCatalogueRepository &&
+        row.supplierId?.trim() &&
+        row.supplierSku?.trim()
+      ) {
+        const mapping =
+          await supplierCatalogueRepository.findSupplierProductBySupplierSku(
+            row.supplierId.trim(),
+            row.supplierSku.trim(),
+          );
+        if (mapping) {
+          const item = await catalogRepository.findMasterItemById(
+            mapping.productId,
+          );
+          if (item && item.status !== "archived") {
+            return {
+              productId: item.id,
+              productName: item.name,
+              productSku: item.sku,
+              matchStatus: "supplier_mapping",
+            };
+          }
+        }
+      }
+
+      // Step 2 — barcode match (unique barcode → canonical master item)
       if (row.barcodeValue?.trim()) {
         const mapping = await catalogRepository.findBarcodeMapping(
           row.barcodeValue.trim(),
@@ -108,7 +145,7 @@ export function createProductMatchingService(
           const item = await catalogRepository.findMasterItemById(
             mapping.masterCatalogItemId,
           );
-          if (item) {
+          if (item && item.status !== "archived") {
             return {
               productId: item.id,
               productName: item.name,
@@ -119,12 +156,15 @@ export function createProductMatchingService(
         }
       }
 
-      // Strategy 2 — SKU match (supplier SKU treated as potential master SKU)
+      // Step 3 — exact canonical master SKU match (active products only).
+      // NOTE: supplierSku is used here only as a candidate for the master SKU.
+      // This only succeeds when the supplier's code happens to equal the
+      // canonical master SKU — a deliberate cross-check, not supplier-scoped.
       if (row.supplierSku?.trim()) {
         const item = await catalogRepository.findMasterItemBySku(
           row.supplierSku.trim(),
         );
-        if (item) {
+        if (item && item.status !== "archived") {
           return {
             productId: item.id,
             productName: item.name,
@@ -134,7 +174,8 @@ export function createProductMatchingService(
         }
       }
 
-      // Strategy 3 — exact name match (case-insensitive)
+      // Step 4 — exact normalised canonical product name (active products only).
+      // listMasterItems() already returns only active (isActive=true) items.
       if (row.description?.trim()) {
         const normalized = row.description.trim().toLowerCase();
         const allItems = await catalogRepository.listMasterItems();
