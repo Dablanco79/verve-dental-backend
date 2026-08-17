@@ -243,10 +243,24 @@ export type SupplierInvoiceLine = {
   ocrDescription: string | null;
   ocrSku: string | null;
   quantity: number;
+  /** Printed supplier unit price in cents as it appears on the invoice. */
   unitPriceCents: number;
+  /**
+   * Whether the printed unit price already includes tax.
+   * true = incl-tax; false = ex-tax; null = unknown.
+   */
+  priceIncludesTax: boolean | null;
+  /** Supplier line discount in basis points (0 = none, 1000 = 10%). */
+  discountBasisPoints: number;
+  /** Verve-calculated line total (incl tax), correctly derived from price semantics. */
   lineTotalCents: number;
   taxRateBasisPoints: number;
   taxCents: number;
+  /**
+   * Supplier-stated line total exactly as printed on the invoice (cents).
+   * Preserved verbatim as invoice financial truth. null when not available.
+   */
+  supplierLineTotalCents: number | null;
   masterCatalogItemId: string | null;
   /** Display name of the linked Master Product — null when not yet matched. */
   masterProductName: string | null;
@@ -367,7 +381,13 @@ export type UpdateSupplierInvoiceLineRequest = {
   ocrSku?: string | null;
   quantity?: number;
   unitPriceCents?: number;
+  /** Override whether the printed unit price includes tax. null = unknown. */
+  priceIncludesTax?: boolean | null;
+  /** Override line discount in basis points. */
+  discountBasisPoints?: number;
   taxRateBasisPoints?: number;
+  /** Override supplier-stated line total. null clears. */
+  supplierLineTotalCents?: number | null;
   masterCatalogItemId?: string | null;
   supplierCatalogueId?: string | null;
   isMatched?: boolean;

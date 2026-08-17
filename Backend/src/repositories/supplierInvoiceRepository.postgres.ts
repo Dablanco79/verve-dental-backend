@@ -25,6 +25,7 @@ import type {
   UpdateSupplierInvoiceLineInput,
 } from "../types/supplierInvoice.js";
 import type { SupplierInvoiceRepository } from "./supplierInvoiceRepository.js";
+import { calcLineTotals } from "../services/invoiceLineCostHelper.js";
 
 // ── Row types ─────────────────────────────────────────────────────────────────
 
@@ -74,10 +75,13 @@ type LineRow = {
   ocr_confidence: string | null;
   quantity: string;
   unit_price_cents: number;
+  price_includes_tax: boolean | null;
+  discount_basis_points: number;
   subtotal_cents: number;
   tax_rate_basis_points: number;
   tax_cents: number;
   total_cents: number;
+  supplier_line_total_cents: number | null;
   sort_order: number;
   is_matched: boolean;
   match_method: string | null;
@@ -153,10 +157,13 @@ function mapLine(row: LineRow): SupplierInvoiceLine {
     ocrConfidence: row.ocr_confidence !== null ? Number(row.ocr_confidence) : null,
     quantity: Number(row.quantity),
     unitPriceCents: row.unit_price_cents,
+    priceIncludesTax: row.price_includes_tax ?? null,
+    discountBasisPoints: row.discount_basis_points,
     subtotalCents: row.subtotal_cents,
     taxRateBasisPoints: row.tax_rate_basis_points,
     taxCents: row.tax_cents,
     totalCents: row.total_cents,
+    supplierLineTotalCents: row.supplier_line_total_cents ?? null,
     sortOrder: row.sort_order,
     isMatched: row.is_matched,
     matchMethod: row.match_method as SupplierInvoiceLine["matchMethod"],
@@ -422,11 +429,13 @@ export function createPostgresSupplierInvoiceRepository(
     async addLine(
       input: AddSupplierInvoiceLineInput,
     ): Promise<SupplierInvoiceLine> {
-      const subtotalCents = Math.round(input.quantity * input.unitPriceCents);
-      const taxCents = Math.round(
-        (subtotalCents * input.taxRateBasisPoints) / 10_000,
+      const { subtotalCents, taxCents, totalCents } = calcLineTotals(
+        input.quantity,
+        input.unitPriceCents,
+        input.priceIncludesTax,
+        input.discountBasisPoints,
+        input.taxRateBasisPoints,
       );
-      const totalCents = subtotalCents + taxCents;
 
       const { rows } = await withTenantContext(
         pool,
@@ -437,10 +446,12 @@ export function createPostgresSupplierInvoiceRepository(
                clinic_id, supplier_invoice_id,
                master_catalog_item_id, supplier_catalogue_id,
                ocr_description, ocr_sku, ocr_confidence,
-               quantity, unit_price_cents, subtotal_cents,
-               tax_rate_basis_points, tax_cents, total_cents,
+               quantity, unit_price_cents,
+               price_includes_tax, discount_basis_points,
+               subtotal_cents, tax_rate_basis_points,
+               tax_cents, total_cents, supplier_line_total_cents,
                sort_order, is_matched, match_method
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
              RETURNING *`,
             [
               input.clinicId,
@@ -452,10 +463,13 @@ export function createPostgresSupplierInvoiceRepository(
               input.ocrConfidence,
               input.quantity,
               input.unitPriceCents,
+              input.priceIncludesTax,
+              input.discountBasisPoints,
               subtotalCents,
               input.taxRateBasisPoints,
               taxCents,
               totalCents,
+              input.supplierLineTotalCents,
               input.sortOrder,
               input.isMatched,
               input.matchMethod,
@@ -515,38 +529,50 @@ export function createPostgresSupplierInvoiceRepository(
       const quantity =
         patch.quantity !== undefined ? patch.quantity : Number(existing.quantity);
       const unitPriceCents =
-        patch.unitPriceCents !== undefined
-          ? patch.unitPriceCents
-          : existing.unit_price_cents;
+        patch.unitPriceCents !== undefined ? patch.unitPriceCents : existing.unit_price_cents;
+      const priceIncludesTax =
+        patch.priceIncludesTax !== undefined ? patch.priceIncludesTax : (existing.price_includes_tax ?? null);
+      const discountBasisPoints =
+        patch.discountBasisPoints !== undefined ? patch.discountBasisPoints : existing.discount_basis_points;
       const taxRateBasisPoints =
-        patch.taxRateBasisPoints !== undefined
-          ? patch.taxRateBasisPoints
-          : existing.tax_rate_basis_points;
+        patch.taxRateBasisPoints !== undefined ? patch.taxRateBasisPoints : existing.tax_rate_basis_points;
+      const supplierLineTotalCents =
+        patch.supplierLineTotalCents !== undefined
+          ? patch.supplierLineTotalCents
+          : (existing.supplier_line_total_cents ?? null);
 
-      const subtotalCents = Math.round(quantity * unitPriceCents);
-      const taxCents = Math.round(
-        (subtotalCents * taxRateBasisPoints) / 10_000,
+      const { subtotalCents, taxCents, totalCents } = calcLineTotals(
+        quantity,
+        unitPriceCents,
+        priceIncludesTax,
+        discountBasisPoints,
+        taxRateBasisPoints,
       );
-      const totalCents = subtotalCents + taxCents;
 
       const sets: string[] = [
         "quantity = $1",
         "unit_price_cents = $2",
-        "subtotal_cents = $3",
-        "tax_rate_basis_points = $4",
-        "tax_cents = $5",
-        "total_cents = $6",
+        "price_includes_tax = $3",
+        "discount_basis_points = $4",
+        "subtotal_cents = $5",
+        "tax_rate_basis_points = $6",
+        "tax_cents = $7",
+        "total_cents = $8",
+        "supplier_line_total_cents = $9",
         "updated_at = now()",
       ];
       const params: unknown[] = [
         quantity,
         unitPriceCents,
+        priceIncludesTax,
+        discountBasisPoints,
         subtotalCents,
         taxRateBasisPoints,
         taxCents,
         totalCents,
+        supplierLineTotalCents,
       ];
-      let idx = 7;
+      let idx = 10;
 
       const add = (col: string, value: unknown) => {
         sets.push(`${col} = $${String(idx++)}`);

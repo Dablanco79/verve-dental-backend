@@ -56,6 +56,7 @@ import {
   receiveInventoryLine,
   resolveConversionFactorFromCatalogItem,
 } from "./receivingEngine.js";
+import { deriveOperationalUnitCost } from "./invoiceLineCostHelper.js";
 
 export function createSupplierInvoiceService(
   repo: SupplierInvoiceRepository,
@@ -134,6 +135,24 @@ export function createSupplierInvoiceService(
         `Line "${lineLabel}": a valid category must be selected before a new product can be created. Got: "${gotCategory}".`,
       );
     }
+    // Derive canonical operational unit cost: net ex-tax per stock unit.
+    // If the operator provided an explicit reviewed cost, honour it (it has
+    // been manually verified and represents the canonical value).
+    // Otherwise derive from line financial data; fall back to unitPriceCents
+    // only when derivation is genuinely ambiguous (maintains backward compat).
+    const unitsPerReceivingUnit = reviewed?.unitsPerReceivingUnit ?? 1;
+    const derivedCost = reviewed?.unitCostCents !== undefined
+      ? reviewed.unitCostCents
+      : (deriveOperationalUnitCost({
+          quantity: line.quantity,
+          unitPriceCents: line.unitPriceCents,
+          priceIncludesTax: line.priceIncludesTax,
+          discountBasisPoints: line.discountBasisPoints,
+          taxRateBasisPoints: line.taxRateBasisPoints,
+          supplierLineTotalCents: line.supplierLineTotalCents,
+          unitsPerReceivingUnit,
+        }) ?? line.unitPriceCents);
+
     const masterItem = await catalogRepository.createMasterItem({
       sku,
       name: (reviewed?.productName ?? line.ocrDescription).trim() || sku,
@@ -141,8 +160,8 @@ export function createSupplierInvoiceService(
       category: rawCategory,
       stockUnit: reviewed?.stockUnit ?? "unit",
       receivingUnit: reviewed?.receivingUnit ?? "unit",
-      unitsPerReceivingUnit: reviewed?.unitsPerReceivingUnit ?? 1,
-      defaultUnitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
+      unitsPerReceivingUnit,
+      defaultUnitCostCents: derivedCost,
     });
 
     await inventoryRepository.createClinicInventoryItem({
@@ -159,7 +178,7 @@ export function createSupplierInvoiceService(
       productId: masterItem.id,
       supplierSku: reviewed?.supplierSku ?? line.ocrSku,
       supplierDescription: reviewed?.productName ?? line.ocrDescription,
-      unitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
+      unitCostCents: derivedCost,
       unitOfMeasure: reviewed?.stockUnit ?? "unit",
     });
 
@@ -175,7 +194,7 @@ export function createSupplierInvoiceService(
       supplierInfo?.supplierName ?? null,
       {
         supplierSku: reviewed?.supplierSku ?? line.ocrSku,
-        unitCostCents: reviewed?.unitCostCents ?? line.unitPriceCents,
+        unitCostCents: derivedCost,
       },
     );
 
@@ -529,7 +548,10 @@ export function createSupplierInvoiceService(
           ocrConfidence: m.ocrLine.confidence,
           quantity: m.ocrLine.quantity,
           unitPriceCents: m.ocrLine.unitPriceCents,
+          priceIncludesTax: m.ocrLine.priceIncludesTax,
+          discountBasisPoints: m.ocrLine.discountBasisPoints,
           taxRateBasisPoints: m.ocrLine.taxRateBasisPoints,
+          supplierLineTotalCents: m.ocrLine.supplierLineTotalCents,
           sortOrder: m.sortOrder,
           isMatched: m.isMatched,
           matchMethod: m.matchMethod,
@@ -784,13 +806,33 @@ export function createSupplierInvoiceService(
     }
 
     // Upsert supplier_catalogue pricing for each matched line.
+    // Use the canonical operational unit cost: net ex-tax per stock unit.
+    // Fall back to unitPriceCents only when semantics are ambiguous (backward compat).
     const priceHistoryRecords = await Promise.all(
       matchedLines.map(async (line) => {
+        // Look up unitsPerReceivingUnit from the catalog when available.
+        let unitsPerReceivingUnit = 1;
+        if (catalogRepository) {
+          const catalogItem = await catalogRepository.findMasterItemById(line.masterCatalogItemId);
+          unitsPerReceivingUnit = catalogItem?.unitsPerReceivingUnit ?? 1;
+        }
+
+        const canonicalCost =
+          deriveOperationalUnitCost({
+            quantity: line.quantity,
+            unitPriceCents: line.unitPriceCents,
+            priceIncludesTax: line.priceIncludesTax,
+            discountBasisPoints: line.discountBasisPoints,
+            taxRateBasisPoints: line.taxRateBasisPoints,
+            supplierLineTotalCents: line.supplierLineTotalCents,
+            unitsPerReceivingUnit,
+          }) ?? line.unitPriceCents;
+
         const { catalogueId, oldUnitCostCents } =
           await repo.upsertSupplierCataloguePrice(
             confirmedSupplierId,
             line.masterCatalogItemId,
-            line.unitPriceCents,
+            canonicalCost,
             line.ocrSku,
           );
 
@@ -799,7 +841,7 @@ export function createSupplierInvoiceService(
           supplierId: confirmedSupplierId,
           masterCatalogItemId: line.masterCatalogItemId,
           oldUnitCostCents,
-          newUnitCostCents: line.unitPriceCents,
+          newUnitCostCents: canonicalCost,
           source: "supplier_invoice_ocr",
           sourceReferenceId: invoiceId,
           changedByUserId: caller.id,

@@ -21,6 +21,7 @@ import type {
   UpdateSupplierInvoiceInput,
   UpdateSupplierInvoiceLineInput,
 } from "../types/supplierInvoice.js";
+import { calcLineTotals } from "../services/invoiceLineCostHelper.js";
 
 // ── Interface ─────────────────────────────────────────────────────────────────
 
@@ -370,11 +371,13 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       input: AddSupplierInvoiceLineInput,
     ): Promise<SupplierInvoiceLine> {
       const now = new Date();
-      const subtotalCents = Math.round(input.quantity * input.unitPriceCents);
-      const taxCents = Math.round(
-        (subtotalCents * input.taxRateBasisPoints) / 10_000,
+      const { subtotalCents, taxCents, totalCents } = calcLineTotals(
+        input.quantity,
+        input.unitPriceCents,
+        input.priceIncludesTax,
+        input.discountBasisPoints,
+        input.taxRateBasisPoints,
       );
-      const totalCents = subtotalCents + taxCents;
 
       const line: SupplierInvoiceLine = {
         id: randomUUID(),
@@ -388,10 +391,13 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         ocrConfidence: input.ocrConfidence,
         quantity: input.quantity,
         unitPriceCents: input.unitPriceCents,
+        priceIncludesTax: input.priceIncludesTax,
+        discountBasisPoints: input.discountBasisPoints,
         subtotalCents,
         taxRateBasisPoints: input.taxRateBasisPoints,
         taxCents,
         totalCents,
+        supplierLineTotalCents: input.supplierLineTotalCents,
         sortOrder: input.sortOrder,
         isMatched: input.isMatched,
         matchMethod: input.matchMethod,
@@ -445,19 +451,25 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
       const quantity =
         patch.quantity !== undefined ? patch.quantity : existing.quantity;
       const unitPriceCents =
-        patch.unitPriceCents !== undefined
-          ? patch.unitPriceCents
-          : existing.unitPriceCents;
+        patch.unitPriceCents !== undefined ? patch.unitPriceCents : existing.unitPriceCents;
+      const priceIncludesTax =
+        patch.priceIncludesTax !== undefined ? patch.priceIncludesTax : existing.priceIncludesTax;
+      const discountBasisPoints =
+        patch.discountBasisPoints !== undefined ? patch.discountBasisPoints : existing.discountBasisPoints;
       const taxRateBasisPoints =
-        patch.taxRateBasisPoints !== undefined
-          ? patch.taxRateBasisPoints
-          : existing.taxRateBasisPoints;
+        patch.taxRateBasisPoints !== undefined ? patch.taxRateBasisPoints : existing.taxRateBasisPoints;
+      const supplierLineTotalCents =
+        patch.supplierLineTotalCents !== undefined
+          ? patch.supplierLineTotalCents
+          : existing.supplierLineTotalCents;
 
-      const subtotalCents = Math.round(quantity * unitPriceCents);
-      const taxCents = Math.round(
-        (subtotalCents * taxRateBasisPoints) / 10_000,
+      const { subtotalCents, taxCents, totalCents } = calcLineTotals(
+        quantity,
+        unitPriceCents,
+        priceIncludesTax,
+        discountBasisPoints,
+        taxRateBasisPoints,
       );
-      const totalCents = subtotalCents + taxCents;
 
       const updated: SupplierInvoiceLine = {
         ...existing,
@@ -467,10 +479,13 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         ...(patch.ocrSku !== undefined && { ocrSku: patch.ocrSku }),
         quantity,
         unitPriceCents,
+        priceIncludesTax,
+        discountBasisPoints,
         subtotalCents,
         taxRateBasisPoints,
         taxCents,
         totalCents,
+        supplierLineTotalCents,
         ...(patch.masterCatalogItemId !== undefined && {
           masterCatalogItemId: patch.masterCatalogItemId,
         }),

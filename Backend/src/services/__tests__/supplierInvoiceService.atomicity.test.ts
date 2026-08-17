@@ -63,8 +63,10 @@ const ocrResult: OcrInvoiceResult = {
     {
       description: "Gloves Box", sku: "GLV-001",
       quantity: 6, unitPriceCents: 800,
+      priceIncludesTax: null, discountBasisPoints: 0,
       subtotalCents: 4800, taxRateBasisPoints: 1000,
-      taxCents: 480, totalCents: 5280, confidence: 90,
+      taxCents: 480, totalCents: 5280,
+      supplierLineTotalCents: null, confidence: 90,
     },
   ],
   rawResponse: {},

@@ -234,10 +234,15 @@ describe("ClaudeOcrProvider", () => {
     const result = await provider.extractInvoice(PDF_BUFFER, "application/pdf", "sparse.pdf");
 
     expect(result.lines).toHaveLength(1);
-    // subtotal = 1 × 500 = 500; tax at default 1000bp = 50; total = 550
+    // taxRateBasisPoints defaults to 0 when missing (no invented GST assumption)
+    // subtotal = 1 × 500 = 500; tax = 0; total = 500
     const sparseLine = result.lines[0];
     expect(sparseLine?.subtotalCents).toBe(500);
-    expect(sparseLine?.taxCents).toBe(50);
+    expect(sparseLine?.taxCents).toBe(0);
+    expect(sparseLine?.totalCents).toBe(500);
+    expect(sparseLine?.priceIncludesTax).toBeNull();
+    expect(sparseLine?.discountBasisPoints).toBe(0);
+    expect(sparseLine?.supplierLineTotalCents).toBeNull();
     expect(sparseLine?.confidence).toBeNull();
   });
 });

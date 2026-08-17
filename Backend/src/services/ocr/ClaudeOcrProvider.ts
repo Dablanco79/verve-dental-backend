@@ -77,10 +77,12 @@ Return ONLY valid JSON — no markdown fences, no explanation, no commentary. Us
       "sku": "string or null",
       "quantity": number,
       "unitPriceCents": integer,
-      "subtotalCents": integer,
-      "taxRateBasisPoints": integer,
-      "taxCents": integer,
-      "totalCents": integer,
+      "priceIncludesTax": true_false_or_null,
+      "discountBasisPoints": integer,
+      "subtotalCents": integer_or_null,
+      "taxRateBasisPoints": integer_or_null,
+      "taxCents": integer_or_null,
+      "supplierLineTotalCents": integer_or_null,
       "confidence": number_0_to_100
     }
   ]
@@ -88,7 +90,13 @@ Return ONLY valid JSON — no markdown fences, no explanation, no commentary. Us
 
 Rules:
 - ALL monetary values MUST be integer cents (AUD). Example: $12.50 = 1250, $100.00 = 10000
-- taxRateBasisPoints: 1000 = 10% GST, 0 = no tax, 500 = 5%
+- unitPriceCents: the printed unit price exactly as shown on the invoice, in cents
+- priceIncludesTax: true if the printed unit price already includes GST/tax; false if it is ex-tax; null if you cannot determine with confidence. Do NOT guess — use null when uncertain. A price like "$119.90 incl GST" or a total that equals the unit price × qty with no separate tax line means true. A subtotal line that excludes GST suggests false.
+- discountBasisPoints: any line-level discount as basis points (0 = no discount, 500 = 5%, 1000 = 10%). Extract from percentage shown next to the line. Default 0 if not present.
+- taxRateBasisPoints: 1000 = 10% GST, 0 = GST-free/no tax, 500 = 5%, null if unknown
+- supplierLineTotalCents: the total for this line exactly as printed on the invoice (may be incl or excl GST). This is the authoritative supplier figure. Use null only if no line total is printed.
+- subtotalCents: line subtotal before tax as printed, if available; otherwise null
+- taxCents: tax amount for this line as printed, if available; otherwise null
 - overallConfidence: your overall confidence in the extraction accuracy (0 = certain failure, 100 = perfect)
 - confidence per line: your confidence that each individual line was extracted correctly (0–100)
 - Use null for any field you cannot determine with reasonable confidence
@@ -240,20 +248,59 @@ export class ClaudeOcrProvider implements OcrProvider {
       const line = (item ?? {}) as Record<string, unknown>;
       const quantity = safePositiveFloat(line.quantity);
       const unitPriceCents = safeInt(line.unitPriceCents) ?? 0;
-      const taxRateBasisPoints = safeInt(line.taxRateBasisPoints) ?? 1000;
-      const subtotalCents = safeInt(line.subtotalCents) ?? Math.round(quantity * unitPriceCents);
-      const taxCents = safeInt(line.taxCents) ?? Math.round((subtotalCents * taxRateBasisPoints) / 10_000);
-      const totalCents = safeInt(line.totalCents) ?? subtotalCents + taxCents;
+
+      // priceIncludesTax: only accept explicit boolean; everything else is null (unknown)
+      const priceIncludesTax: boolean | null =
+        line.priceIncludesTax === true
+          ? true
+          : line.priceIncludesTax === false
+            ? false
+            : null;
+
+      // discountBasisPoints: non-negative integer, default 0
+      const discountBasisPoints = Math.max(0, safeInt(line.discountBasisPoints) ?? 0);
+
+      // taxRateBasisPoints: null = unknown (do not default to 1000 / 10%)
+      const taxRateBasisPoints = safeInt(line.taxRateBasisPoints) ?? 0;
+
+      // supplierLineTotalCents: the printed line total — preserved verbatim
+      const supplierLineTotalCents = safeInt(line.supplierLineTotalCents);
+
+      // subtotalCents / taxCents from OCR if available; otherwise compute below
+      const subtotalCentsRaw = safeInt(line.subtotalCents);
+      const taxCentsRaw = safeInt(line.taxCents);
+
+      // Derive Verve-calculated subtotal/tax/total from the new semantics
+      let subtotalCents: number;
+      let taxCents: number;
+      let totalCents: number;
+
+      if (priceIncludesTax === true) {
+        // Gross already includes tax; apply discount to the incl-GST amount
+        const grossInclGst = Math.round(quantity * unitPriceCents);
+        totalCents = Math.round(grossInclGst * (10_000 - discountBasisPoints) / 10_000);
+        taxCents = taxCentsRaw ?? Math.round(totalCents * taxRateBasisPoints / (10_000 + taxRateBasisPoints));
+        subtotalCents = subtotalCentsRaw ?? (totalCents - taxCents);
+      } else {
+        // price is ex-tax or unknown — apply discount to ex-tax amount, then add tax
+        const grossExTax = Math.round(quantity * unitPriceCents);
+        subtotalCents = subtotalCentsRaw ?? Math.round(grossExTax * (10_000 - discountBasisPoints) / 10_000);
+        taxCents = taxCentsRaw ?? Math.round(subtotalCents * taxRateBasisPoints / 10_000);
+        totalCents = subtotalCents + taxCents;
+      }
 
       return {
         description: typeof line.description === "string" ? line.description : "Unknown item",
         sku: typeof line.sku === "string" ? line.sku : null,
         quantity,
         unitPriceCents,
+        priceIncludesTax,
+        discountBasisPoints,
         subtotalCents,
         taxRateBasisPoints,
         taxCents,
         totalCents,
+        supplierLineTotalCents,
         confidence: normaliseConfidence(line.confidence),
       };
     });

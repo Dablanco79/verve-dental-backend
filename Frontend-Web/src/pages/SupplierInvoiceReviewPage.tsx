@@ -436,7 +436,32 @@ function LineRow({
             {centsToDollars(Math.round(previewTotal * 100))}
           </span>
         ) : (
-          centsToDollars(line.lineTotalCents)
+          <span>
+            {centsToDollars(line.supplierLineTotalCents ?? line.lineTotalCents)}
+            {line.discountBasisPoints > 0 ? (
+              <span
+                className="invoice-review__line-tag invoice-review__line-tag--discount"
+                title={`${String(line.discountBasisPoints / 100)}% supplier discount applied`}
+              >
+                {String(line.discountBasisPoints / 100)}% off
+              </span>
+            ) : null}
+            {line.priceIncludesTax === true ? (
+              <span
+                className="invoice-review__line-tag invoice-review__line-tag--incl"
+                title="Printed unit price includes GST"
+              >
+                incl GST
+              </span>
+            ) : line.priceIncludesTax === false ? (
+              <span
+                className="invoice-review__line-tag invoice-review__line-tag--excl"
+                title="Printed unit price is ex-GST"
+              >
+                ex GST
+              </span>
+            ) : null}
+          </span>
         )}
       </td>
 
@@ -552,8 +577,13 @@ function LinesTable({
   }
 
   const activeLines = lines.filter((l) => !ignoredLineIds.has(l.id));
+  // Prefer supplier-stated line totals for reconciliation (invoice financial truth).
+  // Fall back to the Verve-calculated total when the supplier total is not available.
   const subtotal = activeLines.reduce(
-    (sum, l) => sum + (Number.isFinite(l.lineTotalCents) ? l.lineTotalCents : 0),
+    (sum, l) => {
+      const lineTotal = l.supplierLineTotalCents ?? l.lineTotalCents;
+      return sum + (Number.isFinite(lineTotal) ? lineTotal : 0);
+    },
     0,
   );
 
@@ -1238,12 +1268,13 @@ export function SupplierInvoiceReviewPage() {
                     (l) => !lineIsResolved(l, localLineActions, ignoredLineIds),
                   );
 
+                  // Prefer supplier-stated line totals for reconciliation accuracy.
                   const visibleLineTotal = lines
                     .filter(
                       (l) =>
                         !ignoredLineIds.has(l.id) && localLineActions[l.id] !== "skipped",
                     )
-                    .reduce((sum, l) => sum + l.lineTotalCents, 0);
+                    .reduce((sum, l) => sum + (l.supplierLineTotalCents ?? l.lineTotalCents), 0);
                   const invoiceTotal = invoice.totalCents ?? null;
                   const reconciliationDiff =
                     invoiceTotal !== null ? invoiceTotal - visibleLineTotal : null;
@@ -1297,12 +1328,19 @@ export function SupplierInvoiceReviewPage() {
                               <span className="invoice-review__summary-label">Active line total</span>
                               <span className="invoice-review__summary-value">{centsToDollars(visibleLineTotal)}</span>
                             </div>
-                            {reconciliationDiff !== null && reconciliationDiff !== 0 ? (
+                            {reconciliationDiff !== null && Math.abs(reconciliationDiff) > 2 ? (
                               <div className="invoice-review__summary-row invoice-review__summary-row--warn">
                                 <span className="invoice-review__summary-label">Reconciliation difference</span>
                                 <span className="invoice-review__summary-value">
                                   {centsToDollars(Math.abs(reconciliationDiff))}{" "}
                                   {reconciliationDiff > 0 ? "(header exceeds lines)" : "(lines exceed header)"}
+                                </span>
+                              </div>
+                            ) : reconciliationDiff !== null && Math.abs(reconciliationDiff) <= 2 ? (
+                              <div className="invoice-review__summary-row">
+                                <span className="invoice-review__summary-label">Reconciliation</span>
+                                <span className="invoice-review__summary-value" style={{ color: "var(--color-success, #22c55e)" }}>
+                                  Balanced
                                 </span>
                               </div>
                             ) : null}

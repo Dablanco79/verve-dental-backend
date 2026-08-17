@@ -122,11 +122,33 @@ export type SupplierInvoiceLine = {
   ocrSku: string | null;
   ocrConfidence: number | null;
   quantity: number;
+  /**
+   * Printed supplier unit price in cents as it appears on the invoice.
+   * Interpretation depends on `priceIncludesTax`.
+   */
   unitPriceCents: number;
+  /**
+   * Whether the printed `unitPriceCents` already includes tax.
+   * true = incl-tax; false = ex-tax; null = unknown.
+   */
+  priceIncludesTax: boolean | null;
+  /**
+   * Supplier line discount in basis points (0 = no discount, 1000 = 10%).
+   */
+  discountBasisPoints: number;
+  /** Verve-calculated line subtotal before tax (ex-tax), in cents. */
   subtotalCents: number;
   taxRateBasisPoints: number;
+  /** Verve-calculated tax amount for this line, in cents. */
   taxCents: number;
+  /** Verve-calculated line total (incl tax), in cents. Correctly handles incl/excl-tax prices. */
   totalCents: number;
+  /**
+   * Supplier-stated line total exactly as printed on the invoice, in cents.
+   * Preserved verbatim as invoice financial truth. Used for reconciliation.
+   * null when the supplier did not print a line total or it could not be extracted.
+   */
+  supplierLineTotalCents: number | null;
   sortOrder: number;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
@@ -199,11 +221,33 @@ export type OcrInvoiceLine = {
   description: string;
   sku: string | null;
   quantity: number;
+  /**
+   * Printed supplier unit price in cents as it appears on the invoice.
+   * Whether this price includes tax is indicated by `priceIncludesTax`.
+   */
   unitPriceCents: number;
+  /**
+   * Whether the printed `unitPriceCents` already includes tax (e.g. GST).
+   * true  = price is GST-inclusive (do NOT add tax again)
+   * false = price is ex-tax (tax should be added to arrive at total)
+   * null  = OCR could not determine; treat with caution
+   */
+  priceIncludesTax: boolean | null;
+  /**
+   * Supplier line discount in basis points (0 = no discount, 1000 = 10%).
+   * Applied to the line before tax is considered for ex-tax prices, or to the
+   * total for incl-tax prices.
+   */
+  discountBasisPoints: number;
   subtotalCents: number;
   taxRateBasisPoints: number;
   taxCents: number;
   totalCents: number;
+  /**
+   * Supplier-stated line total exactly as printed on the invoice (cents).
+   * Preserved verbatim as invoice financial truth; null if not determinable.
+   */
+  supplierLineTotalCents: number | null;
   confidence: number | null;
 };
 
@@ -243,7 +287,13 @@ export type UpdateSupplierInvoiceLineInput = Partial<{
   ocrSku: string | null;
   quantity: number;
   unitPriceCents: number;
+  /** Whether the printed unit price includes tax. null clears to unknown. */
+  priceIncludesTax: boolean | null;
+  /** Supplier discount in basis points. 0 = no discount. */
+  discountBasisPoints: number;
   taxRateBasisPoints: number;
+  /** Supplier-stated line total override. null clears. */
+  supplierLineTotalCents: number | null;
   masterCatalogItemId: string | null;
   supplierCatalogueId: string | null;
   isMatched: boolean;
@@ -273,7 +323,13 @@ export type AddSupplierInvoiceLineInput = {
   ocrConfidence: number | null;
   quantity: number;
   unitPriceCents: number;
+  /** Whether the printed unit price includes tax. null = unknown. */
+  priceIncludesTax: boolean | null;
+  /** Supplier discount in basis points. 0 = no discount. */
+  discountBasisPoints: number;
   taxRateBasisPoints: number;
+  /** Supplier-stated line total in cents (preserved verbatim). null if unavailable. */
+  supplierLineTotalCents: number | null;
   sortOrder: number;
   isMatched: boolean;
   matchMethod: "exact_sku" | "name_match" | "manual" | null;
