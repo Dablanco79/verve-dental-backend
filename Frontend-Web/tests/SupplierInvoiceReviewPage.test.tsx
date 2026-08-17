@@ -986,3 +986,337 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
     expect(screen.getByText(/🆕 Ready to Create/)).toBeInTheDocument();
   });
 });
+
+// ── Tax treatment and financial display tests ──────────────────────────────────
+
+describe("SupplierInvoiceReviewPage — tax treatment and financial summary display", () => {
+  const taxInvoice: SupplierInvoice = {
+    id: "inv-tax-test",
+    clinicId: TEST_CLINIC_ID,
+    supplierId: "sup-tax",
+    supplierNameRaw: "Tax Test Supplier",
+    invoiceNumber: "TX-001",
+    invoiceDate: "2026-08-17",
+    dueDate: null,
+    status: "pending_review",
+    subtotalCents: null,
+    taxCents: null,
+    totalCents: null,
+    currency: "AUD",
+    ocrProvider: "claude",
+    ocrConfidence: 95,
+    originalFilename: "test-invoice.pdf",
+    fileMimeType: "application/pdf",
+    importedByUserId: "user-1",
+    importedByEmail: "test@clinic.com",
+    confirmedByUserId: null,
+    confirmedAt: null,
+    voidedByUserId: null,
+    voidedAt: null,
+    receivedAt: null,
+    receivedByUserId: null,
+    receivedReference: null,
+    notes: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+
+  const baseLine: SupplierInvoiceLine = {
+    id: "line-tax-1",
+    invoiceId: "inv-tax-test",
+    lineNumber: 1,
+    ocrDescription: "Test Product",
+    ocrSku: "TP-001",
+    quantity: 1,
+    unitPriceCents: 11000,
+    priceIncludesTax: null,
+    discountBasisPoints: 0,
+    lineTotalCents: 11000,
+    taxRateBasisPoints: 1000,
+    taxCents: 1000,
+    supplierLineTotalCents: null,
+    masterCatalogItemId: null,
+    masterProductName: null,
+    supplierCatalogueId: null,
+    isMatched: false,
+    matchMethod: null,
+    reviewDecision: null,
+    productCreationData: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
+    setAuthenticatedUser(authTestState, createManagerUser());
+  });
+
+  afterEach(() => {
+    clearAuthenticatedUser(authTestState);
+    vi.clearAllMocks();
+  });
+
+  // Test 1: GST-inclusive unit price shows "incl. GST"
+  it("displays incl. GST label for priceIncludesTax=true lines", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, priceIncludesTax: true }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getAllByText("incl. GST").length).toBeGreaterThan(0);
+  });
+
+  // Test 2: GST-exclusive price shows "ex GST"
+  it("displays ex GST label for priceIncludesTax=false lines", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, priceIncludesTax: false }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getByText("ex GST")).toBeInTheDocument();
+  });
+
+  // Test 3: Unknown tax basis shows "tax basis unknown"
+  it("displays tax basis unknown label for priceIncludesTax=null lines", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, priceIncludesTax: null }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getByText("tax basis unknown")).toBeInTheDocument();
+  });
+
+  // Test 4: Discount displays clearly in GST/Discount column
+  it("displays discount label in GST/Discount column for lines with discountBasisPoints > 0", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, discountBasisPoints: 1000 }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getByText("10% discount")).toBeInTheDocument();
+  });
+
+  // Test 5: Supplier line total is shown when available
+  it("shows supplier-stated line total when supplierLineTotalCents is set", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, supplierLineTotalCents: 9900, lineTotalCents: 11000 }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    // Supplier total $99.00 takes priority over lineTotalCents $110.00.
+    // $99.00 should appear in both the Line Total column and the financial summary.
+    expect(screen.getAllByText("$99.00").length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Test 6: Visible lines subtotal uses supplier line totals
+  it("shows correct visible lines subtotal from supplier line totals in financial summary", async () => {
+    const line1 = { ...baseLine, id: "l1", supplierLineTotalCents: 9900, lineTotalCents: 11000, taxCents: 900 };
+    const line2 = { ...baseLine, id: "l2", supplierLineTotalCents: 4950, lineTotalCents: 5500, taxCents: 450 };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [line1, line2],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    // Combined supplier total = $99.00 + $49.50 = $148.50
+    expect(await screen.findByText("$148.50")).toBeInTheDocument();
+  });
+
+  // Test 7: Balanced invoice shows "$0.00" and "Balanced ✓"
+  it("shows $0.00 and Balanced ✓ when invoice total matches active line totals", async () => {
+    const balancedInvoice = { ...taxInvoice, totalCents: 11000 };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: balancedInvoice,
+      lines: [{ ...baseLine, supplierLineTotalCents: 11000, lineTotalCents: 11000 }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(await screen.findByText("Balanced ✓")).toBeInTheDocument();
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+  });
+
+  // Test 8: Piksters medium gloves line — $55.00, 10% discount, $148.50
+  it("shows $55.00 unit price, incl. GST, 10% discount and $148.50 line total for discounted incl-GST line", async () => {
+    const gloveLine: SupplierInvoiceLine = {
+      ...baseLine,
+      id: "line-gloves-medium",
+      ocrDescription: "Erskine Everyday Dental Nitrile Glove Medium,100pk",
+      ocrSku: "EEDNGM",
+      quantity: 3,
+      unitPriceCents: 5500,
+      priceIncludesTax: true,
+      discountBasisPoints: 1000,
+      taxRateBasisPoints: 1000,
+      taxCents: 1350,
+      lineTotalCents: 14850,
+      supplierLineTotalCents: 14850,
+    };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [gloveLine],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+
+    expect(screen.getAllByText("$55.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("incl. GST").length).toBeGreaterThan(0);
+    expect(screen.getByText("10% discount")).toBeInTheDocument();
+    // $148.50 appears in both the line row and the financial summary.
+    expect(screen.getAllByText("$148.50").length).toBeGreaterThan(0);
+  });
+
+  // Test 9: Existing match buttons continue to render for unmatched lines
+  it("still renders all match action buttons for unmatched lines after UI changes", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine, isMatched: false }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getByRole("button", { name: "Find suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
+  });
+
+  // Test 10: Existing review actions (Edit, Ignore, Confirm) still work after UI changes
+  it("still renders Edit, Ignore, and Confirm Invoice Import buttons after UI changes", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: taxInvoice,
+      lines: [{ ...baseLine }],
+    });
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ignore" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm Invoice Import" })).toBeInTheDocument();
+  });
+});
+
+// ── Conditional incl. GST label tests ─────────────────────────────────────────
+
+describe("SupplierInvoiceReviewPage — conditional incl. GST labelling", () => {
+  const labelTestInvoice: SupplierInvoice = {
+    id: "inv-label-test",
+    clinicId: TEST_CLINIC_ID,
+    supplierId: "sup-label",
+    supplierNameRaw: "Label Test Supplier",
+    invoiceNumber: "LBL-001",
+    invoiceDate: "2026-08-17",
+    dueDate: null,
+    status: "pending_review",
+    subtotalCents: null,
+    taxCents: null,
+    totalCents: 11000,
+    currency: "AUD",
+    ocrProvider: "claude",
+    ocrConfidence: 90,
+    originalFilename: "label-test.pdf",
+    fileMimeType: "application/pdf",
+    importedByUserId: "user-1",
+    importedByEmail: "test@clinic.com",
+    confirmedByUserId: null,
+    confirmedAt: null,
+    voidedByUserId: null,
+    voidedAt: null,
+    receivedAt: null,
+    receivedByUserId: null,
+    receivedReference: null,
+    notes: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+
+  const inclGSTLine: SupplierInvoiceLine = {
+    id: "line-lbl-1",
+    invoiceId: "inv-label-test",
+    lineNumber: 1,
+    ocrDescription: "GST-Inclusive Product",
+    ocrSku: "GIP-001",
+    quantity: 1,
+    unitPriceCents: 11000,
+    priceIncludesTax: true,
+    discountBasisPoints: 0,
+    lineTotalCents: 11000,
+    taxRateBasisPoints: 1000,
+    taxCents: 1000,
+    supplierLineTotalCents: 11000,
+    masterCatalogItemId: null,
+    masterProductName: null,
+    supplierCatalogueId: null,
+    isMatched: false,
+    matchMethod: null,
+    reviewDecision: null,
+    productCreationData: null,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" },
+    };
+    setAuthenticatedUser(authTestState, createManagerUser());
+  });
+
+  afterEach(() => {
+    clearAuthenticatedUser(authTestState);
+    vi.clearAllMocks();
+  });
+
+  // Test A: Piksters-style / all lines priceIncludesTax=true, taxRateBasisPoints=1000
+  it("shows incl. GST on invoice total and Line Total column when all lines are GST-inclusive", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: labelTestInvoice,
+      lines: [inclGSTLine],
+    });
+    renderReviewPage("inv-label-test");
+    await screen.findByRole("heading", { name: "Label Test Supplier" });
+
+    // Column header must be "Line Total (incl. GST)"
+    expect(screen.getByRole("columnheader", { name: "Line Total (incl. GST)" })).toBeInTheDocument();
+    // "incl. GST" must appear at least once (invoice total sublabel and/or unit price area)
+    expect(screen.getAllByText("incl. GST").length).toBeGreaterThanOrEqual(1);
+  });
+
+  // Test B: Unknown tax semantics — priceIncludesTax=null
+  it("does not show incl. GST anywhere when tax treatment is unknown (priceIncludesTax=null)", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: labelTestInvoice,
+      lines: [{ ...inclGSTLine, priceIncludesTax: null }],
+    });
+    renderReviewPage("inv-label-test");
+    await screen.findByRole("heading", { name: "Label Test Supplier" });
+
+    // Column header must be plain "Line Total"
+    expect(screen.queryByRole("columnheader", { name: "Line Total (incl. GST)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Line Total" })).toBeInTheDocument();
+    // No "incl. GST" text — unit price shows "tax basis unknown" instead
+    expect(screen.queryByText("incl. GST")).not.toBeInTheDocument();
+  });
+
+  // Test C: GST-free invoice — taxRateBasisPoints=0 (no GST charged)
+  it("does not show incl. GST in column header or invoice total when all lines are GST-free", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...labelTestInvoice, totalCents: 10000 },
+      lines: [{ ...inclGSTLine, taxRateBasisPoints: 0, taxCents: 0, priceIncludesTax: null }],
+    });
+    renderReviewPage("inv-label-test");
+    await screen.findByRole("heading", { name: "Label Test Supplier" });
+
+    // Column header must be plain "Line Total" (GST-free: no incl. GST qualifier)
+    expect(screen.queryByRole("columnheader", { name: "Line Total (incl. GST)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Line Total" })).toBeInTheDocument();
+    // No "incl. GST" text anywhere (priceIncludesTax=null → "tax basis unknown" in unit price)
+    expect(screen.queryByText("incl. GST")).not.toBeInTheDocument();
+  });
+});

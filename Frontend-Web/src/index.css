@@ -5325,6 +5325,148 @@ body {
 .invoice-review__void-btn:hover  { background: #fef2f2; }
 .invoice-review__void-btn:disabled { opacity: 0.6; cursor: default; }
 
+/* ── Invoice total highlight in summary card ──────────────────────────────── */
+.invoice-review__summary-item--total dd {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.invoice-review__total-amount {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #102a43;
+}
+
+.invoice-review__total-sublabel {
+  font-size: 0.7rem;
+  color: #627d98;
+  font-weight: 500;
+}
+
+/* ── Unit price tax-basis label ───────────────────────────────────────────── */
+.invoice-review__unit-price-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+}
+
+.invoice-review__price-tax-label {
+  font-size: 0.7rem;
+  color: #627d98;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* ── GST / Discount stacked column ───────────────────────────────────────── */
+.invoice-review__gst-discount-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+}
+
+.invoice-review__gst-label {
+  font-size: 0.8rem;
+  color: #486581;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.invoice-review__discount-label {
+  font-size: 0.75rem;
+  color: #c05621;
+  font-weight: 600;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  white-space: nowrap;
+}
+
+/* ── Invoice financial summary row ───────────────────────────────────────── */
+.invoice-review__financial-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  border-top: 2px solid #e2ecf4;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.invoice-review__financial-item {
+  flex: 1 1 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.75rem 1rem;
+  border-right: 1px solid #e2ecf4;
+}
+
+.invoice-review__financial-item:last-child {
+  border-right: none;
+}
+
+.invoice-review__financial-item--reconciliation {
+  background: #f0fdf4;
+}
+
+.invoice-review__financial-item--warn {
+  background: #fff7ed;
+}
+
+.invoice-review__financial-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #627d98;
+}
+
+.invoice-review__financial-sublabel {
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #9ab5cc;
+}
+
+.invoice-review__financial-value {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #102a43;
+}
+
+.invoice-review__financial-value--primary {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.invoice-review__financial-value--discount {
+  color: #c05621;
+}
+
+.invoice-review__financial-value--balanced {
+  color: #059669;
+}
+
+.invoice-review__financial-value--unbalanced {
+  color: #dc2626;
+}
+
+.invoice-review__reconciliation-status {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 /* Confirmed / Voided banner */
 .invoice-review__confirmed-banner,
 .invoice-review__voided-banner {

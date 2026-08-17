@@ -129,9 +129,11 @@ type SummaryCardProps = {
   lineCount: number;
   duplicateFile: UploadAndExtractResult["duplicateFileWarning"];
   duplicateNumber: UploadAndExtractResult["duplicateInvoiceNumberWarning"];
+  /** Derived from line data: "incl. GST" when all active lines are reliably GST-inclusive, null otherwise. */
+  invoiceTaxLabel: string | null;
 };
 
-function SummaryCard({ invoice, lineCount, duplicateFile, duplicateNumber }: SummaryCardProps) {
+function SummaryCard({ invoice, lineCount, duplicateFile, duplicateNumber, invoiceTaxLabel }: SummaryCardProps) {
   const confidence = formatConfidence(invoice.ocrConfidence);
 
   return (
@@ -163,10 +165,15 @@ function SummaryCard({ invoice, lineCount, duplicateFile, duplicateNumber }: Sum
           <dt>Invoice Date</dt>
           <dd>{formatDate(invoice.invoiceDate)}</dd>
         </div>
-        <div className="invoice-review__summary-item">
+        <div className="invoice-review__summary-item invoice-review__summary-item--total">
           <dt>Invoice Total</dt>
           <dd>
-            {invoice.totalCents !== null ? centsToDollars(invoice.totalCents) : "—"}
+            <span className="invoice-review__total-amount">
+              {invoice.totalCents !== null ? centsToDollars(invoice.totalCents) : "—"}
+            </span>
+            {invoice.totalCents !== null && invoiceTaxLabel ? (
+              <span className="invoice-review__total-sublabel">{invoiceTaxLabel}</span>
+            ) : null}
           </dd>
         </div>
         <div className="invoice-review__summary-item">
@@ -414,15 +421,42 @@ function LineRow({
             aria-label="Unit price"
           />
         ) : (
-          <span>
-            {centsToDollars(line.unitPriceCents)}
-            {line.unitPriceCents === 0 ? (
-              <span
-                className="match-badge match-badge--free"
-                title="Zero-price / free item — can still be received at $0.00"
-                style={{ marginLeft: "0.4rem", verticalAlign: "middle" }}
-              >
-                Free
+          <span className="invoice-review__unit-price-wrap">
+            <span>
+              {centsToDollars(line.unitPriceCents)}
+              {line.unitPriceCents === 0 ? (
+                <span
+                  className="match-badge match-badge--free"
+                  title="Zero-price / free item — can still be received at $0.00"
+                  style={{ marginLeft: "0.4rem", verticalAlign: "middle" }}
+                >
+                  Free
+                </span>
+              ) : null}
+            </span>
+            <span className="invoice-review__price-tax-label">
+              {line.priceIncludesTax === true
+                ? "incl. GST"
+                : line.priceIncludesTax === false
+                  ? "ex GST"
+                  : "tax basis unknown"}
+            </span>
+          </span>
+        )}
+      </td>
+
+      {/* GST / Discount */}
+      <td className="supplier-table__td supplier-table__td--numeric">
+        {isEditing ? null : (
+          <span className="invoice-review__gst-discount-cell">
+            <span className="invoice-review__gst-label">
+              {line.taxRateBasisPoints === 0
+                ? "GST free"
+                : `${String(line.taxRateBasisPoints / 100)}% GST`}
+            </span>
+            {line.discountBasisPoints > 0 ? (
+              <span className="invoice-review__discount-label">
+                {String(line.discountBasisPoints / 100)}% discount
               </span>
             ) : null}
           </span>
@@ -436,32 +470,7 @@ function LineRow({
             {centsToDollars(Math.round(previewTotal * 100))}
           </span>
         ) : (
-          <span>
-            {centsToDollars(line.supplierLineTotalCents ?? line.lineTotalCents)}
-            {line.discountBasisPoints > 0 ? (
-              <span
-                className="invoice-review__line-tag invoice-review__line-tag--discount"
-                title={`${String(line.discountBasisPoints / 100)}% supplier discount applied`}
-              >
-                {String(line.discountBasisPoints / 100)}% off
-              </span>
-            ) : null}
-            {line.priceIncludesTax === true ? (
-              <span
-                className="invoice-review__line-tag invoice-review__line-tag--incl"
-                title="Printed unit price includes GST"
-              >
-                incl GST
-              </span>
-            ) : line.priceIncludesTax === false ? (
-              <span
-                className="invoice-review__line-tag invoice-review__line-tag--excl"
-                title="Printed unit price is ex-GST"
-              >
-                ex GST
-              </span>
-            ) : null}
-          </span>
+          centsToDollars(line.supplierLineTotalCents ?? line.lineTotalCents)
         )}
       </td>
 
@@ -576,16 +585,16 @@ function LinesTable({
     );
   }
 
-  const activeLines = lines.filter((l) => !ignoredLineIds.has(l.id));
-  // Prefer supplier-stated line totals for reconciliation (invoice financial truth).
-  // Fall back to the Verve-calculated total when the supplier total is not available.
-  const subtotal = activeLines.reduce(
-    (sum, l) => {
-      const lineTotal = l.supplierLineTotalCents ?? l.lineTotalCents;
-      return sum + (Number.isFinite(lineTotal) ? lineTotal : 0);
-    },
-    0,
+  // Only label the column "incl. GST" when every active line's supplier price is
+  // reliably GST-inclusive. Unknown or GST-free lines suppress the qualifier.
+  const activeLines = lines.filter(
+    (l) => !ignoredLineIds.has(l.id) && localLineActions[l.id] !== "skipped",
   );
+  const lineTotalColHeader =
+    activeLines.length > 0 &&
+    activeLines.every((l) => l.priceIncludesTax === true && l.taxRateBasisPoints > 0)
+      ? "Line Total (incl. GST)"
+      : "Line Total";
 
   return (
     <div className="supplier-table-wrap">
@@ -596,7 +605,8 @@ function LinesTable({
             <th className="supplier-table__th">Match</th>
             <th className="supplier-table__th supplier-table__th--numeric">Qty</th>
             <th className="supplier-table__th supplier-table__th--numeric">Unit Price</th>
-            <th className="supplier-table__th supplier-table__th--numeric">Line Total</th>
+            <th className="supplier-table__th supplier-table__th--numeric">GST / Discount</th>
+            <th className="supplier-table__th supplier-table__th--numeric">{lineTotalColHeader}</th>
             {!readOnly ? (
               <th className="supplier-table__th supplier-table__th--action">Actions</th>
             ) : null}
@@ -631,22 +641,6 @@ function LinesTable({
             />
           ))}
         </tbody>
-        {lines.length > 1 ? (
-          <tfoot>
-            <tr className="invoice-review__subtotal-row">
-              <td
-                className="supplier-table__td invoice-review__subtotal-label"
-                colSpan={readOnly ? 4 : 4}
-              >
-                Visible lines subtotal
-              </td>
-              <td className="supplier-table__td supplier-table__td--numeric invoice-review__subtotal-value">
-                {centsToDollars(subtotal)}
-              </td>
-              {!readOnly ? <td className="supplier-table__td" /> : null}
-            </tr>
-          </tfoot>
-        ) : null}
       </table>
     </div>
   );
@@ -705,6 +699,126 @@ function VoidConfirmDialog({ isVoiding, onConfirm, onCancel }: VoidConfirmProps)
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Invoice financial summary ──────────────────────────────────────────────────
+
+type InvoiceFinancialSummaryProps = {
+  lines: SupplierInvoiceLine[];
+  ignoredLineIds: Set<string>;
+  localLineActions: Record<string, LocalLineAction>;
+  invoiceTotalCents: number | null;
+};
+
+function InvoiceFinancialSummary({
+  lines,
+  ignoredLineIds,
+  localLineActions,
+  invoiceTotalCents,
+}: InvoiceFinancialSummaryProps) {
+  const activeLines = lines.filter(
+    (l) => !ignoredLineIds.has(l.id) && localLineActions[l.id] !== "skipped",
+  );
+
+  if (activeLines.length === 0) return null;
+
+  // Prefer supplier-stated line totals as invoice financial truth.
+  const visibleLineTotal = activeLines.reduce(
+    (sum, l) => sum + (l.supplierLineTotalCents ?? l.lineTotalCents),
+    0,
+  );
+
+  const totalTax = activeLines.reduce((sum, l) => sum + l.taxCents, 0);
+
+  // Pre-discount ex-GST subtotal and discount amount — only when tax basis is known for all active lines.
+  const allTaxBasisKnown = activeLines.length > 0 && activeLines.every((l) => l.priceIncludesTax !== null);
+
+  const subtotalBeforeDiscount: number | null = allTaxBasisKnown
+    ? activeLines.reduce((sum, l) => {
+        const exGSTUnit =
+          l.priceIncludesTax === true
+            ? l.unitPriceCents / (1 + l.taxRateBasisPoints / 10000)
+            : l.unitPriceCents;
+        return sum + Math.round(exGSTUnit * l.quantity);
+      }, 0)
+    : null;
+
+  const totalDiscount: number | null = allTaxBasisKnown
+    ? activeLines.reduce((sum, l) => {
+        if (l.discountBasisPoints === 0) return sum;
+        const exGSTUnit =
+          l.priceIncludesTax === true
+            ? l.unitPriceCents / (1 + l.taxRateBasisPoints / 10000)
+            : l.unitPriceCents;
+        return sum + Math.round(exGSTUnit * l.quantity * l.discountBasisPoints / 10000);
+      }, 0)
+    : null;
+
+  const reconciliationDiff =
+    invoiceTotalCents !== null ? invoiceTotalCents - visibleLineTotal : null;
+  const isBalanced = reconciliationDiff !== null && Math.abs(reconciliationDiff) <= 2;
+
+  return (
+    <div className="invoice-review__financial-summary" aria-label="Invoice financial summary">
+      <div className="invoice-review__financial-item">
+        <span className="invoice-review__financial-label">
+          Visible lines subtotal
+          <span className="invoice-review__financial-sublabel">(incl. GST)</span>
+        </span>
+        <span className="invoice-review__financial-value invoice-review__financial-value--primary">
+          {centsToDollars(visibleLineTotal)}
+        </span>
+      </div>
+
+      <div className="invoice-review__financial-item">
+        <span className="invoice-review__financial-label">
+          Subtotal before discount
+          <span className="invoice-review__financial-sublabel">ex. GST</span>
+        </span>
+        <span className="invoice-review__financial-value">
+          {subtotalBeforeDiscount !== null ? centsToDollars(subtotalBeforeDiscount) : "—"}
+        </span>
+      </div>
+
+      <div className="invoice-review__financial-item">
+        <span className="invoice-review__financial-label">Total discount</span>
+        <span
+          className={`invoice-review__financial-value${totalDiscount !== null && totalDiscount > 0 ? " invoice-review__financial-value--discount" : ""}`}
+        >
+          {totalDiscount !== null
+            ? totalDiscount > 0
+              ? `-${centsToDollars(totalDiscount)}`
+              : centsToDollars(0)
+            : "—"}
+        </span>
+      </div>
+
+      <div className="invoice-review__financial-item">
+        <span className="invoice-review__financial-label">GST total</span>
+        <span className="invoice-review__financial-value">{centsToDollars(totalTax)}</span>
+      </div>
+
+      {reconciliationDiff !== null ? (
+        <div
+          className={`invoice-review__financial-item invoice-review__financial-item--reconciliation${!isBalanced ? " invoice-review__financial-item--warn" : ""}`}
+        >
+          <span className="invoice-review__financial-label">Reconciliation difference</span>
+          <span
+            className={`invoice-review__financial-value${isBalanced ? " invoice-review__financial-value--balanced" : " invoice-review__financial-value--unbalanced"}`}
+          >
+            {isBalanced ? "$0.00" : centsToDollars(Math.abs(reconciliationDiff))}
+            <span className="invoice-review__reconciliation-status">
+              {isBalanced
+                ? "Balanced ✓"
+                : reconciliationDiff > 0
+                  ? "header exceeds lines"
+                  : "lines exceed header"}
+            </span>
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -854,6 +968,16 @@ export function SupplierInvoiceReviewPage() {
     s === "pending_review" || s === "ready_for_review";
   const readOnly = !isReviewable(invoice?.status);
   const backPath = locationState?.backPath ?? "/suppliers";
+
+  // Only claim "incl. GST" on the invoice header when every line's printed price
+  // explicitly includes GST and there is actual GST on the invoice.
+  // All-GST-free invoices and any unknown-basis lines suppress the label.
+  const invoiceTaxLabel: string | null = (() => {
+    if (lines.length === 0) return null;
+    if (lines.every((l) => l.taxRateBasisPoints === 0)) return null;
+    if (lines.every((l) => l.priceIncludesTax === true && l.taxRateBasisPoints > 0)) return "incl. GST";
+    return null;
+  })();
 
   // ── Product matching helpers ─────────────────────────────────────────────────
 
@@ -1186,6 +1310,7 @@ export function SupplierInvoiceReviewPage() {
               lineCount={lines.length}
               duplicateFile={duplicateFile}
               duplicateNumber={duplicateNumber}
+              invoiceTaxLabel={invoiceTaxLabel}
             />
 
             {/* ── Line items section ── */}
@@ -1240,6 +1365,15 @@ export function SupplierInvoiceReviewPage() {
                 onSkipLine={handleSkipLine}
                 onUndoLine={handleUndoLine}
               />
+
+              {lines.length > 0 ? (
+                <InvoiceFinancialSummary
+                  lines={lines}
+                  ignoredLineIds={ignoredLineIds}
+                  localLineActions={localLineActions}
+                  invoiceTotalCents={invoice.totalCents}
+                />
+              ) : null}
             </section>
 
             {/* ── Approval actions ── */}
@@ -1267,17 +1401,6 @@ export function SupplierInvoiceReviewPage() {
                   const unresolved = lines.filter(
                     (l) => !lineIsResolved(l, localLineActions, ignoredLineIds),
                   );
-
-                  // Prefer supplier-stated line totals for reconciliation accuracy.
-                  const visibleLineTotal = lines
-                    .filter(
-                      (l) =>
-                        !ignoredLineIds.has(l.id) && localLineActions[l.id] !== "skipped",
-                    )
-                    .reduce((sum, l) => sum + (l.supplierLineTotalCents ?? l.lineTotalCents), 0);
-                  const invoiceTotal = invoice.totalCents ?? null;
-                  const reconciliationDiff =
-                    invoiceTotal !== null ? invoiceTotal - visibleLineTotal : null;
 
                   const pct =
                     lines.length > 0
@@ -1317,34 +1440,6 @@ export function SupplierInvoiceReviewPage() {
                               {unresolved.length} line{unresolved.length !== 1 ? "s" : ""} — decision required
                             </span>
                           </div>
-                        ) : null}
-                        {invoiceTotal !== null ? (
-                          <>
-                            <div className="invoice-review__summary-row invoice-review__summary-divider">
-                              <span className="invoice-review__summary-label">Invoice total (header)</span>
-                              <span className="invoice-review__summary-value">{centsToDollars(invoiceTotal)}</span>
-                            </div>
-                            <div className="invoice-review__summary-row">
-                              <span className="invoice-review__summary-label">Active line total</span>
-                              <span className="invoice-review__summary-value">{centsToDollars(visibleLineTotal)}</span>
-                            </div>
-                            {reconciliationDiff !== null && Math.abs(reconciliationDiff) > 2 ? (
-                              <div className="invoice-review__summary-row invoice-review__summary-row--warn">
-                                <span className="invoice-review__summary-label">Reconciliation difference</span>
-                                <span className="invoice-review__summary-value">
-                                  {centsToDollars(Math.abs(reconciliationDiff))}{" "}
-                                  {reconciliationDiff > 0 ? "(header exceeds lines)" : "(lines exceed header)"}
-                                </span>
-                              </div>
-                            ) : reconciliationDiff !== null && Math.abs(reconciliationDiff) <= 2 ? (
-                              <div className="invoice-review__summary-row">
-                                <span className="invoice-review__summary-label">Reconciliation</span>
-                                <span className="invoice-review__summary-value" style={{ color: "var(--color-success, #22c55e)" }}>
-                                  Balanced
-                                </span>
-                              </div>
-                            ) : null}
-                          </>
                         ) : null}
                       </div>
                     </div>
