@@ -212,6 +212,14 @@ type EditDraft = {
 /** Local-only line actions that are tracked in state and passed to confirmImport. */
 type LocalLineAction = "ready_to_create" | "skipped";
 
+type LineSuggestionState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "candidates"; suggestions: ProductMatchSuggestion[] }
+  | { status: "empty" }
+  | { status: "error" }
+  | { status: "supplier-required" };
+
 type LineRowProps = {
   line: SupplierInvoiceLine;
   isEditing: boolean;
@@ -225,8 +233,7 @@ type LineRowProps = {
   onEditCancel: () => void;
   onIgnoreToggle: (lineId: string) => void;
   // ── Product matching ──
-  lineSuggestion: ProductMatchSuggestion | null;
-  isFetchingSuggestion: boolean;
+  lineSuggestionState: LineSuggestionState;
   isLinking: boolean;
   matchDisplayName: string | null;
   localAction: LocalLineAction | null;
@@ -250,8 +257,7 @@ function LineRow({
   onEditSave,
   onEditCancel,
   onIgnoreToggle,
-  lineSuggestion,
-  isFetchingSuggestion,
+  lineSuggestionState,
   isLinking,
   matchDisplayName,
   localAction,
@@ -349,47 +355,90 @@ function LineRow({
         ) : !readOnly ? (
           <div className="invoice-review__match-cell">
             <MatchBadge line={line} />
-            {lineSuggestion ? (
-              <ProductMatchSuggestionCard
-                suggestion={lineSuggestion}
-                onAccept={() => { onAcceptSuggestion(lineSuggestion); }}
-                onChooseDifferent={onChooseDifferent}
-                onCreateNew={onCreateNew}
-                onSkip={onSkipLine}
-              />
-            ) : (
-              <div className="invoice-review__match-actions">
-                <button
-                  type="button"
-                  className="link-button"
-                  disabled={isFetchingSuggestion || isLinking}
-                  onClick={onFetchSuggestion}
-                >
-                  {isFetchingSuggestion ? "Finding…" : "Find suggestions"}
-                </button>
-                <button
-                  type="button"
-                  className="link-button"
-                  disabled={isLinking}
-                  onClick={onChooseDifferent}
-                >
-                  Match existing product
-                </button>
-                <button
-                  type="button"
-                  className="link-button"
-                  onClick={onCreateNew}
-                >
-                  Create new product
-                </button>
-                <button
-                  type="button"
-                  className="link-button"
-                  onClick={onSkipLine}
-                >
-                  Skip
-                </button>
+            {lineSuggestionState.status === "candidates" ? (
+              <div
+                className="invoice-review__suggestion-list"
+                aria-label="Master Product suggestions"
+              >
+                {lineSuggestionState.suggestions.map((suggestion) => (
+                  <ProductMatchSuggestionCard
+                    key={suggestion.masterProductId}
+                    suggestion={suggestion}
+                    onAccept={() => { onAcceptSuggestion(suggestion); }}
+                    onChooseDifferent={onChooseDifferent}
+                    onCreateNew={onCreateNew}
+                    onSkip={onSkipLine}
+                  />
+                ))}
               </div>
+            ) : (
+              <>
+                {lineSuggestionState.status === "loading" ? (
+                  <div className="invoice-review__match-feedback" role="status" aria-live="polite">
+                    <strong>Finding suggestions…</strong>
+                  </div>
+                ) : lineSuggestionState.status === "empty" ? (
+                  <div className="invoice-review__match-feedback" role="status">
+                    <strong>No suitable suggestions found</strong>
+                    <p>
+                      Verve couldn&apos;t confidently identify a matching Master Product. Search
+                      existing products manually or create a new product if required.
+                    </p>
+                  </div>
+                ) : lineSuggestionState.status === "error" ? (
+                  <div
+                    className="invoice-review__match-feedback invoice-review__match-feedback--error"
+                    role="alert"
+                  >
+                    <strong>Unable to load suggestions</strong>
+                    <p>
+                      Please try again. You can also search existing Master Products manually.
+                    </p>
+                  </div>
+                ) : lineSuggestionState.status === "supplier-required" ? (
+                  <div className="invoice-review__match-feedback" role="status">
+                    <strong>Supplier required</strong>
+                    <p>
+                      Resolve or select the invoice supplier before searching for Master Product
+                      suggestions.
+                    </p>
+                  </div>
+                ) : null}
+                <div className="invoice-review__match-actions">
+                  <button
+                    type="button"
+                    className="link-button"
+                    disabled={lineSuggestionState.status === "loading" || isLinking}
+                    onClick={onFetchSuggestion}
+                  >
+                    {lineSuggestionState.status === "loading"
+                      ? "Finding suggestions…"
+                      : "Find suggestions"}
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button"
+                    disabled={isLinking}
+                    onClick={onChooseDifferent}
+                  >
+                    Match existing product
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={onCreateNew}
+                  >
+                    Create new product
+                  </button>
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={onSkipLine}
+                  >
+                    Skip
+                  </button>
+                </div>
+              </>
             )}
           </div>
         ) : (
@@ -544,8 +593,7 @@ type LinesTableProps = {
   onEditCancel: () => void;
   onIgnoreToggle: (lineId: string) => void;
   // ── Product matching ──
-  lineSuggestions: Record<string, ProductMatchSuggestion | null>;
-  fetchingSuggestionForLine: string | null;
+  lineSuggestionStates: Record<string, LineSuggestionState>;
   linkingLineId: string | null;
   lineMatchDisplayNames: Record<string, string>;
   localLineActions: Record<string, LocalLineAction>;
@@ -569,8 +617,7 @@ function LinesTable({
   onEditSave,
   onEditCancel,
   onIgnoreToggle,
-  lineSuggestions,
-  fetchingSuggestionForLine,
+  lineSuggestionStates,
   linkingLineId,
   lineMatchDisplayNames,
   localLineActions,
@@ -635,8 +682,7 @@ function LinesTable({
               onEditSave={onEditSave}
               onEditCancel={onEditCancel}
               onIgnoreToggle={onIgnoreToggle}
-              lineSuggestion={lineSuggestions[line.id] ?? null}
-              isFetchingSuggestion={fetchingSuggestionForLine === line.id}
+              lineSuggestionState={lineSuggestionStates[line.id] ?? { status: "idle" }}
               isLinking={linkingLineId !== null}
               matchDisplayName={lineMatchDisplayNames[line.id] ?? line.masterProductName ?? null}
               localAction={localLineActions[line.id] ?? null}
@@ -910,8 +956,9 @@ export function SupplierInvoiceReviewPage() {
   const [ignoredLineIds, setIgnoredLineIds] = useState<Set<string>>(new Set());
 
   // ── Product matching state ──────────────────────────────────────────────────
-  const [lineSuggestions, setLineSuggestions] = useState<Record<string, ProductMatchSuggestion | null>>({});
-  const [fetchingSuggestionForLine, setFetchingSuggestionForLine] = useState<string | null>(null);
+  const [lineSuggestionStates, setLineSuggestionStates] = useState<
+    Record<string, LineSuggestionState>
+  >({});
   const [linkingLineId, setLinkingLineId] = useState<string | null>(null);
   const [matchSearchTargetLineId, setMatchSearchTargetLineId] = useState<string | null>(null);
   const [lineMatchDisplayNames, setLineMatchDisplayNames] = useState<Record<string, string>>({});
@@ -1049,24 +1096,38 @@ export function SupplierInvoiceReviewPage() {
   }
 
   async function fetchLineSuggestion(lineId: string): Promise<void> {
-    if (!invoice?.supplierId) return;
+    if (lineSuggestionStates[lineId]?.status === "loading") return;
+    if (!invoice?.supplierId) {
+      setLineSuggestionStates((prev) => ({
+        ...prev,
+        [lineId]: { status: "supplier-required" },
+      }));
+      return;
+    }
     const line = lines.find((l) => l.id === lineId);
     if (!line) return;
-    setFetchingSuggestionForLine(lineId);
+    setLineSuggestionStates((prev) => ({
+      ...prev,
+      [lineId]: { status: "loading" },
+    }));
     try {
       const result = await apiClient.suggestMasterProductMatch({
         supplierId: invoice.supplierId,
         supplierSku: line.ocrSku ?? undefined,
         supplierDescription: line.ocrDescription ?? undefined,
       });
-      setLineSuggestions((prev) => ({
+      setLineSuggestionStates((prev) => ({
         ...prev,
-        [lineId]: result.suggestions[0] ?? null,
+        [lineId]:
+          result.suggestions.length > 0
+            ? { status: "candidates", suggestions: result.suggestions }
+            : { status: "empty" },
       }));
     } catch {
-      setLineSuggestions((prev) => ({ ...prev, [lineId]: null }));
-    } finally {
-      setFetchingSuggestionForLine(null);
+      setLineSuggestionStates((prev) => ({
+        ...prev,
+        [lineId]: { status: "error" },
+      }));
     }
   }
 
@@ -1089,7 +1150,7 @@ export function SupplierInvoiceReviewPage() {
       );
       setLines((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
       setLineMatchDisplayNames((prev) => ({ ...prev, [lineId]: displayName }));
-      setLineSuggestions((prev) => {
+      setLineSuggestionStates((prev) => {
         const { [lineId]: _removed, ...rest } = prev;
         void _removed;
         return rest;
@@ -1398,8 +1459,7 @@ export function SupplierInvoiceReviewPage() {
                 onEditSave={() => { void handleEditSave(); }}
                 onEditCancel={handleEditCancel}
                 onIgnoreToggle={handleIgnoreToggle}
-                lineSuggestions={lineSuggestions}
-                fetchingSuggestionForLine={fetchingSuggestionForLine}
+                lineSuggestionStates={lineSuggestionStates}
                 linkingLineId={linkingLineId}
                 lineMatchDisplayNames={lineMatchDisplayNames}
                 localLineActions={localLineActions}

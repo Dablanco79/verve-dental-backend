@@ -9,6 +9,7 @@ import type {
   SupplierInvoiceLine,
   UploadAndExtractResult,
 } from "../src/types/supplier.js";
+import type { ProductMatchSuggestion } from "../src/types/masterProduct.js";
 import { createAdminUser, createManagerUser, TEST_CLINIC_ID } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
@@ -25,6 +26,8 @@ const {
   mockUpdateSupplierInvoiceLine,
   mockConfirmSupplierInvoice,
   mockVoidSupplierInvoice,
+  mockSuggestMasterProductMatch,
+  mockConfirmMasterProductMatch,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   // Hardcoded because vi.hoisted() runs before module imports resolve.
@@ -42,6 +45,8 @@ const {
     mockUpdateSupplierInvoiceLine: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
     mockVoidSupplierInvoice: vi.fn(),
+    mockSuggestMasterProductMatch: vi.fn(),
+    mockConfirmMasterProductMatch: vi.fn(),
   };
 });
 
@@ -76,8 +81,8 @@ vi.mock("../src/api/client.js", () => ({
     updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
     voidSupplierInvoice: mockVoidSupplierInvoice,
-    suggestMasterProductMatch: vi.fn().mockResolvedValue({ suggestions: [] }),
-    confirmMasterProductMatch: vi.fn().mockResolvedValue({}),
+    suggestMasterProductMatch: mockSuggestMasterProductMatch,
+    confirmMasterProductMatch: mockConfirmMasterProductMatch,
     listMasterProducts: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     listCategories: vi.fn().mockResolvedValue([
       "Consumables", "Dental Supplies", "Medications", "PPE", "Restorative", "Uncategorised",
@@ -161,6 +166,17 @@ const unmatchedLine: SupplierInvoiceLine = {
   matchMethod: null,
 };
 
+const gloveSuggestion: ProductMatchSuggestion = {
+  masterProductId: "master-glove-black-medium",
+  displayName: "Nitrile Gloves Black M 100pk",
+  sku: "NGB-M-100",
+  category: "PPE",
+  brand: null,
+  stockUnit: "box",
+  confidence: 48,
+  reasons: ["token_similarity"],
+};
+
 const confirmedInvoice: SupplierInvoice = {
   ...sampleInvoice,
   status: "confirmed",
@@ -202,6 +218,10 @@ describe("SupplierInvoiceReviewPage", () => {
     mockUpdateSupplierInvoiceLine.mockReset();
     mockConfirmSupplierInvoice.mockReset();
     mockVoidSupplierInvoice.mockReset();
+    mockSuggestMasterProductMatch.mockReset();
+    mockConfirmMasterProductMatch.mockReset();
+    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [] });
+    mockConfirmMasterProductMatch.mockResolvedValue({});
 
     // Reset clinic scope to a specific clinic before each test.
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_ID, name: "Verve Dental Clinic A" };
@@ -395,6 +415,145 @@ describe("SupplierInvoiceReviewPage", () => {
 
     // New product matching UI replaces the old disabled placeholder button.
     expect(screen.getByRole("button", { name: "Find suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
+  });
+
+  it("calls the suggestions API with supplier and invoice-line identity fields", async () => {
+    const user = userEvent.setup();
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [{ ...unmatchedLine, ocrSku: "EEDMGM", ocrDescription: "Nitrile Gloves Medium" }],
+    });
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    await waitFor(() => {
+      expect(mockSuggestMasterProductMatch).toHaveBeenCalledWith({
+        supplierId: sampleInvoice.supplierId,
+        supplierSku: "EEDMGM",
+        supplierDescription: "Nitrile Gloves Medium",
+      });
+    });
+  });
+
+  it("shows a persistent per-line loading state and prevents duplicate requests", async () => {
+    let resolveSuggestions!: (value: { suggestions: ProductMatchSuggestion[] }) => void;
+    mockSuggestMasterProductMatch.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSuggestions = resolve;
+      }),
+    );
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    const button = await screen.findByRole("button", { name: "Find suggestions" });
+    await user.click(button);
+
+    expect(screen.getByRole("button", { name: "Finding suggestions…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Finding suggestions…");
+    await user.click(screen.getByRole("button", { name: "Finding suggestions…" }));
+    expect(mockSuggestMasterProductMatch).toHaveBeenCalledTimes(1);
+
+    resolveSuggestions({ suggestions: [] });
+    expect(await screen.findByText("No suitable suggestions found")).toBeInTheDocument();
+  });
+
+  it("renders one returned candidate without accepting it automatically", async () => {
+    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [gloveSuggestion] });
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    expect(await screen.findByText(gloveSuggestion.displayName)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept Match" })).toBeInTheDocument();
+    expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalled();
+    expect(mockConfirmMasterProductMatch).not.toHaveBeenCalled();
+  });
+
+  it("renders every returned candidate as a separate manual choice", async () => {
+    const blueSuggestion: ProductMatchSuggestion = {
+      ...gloveSuggestion,
+      masterProductId: "master-glove-blue-medium",
+      displayName: "Nitrile Gloves Blue M 100pk",
+      sku: "NGBL-M-100",
+    };
+    mockSuggestMasterProductMatch.mockResolvedValue({
+      suggestions: [gloveSuggestion, blueSuggestion],
+    });
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    expect(await screen.findByText(gloveSuggestion.displayName)).toBeInTheDocument();
+    expect(screen.getByText(blueSuggestion.displayName)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Accept Match" })).toHaveLength(2);
+    expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalled();
+  });
+
+  it("shows an explicit empty state while preserving manual review actions", async () => {
+    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [] });
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    expect(await screen.findByText("No suitable suggestions found")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
+  });
+
+  it("shows a safe per-line error and keeps Find suggestions available for retry", async () => {
+    mockSuggestMasterProductMatch.mockRejectedValue(new Error("sensitive backend detail"));
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    expect(await screen.findByText("Unable to load suggestions")).toBeInTheDocument();
+    expect(screen.getByText(/Please try again/)).toBeInTheDocument();
+    expect(screen.queryByText("sensitive backend detail")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Find suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
+  });
+
+  it("shows Supplier required and does not call the API when supplier is unresolved", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...sampleInvoice, supplierId: null },
+      lines: [unmatchedLine],
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+
+    expect(await screen.findByText("Supplier required")).toBeInTheDocument();
+    expect(mockSuggestMasterProductMatch).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();
