@@ -81,7 +81,7 @@ type LineRow = {
   tax_rate_basis_points: number;
   tax_cents: number;
   total_cents: number;
-  supplier_line_total_cents: number | null;
+  supplier_line_total_cents: string | number | null;
   sort_order: number;
   is_matched: boolean;
   match_method: string | null;
@@ -107,6 +107,19 @@ type PriceHistoryRow = {
 };
 
 // ── Row mappers ───────────────────────────────────────────────────────────────
+
+function mapNullableBigIntCents(value: string | number | null): number | null {
+  if (value === null) return null;
+  const cents = Number(value);
+  if (!Number.isSafeInteger(cents)) {
+    throw new AppError(
+      500,
+      "INTERNAL_ERROR",
+      "Supplier invoice line total is outside the safe integer range",
+    );
+  }
+  return cents;
+}
 
 function mapInvoice(row: InvoiceRow): SupplierInvoice {
   return {
@@ -163,7 +176,7 @@ function mapLine(row: LineRow): SupplierInvoiceLine {
     taxRateBasisPoints: row.tax_rate_basis_points,
     taxCents: row.tax_cents,
     totalCents: row.total_cents,
-    supplierLineTotalCents: row.supplier_line_total_cents ?? null,
+    supplierLineTotalCents: mapNullableBigIntCents(row.supplier_line_total_cents),
     sortOrder: row.sort_order,
     isMatched: row.is_matched,
     matchMethod: row.match_method as SupplierInvoiceLine["matchMethod"],

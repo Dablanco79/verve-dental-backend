@@ -84,12 +84,12 @@ export function calcLineTotals(
  * Derive the net ex-tax line cost (entire line, not per unit) in cents.
  *
  * Source-of-truth priority:
- *   1. `supplierLineTotalCents` + tax rate → extract tax component
+ *   1. `supplierLineTotalCents` with explicit tax-basis semantics
  *   2. `unitPriceCents` with explicit `priceIncludesTax`, discount, and tax data
  *   3. Returns null when semantics are genuinely ambiguous
  *
- * The supplier line total is assumed to be incl-GST when taxRateBasisPoints > 0
- * (the standard Australian supplier presentation).
+ * The supplier line total is kept as invoice truth, but its tax basis must not
+ * be guessed when deriving an operational ex-tax cost.
  */
 export function deriveNetExTaxLineCost(params: {
   quantity: number;
@@ -108,13 +108,14 @@ export function deriveNetExTaxLineCost(params: {
     supplierLineTotalCents,
   } = params;
 
-  // Priority 1: supplier-stated line total (invoice financial truth).
-  // Supplier line totals on Australian invoices are GST-inclusive when taxRate > 0.
+  // Priority 1: supplier-stated line total (invoice financial truth), using
+  // the explicit printed-column tax basis shared by unit price and line total.
   if (supplierLineTotalCents !== null) {
-    if (taxRateBasisPoints > 0) {
+    if (priceIncludesTax === true && taxRateBasisPoints > 0) {
       return Math.round(supplierLineTotalCents * 10_000 / (10_000 + taxRateBasisPoints));
     }
-    return supplierLineTotalCents;
+    if (priceIncludesTax !== null) return supplierLineTotalCents;
+    return null;
   }
 
   // Priority 2: derive from printed unit price with explicit semantics.
@@ -132,7 +133,7 @@ export function deriveNetExTaxLineCost(params: {
     return Math.round(grossExTax * (10_000 - discountBasisPoints) / 10_000);
   }
 
-  // Priority 3: priceIncludesTax = null and no supplier total — genuinely ambiguous.
+  // Priority 3: priceIncludesTax = null — genuinely ambiguous.
   return null;
 }
 

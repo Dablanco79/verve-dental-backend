@@ -102,7 +102,7 @@ function buildOcrResult(supplierName: string, sku: string, description: string):
         sku,
         quantity: 2,
         unitPriceCents: 500,
-        priceIncludesTax: null,
+        priceIncludesTax: false,
         discountBasisPoints: 0,
         subtotalCents: 1000,
         taxRateBasisPoints: 1000,

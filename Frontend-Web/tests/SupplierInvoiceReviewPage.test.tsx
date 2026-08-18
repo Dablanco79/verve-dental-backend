@@ -1173,6 +1173,81 @@ describe("SupplierInvoiceReviewPage — tax treatment and financial summary disp
     expect(screen.getAllByText("$148.50").length).toBeGreaterThan(0);
   });
 
+  it("normalises defensive string cents without concatenating reconciliation totals", async () => {
+    const runtimeStringLine = {
+      ...baseLine,
+      priceIncludesTax: true,
+      supplierLineTotalCents: "11990" as unknown as number,
+      lineTotalCents: 11_990,
+      taxCents: 1_090,
+    };
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: {
+        ...taxInvoice,
+        subtotalCents: 10_900,
+        taxCents: 1_090,
+        totalCents: 11_990,
+      },
+      lines: [runtimeStringLine],
+    });
+
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Tax Test Supplier" });
+
+    expect(screen.getAllByText("$119.90").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Balanced ✓")).toBeInTheDocument();
+    expect(screen.queryByText(/1199011990/)).not.toBeInTheDocument();
+  });
+
+  it("reconciles all eight Piksters lines to $714.05 with supplier header truth", async () => {
+    const pikstersLines: SupplierInvoiceLine[] = [
+      ["ERVA363", "Diapro Twist RA Set - 6pk", 1, 11_990, 0, 1_090, 11_990],
+      [".PKRP140", "Piksters Professional Pack Refills (1) Purple 40pk", 1, 685, 0, 62, 685],
+      [".PKRP040", "Piksters Professional Pack Refills (0) Silver 40pk", 3, 685, 0, 187, 2_055],
+      [".PKRP0040", "Piksters Professional Pack Refills (00) Pink 40pk", 3, 685, 0, 187, 2_055],
+      [".PKRP00040", "Piksters Professional Pack Refills (000) Navy 40pk", 2, 685, 0, 125, 1_370],
+      ["EPAK0001", "Piksters - On the Go - Essential Oral Care Kit", 1, 28_500, 0, 2_591, 28_500],
+      ["EEDNGS", "Erskine Everyday Dental Nitrile Glove Small,100pk", 2, 5_500, 1_000, 900, 9_900],
+      ["EEDMGM", "Erskine Everyday Dental Nitrile Glove Medium,100pk", 3, 5_500, 1_000, 1_350, 14_850],
+    ].map(([sku, description, quantity, unitPriceCents, discountBasisPoints, taxCents, total], index) => ({
+      ...baseLine,
+      id: `piksters-${String(index + 1)}`,
+      lineNumber: index + 1,
+      ocrSku: sku as string,
+      ocrDescription: description as string,
+      quantity: quantity as number,
+      unitPriceCents: unitPriceCents as number,
+      priceIncludesTax: true,
+      discountBasisPoints: discountBasisPoints as number,
+      taxCents: taxCents as number,
+      lineTotalCents: total as number,
+      supplierLineTotalCents: total as number,
+    }));
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: {
+        ...taxInvoice,
+        supplierNameRaw: "Erskine Oral Care",
+        invoiceNumber: "INV538147",
+        invoiceDate: "2026-05-04",
+        subtotalCents: 64_913,
+        taxCents: 6_492,
+        totalCents: 71_405,
+      },
+      lines: pikstersLines,
+    });
+
+    renderReviewPage("inv-tax-test");
+    await screen.findByRole("heading", { name: "Erskine Oral Care" });
+
+    expect(screen.getAllByText("$714.05").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("$649.13")).toBeInTheDocument();
+    expect(screen.getByText("$64.92")).toBeInTheDocument();
+    expect(screen.getByText("-$27.50")).toBeInTheDocument();
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.getByText("Balanced ✓")).toBeInTheDocument();
+    expect(screen.queryByText("ex GST")).not.toBeInTheDocument();
+  });
+
   // Test 9: Existing match buttons continue to render for unmatched lines
   it("still renders all match action buttons for unmatched lines after UI changes", async () => {
     mockGetSupplierInvoice.mockResolvedValue({

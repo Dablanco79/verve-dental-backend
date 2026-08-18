@@ -138,12 +138,12 @@ export function createSupplierInvoiceService(
     // Derive canonical operational unit cost: net ex-tax per stock unit.
     // If the operator provided an explicit reviewed cost, honour it (it has
     // been manually verified and represents the canonical value).
-    // Otherwise derive from line financial data; fall back to unitPriceCents
-    // only when derivation is genuinely ambiguous (maintains backward compat).
+    // Otherwise derive from line financial data. Ambiguous printed prices must
+    // never be persisted as canonical operational cost.
     const unitsPerReceivingUnit = reviewed?.unitsPerReceivingUnit ?? 1;
     const derivedCost = reviewed?.unitCostCents !== undefined
       ? reviewed.unitCostCents
-      : (deriveOperationalUnitCost({
+      : deriveOperationalUnitCost({
           quantity: line.quantity,
           unitPriceCents: line.unitPriceCents,
           priceIncludesTax: line.priceIncludesTax,
@@ -151,7 +151,15 @@ export function createSupplierInvoiceService(
           taxRateBasisPoints: line.taxRateBasisPoints,
           supplierLineTotalCents: line.supplierLineTotalCents,
           unitsPerReceivingUnit,
-        }) ?? line.unitPriceCents);
+        });
+
+    if (derivedCost === null) {
+      throw new AppError(
+        422,
+        "AMBIGUOUS_OPERATIONAL_COST",
+        `Line "${line.ocrDescription.slice(0, 80)}": operational unit cost cannot be derived safely. Review the tax basis or provide a verified unit cost.`,
+      );
+    }
 
     const masterItem = await catalogRepository.createMasterItem({
       sku,
@@ -753,6 +761,46 @@ export function createSupplierInvoiceService(
       if (line.reviewDecision === "create_product") readyToCreateLineIds.add(line.id);
     }
 
+    // Validate every operational cost before confirmation performs any product,
+    // inventory, supplier-pricing, or history writes.
+    const linesRequiringOperationalCost = lines.filter(
+      (line) =>
+        !skippedLineIds.has(line.id) &&
+        (readyToCreateLineIds.has(line.id) ||
+          (line.isMatched && line.masterCatalogItemId !== null)),
+    );
+    for (const line of linesRequiringOperationalCost) {
+      const reviewed = line.productCreationData;
+      if (readyToCreateLineIds.has(line.id) && reviewed?.unitCostCents !== undefined) {
+        continue;
+      }
+
+      let unitsPerReceivingUnit = reviewed?.unitsPerReceivingUnit ?? 1;
+      if (line.masterCatalogItemId && catalogRepository) {
+        const catalogItem = await catalogRepository.findMasterItemById(
+          line.masterCatalogItemId,
+        );
+        unitsPerReceivingUnit = catalogItem?.unitsPerReceivingUnit ?? unitsPerReceivingUnit;
+      }
+
+      const canonicalCost = deriveOperationalUnitCost({
+        quantity: line.quantity,
+        unitPriceCents: line.unitPriceCents,
+        priceIncludesTax: line.priceIncludesTax,
+        discountBasisPoints: line.discountBasisPoints,
+        taxRateBasisPoints: line.taxRateBasisPoints,
+        supplierLineTotalCents: line.supplierLineTotalCents,
+        unitsPerReceivingUnit,
+      });
+      if (canonicalCost === null) {
+        throw new AppError(
+          422,
+          "AMBIGUOUS_OPERATIONAL_COST",
+          `Line "${line.ocrDescription.slice(0, 80)}": operational unit cost cannot be derived safely. Review the tax basis or provide a verified unit cost.`,
+        );
+      }
+    }
+
     const createdProductPairs = await Promise.all(
       lines
         .filter((line) => readyToCreateLineIds.has(line.id) && !skippedLineIds.has(line.id))
@@ -807,7 +855,7 @@ export function createSupplierInvoiceService(
 
     // Upsert supplier_catalogue pricing for each matched line.
     // Use the canonical operational unit cost: net ex-tax per stock unit.
-    // Fall back to unitPriceCents only when semantics are ambiguous (backward compat).
+    // Never persist a raw printed price when its tax semantics are ambiguous.
     const priceHistoryRecords = await Promise.all(
       matchedLines.map(async (line) => {
         // Look up unitsPerReceivingUnit from the catalog when available.
@@ -817,16 +865,27 @@ export function createSupplierInvoiceService(
           unitsPerReceivingUnit = catalogItem?.unitsPerReceivingUnit ?? 1;
         }
 
+        const reviewedUnitCost = line.productCreationData?.unitCostCents;
         const canonicalCost =
-          deriveOperationalUnitCost({
-            quantity: line.quantity,
-            unitPriceCents: line.unitPriceCents,
-            priceIncludesTax: line.priceIncludesTax,
-            discountBasisPoints: line.discountBasisPoints,
-            taxRateBasisPoints: line.taxRateBasisPoints,
-            supplierLineTotalCents: line.supplierLineTotalCents,
-            unitsPerReceivingUnit,
-          }) ?? line.unitPriceCents;
+          reviewedUnitCost !== undefined
+            ? reviewedUnitCost
+            : deriveOperationalUnitCost({
+                quantity: line.quantity,
+                unitPriceCents: line.unitPriceCents,
+                priceIncludesTax: line.priceIncludesTax,
+                discountBasisPoints: line.discountBasisPoints,
+                taxRateBasisPoints: line.taxRateBasisPoints,
+                supplierLineTotalCents: line.supplierLineTotalCents,
+                unitsPerReceivingUnit,
+              });
+
+        if (canonicalCost === null) {
+          throw new AppError(
+            422,
+            "AMBIGUOUS_OPERATIONAL_COST",
+            `Line "${line.ocrDescription.slice(0, 80)}": operational unit cost cannot be derived safely. Review the tax basis before confirming.`,
+          );
+        }
 
         const { catalogueId, oldUnitCostCents } =
           await repo.upsertSupplierCataloguePrice(

@@ -516,6 +516,61 @@ describe("SupplierInvoiceService — financial truth integration", () => {
     );
     expect(createdItem?.defaultUnitCostCents).toBe(5_000);
   });
+
+  it("rejects confirmation instead of persisting an ambiguous raw printed price", async () => {
+    const ambiguousOcr: OcrInvoiceResult = {
+      provider: "stub",
+      supplierName: "Ambiguous Supplier",
+      supplierAbn: null,
+      supplierEmail: null,
+      supplierPhone: null,
+      supplierAddress: null,
+      supplierWebsite: null,
+      invoiceNumber: "INV-AMBIGUOUS",
+      invoiceDate: "2026-08-18",
+      dueDate: null,
+      subtotalCents: null,
+      taxCents: null,
+      totalCents: null,
+      overallConfidence: 80,
+      lines: [{
+        description: "Ambiguous Tax Product",
+        sku: "AMB-1",
+        quantity: 1,
+        unitPriceCents: 11_000,
+        priceIncludesTax: null,
+        discountBasisPoints: 0,
+        subtotalCents: 11_000,
+        taxRateBasisPoints: 1_000,
+        taxCents: 1_100,
+        totalCents: 12_100,
+        supplierLineTotalCents: 12_100,
+        confidence: 80,
+      }],
+      rawResponse: {},
+    };
+    const { service } = makeService(ambiguousOcr);
+    const caller = makeManager();
+    const { invoice, lines } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
+    const line = lines[0];
+    if (!line) throw new Error("Expected ambiguous line");
+
+    await service.updateInvoice(caller, CLINIC_A, invoice.id, {
+      supplierId: SUPPLIER_ID,
+      invoiceNumber: "INV-AMBIGUOUS",
+      invoiceDate: "2026-08-18",
+    });
+    await service.updateLine(caller, CLINIC_A, invoice.id, line.id, {
+      masterCatalogItemId: "00000000-0000-0000-0000-000000000099",
+      isMatched: true,
+      matchMethod: "manual",
+    });
+
+    await expect(service.confirmImport(caller, CLINIC_A, invoice.id)).rejects.toMatchObject({
+      statusCode: 422,
+      code: "AMBIGUOUS_OPERATIONAL_COST",
+    });
+  });
 });
 
 // ── Piksters INV538147 regression fixture ────────────────────────────────────
@@ -530,7 +585,7 @@ describe("Piksters / Erskine INV538147 regression", () => {
     supplierAddress: null,
     supplierWebsite: null,
     invoiceNumber: "INV538147",
-    invoiceDate: "2026-07-01",
+    invoiceDate: "2026-05-04",
     dueDate: null,
     subtotalCents: 64_913,  // $649.13 ex-GST
     taxCents: 6_492,        // $64.92 GST
@@ -539,8 +594,8 @@ describe("Piksters / Erskine INV538147 regression", () => {
     lines: [
       {
         // Diapro Twist RA Set: price is incl-GST, qty 1, no discount
-        description: "Diapro Twist RA Set",
-        sku: null,
+        description: "Diapro Twist RA Set - 6pk",
+        sku: "ERVA363",
         quantity: 1,
         unitPriceCents: 11_990,
         priceIncludesTax: true,
@@ -553,10 +608,92 @@ describe("Piksters / Erskine INV538147 regression", () => {
         confidence: 92,
       },
       {
-        // Medium Nitrile Gloves: qty 3, $55.00 incl-GST, 10% discount
-        // Supplier line total: $148.50 incl-GST
-        description: "Medium Nitrile Gloves",
-        sku: null,
+        description: "Piksters Professional Pack Refills (1) Purple 40pk",
+        sku: ".PKRP140",
+        quantity: 1,
+        unitPriceCents: 685,
+        priceIncludesTax: true,
+        discountBasisPoints: 0,
+        subtotalCents: 623,
+        taxRateBasisPoints: 1_000,
+        taxCents: 62,
+        totalCents: 685,
+        supplierLineTotalCents: 685,
+        confidence: 92,
+      },
+      {
+        description: "Piksters Professional Pack Refills (0) Silver 40pk",
+        sku: ".PKRP040",
+        quantity: 3,
+        unitPriceCents: 685,
+        priceIncludesTax: true,
+        discountBasisPoints: 0,
+        subtotalCents: 1_868,
+        taxRateBasisPoints: 1_000,
+        taxCents: 187,
+        totalCents: 2_055,
+        supplierLineTotalCents: 2_055,
+        confidence: 92,
+      },
+      {
+        description: "Piksters Professional Pack Refills (00) Pink 40pk",
+        sku: ".PKRP0040",
+        quantity: 3,
+        unitPriceCents: 685,
+        priceIncludesTax: true,
+        discountBasisPoints: 0,
+        subtotalCents: 1_868,
+        taxRateBasisPoints: 1_000,
+        taxCents: 187,
+        totalCents: 2_055,
+        supplierLineTotalCents: 2_055,
+        confidence: 92,
+      },
+      {
+        description: "Piksters Professional Pack Refills (000) Navy 40pk",
+        sku: ".PKRP00040",
+        quantity: 2,
+        unitPriceCents: 685,
+        priceIncludesTax: true,
+        discountBasisPoints: 0,
+        subtotalCents: 1_245,
+        taxRateBasisPoints: 1_000,
+        taxCents: 125,
+        totalCents: 1_370,
+        supplierLineTotalCents: 1_370,
+        confidence: 92,
+      },
+      {
+        description: "Piksters - On the Go - Essential Oral Care Kit",
+        sku: "EPAK0001",
+        quantity: 1,
+        unitPriceCents: 28_500,
+        priceIncludesTax: true,
+        discountBasisPoints: 0,
+        subtotalCents: 25_909,
+        taxRateBasisPoints: 1_000,
+        taxCents: 2_591,
+        totalCents: 28_500,
+        supplierLineTotalCents: 28_500,
+        confidence: 92,
+      },
+      {
+        description: "Erskine Everyday Dental Nitrile Glove Small,100pk",
+        sku: "EEDNGS",
+        quantity: 2,
+        unitPriceCents: 5_500,
+        priceIncludesTax: true,
+        discountBasisPoints: 1_000,
+        subtotalCents: 9_000,
+        taxRateBasisPoints: 1_000,
+        taxCents: 900,
+        totalCents: 9_900,
+        supplierLineTotalCents: 9_900,
+        confidence: 92,
+      },
+      {
+        description: "Erskine Everyday Dental Nitrile Glove Medium,100pk",
+        sku: "EEDMGM",
         quantity: 3,
         unitPriceCents: 5_500,
         priceIncludesTax: true,
@@ -591,7 +728,7 @@ describe("Piksters / Erskine INV538147 regression", () => {
     const caller = makeManager();
 
     const { lines } = await service.uploadAndExtract(caller, CLINIC_A, FAKE_FILE);
-    const gloves = lines.find((l) => l.ocrDescription.includes("Nitrile"));
+    const gloves = lines.find((l) => l.ocrDescription.includes("Medium"));
 
     expect(gloves).toBeDefined();
     expect(gloves?.totalCents).toBe(14_850);       // $148.50
@@ -623,25 +760,23 @@ describe("Piksters / Erskine INV538147 regression", () => {
     // Invoice header total from OCR
     expect(invoice.totalCents).toBe(71_405);
 
-    // Sum of supplier-stated line totals for our two known lines
-    const knownLineTotal = lines.reduce(
+    const supplierLineTotal = lines.reduce(
       (sum, l) => sum + (l.supplierLineTotalCents ?? l.totalCents),
       0,
     );
 
-    // The two lines are $119.90 + $148.50 = $268.40
-    // The full invoice includes other lines summing to $714.05
-    // For this fixture, only two lines are included so the partial sum is $268.40
-    expect(knownLineTotal).toBe(11_990 + 14_850);  // $268.40
+    expect(lines).toHaveLength(8);
+    expect(supplierLineTotal).toBe(71_405);
+    expect(lines.reduce((sum, line) => sum + line.taxCents, 0)).toBe(6_492);
+    expect(lines.every((line) => line.priceIncludesTax === true)).toBe(true);
 
-    // Individually verify no GST double-counting
-    // Diapro: $119.90 is the supplier total — not $131.89
     const diapro = lines.find((l) => l.ocrDescription.includes("Diapro"));
     expect(diapro?.supplierLineTotalCents).toBe(11_990);
 
-    // Gloves: $148.50 is the supplier total
-    const gloves = lines.find((l) => l.ocrDescription.includes("Nitrile"));
-    expect(gloves?.supplierLineTotalCents).toBe(14_850);
+    const gloveLines = lines.filter((l) => l.ocrDescription.includes("Nitrile"));
+    expect(gloveLines).toHaveLength(2);
+    expect(gloveLines.map((line) => line.discountBasisPoints)).toEqual([1_000, 1_000]);
+    expect(gloveLines.map((line) => line.supplierLineTotalCents)).toEqual([9_900, 14_850]);
   });
 });
 
@@ -668,8 +803,7 @@ describe("Regression: existing invoice line calculation behaviour", () => {
     expect(result).toBeNull();
   });
 
-  it("16b: unknown priceIncludesTax WITH supplier total still derives cost correctly", () => {
-    // Even if we don't know if price is incl/excl, we have the supplier total
+  it("16b: unknown supplier-total tax basis does not invent operational cost", () => {
     const result = deriveOperationalUnitCost({
       quantity: 2,
       unitPriceCents: 6_000,
@@ -679,7 +813,6 @@ describe("Regression: existing invoice line calculation behaviour", () => {
       supplierLineTotalCents: 11_000,  // supplier confirms $110 incl-GST
       unitsPerReceivingUnit: 1,
     });
-    // net ex-GST = round(11000 × 10000 / 11000) = 10000; per unit = 5000
-    expect(result).toBe(5_000);
+    expect(result).toBeNull();
   });
 });

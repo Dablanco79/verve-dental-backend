@@ -91,7 +91,11 @@ Return ONLY valid JSON — no markdown fences, no explanation, no commentary. Us
 Rules:
 - ALL monetary values MUST be integer cents (AUD). Example: $12.50 = 1250, $100.00 = 10000
 - unitPriceCents: the printed unit price exactly as shown on the invoice, in cents
-- priceIncludesTax: true if the printed unit price already includes GST/tax; false if it is ex-tax; null if you cannot determine with confidence. Do NOT guess — use null when uncertain. A price like "$119.90 incl GST" or a total that equals the unit price × qty with no separate tax line means true. A subtotal line that excludes GST suggests false.
+- priceIncludesTax: report the tax basis of the PRINTED LINE UNIT-PRICE COLUMN. Explicit line-column headings are authoritative and take precedence over invoice-header subtotals or other weaker clues.
+  - true for explicit inclusive wording such as "Price (In)", "Price Incl", "Incl GST", "GST Inclusive", "Inc. Tax", or equivalent wording applying to the line-price column.
+  - false for explicit exclusive wording such as "Price (Ex)", "Price Excl", "Ex GST", "GST Exclusive", "Ex. Tax", or equivalent wording applying to the line-price column.
+  - A header/footer subtotal excluding GST does NOT mean line unit prices are ex-GST and must never override an explicit inclusive line-column heading.
+  - null when the line-price tax basis is ambiguous. Do NOT guess.
 - discountBasisPoints: any line-level discount as basis points (0 = no discount, 500 = 5%, 1000 = 10%). Extract from percentage shown next to the line. Default 0 if not present.
 - taxRateBasisPoints: 1000 = 10% GST, 0 = GST-free/no tax, 500 = 5%, null if unknown
 - supplierLineTotalCents: the total for this line exactly as printed on the invoice (may be incl or excl GST). This is the authoritative supplier figure. Use null only if no line total is printed.

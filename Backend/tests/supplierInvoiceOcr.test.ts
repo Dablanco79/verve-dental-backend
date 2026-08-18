@@ -92,7 +92,15 @@ describe("ClaudeOcrProvider", () => {
     };
     const content = callArg.messages[0]?.content ?? [];
     const docBlock = content.find((b) => b.type === "document");
+    const promptBlock = content.find((b) => b.type === "text") as
+      | { type: string; text: string }
+      | undefined;
     expect(docBlock).toBeDefined();
+    expect(promptBlock?.text).toContain('Price (In)');
+    expect(promptBlock?.text).toContain('Price (Ex)');
+    expect(promptBlock?.text).toContain(
+      "must never override an explicit inclusive line-column heading",
+    );
   });
 
   // ── 2. PNG sends image source block ───────────────────────────────────────
@@ -157,6 +165,50 @@ describe("ClaudeOcrProvider", () => {
     const firstLine = result.lines[0];
     expect(firstLine?.description).toBe("Prophy Paste");
     expect(firstLine?.confidence).toBe(97);
+  });
+
+  it("preserves explicit inclusive, exclusive, and ambiguous line-price tax bases", async () => {
+    const taxBasisResponse = JSON.stringify({
+      ...JSON.parse(VALID_JSON_RESPONSE) as object,
+      lines: [
+        {
+          description: "Price (In) product",
+          quantity: 1,
+          unitPriceCents: 11_000,
+          priceIncludesTax: true,
+          taxRateBasisPoints: 1_000,
+          supplierLineTotalCents: 11_000,
+        },
+        {
+          description: "Price (Ex) product",
+          quantity: 1,
+          unitPriceCents: 10_000,
+          priceIncludesTax: false,
+          taxRateBasisPoints: 1_000,
+          supplierLineTotalCents: 11_000,
+        },
+        {
+          description: "Ambiguous price product",
+          quantity: 1,
+          unitPriceCents: 10_000,
+          priceIncludesTax: null,
+          taxRateBasisPoints: 1_000,
+          supplierLineTotalCents: null,
+        },
+      ],
+    });
+    const createFn = jest
+      .fn<() => Promise<ClaudeMessageResponse>>()
+      .mockResolvedValue(makeClaudeResponse(taxBasisResponse));
+    const provider = new ClaudeOcrProvider("key", "model", makeMockClient(createFn));
+
+    const result = await provider.extractInvoice(PDF_BUFFER, "application/pdf", "tax-bases.pdf");
+
+    expect(result.lines.map((line) => line.priceIncludesTax)).toEqual([
+      true,
+      false,
+      null,
+    ]);
   });
 
   // ── 6. Confidence clamped 0–100 ────────────────────────────────────────────

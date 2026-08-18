@@ -77,7 +77,7 @@ const ocrResult: OcrInvoiceResult = {
       sku: "GLV-001",
       quantity: 6,
       unitPriceCents: 800,
-      priceIncludesTax: null,
+      priceIncludesTax: false,
       discountBasisPoints: 0,
       subtotalCents: 4800,
       taxRateBasisPoints: 1000,

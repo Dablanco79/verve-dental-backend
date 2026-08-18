@@ -40,6 +40,37 @@ function createInvoiceRow() {
   };
 }
 
+function createLineRow(supplierLineTotalCents: string | null) {
+  const now = new Date("2026-07-02T00:00:00.000Z");
+  return {
+    id: "88888888-8888-4888-8888-888888888888",
+    clinic_id: CLINIC_ID,
+    supplier_invoice_id: "99999999-9999-4999-8999-999999999999",
+    master_catalog_item_id: null,
+    master_product_name: null,
+    supplier_catalogue_id: null,
+    ocr_description: "Diapro Twist RA Set - 6pk",
+    ocr_sku: "ERVA363",
+    ocr_confidence: "95",
+    quantity: "1",
+    unit_price_cents: 11_990,
+    price_includes_tax: true,
+    discount_basis_points: 0,
+    subtotal_cents: 10_900,
+    tax_rate_basis_points: 1_000,
+    tax_cents: 1_090,
+    total_cents: 11_990,
+    supplier_line_total_cents: supplierLineTotalCents,
+    sort_order: 0,
+    is_matched: false,
+    match_method: null,
+    review_decision: null,
+    product_creation_data: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 function createMockPool() {
   const release = jest.fn();
   const query = jest.fn((sql: string) => {
@@ -99,5 +130,40 @@ describe("PostgresSupplierInvoiceRepository.createSupplierInvoice", () => {
     expect(query).toHaveBeenNthCalledWith(4, "COMMIT");
     expect(release).toHaveBeenCalledTimes(1);
     expect(invoice.clinicId).toBe(CLINIC_ID);
+  });
+});
+
+describe("PostgresSupplierInvoiceRepository supplier line total mapping", () => {
+  it("normalises PostgreSQL BIGINT strings to number cents", async () => {
+    const query = jest.fn(() =>
+      Promise.resolve({ rows: [createLineRow("11990")] }),
+    );
+    const repo = createPostgresSupplierInvoiceRepository({
+      query,
+    } as unknown as DatabasePool);
+
+    const lines = await repo.listLines(
+      CLINIC_ID,
+      "99999999-9999-4999-8999-999999999999",
+    );
+
+    expect(lines[0]?.supplierLineTotalCents).toBe(11_990);
+    expect(typeof lines[0]?.supplierLineTotalCents).toBe("number");
+  });
+
+  it("preserves null PostgreSQL BIGINT values", async () => {
+    const query = jest.fn(() =>
+      Promise.resolve({ rows: [createLineRow(null)] }),
+    );
+    const repo = createPostgresSupplierInvoiceRepository({
+      query,
+    } as unknown as DatabasePool);
+
+    const lines = await repo.listLines(
+      CLINIC_ID,
+      "99999999-9999-4999-8999-999999999999",
+    );
+
+    expect(lines[0]?.supplierLineTotalCents).toBeNull();
   });
 });
