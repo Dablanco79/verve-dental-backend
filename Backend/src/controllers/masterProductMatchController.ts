@@ -14,6 +14,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 
 import type { AuditService } from "../services/auditService.js";
+import type { ProductCandidateDiscoveryService } from "../services/productCandidateDiscoveryService.js";
 import type { ProductMatchingService } from "../services/productMatchingService.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import { AppError } from "../types/errors.js";
@@ -33,6 +34,14 @@ const suggestMatchesBodySchema = z
   })
   .strict();
 
+const discoverReviewCandidatesBodySchema = z
+  .object({
+    supplierId: z.string().uuid("supplierId must be a valid UUID"),
+    supplierSku: z.string().trim().max(128).nullable().optional(),
+    supplierDescription: z.string().trim().max(512).nullable().optional(),
+  })
+  .strict();
+
 const confirmMatchBodySchema = z
   .object({
     supplierId: z.string().uuid("supplierId must be a valid UUID"),
@@ -47,6 +56,7 @@ const confirmMatchBodySchema = z
 
 export function createMasterProductMatchHandlers(
   productMatchingService: ProductMatchingService,
+  productCandidateDiscoveryService: ProductCandidateDiscoveryService,
   supplierCatalogueRepository: SupplierCatalogueRepository,
   auditService: AuditService,
 ) {
@@ -77,6 +87,27 @@ export function createMasterProductMatchHandlers(
 
       const result = await productMatchingService.suggestMatches(parsed.data);
 
+      res.status(200).json({ data: result });
+    },
+
+    /**
+     * POST /api/v1/master-products/match/candidates
+     * Returns read-only human-review candidates. It never persists a match.
+     */
+    async discoverReviewCandidates(req: Request, res: Response): Promise<void> {
+      requireUser(req);
+
+      const parsed = discoverReviewCandidatesBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(parsed.error),
+        );
+      }
+
+      const result = await productCandidateDiscoveryService.discoverReviewCandidates(parsed.data);
       res.status(200).json({ data: result });
     },
 

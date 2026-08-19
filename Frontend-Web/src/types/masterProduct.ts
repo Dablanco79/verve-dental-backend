@@ -91,6 +91,55 @@ export type SuggestMatchesResult = {
   suggestions: ProductMatchSuggestion[];
 };
 
+// ─── Human-assisted candidate discovery ──────────────────────────────────────
+
+export type ReviewCandidateAttribute = "size" | "pack_count" | "colour";
+
+export type ReviewCandidateReason =
+  | "confirmed_supplier_mapping"
+  | "family_relevance"
+  | "size_match"
+  | "pack_count_match"
+  | "colour_match";
+
+export type ReviewProductCandidate = {
+  masterProductId: string;
+  displayName: string;
+  sku: string;
+  category: string;
+  brand: string | null;
+  stockUnit: string;
+  /** Human-review ordering only; never automatic identity confidence. */
+  relevanceScore: number;
+  reasons: ReviewCandidateReason[];
+};
+
+export type ReviewCandidateEvidence = {
+  attribute: ReviewCandidateAttribute;
+  label: string;
+  value: string;
+};
+
+export type UnresolvedReviewAttribute = {
+  attribute: ReviewCandidateAttribute;
+  label: string;
+  message: string;
+};
+
+export type DiscoverReviewCandidatesRequest = {
+  supplierId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+};
+
+export type DiscoverReviewCandidatesResult = {
+  candidates: ReviewProductCandidate[];
+  familyLabel: string | null;
+  matchedAttributes: ReviewCandidateEvidence[];
+  unresolvedAttributes: UnresolvedReviewAttribute[];
+  selectionRequired: true;
+};
+
 export type ConfirmMatchRequest = {
   supplierId: string;
   masterProductId: string;

@@ -146,6 +146,8 @@ import type {
   UpdateMasterProductRequest,
   ConfirmMatchRequest,
   ConfirmedSupplierProductMapping,
+  DiscoverReviewCandidatesRequest,
+  DiscoverReviewCandidatesResult,
   SuggestMatchesRequest,
   SuggestMatchesResult,
 } from "../types/masterProduct.js";
@@ -1615,6 +1617,17 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function discoverReviewCandidates(
+    body: DiscoverReviewCandidatesRequest,
+  ): Promise<DiscoverReviewCandidatesResult> {
+    return request<DiscoverReviewCandidatesResult>(
+      config,
+      "/api/v1/master-products/match/candidates",
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function confirmMasterProductMatch(
     body: ConfirmMatchRequest,
   ): Promise<ConfirmedSupplierProductMapping> {
@@ -2444,6 +2457,7 @@ export function createApiClient(config: AppConfig) {
     archiveMasterProduct,
     reactivateMasterProduct,
     suggestMasterProductMatch,
+    discoverReviewCandidates,
     confirmMasterProductMatch,
     listClinicSupplierInvoices,
     uploadSupplierInvoice,

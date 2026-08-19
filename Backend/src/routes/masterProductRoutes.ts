@@ -51,6 +51,7 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
   const handlers = createMasterProductHandlers(deps.masterProductService);
   const matchHandlers = createMasterProductMatchHandlers(
     deps.productMatchingService,
+    deps.productCandidateDiscoveryService,
     deps.supplierCatalogueRepository,
     deps.auditService,
   );
@@ -63,6 +64,13 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
     authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => matchHandlers.suggestMatches(req, res)),
+  );
+
+  router.post(
+    "/match/candidates",
+    authenticate,
+    requireWriteAccess,
+    asyncHandler((req, res) => matchHandlers.discoverReviewCandidates(req, res)),
   );
 
   router.post(

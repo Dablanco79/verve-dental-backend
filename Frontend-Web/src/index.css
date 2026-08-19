@@ -5192,6 +5192,33 @@ body {
   line-height: 1.4;
 }
 
+.invoice-review__candidate-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  max-width: 30rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a5f;
+}
+
+.invoice-review__candidate-summary p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.invoice-review__unresolved-attributes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid #bfdbfe;
+}
+
 .invoice-review__match-actions {
   display: flex;
   flex-wrap: wrap;

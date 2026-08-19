@@ -9,7 +9,10 @@ import type {
   SupplierInvoiceLine,
   UploadAndExtractResult,
 } from "../src/types/supplier.js";
-import type { ProductMatchSuggestion } from "../src/types/masterProduct.js";
+import type {
+  DiscoverReviewCandidatesResult,
+  ReviewProductCandidate,
+} from "../src/types/masterProduct.js";
 import { createAdminUser, createManagerUser, TEST_CLINIC_ID } from "./helpers/auth.js";
 import {
   clearAuthenticatedUser,
@@ -26,7 +29,7 @@ const {
   mockUpdateSupplierInvoiceLine,
   mockConfirmSupplierInvoice,
   mockVoidSupplierInvoice,
-  mockSuggestMasterProductMatch,
+  mockDiscoverReviewCandidates,
   mockConfirmMasterProductMatch,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -45,7 +48,7 @@ const {
     mockUpdateSupplierInvoiceLine: vi.fn(),
     mockConfirmSupplierInvoice: vi.fn(),
     mockVoidSupplierInvoice: vi.fn(),
-    mockSuggestMasterProductMatch: vi.fn(),
+    mockDiscoverReviewCandidates: vi.fn(),
     mockConfirmMasterProductMatch: vi.fn(),
   };
 });
@@ -81,7 +84,7 @@ vi.mock("../src/api/client.js", () => ({
     updateSupplierInvoiceLine: mockUpdateSupplierInvoiceLine,
     confirmSupplierInvoice: mockConfirmSupplierInvoice,
     voidSupplierInvoice: mockVoidSupplierInvoice,
-    suggestMasterProductMatch: mockSuggestMasterProductMatch,
+    discoverReviewCandidates: mockDiscoverReviewCandidates,
     confirmMasterProductMatch: mockConfirmMasterProductMatch,
     listMasterProducts: vi.fn().mockResolvedValue({ items: [], total: 0 }),
     listCategories: vi.fn().mockResolvedValue([
@@ -166,16 +169,30 @@ const unmatchedLine: SupplierInvoiceLine = {
   matchMethod: null,
 };
 
-const gloveSuggestion: ProductMatchSuggestion = {
+const gloveSuggestion: ReviewProductCandidate = {
   masterProductId: "master-glove-black-medium",
   displayName: "Nitrile Gloves Black M 100pk",
   sku: "NGB-M-100",
   category: "PPE",
   brand: null,
   stockUnit: "box",
-  confidence: 48,
-  reasons: ["token_similarity"],
+  relevanceScore: 95,
+  reasons: ["family_relevance", "size_match", "pack_count_match"],
 };
+
+function discoveryResult(
+  candidates: ReviewProductCandidate[] = [],
+  overrides: Partial<DiscoverReviewCandidatesResult> = {},
+): DiscoverReviewCandidatesResult {
+  return {
+    candidates,
+    familyLabel: candidates.length > 0 ? "Nitrile Glove" : null,
+    matchedAttributes: [],
+    unresolvedAttributes: [],
+    selectionRequired: true,
+    ...overrides,
+  };
+}
 
 const confirmedInvoice: SupplierInvoice = {
   ...sampleInvoice,
@@ -218,9 +235,9 @@ describe("SupplierInvoiceReviewPage", () => {
     mockUpdateSupplierInvoiceLine.mockReset();
     mockConfirmSupplierInvoice.mockReset();
     mockVoidSupplierInvoice.mockReset();
-    mockSuggestMasterProductMatch.mockReset();
+    mockDiscoverReviewCandidates.mockReset();
     mockConfirmMasterProductMatch.mockReset();
-    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [] });
+    mockDiscoverReviewCandidates.mockResolvedValue(discoveryResult());
     mockConfirmMasterProductMatch.mockResolvedValue({});
 
     // Reset clinic scope to a specific clinic before each test.
@@ -431,7 +448,7 @@ describe("SupplierInvoiceReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
 
     await waitFor(() => {
-      expect(mockSuggestMasterProductMatch).toHaveBeenCalledWith({
+      expect(mockDiscoverReviewCandidates).toHaveBeenCalledWith({
         supplierId: sampleInvoice.supplierId,
         supplierSku: "EEDMGM",
         supplierDescription: "Nitrile Gloves Medium",
@@ -440,8 +457,8 @@ describe("SupplierInvoiceReviewPage", () => {
   });
 
   it("shows a persistent per-line loading state and prevents duplicate requests", async () => {
-    let resolveSuggestions!: (value: { suggestions: ProductMatchSuggestion[] }) => void;
-    mockSuggestMasterProductMatch.mockReturnValue(
+    let resolveSuggestions!: (value: DiscoverReviewCandidatesResult) => void;
+    mockDiscoverReviewCandidates.mockReturnValue(
       new Promise((resolve) => {
         resolveSuggestions = resolve;
       }),
@@ -459,14 +476,14 @@ describe("SupplierInvoiceReviewPage", () => {
     expect(screen.getByRole("button", { name: "Finding suggestions…" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Finding suggestions…");
     await user.click(screen.getByRole("button", { name: "Finding suggestions…" }));
-    expect(mockSuggestMasterProductMatch).toHaveBeenCalledTimes(1);
+    expect(mockDiscoverReviewCandidates).toHaveBeenCalledTimes(1);
 
-    resolveSuggestions({ suggestions: [] });
+    resolveSuggestions(discoveryResult());
     expect(await screen.findByText("No suitable suggestions found")).toBeInTheDocument();
   });
 
   it("renders one returned candidate without accepting it automatically", async () => {
-    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [gloveSuggestion] });
+    mockDiscoverReviewCandidates.mockResolvedValue(discoveryResult([gloveSuggestion]));
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: sampleInvoice,
       lines: [unmatchedLine],
@@ -482,16 +499,28 @@ describe("SupplierInvoiceReviewPage", () => {
     expect(mockConfirmMasterProductMatch).not.toHaveBeenCalled();
   });
 
-  it("renders every returned candidate as a separate manual choice", async () => {
-    const blueSuggestion: ProductMatchSuggestion = {
+  it("renders every Best Candidate, unresolved Colour, and mandatory selection", async () => {
+    const blueSuggestion: ReviewProductCandidate = {
       ...gloveSuggestion,
       masterProductId: "master-glove-blue-medium",
       displayName: "Nitrile Gloves Blue M 100pk",
       sku: "NGBL-M-100",
     };
-    mockSuggestMasterProductMatch.mockResolvedValue({
-      suggestions: [gloveSuggestion, blueSuggestion],
-    });
+    mockDiscoverReviewCandidates.mockResolvedValue(
+      discoveryResult([gloveSuggestion, blueSuggestion], {
+        matchedAttributes: [
+          { attribute: "size", label: "Size", value: "Medium" },
+          { attribute: "pack_count", label: "Pack", value: "100pk" },
+        ],
+        unresolvedAttributes: [
+          {
+            attribute: "colour",
+            label: "Colour",
+            message: "Colour was not provided by the supplier. Choose the correct variant.",
+          },
+        ],
+      }),
+    );
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: sampleInvoice,
       lines: [unmatchedLine],
@@ -504,11 +533,69 @@ describe("SupplierInvoiceReviewPage", () => {
     expect(await screen.findByText(gloveSuggestion.displayName)).toBeInTheDocument();
     expect(screen.getByText(blueSuggestion.displayName)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Accept Match" })).toHaveLength(2);
+    expect(screen.getByText("Best matches")).toBeInTheDocument();
+    expect(screen.getByText(/Medium · 100pk/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Colour was not provided by the supplier/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Selection required/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
     expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalled();
   });
 
+  it("submits only the explicitly chosen Master Product ID", async () => {
+    const blueSuggestion: ReviewProductCandidate = {
+      ...gloveSuggestion,
+      masterProductId: "master-glove-blue-medium",
+      displayName: "Nitrile Gloves Blue M 100pk",
+      sku: "NGBL-M-100",
+    };
+    mockDiscoverReviewCandidates.mockResolvedValue(
+      discoveryResult([gloveSuggestion, blueSuggestion]),
+    );
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: sampleInvoice,
+      lines: [unmatchedLine],
+    });
+    mockUpdateSupplierInvoiceLine.mockResolvedValue({
+      ...unmatchedLine,
+      isMatched: true,
+      matchMethod: "manual",
+      masterCatalogItemId: blueSuggestion.masterProductId,
+      masterProductName: blueSuggestion.displayName,
+    });
+    const user = userEvent.setup();
+    renderReviewPage();
+
+    await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
+    await screen.findByText(blueSuggestion.displayName);
+    const acceptButtons = screen.getAllByRole("button", { name: "Accept Match" });
+    const blueAcceptButton = acceptButtons[1];
+    if (!blueAcceptButton) throw new Error("Expected the Blue candidate acceptance button");
+    await user.click(blueAcceptButton);
+
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoiceLine).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        INVOICE_ID,
+        unmatchedLine.id,
+        {
+          masterCatalogItemId: blueSuggestion.masterProductId,
+          isMatched: true,
+          matchMethod: "manual",
+        },
+      );
+    });
+    expect(mockUpdateSupplierInvoiceLine).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ masterCatalogItemId: gloveSuggestion.masterProductId }),
+    );
+  });
+
   it("shows an explicit empty state while preserving manual review actions", async () => {
-    mockSuggestMasterProductMatch.mockResolvedValue({ suggestions: [] });
+    mockDiscoverReviewCandidates.mockResolvedValue(discoveryResult());
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: sampleInvoice,
       lines: [unmatchedLine],
@@ -525,7 +612,7 @@ describe("SupplierInvoiceReviewPage", () => {
   });
 
   it("shows a safe per-line error and keeps Find suggestions available for retry", async () => {
-    mockSuggestMasterProductMatch.mockRejectedValue(new Error("sensitive backend detail"));
+    mockDiscoverReviewCandidates.mockRejectedValue(new Error("sensitive backend detail"));
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: sampleInvoice,
       lines: [unmatchedLine],
@@ -553,7 +640,7 @@ describe("SupplierInvoiceReviewPage", () => {
     await user.click(await screen.findByRole("button", { name: "Find suggestions" }));
 
     expect(await screen.findByText("Supplier required")).toBeInTheDocument();
-    expect(mockSuggestMasterProductMatch).not.toHaveBeenCalled();
+    expect(mockDiscoverReviewCandidates).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Match existing product" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create new product" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip" })).toBeInTheDocument();

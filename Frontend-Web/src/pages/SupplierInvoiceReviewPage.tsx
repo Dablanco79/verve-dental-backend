@@ -6,11 +6,15 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { ProductCreationReviewModal } from "../components/invoice/ProductCreationReviewModal.js";
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
-import { ProductMatchSuggestionCard } from "../components/masterProduct/ProductMatchSuggestionCard.js";
+import { ProductReviewCandidateCard } from "../components/masterProduct/ProductReviewCandidateCard.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useCategories } from "../hooks/useCategories.js";
 import { loadConfig } from "../config/index.js";
-import type { MasterProduct, ProductMatchSuggestion } from "../types/masterProduct.js";
+import type {
+  DiscoverReviewCandidatesResult,
+  MasterProduct,
+  ReviewProductCandidate,
+} from "../types/masterProduct.js";
 import type {
   ProductCreationData,
   SupplierInvoice,
@@ -215,7 +219,7 @@ type LocalLineAction = "ready_to_create" | "skipped";
 type LineSuggestionState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "candidates"; suggestions: ProductMatchSuggestion[] }
+  | { status: "candidates"; result: DiscoverReviewCandidatesResult }
   | { status: "empty" }
   | { status: "error" }
   | { status: "supplier-required" };
@@ -238,7 +242,7 @@ type LineRowProps = {
   matchDisplayName: string | null;
   localAction: LocalLineAction | null;
   onFetchSuggestion: () => void;
-  onAcceptSuggestion: (suggestion: ProductMatchSuggestion) => void;
+  onAcceptSuggestion: (candidate: ReviewProductCandidate) => void;
   onChooseDifferent: () => void;
   onCreateNew: () => void;
   onSkipLine: () => void;
@@ -360,16 +364,55 @@ function LineRow({
                 className="invoice-review__suggestion-list"
                 aria-label="Master Product suggestions"
               >
-                {lineSuggestionState.suggestions.map((suggestion) => (
-                  <ProductMatchSuggestionCard
-                    key={suggestion.masterProductId}
-                    suggestion={suggestion}
-                    onAccept={() => { onAcceptSuggestion(suggestion); }}
-                    onChooseDifferent={onChooseDifferent}
-                    onCreateNew={onCreateNew}
-                    onSkip={onSkipLine}
+                <div className="invoice-review__candidate-summary" role="status">
+                  <strong>Best matches</strong>
+                  {lineSuggestionState.result.matchedAttributes.length > 0 ? (
+                    <p>
+                      <strong>Matches: </strong>
+                      {lineSuggestionState.result.matchedAttributes
+                        .map((attribute) => attribute.value)
+                        .join(" · ")}
+                    </p>
+                  ) : null}
+                  {lineSuggestionState.result.unresolvedAttributes.length > 0 ? (
+                    <div className="invoice-review__unresolved-attributes">
+                      <strong>Unresolved:</strong>
+                      {lineSuggestionState.result.unresolvedAttributes.map((attribute) => (
+                        <p key={attribute.attribute}>
+                          <strong>{attribute.label}: </strong>
+                          {attribute.message}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p>
+                    <strong>Selection required.</strong> Verve will not choose a candidate
+                    automatically.
+                  </p>
+                </div>
+                {lineSuggestionState.result.candidates.map((candidate) => (
+                  <ProductReviewCandidateCard
+                    key={candidate.masterProductId}
+                    candidate={candidate}
+                    onAccept={() => { onAcceptSuggestion(candidate); }}
                   />
                 ))}
+                <div className="invoice-review__match-actions">
+                  <button
+                    type="button"
+                    className="link-button"
+                    disabled={isLinking}
+                    onClick={onChooseDifferent}
+                  >
+                    Match existing product
+                  </button>
+                  <button type="button" className="link-button" onClick={onCreateNew}>
+                    Create new product
+                  </button>
+                  <button type="button" className="link-button" onClick={onSkipLine}>
+                    Skip
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -598,7 +641,7 @@ type LinesTableProps = {
   lineMatchDisplayNames: Record<string, string>;
   localLineActions: Record<string, LocalLineAction>;
   onFetchSuggestion: (lineId: string) => void;
-  onAcceptSuggestion: (lineId: string, suggestion: ProductMatchSuggestion) => void;
+  onAcceptSuggestion: (lineId: string, candidate: ReviewProductCandidate) => void;
   onChooseDifferent: (lineId: string) => void;
   onCreateNew: (lineId: string) => void;
   onSkipLine: (lineId: string) => void;
@@ -1111,7 +1154,7 @@ export function SupplierInvoiceReviewPage() {
       [lineId]: { status: "loading" },
     }));
     try {
-      const result = await apiClient.suggestMasterProductMatch({
+      const result = await apiClient.discoverReviewCandidates({
         supplierId: invoice.supplierId,
         supplierSku: line.ocrSku ?? undefined,
         supplierDescription: line.ocrDescription ?? undefined,
@@ -1119,8 +1162,8 @@ export function SupplierInvoiceReviewPage() {
       setLineSuggestionStates((prev) => ({
         ...prev,
         [lineId]:
-          result.suggestions.length > 0
-            ? { status: "candidates", suggestions: result.suggestions }
+          result.candidates.length > 0
+            ? { status: "candidates", result }
             : { status: "empty" },
       }));
     } catch {
@@ -1171,8 +1214,8 @@ export function SupplierInvoiceReviewPage() {
     }
   }
 
-  function handleAcceptSuggestion(lineId: string, suggestion: ProductMatchSuggestion): void {
-    void persistLineMatch(lineId, suggestion.masterProductId, suggestion.displayName);
+  function handleAcceptSuggestion(lineId: string, candidate: ReviewProductCandidate): void {
+    void persistLineMatch(lineId, candidate.masterProductId, candidate.displayName);
   }
 
   function handleManualMatchSelect(product: MasterProduct): void {

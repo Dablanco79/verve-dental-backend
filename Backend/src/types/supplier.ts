@@ -220,6 +220,65 @@ export type SuggestMatchesResult = {
   suggestions: ProductMatchSuggestion[];
 };
 
+// ─── Human-assisted candidate discovery ──────────────────────────────────────
+
+export const REVIEW_CANDIDATE_ATTRIBUTES = [
+  "size",
+  "pack_count",
+  "colour",
+] as const;
+
+export type ReviewCandidateAttribute = (typeof REVIEW_CANDIDATE_ATTRIBUTES)[number];
+
+export const REVIEW_CANDIDATE_REASONS = [
+  "confirmed_supplier_mapping",
+  "family_relevance",
+  "size_match",
+  "pack_count_match",
+  "colour_match",
+] as const;
+
+export type ReviewCandidateReason = (typeof REVIEW_CANDIDATE_REASONS)[number];
+
+export type ReviewProductCandidate = {
+  masterProductId: string;
+  displayName: string;
+  sku: string;
+  category: string;
+  brand: string | null;
+  stockUnit: string;
+  /** Human-review ordering only. This is never automatic identity confidence. */
+  relevanceScore: number;
+  reasons: ReviewCandidateReason[];
+};
+
+export type ReviewCandidateEvidence = {
+  attribute: ReviewCandidateAttribute;
+  label: string;
+  value: string;
+};
+
+export type UnresolvedReviewAttribute = {
+  attribute: ReviewCandidateAttribute;
+  label: string;
+  message: string;
+};
+
+export type DiscoverReviewCandidatesInput = {
+  supplierId: string;
+  supplierSku?: string | null;
+  supplierDescription?: string | null;
+};
+
+export type DiscoverReviewCandidatesResult = {
+  candidates: ReviewProductCandidate[];
+  familyLabel: string | null;
+  matchedAttributes: ReviewCandidateEvidence[];
+  unresolvedAttributes: UnresolvedReviewAttribute[];
+  /** Candidate discovery always requires an explicit human selection. */
+  selectionRequired: true;
+};
+
 export type ConfirmMatchInput = {
   supplierId: string;
   masterProductId: string;

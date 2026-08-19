@@ -106,6 +106,7 @@ import { createSupplierCatalogueService } from "../services/supplierCatalogueSer
 import { createCatalogueImportService } from "../services/catalogueImportService.js";
 import { createMasterProductImportService } from "../services/masterProductImportService.js";
 import { createMasterProductService } from "../services/masterProductService.js";
+import { createProductCandidateDiscoveryService } from "../services/productCandidateDiscoveryService.js";
 import { createProductMatchingService } from "../services/productMatchingService.js";
 import { createTimesheetService } from "../services/timesheetService.js";
 import { createUserService } from "../services/userService.js";
@@ -144,6 +145,7 @@ import type { SupplierCatalogueService } from "../services/supplierCatalogueServ
 import type { CatalogueImportService } from "../services/catalogueImportService.js";
 import type { MasterProductImportService } from "../services/masterProductImportService.js";
 import type { MasterProductService } from "../services/masterProductService.js";
+import type { ProductCandidateDiscoveryService } from "../services/productCandidateDiscoveryService.js";
 import type { ProductMatchingService } from "../services/productMatchingService.js";
 
 export type AppDependencies = {
@@ -160,6 +162,7 @@ export type AppDependencies = {
   catalogueImportService: CatalogueImportService;
   masterProductImportService: MasterProductImportService;
   masterProductService: MasterProductService;
+  productCandidateDiscoveryService: ProductCandidateDiscoveryService;
   productMatchingService: ProductMatchingService;
   supplierInvoiceService: SupplierInvoiceService;
   supplierIntelligenceService: SupplierIntelligenceService;
@@ -458,6 +461,10 @@ export async function createAppDependencies(
     catalogRepository,
     supplierCatalogueRepository,
   );
+  const productCandidateDiscoveryService = createProductCandidateDiscoveryService(
+    catalogRepository,
+    supplierCatalogueRepository,
+  );
 
   const supplierCatalogueService = createSupplierCatalogueService(
     supplierCatalogueRepository,
@@ -533,6 +540,7 @@ export async function createAppDependencies(
     catalogueImportService,
     masterProductImportService,
     masterProductService,
+    productCandidateDiscoveryService,
     productMatchingService,
     supplierInvoiceService,
     supplierIntelligenceService,
