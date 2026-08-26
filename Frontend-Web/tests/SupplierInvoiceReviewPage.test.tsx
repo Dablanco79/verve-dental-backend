@@ -1475,6 +1475,10 @@ describe("SupplierInvoiceReviewPage — tax treatment and financial summary disp
     mockGetSupplierInvoice.mockResolvedValue({
       invoice: {
         ...taxInvoice,
+        // Erskine Oral Care is the authoritative supplier for this fixture —
+        // set both supplierName (authoritative) and supplierNameRaw (OCR) so
+        // the heading renders "Erskine Oral Care" under the approved architecture.
+        supplierName: "Erskine Oral Care",
         supplierNameRaw: "Erskine Oral Care",
         invoiceNumber: "INV538147",
         invoiceDate: "2026-05-04",
