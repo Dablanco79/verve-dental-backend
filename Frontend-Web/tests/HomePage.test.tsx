@@ -209,6 +209,7 @@ const pendingInvoice: SupplierInvoice = {
   clinicId: TEST_CLINIC_ID,
   supplierId: "supplier-1",
   supplierNameRaw: "DentalCo",
+  supplierName: null,
   invoiceNumber: "INV-1",
   invoiceDate: "2026-06-25",
   dueDate: null,

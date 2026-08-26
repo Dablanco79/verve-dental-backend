@@ -141,6 +141,7 @@ const samplePendingInvoices: SupplierInvoice[] = [
     clinicId: TEST_CLINIC_ID,
     supplierId: "sup-1111-1111-1111-111111111111",
     supplierNameRaw: "DentalCo Australia",
+    supplierName: "DentalCo Australia",
     invoiceNumber: "INV-001",
     invoiceDate: "2026-06-01",
     dueDate: null,

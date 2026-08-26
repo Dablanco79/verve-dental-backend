@@ -67,6 +67,12 @@ export type SupplierInvoice = {
   id: string;
   clinicId: string;
   supplierId: string | null;
+  /**
+   * Authoritative supplier name resolved via LEFT JOIN on the suppliers table.
+   * Populated on findById and listSupplierInvoices.  Null on creation responses
+   * and status-mutation responses that do not perform the JOIN.
+   */
+  supplierName: string | null;
   supplierNameRaw: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;

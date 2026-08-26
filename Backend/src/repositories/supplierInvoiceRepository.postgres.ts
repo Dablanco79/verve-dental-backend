@@ -33,6 +33,8 @@ type InvoiceRow = {
   id: string;
   clinic_id: string;
   supplier_id: string | null;
+  /** Populated only when the query JOINs the suppliers table. */
+  supplier_name?: string | null;
   supplier_name_raw: string | null;
   invoice_number: string | null;
   invoice_date: string | null;
@@ -126,6 +128,7 @@ function mapInvoice(row: InvoiceRow): SupplierInvoice {
     id: row.id,
     clinicId: row.clinic_id,
     supplierId: row.supplier_id,
+    supplierName: row.supplier_name ?? null,
     supplierNameRaw: row.supplier_name_raw,
     invoiceNumber: row.invoice_number,
     invoiceDate: row.invoice_date,
@@ -261,7 +264,10 @@ export function createPostgresSupplierInvoiceRepository(
       id: string,
     ): Promise<SupplierInvoice | null> {
       const { rows } = await pool.query<InvoiceRow>(
-        "SELECT * FROM supplier_invoices WHERE id = $1 AND clinic_id = $2",
+        `SELECT si.*, s.supplier_name
+         FROM supplier_invoices si
+         LEFT JOIN suppliers s ON s.id = si.supplier_id
+         WHERE si.id = $1 AND si.clinic_id = $2`,
         [id, clinicId],
       );
       return rows[0] ? mapInvoice(rows[0]) : null;
@@ -271,7 +277,7 @@ export function createPostgresSupplierInvoiceRepository(
       clinicId: string,
       options: ListSupplierInvoicesOptions = {},
     ): Promise<SupplierInvoice[]> {
-      const conditions: string[] = ["clinic_id = $1"];
+      const conditions: string[] = ["si.clinic_id = $1"];
       const params: unknown[] = [clinicId];
       let idx = 2;
 
@@ -280,19 +286,21 @@ export function createPostgresSupplierInvoiceRepository(
         params.push(val);
       };
 
-      if (options.status) add("status = ?", options.status);
-      if (options.supplierId) add("supplier_id = ?", options.supplierId);
-      if (options.from) add("created_at::date >= ?", options.from);
-      if (options.to) add("created_at::date <= ?", options.to);
+      if (options.status) add("si.status = ?", options.status);
+      if (options.supplierId) add("si.supplier_id = ?", options.supplierId);
+      if (options.from) add("si.created_at::date >= ?", options.from);
+      if (options.to) add("si.created_at::date <= ?", options.to);
 
       const limit = options.limit ?? 50;
       const offset = options.offset ?? 0;
       params.push(limit, offset);
 
       const { rows } = await pool.query<InvoiceRow>(
-        `SELECT * FROM supplier_invoices
+        `SELECT si.*, s.supplier_name
+         FROM supplier_invoices si
+         LEFT JOIN suppliers s ON s.id = si.supplier_id
          WHERE ${conditions.join(" AND ")}
-         ORDER BY created_at DESC
+         ORDER BY si.created_at DESC
          LIMIT $${String(idx++)} OFFSET $${String(idx)}`,
         params,
       );
@@ -326,14 +334,17 @@ export function createPostgresSupplierInvoiceRepository(
 
       sets.push("updated_at = now()");
 
-      const { rows } = await pool.query<InvoiceRow>(
+      // UPDATE then re-fetch with supplier JOIN so the response includes
+      // supplierName — critical for review-page supplier display after PATCH.
+      const { rows: updatedIds } = await pool.query<{ id: string }>(
         `UPDATE supplier_invoices
          SET ${sets.join(", ")}
          WHERE id = $${String(idx++)} AND clinic_id = $${String(idx)}
-         RETURNING *`,
+         RETURNING id`,
         [...params, id, clinicId],
       );
-      return rows[0] ? mapInvoice(rows[0]) : null;
+      if (!updatedIds[0]) return null;
+      return this.findById(clinicId, id);
     },
 
     async setStatus(
@@ -635,6 +646,115 @@ export function createPostgresSupplierInvoiceRepository(
         "DELETE FROM supplier_invoice_lines WHERE supplier_invoice_id = $1 AND clinic_id = $2",
         [invoiceId, clinicId],
       );
+    },
+
+    // ── Supplier-dependent match invalidation ──────────────────────────────
+
+    async clearSupplierDependentAutoMatches(
+      clinicId: string,
+      invoiceId: string,
+    ): Promise<number> {
+      // Only `exact_sku` matches are supplier-dependent (derived from
+      // supplier_catalogue which is scoped to a specific supplier).
+      // `name_match` (schema-reserved, currently unassigned) and `manual`
+      // (explicit human choice) are supplier-independent and are preserved.
+      // Note: `barcode` is NOT a valid match_method on supplier_invoice_lines
+      // (it is a matchStatus value in productMatchingService, a separate
+      // pipeline).  The DB CHECK constraint permits only: exact_sku, name_match,
+      // manual, null.
+      const result = await pool.query(
+        `UPDATE supplier_invoice_lines
+         SET is_matched           = false,
+             match_method         = NULL,
+             master_catalog_item_id = NULL,
+             supplier_catalogue_id  = NULL,
+             updated_at           = now()
+         WHERE supplier_invoice_id = $1
+           AND clinic_id           = $2
+           AND is_matched          = true
+           AND match_method        = 'exact_sku'`,
+        [invoiceId, clinicId],
+      );
+      return result.rowCount ?? 0;
+    },
+
+    /**
+     * Atomically applies ALL patch fields AND clears supplier-dependent
+     * `exact_sku` auto-matches in ONE PostgreSQL transaction via
+     * `withTenantContext`.
+     *
+     * Both the `UPDATE supplier_invoices` and the `UPDATE supplier_invoice_lines`
+     * run on the SAME PoolClient inside a single BEGIN … COMMIT block.  Any
+     * failure rolls back both operations, preventing the contradictory state
+     * where `supplier_id` is updated but stale `exact_sku` matches survive.
+     */
+    async atomicUpdateSupplierAndClearMatches(
+      clinicId: string,
+      invoiceId: string,
+      patch: UpdateSupplierInvoiceInput,
+    ): Promise<SupplierInvoice | null> {
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+
+      const add = (col: string, value: unknown) => {
+        sets.push(`${col} = $${String(idx++)}`);
+        params.push(value);
+      };
+
+      if (patch.supplierId !== undefined) add("supplier_id", patch.supplierId);
+      if (patch.supplierNameRaw !== undefined) add("supplier_name_raw", patch.supplierNameRaw);
+      if (patch.invoiceNumber !== undefined) add("invoice_number", patch.invoiceNumber);
+      if (patch.invoiceDate !== undefined) add("invoice_date", patch.invoiceDate);
+      if (patch.dueDate !== undefined) add("due_date", patch.dueDate);
+      if (patch.notes !== undefined) add("notes", patch.notes);
+
+      // If the patch is empty (shouldn't happen in this code path, but handle
+      // defensively), just clear the matches without updating the header.
+      if (sets.length === 0) {
+        await this.clearSupplierDependentAutoMatches(clinicId, invoiceId);
+        return this.findById(clinicId, invoiceId);
+      }
+
+      sets.push("updated_at = now()");
+
+      // withTenantContext returns true when the invoice was found and both
+      // operations completed, false when the invoice row did not exist.
+      const invoiceFound = await withTenantContext(pool, clinicId, async (client) => {
+        // Step 1 — update the invoice header (all patch fields atomically).
+        const { rows: updated } = await client.query<{ id: string }>(
+          `UPDATE supplier_invoices
+           SET ${sets.join(", ")}
+           WHERE id = $${String(idx++)} AND clinic_id = $${String(idx)}
+           RETURNING id`,
+          [...params, invoiceId, clinicId],
+        );
+
+        if (!updated[0]) return false;
+
+        // Step 2 — clear supplier-dependent auto-matches in the same transaction.
+        // If this fails, the entire transaction rolls back (invoice unchanged too).
+        await client.query(
+          `UPDATE supplier_invoice_lines
+           SET is_matched            = false,
+               match_method          = NULL,
+               master_catalog_item_id = NULL,
+               supplier_catalogue_id  = NULL,
+               updated_at            = now()
+           WHERE supplier_invoice_id = $1
+             AND clinic_id           = $2
+             AND is_matched          = true
+             AND match_method        = 'exact_sku'`,
+          [invoiceId, clinicId],
+        );
+
+        return true;
+      });
+
+      if (!invoiceFound) return null;
+
+      // Re-fetch with supplier name JOIN so the response includes supplierName.
+      return this.findById(clinicId, invoiceId);
     },
 
     // ── Receiving lifecycle ────────────────────────────────────────────────

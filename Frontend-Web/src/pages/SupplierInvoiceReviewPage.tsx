@@ -167,7 +167,16 @@ function SummaryCard({ invoice, lineCount, duplicateFile, duplicateNumber, invoi
       <dl className="invoice-review__summary-grid">
         <div className="invoice-review__summary-item">
           <dt>Supplier</dt>
-          <dd>{invoice.supplierNameRaw ?? "—"}</dd>
+          <dd>{invoice.supplierName ?? invoice.supplierNameRaw ?? "—"}</dd>
+          {/* E. REVIEW PAGE SUPPLIER TRUTH — show OCR evidence when it differs
+              from the authoritative supplier name so the reviewer can see both. */}
+          {invoice.supplierName !== null &&
+           invoice.supplierNameRaw !== null &&
+           invoice.supplierName.toLowerCase() !== invoice.supplierNameRaw.toLowerCase() ? (
+            <dd className="invoice-review__detected-supplier">
+              Detected on invoice: <em>{invoice.supplierNameRaw}</em>
+            </dd>
+          ) : null}
         </div>
         <div className="invoice-review__summary-item">
           <dt>Invoice Number</dt>
@@ -1442,7 +1451,7 @@ export function SupplierInvoiceReviewPage() {
             {isLoading
               ? "Loading invoice…"
               : invoice
-                ? (invoice.supplierNameRaw ?? "Invoice Review")
+                ? (invoice.supplierName ?? invoice.supplierNameRaw ?? "Invoice Review")
                 : "Invoice Review"}
           </h2>
           {invoice ? <InvoiceStatusBadge status={invoice.status} /> : null}

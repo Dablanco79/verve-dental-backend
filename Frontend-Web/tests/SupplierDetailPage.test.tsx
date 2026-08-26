@@ -114,6 +114,7 @@ const sampleInvoices: SupplierInvoice[] = [
     id: "inv-aaaa",
     clinicId: TEST_CLINIC_ID,
     supplierId: SUPPLIER_ID,
+    supplierName: "DentalCo Australia",
     supplierNameRaw: "DentalCo Australia",
     invoiceNumber: "DCO-2026-0042",
     invoiceDate: "2026-06-10",

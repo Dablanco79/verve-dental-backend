@@ -851,3 +851,463 @@ describe("Matching priority order regression", () => {
     expect(result.productId).toBe(productViaMapping.id);
   });
 });
+
+// ── SUPPLIER CHANGE INVALIDATION (D) ─────────────────────────────────────────
+
+/**
+ * Tests for the Supplier Identity & Invoice Ownership Safety Fix.
+ *
+ * I.1  Invoice resolved to Supplier B, SKU auto-matched under Supplier B.
+ * I.2  Changing supplier B → A invalidates Supplier B-dependent auto-match.
+ * I.3  Changing supplier B → null invalidates Supplier B-dependent auto-match.
+ * I.4  Manual match is preserved on supplier change.
+ * I.5  Supplier A cannot inherit Supplier B's SKU mapping after reassignment.
+ * I.6  confirmImport after reassignment rejects stale Supplier B exact_sku match.
+ * I.7  Keeping Supplier B (no change) preserves legitimate Supplier B match.
+ * I.10 No duplicate invoice record is created by supplier resolution.
+ */
+
+describe("Supplier Identity & Invoice Ownership Safety Fix — match invalidation", () => {
+  const SUPPLIER_TEST = "cccccccc-cccc-4000-8000-000000000001";
+  const SUPPLIER_ADAM = "dddddddd-dddd-4000-8000-000000000001";
+
+  /** Build a fixture that replicates the production scenario:
+   *  - ADAM DENTAL has SKU "FB215" mapped to Product FB215 in supplier_catalogue.
+   *  - OCR matches the invoice to ADAM DENTAL and auto-matches FB215.
+   *  - The frontend then PATCHes to Supplier Test.
+   */
+  async function buildProductionScenarioFixture() {
+    const catalogRepo = createInMemoryCatalogRepository();
+    const supplierCatalogueRepo = createInMemorySupplierCatalogueRepository();
+    const supplierRepo = createInMemorySupplierRepository();
+    const invRepo = createInMemoryInventoryRepository(catalogRepo);
+    const invoiceRepo = createInMemorySupplierInvoiceRepository();
+
+    const productFB215 = await catalogRepo.createMasterItem({
+      sku: "FB215",
+      name: "ADM Frostbite Cryogenic Spray",
+      description: null,
+      category: "PPE",
+      stockUnit: "unit",
+      receivingUnit: "unit",
+      unitsPerReceivingUnit: 1,
+      defaultUnitCostCents: 5000,
+    });
+
+    // Adam Dental's supplier_catalogue entry for FB215.
+    await supplierCatalogueRepo.upsertSupplierProduct({
+      supplierId: SUPPLIER_ADAM,
+      productId: productFB215.id,
+      supplierSku: "FB215",
+      supplierDescription: "ADM Frostbite Cryogenic Spray",
+      unitCostCents: 5000,
+      unitOfMeasure: "unit",
+    });
+
+    // Supplier repo: Adam Dental matches by fuzzy name.
+    await supplierRepo.createSupplier({
+      supplierName: "ADAM DENTAL supplies",
+      abn: null, email: null, phone: null, website: null,
+      address: null, notes: null, supplierCode: null, contactName: null,
+      legalName: null, tradingName: null,
+    });
+
+    // We need the repo to return the correct supplierId for SUPPLIER_ADAM.
+    // Use a supplier with the exact name to trigger exact match in matchSupplierFromOcr.
+    // The in-memory supplierRepo creates suppliers with randomUUIDs, so we'll
+    // set up the catalogue entry with the in-memory supplier's actual ID later.
+    // For simplicity in this test, we directly manipulate the invoice service
+    // to use SUPPLIER_ADAM by pre-loading the catalogue under SUPPLIER_ADAM
+    // and relying on the fact that matchSupplierFromOcr won't match (no ABN/email/phone)
+    // but the auto-match still runs against the resolvedSupplierId.
+    //
+    // Simpler approach: stub OCR + stub supplier repo so resolvedSupplierId = SUPPLIER_ADAM.
+
+    return { catalogRepo, supplierCatalogueRepo, supplierRepo, invRepo, invoiceRepo, productFB215 };
+  }
+
+  /** Build invoice service with a supplier repo that resolves the given name to the given ID. */
+  function buildInvoiceServiceWithFixedSupplierResolution(
+    invoiceRepo: ReturnType<typeof createInMemorySupplierInvoiceRepository>,
+    supplierCatalogueRepo: ReturnType<typeof createInMemorySupplierCatalogueRepository>,
+    resolvedSupplierId: string,
+    catalogRepo: ReturnType<typeof createInMemoryCatalogRepository>,
+    invRepo: ReturnType<typeof createInMemoryInventoryRepository>,
+  ) {
+    const supplierRepo = createInMemorySupplierRepository();
+    const stubOcr: OcrProvider = {
+      extractInvoice: () =>
+        Promise.resolve({
+          provider: "stub",
+          supplierName: "ADAM DENTAL supplies",
+          supplierAbn: null, supplierEmail: null, supplierPhone: null,
+          supplierAddress: null, supplierWebsite: null,
+          invoiceNumber: "1043916",
+          invoiceDate: "2026-08-01",
+          dueDate: null,
+          subtotalCents: 5000, taxCents: 500, totalCents: 5500,
+          overallConfidence: 95,
+          lines: [{
+            description: "ADM Frostbite Cryogenic Spray",
+            sku: "FB215",
+            quantity: 1,
+            unitPriceCents: 5000,
+            priceIncludesTax: false,
+            discountBasisPoints: 0,
+            subtotalCents: 5000,
+            taxRateBasisPoints: 1000,
+            taxCents: 500,
+            totalCents: 5500,
+            supplierLineTotalCents: null,
+            confidence: 95,
+          }],
+          rawResponse: {},
+        }),
+    };
+
+    // Override supplier repo's listSuppliers to return a supplier with the
+    // exact name "ADAM DENTAL supplies" whose ID is resolvedSupplierId,
+    // triggering exact-name match in matchSupplierFromOcr.
+    const overriddenRepo = {
+      ...supplierRepo,
+      findSupplierByName: (name: string) => {
+        if (name.toLowerCase() === "adam dental supplies") {
+          return Promise.resolve({
+            id: resolvedSupplierId,
+            supplierName: "ADAM DENTAL supplies",
+            supplierCode: null, contactName: null, email: null, phone: null,
+            website: null, abn: null, address: null, notes: null,
+            active: true, legalName: null, tradingName: null,
+            createdAt: new Date(), updatedAt: new Date(),
+          });
+        }
+        return Promise.resolve(null);
+      },
+      listSuppliers: () => Promise.resolve([]),
+    } as typeof supplierRepo;
+
+    return createSupplierInvoiceService(
+      invoiceRepo, stubOcr, supplierCatalogueRepo,
+      mockAudit, overriddenRepo, undefined, catalogRepo, invRepo,
+    );
+  }
+
+  test("I.1. Invoice resolved to Supplier B (Adam Dental), FB215 auto-matched under Supplier B", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo, productFB215 } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const result = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-1043916.pdf",
+    });
+
+    expect(result.invoice.supplierId).toBe(SUPPLIER_ADAM);
+    expect(result.lines).toHaveLength(1);
+    const line = result.lines[0];
+    expect(line).toBeDefined();
+    if (!line) throw new Error("Expected a line");
+    expect(line.isMatched).toBe(true);
+    expect(line.matchMethod).toBe("exact_sku");
+    expect(line.masterCatalogItemId).toBe(productFB215.id);
+  });
+
+  test("I.2. Changing invoice supplier B → A invalidates Supplier B exact_sku auto-match", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo, productFB215 } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-1043916.pdf",
+    });
+
+    // Verify pre-condition: line is matched under Supplier Adam.
+    const linesBeforePatch = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    expect(linesBeforePatch[0]?.isMatched).toBe(true);
+    expect(linesBeforePatch[0]?.matchMethod).toBe("exact_sku");
+    expect(linesBeforePatch[0]?.masterCatalogItemId).toBe(productFB215.id);
+
+    // PATCH: reassign to Supplier Test — the safety fix must clear the stale match.
+    const { invoice: patched } = await svc.updateInvoice(admin, CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceDate: "2026-08-01",
+      invoiceNumber: "1043916",
+    });
+
+    expect(patched.supplierId).toBe(SUPPLIER_TEST);
+
+    const linesAfterPatch = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    const line = linesAfterPatch[0];
+    expect(line).toBeDefined();
+    if (!line) throw new Error("Expected a line");
+    // exact_sku match must be cleared — it was derived under Supplier B.
+    expect(line.isMatched).toBe(false);
+    expect(line.matchMethod).toBeNull();
+    expect(line.masterCatalogItemId).toBeNull();
+    expect(line.supplierCatalogueId).toBeNull();
+  });
+
+  test("I.3. Changing supplier B → null invalidates Supplier B exact_sku auto-match", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-null-test.pdf",
+    });
+
+    await svc.updateInvoice(admin, CLINIC_ID, invoice.id, { supplierId: null });
+
+    const lines = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    expect(lines[0]?.isMatched).toBe(false);
+    expect(lines[0]?.matchMethod).toBeNull();
+    expect(lines[0]?.masterCatalogItemId).toBeNull();
+  });
+
+  test("I.4. Manual match is preserved on supplier change", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo, productFB215 } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice, lines } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-manual.pdf",
+    });
+
+    const lineId = lines[0]?.id;
+    if (!lineId) throw new Error("Expected a line");
+
+    // Simulate human overriding the match with a manual selection.
+    await invoiceRepo.updateLine(CLINIC_ID, lineId, {
+      matchMethod: "manual",
+      isMatched: true,
+      masterCatalogItemId: productFB215.id,
+    });
+
+    // Reassign supplier.
+    await svc.updateInvoice(admin, CLINIC_ID, invoice.id, { supplierId: SUPPLIER_TEST });
+
+    const linesAfter = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    const line = linesAfter[0];
+    if (!line) throw new Error("Expected a line");
+    // Manual matches are supplier-independent — must survive.
+    expect(line.isMatched).toBe(true);
+    expect(line.matchMethod).toBe("manual");
+    expect(line.masterCatalogItemId).toBe(productFB215.id);
+  });
+
+  test("I.5. Supplier A (Supplier Test) cannot inherit Supplier B (Adam Dental) SKU mapping after reassignment", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-inherit.pdf",
+    });
+
+    // Reassign to Supplier Test.
+    await svc.updateInvoice(admin, CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceDate: "2026-08-01",
+      invoiceNumber: "1043916",
+    });
+
+    const lines = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    // After reassignment, FB215 line must NOT be matched under Supplier Test.
+    expect(lines[0]?.isMatched).toBe(false);
+    expect(lines[0]?.matchMethod).toBeNull();
+    expect(lines[0]?.masterCatalogItemId).toBeNull();
+
+    // And Supplier Test's catalogue must still be empty (no cross-supplier bleed).
+    const supplierCatalogueSvc = createInMemoryCatalogRepository();
+    const catalogueCheck = await supplierCatalogueRepo.findSupplierProductBySupplierSku(
+      SUPPLIER_TEST, "FB215",
+    );
+    expect(catalogueCheck).toBeNull();
+    void supplierCatalogueSvc;
+  });
+
+  test("I.6. confirmImport after reassignment rejects stale Supplier B exact_sku match", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo, productFB215 } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice, lines } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-confirm.pdf",
+    });
+
+    // Directly inject a stale state: line has exact_sku match under Adam Dental
+    // but the invoice is set to Supplier Test, bypassing the normal PATCH path.
+    // This simulates a pre-existing inconsistency.
+    await invoiceRepo.updateSupplierInvoice(CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceDate: "2026-08-01",
+      invoiceNumber: "1043916-stale",
+    });
+    // Line still has old exact_sku match from Adam Dental — the stale state.
+    const lineId = lines[0]?.id;
+    if (!lineId) throw new Error("Expected a line");
+    expect((await invoiceRepo.listLines(CLINIC_ID, invoice.id))[0]?.matchMethod).toBe("exact_sku");
+
+    // confirmImport must reject this stale state.
+    await expect(
+      svc.confirmImport(admin, CLINIC_ID, invoice.id),
+    ).rejects.toMatchObject({
+      code: "STALE_SUPPLIER_MATCH",
+    });
+
+    void productFB215;
+  });
+
+  test("I.7. Keeping Supplier B (no change) preserves legitimate Supplier B match", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo, productFB215 } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("fake-pdf"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-keep.pdf",
+    });
+
+    // PATCH with the SAME supplier — no change → no invalidation.
+    const { invoice: patched } = await svc.updateInvoice(admin, CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_ADAM,
+      invoiceDate: "2026-08-01",
+      invoiceNumber: "1043916",
+    });
+
+    expect(patched.supplierId).toBe(SUPPLIER_ADAM);
+
+    const lines = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+    // Supplier B match must survive — supplier did not change.
+    expect(lines[0]?.isMatched).toBe(true);
+    expect(lines[0]?.matchMethod).toBe("exact_sku");
+    expect(lines[0]?.masterCatalogItemId).toBe(productFB215.id);
+  });
+
+  test("I.10. No duplicate invoice record is created by supplier resolution", async () => {
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice: invoiceA } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("same-file-content"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-dedup.pdf",
+    });
+
+    // Reassign to Supplier Test (the "Keep Supplier A" path).
+    await svc.updateInvoice(admin, CLINIC_ID, invoiceA.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceDate: "2026-08-01",
+      invoiceNumber: "1043916-dedup",
+    });
+
+    // There must still be exactly ONE invoice for this clinic.
+    const allInvoices = await invoiceRepo.listSupplierInvoices(CLINIC_ID);
+    expect(allInvoices).toHaveLength(1);
+    expect(allInvoices[0]?.id).toBe(invoiceA.id);
+  });
+
+  test("I.11. atomicUpdateSupplierAndClearMatches applies ALL patch fields, not only supplierId", async () => {
+    // Verify the atomic path does not silently drop non-supplierId patch fields
+    // (e.g. invoiceNumber, invoiceDate supplied in the same PATCH request).
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("patch-fields-test"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-fields.pdf",
+    });
+
+    // Patch supplier AND other fields in a single request.
+    const { invoice: patched } = await svc.updateInvoice(admin, CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceNumber: "MULTI-FIELD-001",
+      invoiceDate: "2026-08-15",
+      notes: "Multi-field atomic patch",
+    });
+
+    // All four patch fields must be persisted.
+    expect(patched.supplierId).toBe(SUPPLIER_TEST);
+    expect(patched.invoiceNumber).toBe("MULTI-FIELD-001");
+    expect(patched.invoiceDate).toBe("2026-08-15");
+    expect(patched.notes).toBe("Multi-field atomic patch");
+  });
+
+  test("I.12. atomicUpdateSupplierAndClearMatches invalidates exact_sku match in the same logical operation", async () => {
+    // Verify that after the atomic path, the match is cleared alongside
+    // the supplier change — both effects visible in the final state.
+    // (In-memory path: sequential, no real rollback; Postgres path: atomic.)
+    const { catalogRepo, supplierCatalogueRepo, invRepo, invoiceRepo } =
+      await buildProductionScenarioFixture();
+
+    const svc = buildInvoiceServiceWithFixedSupplierResolution(
+      invoiceRepo, supplierCatalogueRepo, SUPPLIER_ADAM, catalogRepo, invRepo,
+    );
+
+    const { invoice, lines } = await svc.uploadAndExtract(admin, CLINIC_ID, {
+      buffer: Buffer.from("atomic-state-test"),
+      mimetype: "application/pdf",
+      originalname: "adam-dental-atomic.pdf",
+    });
+
+    // Verify FB215 starts as exact_sku matched under Adam Dental.
+    expect(lines[0]?.isMatched).toBe(true);
+    expect(lines[0]?.matchMethod).toBe("exact_sku");
+
+    // Apply atomic supplier change.
+    await svc.updateInvoice(admin, CLINIC_ID, invoice.id, {
+      supplierId: SUPPLIER_TEST,
+      invoiceNumber: "ATOMIC-002",
+    });
+
+    // Both effects must be visible atomically: supplier changed AND match cleared.
+    const { invoice: finalInvoice } = await svc.getInvoice(admin, CLINIC_ID, invoice.id);
+    const finalLines = await invoiceRepo.listLines(CLINIC_ID, invoice.id);
+
+    expect(finalInvoice.supplierId).toBe(SUPPLIER_TEST);
+    expect(finalLines[0]?.isMatched).toBe(false);
+    expect(finalLines[0]?.matchMethod).toBeNull();
+  });
+});

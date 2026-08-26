@@ -130,11 +130,12 @@ const burDirect: Supplier = {
   ...supplierMetaDefaults,
 };
 
-function makeSampleInvoice(supplierId: string | null = "sup-1111") {
+function makeSampleInvoice(supplierId: string | null = "sup-1111", supplierName: string | null = null) {
   return {
     id: "inv-aaaa",
     clinicId: TEST_CLINIC_ID,
     supplierId,
+    supplierName,
     supplierNameRaw: "DentalCo Australia",
     invoiceNumber: "INV-001",
     invoiceDate: "2026-06-01",
@@ -201,6 +202,30 @@ const needsConfirmationResult: UploadAndExtractResult = {
   supplierMatchStatus: "needs_confirmation",
   supplierExists: false,
   relationshipExists: null,
+};
+
+/**
+ * Upload result where OCR matched DentalCo (Supplier B) but the upload came
+ * from BurDirect's detail page (Supplier A).  The invoice is created under
+ * DentalCo's ID by the backend.
+ */
+const mismatchUploadResult: UploadAndExtractResult = {
+  invoice: makeSampleInvoice("sup-1111"),  // OCR created under DentalCo (Supplier B)
+  lines: [],
+  duplicateFileWarning: null,
+  duplicateInvoiceNumberWarning: null,
+  detectedSupplier: {
+    supplierName: "DentalCo Australia",
+    abn: "12 345 678 901",
+    email: null,
+    phone: null,
+    address: null,
+    website: null,
+  },
+  matchedSupplier: dentalCo,              // OCR matched DentalCo (Supplier B)
+  supplierMatchStatus: "matched",
+  supplierExists: true,
+  relationshipExists: true,
 };
 
 /** Upload result where OCR could not detect a supplier. */
@@ -580,6 +605,160 @@ describe("UploadInvoiceModal", () => {
     expect(screen.getByText("Extracting Line Items")).toBeInTheDocument();
 
     resolveUpload(matchedUploadResult);
+  });
+
+  // ── Supplier mismatch detection (A–C) ────────────────────────────────────────
+
+  it("13a. manual mode + same OCR supplier → no mismatch prompt, normal PATCH flow", async () => {
+    // upload from DentalCo + OCR also detects DentalCo → no mismatch.
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(matchedUploadResult);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: matchedUploadResult.invoice,
+      duplicateInvoiceNumberWarning: null,
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ onUploadSuccess, defaultSupplierId: dentalCo.id });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+    // No mismatch dialog should appear.
+    expect(screen.queryByText(/Supplier mismatch detected/i)).not.toBeInTheDocument();
+    // PATCH should have been called (normal manual flow).
+    expect(mockUpdateSupplierInvoice).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      matchedUploadResult.invoice.id,
+      expect.objectContaining({ supplierId: dentalCo.id }),
+    );
+  });
+
+  it("27. manual mode + OCR detects different supplier → shows mismatch panel", async () => {
+    // Upload from BurDirect (defaultSupplierId: sup-2222)
+    // but OCR matches DentalCo (sup-1111).
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    expect(await screen.findByText(/Supplier mismatch detected/i)).toBeInTheDocument();
+  });
+
+  it("28. mismatch panel displays both supplier names clearly", async () => {
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    expect(screen.getByText("Uploaded under")).toBeInTheDocument();
+    expect(screen.getByText("BurDirect")).toBeInTheDocument();
+    expect(screen.getByText("Detected on invoice")).toBeInTheDocument();
+    expect(screen.getByText("DentalCo Australia")).toBeInTheDocument();
+  });
+
+  it("29. mismatch panel: neither supplier is automatically selected (both buttons present)", async () => {
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    expect(screen.getByRole("button", { name: /Use DentalCo Australia/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Keep BurDirect/i })).toBeInTheDocument();
+    // No automatic action taken — updateSupplierInvoice must not have been called.
+    expect(mockUpdateSupplierInvoice).not.toHaveBeenCalled();
+  });
+
+  it("30. mismatch: Use Supplier B does NOT call updateSupplierInvoice, calls onUploadSuccess", async () => {
+    // B. USE DETECTED SUPPLIER B — invoice already under Supplier B, no PATCH needed.
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id, onUploadSuccess });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    await user.click(screen.getByRole("button", { name: /Use DentalCo Australia/i }));
+
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+    // No second upload — still only one uploadSupplierInvoice call.
+    expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
+    // No PATCH needed since invoice is already under Supplier B.
+    expect(mockUpdateSupplierInvoice).not.toHaveBeenCalled();
+  });
+
+  it("31. mismatch: Keep Supplier A calls updateSupplierInvoice with selectedSupplierId, then onUploadSuccess", async () => {
+    // C. KEEP SELECTED SUPPLIER A — PATCH to Supplier A; backend clears stale matches.
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+    const patchedInvoice = { ...mismatchUploadResult.invoice, supplierId: burDirect.id };
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: patchedInvoice,
+      duplicateInvoiceNumberWarning: null,
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id, onUploadSuccess });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    await user.click(screen.getByRole("button", { name: /Keep BurDirect/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        mismatchUploadResult.invoice.id,
+        expect.objectContaining({ supplierId: burDirect.id }),
+      );
+    });
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+    // No second upload.
+    expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it("32. mismatch: no second upload occurs for either action", async () => {
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResult);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: mismatchUploadResult.invoice,
+      duplicateInvoiceNumberWarning: null,
+    });
+
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    await user.click(screen.getByRole("button", { name: /Keep BurDirect/i }));
+
+    await waitFor(() => { expect(mockUpdateSupplierInvoice).toHaveBeenCalled(); });
+    // Upload must have been called exactly once — no duplicate record creation.
+    expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
   });
 
   it("26. hides close button during upload", async () => {

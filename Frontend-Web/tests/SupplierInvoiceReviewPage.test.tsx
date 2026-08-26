@@ -106,6 +106,7 @@ const sampleInvoice: SupplierInvoice = {
   clinicId: TEST_CLINIC_ID,
   supplierId: "sup-1111",
   supplierNameRaw: "DentalCo Australia",
+  supplierName: "DentalCo Australia",
   invoiceNumber: "DCO-2026-0042",
   invoiceDate: "2026-06-10",
   dueDate: "2026-07-10",
@@ -963,6 +964,7 @@ describe("SupplierInvoiceReviewPage — ready_for_review status and review decis
     clinicId: TEST_CLINIC_ID,
     supplierId: "sup-1111",
     supplierNameRaw: "DentalCo Australia",
+    supplierName: "DentalCo Australia",
     invoiceNumber: "DCO-2026-0042",
     invoiceDate: "2026-06-10",
     dueDate: null,
@@ -1241,6 +1243,7 @@ describe("SupplierInvoiceReviewPage — tax treatment and financial summary disp
     clinicId: TEST_CLINIC_ID,
     supplierId: "sup-tax",
     supplierNameRaw: "Tax Test Supplier",
+    supplierName: "Tax Test Supplier",
     invoiceNumber: "TX-001",
     invoiceDate: "2026-08-17",
     dueDate: null,
@@ -1530,6 +1533,7 @@ describe("SupplierInvoiceReviewPage — conditional incl. GST labelling", () => 
     clinicId: TEST_CLINIC_ID,
     supplierId: "sup-label",
     supplierNameRaw: "Label Test Supplier",
+    supplierName: "Label Test Supplier",
     invoiceNumber: "LBL-001",
     invoiceDate: "2026-08-17",
     dueDate: null,
@@ -1639,5 +1643,119 @@ describe("SupplierInvoiceReviewPage — conditional incl. GST labelling", () => 
     expect(screen.getByRole("columnheader", { name: "Line Total" })).toBeInTheDocument();
     // No "incl. GST" text anywhere (priceIncludesTax=null → "tax basis unknown" in unit price)
     expect(screen.queryByText("incl. GST")).not.toBeInTheDocument();
+  });
+});
+
+// ── E. REVIEW PAGE SUPPLIER TRUTH ─────────────────────────────────────────────
+// Tests added as part of the Supplier Identity & Invoice Ownership Safety Fix.
+// Verifies that the review page correctly distinguishes the authoritative
+// supplier (invoice.supplierName from the suppliers JOIN) from the OCR-raw
+// supplier text (invoice.supplierNameRaw).
+
+describe("SupplierInvoiceReviewPage — supplier display (E. REVIEW PAGE SUPPLIER TRUTH)", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    mockGetSupplierInvoice.mockReset();
+    mockDiscoverReviewCandidates.mockResolvedValue(discoveryResult());
+    mockConfirmMasterProductMatch.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    clearAuthenticatedUser(authTestState);
+  });
+
+  it("8a. shows authoritative supplierName as the Supplier field", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...sampleInvoice, supplierId: "sup-dentco", supplierName: "DentalCo Australia", supplierNameRaw: "DentalCo Australia" },
+      lines: [],
+    });
+
+    renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading invoice data…")).not.toBeInTheDocument();
+    });
+
+    // "Supplier" dt label is present in the summary card.
+    const supplierLabel = screen.getByText("Supplier");
+    expect(supplierLabel).toBeInTheDocument();
+    // Authoritative name appears (at least in summary dd, possibly also in heading).
+    expect(screen.getAllByText("DentalCo Australia").length).toBeGreaterThan(0);
+  });
+
+  it("8b. shows 'Detected on invoice' when supplierName differs from supplierNameRaw", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: {
+        ...sampleInvoice,
+        supplierId: "sup-supplier-test",
+        supplierName: "Supplier Test",
+        supplierNameRaw: "ADAM DENTAL supplies",
+      },
+      lines: [],
+    });
+
+    renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading invoice data…")).not.toBeInTheDocument();
+    });
+
+    // Authoritative name shown in summary (may appear in both heading and dd).
+    expect(screen.getAllByText("Supplier Test").length).toBeGreaterThan(0);
+    // OCR evidence shown separately.
+    expect(screen.getByText(/Detected on invoice/i)).toBeInTheDocument();
+    expect(screen.getByText("ADAM DENTAL supplies")).toBeInTheDocument();
+  });
+
+  it("8c. no 'Detected on invoice' row when supplier names match", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: {
+        ...sampleInvoice,
+        supplierName: "ADAM DENTAL supplies",
+        supplierNameRaw: "ADAM DENTAL supplies",
+      },
+      lines: [],
+    });
+
+    renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading invoice data…")).not.toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/Detected on invoice/i)).not.toBeInTheDocument();
+  });
+
+  it("8d. falls back to supplierNameRaw when supplierName is null", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...sampleInvoice, supplierName: null, supplierNameRaw: "ADAM DENTAL supplies" },
+      lines: [],
+    });
+
+    renderReviewPage();
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading invoice data…")).not.toBeInTheDocument();
+    });
+
+    // Raw name is shown; no separate "Detected on invoice" row when supplierName is null.
+    expect(screen.getAllByText("ADAM DENTAL supplies").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Detected on invoice/i)).not.toBeInTheDocument();
+  });
+
+  it("8e. page heading uses supplierName over supplierNameRaw when both differ", async () => {
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: {
+        ...sampleInvoice,
+        supplierName: "Supplier Test",
+        supplierNameRaw: "ADAM DENTAL supplies",
+      },
+      lines: [],
+    });
+
+    renderReviewPage();
+
+    await screen.findByRole("heading", { name: "Supplier Test" });
+    expect(screen.queryByRole("heading", { name: "ADAM DENTAL supplies" })).not.toBeInTheDocument();
   });
 });

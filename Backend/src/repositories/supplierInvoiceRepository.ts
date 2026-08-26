@@ -116,6 +116,39 @@ export interface SupplierInvoiceRepository {
 
   removeLinesForInvoice(clinicId: string, invoiceId: string): Promise<void>;
 
+  /**
+   * Clears automatic supplier-dependent line matches when the invoice supplier
+   * changes.  Only `exact_sku` matches are supplier-dependent and are cleared.
+   * Supplier-independent matches (`name_match`) and explicit human matches
+   * (`manual`) are preserved.
+   *
+   * Returns the number of lines whose match was cleared.
+   */
+  clearSupplierDependentAutoMatches(
+    clinicId: string,
+    invoiceId: string,
+  ): Promise<number>;
+
+  /**
+   * Atomically applies ALL patch fields AND clears supplier-dependent
+   * `exact_sku` auto-matches in a SINGLE database transaction.
+   *
+   * Use this instead of calling `updateSupplierInvoice` + `clearSupplierDependentAutoMatches`
+   * separately when `supplierId` is changing, so that a failure to clear
+   * stale matches cannot leave the invoice in a contradictory state.
+   *
+   * Returns the updated invoice (including the `supplierName` JOIN), or null
+   * if the invoice was not found.
+   *
+   * On non-Postgres backends (in-memory), the two operations run sequentially
+   * without true rollback — the transactional guarantee is Postgres-only.
+   */
+  atomicUpdateSupplierAndClearMatches(
+    clinicId: string,
+    invoiceId: string,
+    patch: UpdateSupplierInvoiceInput,
+  ): Promise<SupplierInvoice | null>;
+
   // ── Supplier catalogue pricing upsert ─────────────────────────────────────
 
   upsertSupplierCataloguePrice(
@@ -156,6 +189,7 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         id: randomUUID(),
         clinicId: input.clinicId,
         supplierId: input.supplierId,
+        supplierName: null,
         supplierNameRaw: input.supplierNameRaw,
         invoiceNumber: input.invoiceNumber,
         invoiceDate: input.invoiceDate,
@@ -571,6 +605,44 @@ export function createInMemorySupplierInvoiceRepository(): SupplierInvoiceReposi
         catalogueId,
         oldUnitCostCents: existing?.unitCostCents ?? null,
       });
+    },
+
+    // ── Supplier-dependent match invalidation ────────────────────────────────
+
+    clearSupplierDependentAutoMatches(
+      clinicId: string,
+      invoiceId: string,
+    ): Promise<number> {
+      let cleared = 0;
+      for (const line of lines) {
+        if (
+          line.clinicId === clinicId &&
+          line.supplierInvoiceId === invoiceId &&
+          line.isMatched &&
+          line.matchMethod === "exact_sku"
+        ) {
+          line.isMatched = false;
+          line.matchMethod = null;
+          line.masterCatalogItemId = null;
+          line.supplierCatalogueId = null;
+          line.updatedAt = new Date();
+          cleared++;
+        }
+      }
+      return Promise.resolve(cleared);
+    },
+
+    // In-memory: the two operations run sequentially (no real transaction).
+    // Transactional rollback is a Postgres-only guarantee.
+    async atomicUpdateSupplierAndClearMatches(
+      clinicId: string,
+      invoiceId: string,
+      patch: UpdateSupplierInvoiceInput,
+    ): Promise<SupplierInvoice | null> {
+      const updated = await this.updateSupplierInvoice(clinicId, invoiceId, patch);
+      if (!updated) return null;
+      await this.clearSupplierDependentAutoMatches(clinicId, invoiceId);
+      return updated;
     },
 
     // ── Price history ─────────────────────────────────────────────────────────

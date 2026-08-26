@@ -18,11 +18,12 @@ const ACCEPTED_EXTENSIONS = ".pdf,.png,.jpg,.jpeg";
 // ── Phase types ──────────────────────────────────────────────────────────────
 
 type UploadPhase =
-  | "select"          // Initial: choose mode + file
-  | "uploading"       // OCR processing in progress
-  | "detection"       // Show supplier detection result
-  | "choose_existing" // User picks existing supplier from dropdown
-  | "attaching";      // PATCH invoice supplier_id in progress
+  | "select"             // Initial: choose mode + file
+  | "uploading"          // OCR processing in progress
+  | "detection"          // Show supplier detection result
+  | "supplier_mismatch"  // Manual mode: OCR detected a different supplier
+  | "choose_existing"    // User picks existing supplier from dropdown
+  | "attaching";         // PATCH invoice supplier_id in progress
 
 type SupplierMode = "manual" | "auto_detect";
 
@@ -284,6 +285,74 @@ function DetectionPanel({
   );
 }
 
+// ── Supplier mismatch panel ───────────────────────────────────────────────────
+
+type SupplierMismatchPanelProps = {
+  /** The supplier the user chose before uploading (Supplier A). */
+  selectedSupplierName: string;
+  /** The supplier OCR confidently detected on the invoice (Supplier B). */
+  detectedSupplierName: string;
+  onUseDetected: () => void;
+  onKeepSelected: () => void;
+  onCancel: () => void;
+  actionError: string | null;
+};
+
+function SupplierMismatchPanel({
+  selectedSupplierName,
+  detectedSupplierName,
+  onUseDetected,
+  onKeepSelected,
+  onCancel,
+  actionError,
+}: SupplierMismatchPanelProps) {
+  return (
+    <div className="supplier-detection">
+      <div className="supplier-detection__badge supplier-detection__badge--mismatch">
+        Supplier mismatch detected
+      </div>
+      <dl className="supplier-detection__fields">
+        <div className="supplier-detection__field">
+          <dt>Uploaded under</dt>
+          <dd><strong>{selectedSupplierName}</strong></dd>
+        </div>
+        <div className="supplier-detection__field">
+          <dt>Detected on invoice</dt>
+          <dd><strong>{detectedSupplierName}</strong></dd>
+        </div>
+      </dl>
+      <p className="supplier-detection__hint">
+        The invoice appears to belong to a different supplier. Choose which
+        supplier should own this invoice before continuing.
+      </p>
+      {actionError ? (
+        <div className="upload-error-banner" role="alert">
+          <strong>Error:</strong> {actionError}
+        </div>
+      ) : null}
+      <div className="supplier-form__actions supplier-form__actions--column">
+        <button
+          type="button"
+          className="supplier-form__submit"
+          onClick={onUseDetected}
+        >
+          Use {detectedSupplierName}
+        </button>
+        <button
+          type="button"
+          className="supplier-form__secondary"
+          onClick={onKeepSelected}
+        >
+          Keep {selectedSupplierName}
+        </button>
+        <button type="button" className="supplier-form__cancel" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main modal ─────────────────────────────────────────────────────────────────
 
 type Props = {
@@ -421,7 +490,23 @@ export function UploadInvoiceModal({
       const result = await apiClient.uploadSupplierInvoice(clinicId, selectedFile);
 
       if (mode === "manual") {
-        // Manual mode: attach the explicitly selected supplier, then navigate.
+        // A. SUPPLIER MISMATCH UX
+        // If OCR confidently matched a DIFFERENT supplier from the one the
+        // user selected, show the mismatch dialog instead of silently PATCHing.
+        // This prevents an invoice from being silently assigned to the wrong
+        // supplier with stale product-line matches intact.
+        const detectedSupplierId = result.matchedSupplier?.id ?? null;
+        const mismatchDetected =
+          detectedSupplierId !== null &&
+          detectedSupplierId !== selectedSupplierId;
+
+        if (mismatchDetected) {
+          setUploadResult(result);
+          setPhase("supplier_mismatch");
+          return;
+        }
+
+        // No mismatch: attach the explicitly selected supplier, then navigate.
         await attachSupplierAndContinue(result, selectedSupplierId);
         return;
       }
@@ -482,6 +567,33 @@ export function UploadInvoiceModal({
     setActionError(null);
   }
 
+  // ── Supplier mismatch resolution ──────────────────────────────────────────
+
+  /** B. USE DETECTED SUPPLIER B — the invoice is already under Supplier B; no PATCH needed. */
+  function handleMismatchUseDetected(): void {
+    if (!uploadResult) return;
+    // The invoice was created with the OCR-matched supplier_id — navigate directly.
+    onUploadSuccess(uploadResult);
+  }
+
+  /** C. KEEP SELECTED SUPPLIER A — PATCH to Supplier A; backend clears stale matches. */
+  async function handleMismatchKeepSelected(): Promise<void> {
+    if (!uploadResult) return;
+    setPhase("attaching");
+    setActionError(null);
+    try {
+      const patched = await apiClient.updateSupplierInvoice(
+        clinicId,
+        uploadResult.invoice.id,
+        { supplierId: selectedSupplierId },
+      );
+      onUploadSuccess({ ...uploadResult, invoice: patched.invoice });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to attach supplier.");
+      setPhase("supplier_mismatch");
+    }
+  }
+
   // ── Derived state ──────────────────────────────────────────────────────────
 
   const activeSupplier = suppliers.find((s) => s.id === selectedSupplierId);
@@ -524,6 +636,18 @@ export function UploadInvoiceModal({
           <ProgressCard activeStep={activeStep} />
         ) : phase === "attaching" ? (
           <AttachingSpinner />
+        ) : phase === "supplier_mismatch" && uploadResult?.matchedSupplier ? (
+          <SupplierMismatchPanel
+            selectedSupplierName={
+              suppliers.find((s) => s.id === selectedSupplierId)?.supplierName ??
+              selectedSupplierId
+            }
+            detectedSupplierName={uploadResult.matchedSupplier.supplierName}
+            onUseDetected={handleMismatchUseDetected}
+            onKeepSelected={() => { void handleMismatchKeepSelected(); }}
+            onCancel={onClose}
+            actionError={actionError}
+          />
         ) : phase === "detection" && uploadResult ? (
           <DetectionPanel
             status={uploadResult.supplierMatchStatus}

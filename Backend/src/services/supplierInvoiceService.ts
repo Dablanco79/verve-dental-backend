@@ -653,7 +653,26 @@ export function createSupplierInvoiceService(
     }
     assertPendingReview(existing);
 
-    const updated = await repo.updateSupplierInvoice(clinicId, invoiceId, patch);
+    // D. BACKEND AUTHORITATIVE SAFEGUARD
+    // When supplier_id changes, both the header update AND the stale-match
+    // invalidation must run inside ONE database transaction so that a partial
+    // failure cannot leave the invoice in a contradictory state (supplier_id
+    // updated but exact_sku matches from the old supplier surviving).
+    //
+    // `exact_sku` matches are supplier-dependent (supplier_catalogue-scoped).
+    // `name_match` and `manual` matches are supplier-independent: preserved.
+    const supplierIsChanging =
+      patch.supplierId !== undefined &&
+      patch.supplierId !== existing.supplierId;
+
+    let updated: SupplierInvoice | null;
+    if (supplierIsChanging) {
+      // Atomic path: header update + match invalidation in one transaction.
+      // All patch fields (supplierId, invoiceNumber, etc.) are applied together.
+      updated = await repo.atomicUpdateSupplierAndClearMatches(clinicId, invoiceId, patch);
+    } else {
+      updated = await repo.updateSupplierInvoice(clinicId, invoiceId, patch);
+    }
     if (!updated) {
       throw new AppError(404, "NOT_FOUND", "Supplier invoice not found");
     }
@@ -759,6 +778,51 @@ export function createSupplierInvoiceService(
     for (const line of lines) {
       if (line.reviewDecision === "skip") skippedLineIds.add(line.id);
       if (line.reviewDecision === "create_product") readyToCreateLineIds.add(line.id);
+    }
+
+    // F. CONFIRM IMPORT SAFETY — defensive supplier-match consistency guard.
+    // The backend supplier-change invalidation (D) makes this state unreachable
+    // going forward.  This guard catches pre-existing inconsistencies where an
+    // exact_sku line was derived under a different supplier than the one now
+    // assigned to the invoice.
+    //
+    // Match-method semantics:
+    //   exact_sku  — supplier-dependent (supplier_catalogue scoped) → verify
+    //   name_match — supplier-independent (global exact name)        → skip check
+    //   manual     — explicit human choice                           → skip check
+    //
+    // Only non-skipped, non-create-product lines are verified because:
+    //   - Skipped lines are excluded from import entirely.
+    //   - create_product lines will produce a new master item — they do not
+    //     rely on the existing masterCatalogItemId.
+    {
+      const staleLines: string[] = [];
+      for (const line of lines) {
+        if (
+          skippedLineIds.has(line.id) ||
+          readyToCreateLineIds.has(line.id) ||
+          !line.isMatched ||
+          line.matchMethod !== "exact_sku" ||
+          line.masterCatalogItemId === null ||
+          line.ocrSku === null
+        ) {
+          continue;
+        }
+        const check = await supplierCatalogueRepo.findSupplierProductBySupplierSku(
+          confirmedSupplierId,
+          line.ocrSku,
+        );
+        if (!check || check.productId !== line.masterCatalogItemId) {
+          staleLines.push(`"${line.ocrDescription.slice(0, 60)}"`);
+        }
+      }
+      if (staleLines.length > 0) {
+        throw new AppError(
+          422,
+          "STALE_SUPPLIER_MATCH",
+          `Cannot confirm: ${String(staleLines.length)} line(s) have supplier-scoped auto-matches that are inconsistent with the current supplier (${confirmedSupplierId}). Re-open the invoice to re-evaluate these lines before confirming: ${staleLines.join(", ")}.`,
+        );
+      }
     }
 
     // Validate every operational cost before confirmation performs any product,
@@ -1275,6 +1339,7 @@ export function createSupplierInvoiceService(
         id: updatedRow.id,
         clinicId: updatedRow.clinic_id,
         supplierId: updatedRow.supplier_id,
+        supplierName: null,
         supplierNameRaw: updatedRow.supplier_name_raw,
         invoiceNumber: updatedRow.invoice_number,
         invoiceDate: updatedRow.invoice_date,
