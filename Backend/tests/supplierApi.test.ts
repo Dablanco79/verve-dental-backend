@@ -26,6 +26,8 @@ type Supplier = {
   email: string | null;
   phone: string | null;
   website: string | null;
+  abn: string | null;
+  address: string | null;
   notes: string | null;
   active: boolean;
   createdAt: string;
@@ -493,5 +495,167 @@ describe("PATCH /api/v1/suppliers/:supplierId — update Sprint 4C metadata", ()
     expect(found?.supplierCategory).toBe("Orthodontics");
     expect(found?.verified).toBe(true);
     expect(found?.countryCode).toBe("AU");
+  });
+});
+
+// ─── Website normalisation ────────────────────────────────────────────────────
+
+describe("POST /api/v1/suppliers — website normalisation", () => {
+  it("1. normalises bare www.domain.com to https://www.domain.com", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Normalise WWW Test", website: "www.piksters.com" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.website).toBe("https://www.piksters.com");
+  });
+
+  it("2. normalises bare domain.com to https://domain.com", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Normalise Bare Domain Test", website: "piksters.com" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.website).toBe("https://piksters.com");
+  });
+
+  it("3. leaves https://www.piksters.com unchanged", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Https Unchanged Test", website: "https://www.piksters.com" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.website).toBe("https://www.piksters.com");
+  });
+
+  it("4. rejects obviously malformed website input (no dot, not a domain)", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Malformed Website Test", website: "not a website at all" });
+
+    expect(res.status).toBe(400);
+    const body = res.body as ApiError;
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("5. allows null/missing website", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "No Website Test" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.website).toBeNull();
+  });
+
+  it("website normalisation also applies on PATCH update", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Patch Website Normalise Test" });
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ website: "oral-care.com.au" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<Supplier>).data.website).toBe("https://oral-care.com.au");
+  });
+});
+
+// ─── ABN duplicate protection ─────────────────────────────────────────────────
+
+describe("POST /api/v1/suppliers — ABN duplicate protection", () => {
+  it("8. duplicate normalised ABN returns 409 DUPLICATE_ABN with existing supplier details", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    // Create the first supplier with ABN
+    const first = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Piksters Pty Ltd", abn: "81 056 223 897" });
+    expect(first.status).toBe(201);
+    const firstId = (first.body as ApiData<Supplier>).data.id;
+
+    // Attempt to create a second supplier with the same ABN
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Erskine Oral Care", abn: "81 056 223 897" });
+
+    expect(res.status).toBe(409);
+    const body = res.body as ApiError & { error: { details?: Array<{ field: string; message: string }> } };
+    expect(body.error.code).toBe("DUPLICATE_ABN");
+    expect(body.error.message).toContain("81 056 223 897");
+    const details = body.error.details ?? [];
+    const supplierIdDetail = details.find((d) => d.field === "existingSupplierId");
+    const supplierNameDetail = details.find((d) => d.field === "existingSupplierName");
+    expect(supplierIdDetail?.message).toBe(firstId);
+    expect(supplierNameDetail?.message).toBe("Piksters Pty Ltd");
+  });
+
+  it("9. differently formatted equivalent ABNs are treated as identical", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    // Create with spaced ABN
+    const first = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "ABN Format Test A", abn: "81 056 223 897" });
+    expect(first.status).toBe(201);
+
+    // Attempt with no-space ABN (should normalise to same value)
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "ABN Format Test B", abn: "81056223897" });
+
+    expect(res.status).toBe(409);
+    expect((res.body as ApiError).error.code).toBe("DUPLICATE_ABN");
+  });
+
+  it("10. no ABN allows normal supplier creation", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "No ABN Supplier" });
+
+    expect(res.status).toBe(201);
+    const body = res.body as ApiData<Supplier>;
+    expect(body.data.supplierName).toBe("No ABN Supplier");
+    expect(body.data.abn).toBeNull();
   });
 });

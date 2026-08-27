@@ -30,13 +30,44 @@ const supplierMetadataFields = {
   isPublic: z.boolean().optional(),
 };
 
+/**
+ * Normalise a raw website value to a full URL before Zod validates it.
+ *
+ * - Already has an http(s):// scheme → returned unchanged.
+ * - Looks like a bare domain (no whitespace, contains a dot, TLD ≥ 2 chars)
+ *   → prepends "https://".
+ * - Blank / null / undefined → mapped to null/undefined so .nullable() /
+ *   .optional() allows it through.
+ * - Anything else (no dot, spaces, obviously malformed) → returned as-is so
+ *   that z.string().url() produces the appropriate validation error.
+ */
+function normaliseWebsite(raw: unknown): unknown {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  // Non-string input is passed through unchanged; z.string() will reject it.
+  if (typeof raw !== "string") return raw;
+  const s = raw.trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  // Bare domain heuristic: no whitespace, at least one dot, TLD is ≥ 2 chars.
+  if (/^[^\s]+\.[^\s]{2,}$/.test(s)) return `https://${s}`;
+  // Not a recognisable domain — let z.string().url() reject it.
+  return s;
+}
+
+// Shared website field: normalises bare domains before URL validation.
+const websiteField = z.preprocess(
+  normaliseWebsite,
+  z.string().url("Website must be a valid URL (e.g. www.example.com or https://example.com)").nullable().optional(),
+);
+
 const createSupplierBodySchema = z.object({
   supplierName: z.string().min(1, "supplierName is required").max(200),
   supplierCode: z.string().max(50).nullable().optional(),
   contactName: z.string().max(200).nullable().optional(),
   email: z.string().email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
-  website: z.string().url("Invalid URL").nullable().optional(),
+  website: websiteField,
   abn: z.string().max(20).nullable().optional(),
   address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
@@ -49,7 +80,7 @@ const updateSupplierBodySchema = z.object({
   contactName: z.string().max(200).nullable().optional(),
   email: z.string().email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
-  website: z.string().url("Invalid URL").nullable().optional(),
+  website: websiteField,
   abn: z.string().max(20).nullable().optional(),
   address: z.string().max(500).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),

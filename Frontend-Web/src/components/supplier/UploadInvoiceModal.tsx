@@ -145,6 +145,14 @@ type DetectionPanelProps = {
   onChooseExisting: () => void;
   onCancel: () => void;
   actionError: string | null;
+  /**
+   * Set when Create Supplier & Continue returns a DUPLICATE_ABN conflict.
+   * Allows the user to attach the invoice to the existing supplier instead of
+   * creating a duplicate.
+   */
+  duplicateAbnSupplierId?: string | null;
+  duplicateAbnSupplierName?: string | null;
+  onUseDuplicateAbnSupplier?: () => void;
 };
 
 function DetectionPanel({
@@ -156,6 +164,9 @@ function DetectionPanel({
   onChooseExisting,
   onCancel,
   actionError,
+  duplicateAbnSupplierId,
+  duplicateAbnSupplierName,
+  onUseDuplicateAbnSupplier,
 }: DetectionPanelProps) {
   if (status === "matched" && matched) {
     return (
@@ -219,6 +230,12 @@ function DetectionPanel({
               <dd>{detected.phone}</dd>
             </div>
           ) : null}
+          {detected.website ? (
+            <div className="supplier-detection__field">
+              <dt>Website</dt>
+              <dd>{detected.website}</dd>
+            </div>
+          ) : null}
           {detected.address ? (
             <div className="supplier-detection__field">
               <dt>Address</dt>
@@ -239,6 +256,15 @@ function DetectionPanel({
           >
             Create Supplier &amp; Continue
           </button>
+          {duplicateAbnSupplierId ? (
+            <button
+              type="button"
+              className="supplier-form__submit"
+              onClick={onUseDuplicateAbnSupplier}
+            >
+              Use {duplicateAbnSupplierName ?? "existing supplier"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="supplier-form__secondary"
@@ -384,6 +410,10 @@ export function UploadInvoiceModal({
   const [isDragging, setIsDragging] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
 
+  // Set when Create Supplier & Continue returns a DUPLICATE_ABN conflict.
+  const [duplicateAbnSupplierId, setDuplicateAbnSupplierId] = useState<string | null>(null);
+  const [duplicateAbnSupplierName, setDuplicateAbnSupplierName] = useState<string | null>(null);
+
   // Upload result held during the detection/choose steps.
   const [uploadResult, setUploadResult] = useState<UploadAndExtractResult | null>(null);
 
@@ -455,12 +485,19 @@ export function UploadInvoiceModal({
     setPhase("attaching");
     setActionError(null);
     try {
-      const patched = await apiClient.updateSupplierInvoice(
+      await apiClient.updateSupplierInvoice(
         clinicId,
         result.invoice.id,
         { supplierId },
       );
-      onUploadSuccess({ ...result, invoice: patched.invoice });
+      // Re-fetch authoritative invoice + lines after supplier ownership is
+      // established.  Mirrors handleMismatchKeepSelected — backend state is
+      // authoritative after any supplier identity change.  Without this
+      // re-fetch the review page would initialise from stale upload-time
+      // lines (e.g. exact_sku matches derived under a previously matched
+      // supplier that the backend has since cleared).
+      const refreshed = await apiClient.getSupplierInvoice(clinicId, result.invoice.id);
+      onUploadSuccess({ ...result, invoice: refreshed.invoice, lines: refreshed.lines });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to attach supplier.");
       setPhase("detection");
@@ -544,11 +581,36 @@ export function UploadInvoiceModal({
       });
       await attachSupplierAndContinue(uploadResult, newSupplier.id);
     } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : "Failed to create supplier.",
-      );
+      if (err instanceof Error) {
+        // Duck-type ApiRequestError to extract structured error fields.
+        const apiErr = err as Error & {
+          code?: string | null;
+          details?: Array<{ field: string; message: string }>;
+        };
+        if (apiErr.code === "DUPLICATE_ABN") {
+          const existingSupplierId =
+            apiErr.details?.find((d) => d.field === "existingSupplierId")?.message ?? null;
+          const existingSupplierName =
+            apiErr.details?.find((d) => d.field === "existingSupplierName")?.message ?? null;
+          if (existingSupplierId) {
+            setDuplicateAbnSupplierId(existingSupplierId);
+            setDuplicateAbnSupplierName(existingSupplierName);
+            setActionError(err.message);
+            setPhase("detection");
+            return;
+          }
+        }
+        setActionError(err.message);
+      } else {
+        setActionError("Failed to create supplier.");
+      }
       setPhase("detection");
     }
+  }
+
+  function handleUseDuplicateAbnSupplier(): void {
+    if (!uploadResult || !duplicateAbnSupplierId) return;
+    void attachSupplierAndContinue(uploadResult, duplicateAbnSupplierId);
   }
 
   function handleChooseExisting(): void {
@@ -676,6 +738,9 @@ export function UploadInvoiceModal({
             onChooseExisting={handleChooseExisting}
             onCancel={onClose}
             actionError={actionError}
+            duplicateAbnSupplierId={duplicateAbnSupplierId}
+            duplicateAbnSupplierName={duplicateAbnSupplierName}
+            onUseDuplicateAbnSupplier={handleUseDuplicateAbnSupplier}
           />
         ) : phase === "choose_existing" ? (
           /* ── Choose existing supplier after detection ── */

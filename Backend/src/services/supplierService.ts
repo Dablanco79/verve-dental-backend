@@ -64,6 +64,25 @@ export function createSupplierService(
         }
       }
 
+      // ABN duplicate check — prevents creating a phantom supplier when an
+      // existing supplier already has the same normalised ABN.  No UNIQUE DB
+      // constraint exists yet (deferred pending a production-data audit), so
+      // this enforces uniqueness at the service layer instead.
+      if (input.abn) {
+        const existingByAbn = await supplierRepository.findSupplierByAbn(input.abn);
+        if (existingByAbn) {
+          throw new AppError(
+            409,
+            "DUPLICATE_ABN",
+            `An existing supplier already uses ABN ${input.abn.trim()}: ${existingByAbn.supplierName}`,
+            [
+              { field: "existingSupplierId", message: existingByAbn.id },
+              { field: "existingSupplierName", message: existingByAbn.supplierName },
+            ],
+          );
+        }
+      }
+
       validateMetadataFields(input);
 
       const supplier = await supplierRepository.createSupplier(input);

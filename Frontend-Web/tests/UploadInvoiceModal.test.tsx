@@ -912,4 +912,274 @@ describe("UploadInvoiceModal", () => {
 
     resolveUpload(matchedUploadResult);
   });
+
+  // ── Website normalisation & display ──────────────────────────────────────────
+
+  it("34. needs_confirmation: detected website is displayed in the New Supplier panel", async () => {
+    // Test 6 from requirements: detected website visible to reviewer.
+    const user = userEvent.setup();
+    const baseDetected = needsConfirmationResult.detectedSupplier;
+    expect(baseDetected).not.toBeNull();
+    if (!baseDetected) return;
+    const resultWithWebsite: UploadAndExtractResult = {
+      ...needsConfirmationResult,
+      detectedSupplier: {
+        ...baseDetected,
+        website: "www.piksters.com",
+      },
+    };
+    mockUploadSupplierInvoice.mockResolvedValue(resultWithWebsite);
+
+    renderModal({ autoDetect: true });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    expect(screen.getByText("Website")).toBeInTheDocument();
+    expect(screen.getByText("www.piksters.com")).toBeInTheDocument();
+  });
+
+  it("35. needs_confirmation: Create Supplier & Continue succeeds with a bare-domain OCR website (frontend passes through, backend normalises)", async () => {
+    // Test 7 from requirements: bare domain does not cause frontend to fail.
+    const user = userEvent.setup();
+    const baseDetected = needsConfirmationResult.detectedSupplier;
+    expect(baseDetected).not.toBeNull();
+    if (!baseDetected) return;
+    const resultWithBareDomain: UploadAndExtractResult = {
+      ...needsConfirmationResult,
+      detectedSupplier: {
+        ...baseDetected,
+        website: "www.piksters.com",
+      },
+    };
+    mockUploadSupplierInvoice.mockResolvedValue(resultWithBareDomain);
+    const newSupplier = { ...burDirect, id: "sup-piksters", supplierName: "Henry Schein Pty Ltd" };
+    mockCreateSupplier.mockResolvedValue(newSupplier);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: { ...resultWithBareDomain.invoice, supplierId: newSupplier.id },
+      duplicateInvoiceNumberWarning: null,
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ autoDetect: true, onUploadSuccess });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    await user.click(screen.getByRole("button", { name: /Create Supplier/i }));
+
+    // createSupplier is called with the bare-domain website exactly as received from OCR.
+    await waitFor(() => {
+      expect(mockCreateSupplier).toHaveBeenCalledWith(
+        expect.objectContaining({ website: "www.piksters.com" }),
+      );
+    });
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+  });
+
+  // ── ABN duplicate protection (frontend) ──────────────────────────────────────
+
+  it("36. needs_confirmation: DUPLICATE_ABN error shows message and 'Use existing supplier' button", async () => {
+    // Test 8 from requirements: duplicate ABN prevents silent creation.
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(needsConfirmationResult);
+
+    const dupAbnError = Object.assign(
+      new Error("An existing supplier already uses ABN 98 765 432 109: DentalCo Australia"),
+      {
+        code: "DUPLICATE_ABN",
+        details: [
+          { field: "existingSupplierId", message: "sup-1111" },
+          { field: "existingSupplierName", message: "DentalCo Australia" },
+        ],
+      },
+    );
+    mockCreateSupplier.mockRejectedValue(dupAbnError);
+
+    renderModal({ autoDetect: true });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    await user.click(screen.getByRole("button", { name: /Create Supplier/i }));
+
+    // Error message displayed.
+    await screen.findByText(/An existing supplier already uses ABN/i);
+    // "Use DentalCo Australia" button appears.
+    expect(screen.getByRole("button", { name: /Use DentalCo Australia/i })).toBeInTheDocument();
+    // No new supplier was created on the server.
+    expect(mockUpdateSupplierInvoice).not.toHaveBeenCalled();
+  });
+
+  it("37. needs_confirmation: clicking 'Use existing supplier' attaches invoice via PATCH and re-fetches", async () => {
+    // Test 12+13 from requirements: choose-existing path re-fetches authoritative lines.
+    const user = userEvent.setup();
+    mockUploadSupplierInvoice.mockResolvedValue(needsConfirmationResult);
+
+    const dupAbnError = Object.assign(
+      new Error("An existing supplier already uses ABN 98 765 432 109: DentalCo Australia"),
+      {
+        code: "DUPLICATE_ABN",
+        details: [
+          { field: "existingSupplierId", message: "sup-1111" },
+          { field: "existingSupplierName", message: "DentalCo Australia" },
+        ],
+      },
+    );
+    mockCreateSupplier.mockRejectedValue(dupAbnError);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: { ...needsConfirmationResult.invoice, supplierId: "sup-1111" },
+      duplicateInvoiceNumberWarning: null,
+    });
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...needsConfirmationResult.invoice, supplierId: "sup-1111" },
+      lines: [],
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ autoDetect: true, onUploadSuccess });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    await user.click(screen.getByRole("button", { name: /Create Supplier/i }));
+    await screen.findByRole("button", { name: /Use DentalCo Australia/i });
+    await user.click(screen.getByRole("button", { name: /Use DentalCo Australia/i }));
+
+    // PATCH called with the existing supplier's ID.
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        needsConfirmationResult.invoice.id,
+        expect.objectContaining({ supplierId: "sup-1111" }),
+      );
+    });
+    // Re-fetch called after PATCH.
+    await waitFor(() => {
+      expect(mockGetSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        needsConfirmationResult.invoice.id,
+      );
+    });
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+    // Authoritative supplier in forwarded result.
+    const [result] = onUploadSuccess.mock.calls[0] as [UploadAndExtractResult];
+    expect(result.invoice.supplierId).toBe("sup-1111");
+    // No second upload.
+    expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Authoritative re-fetch after new-supplier creation ──────────────────────
+
+  it("38. Create Supplier & Continue re-fetches authoritative invoice + lines after PATCH", async () => {
+    // Test 11+13+14 from requirements: new-supplier path re-fetches and does
+    // NOT forward stale upload-time lines.
+    const user = userEvent.setup();
+
+    // Upload result has a stale matched line (simulates OCR matching under a
+    // previously detected supplier).
+    const resultWithStaleLine: UploadAndExtractResult = {
+      ...needsConfirmationResult,
+      lines: [fb215MatchedLine],
+    };
+    mockUploadSupplierInvoice.mockResolvedValue(resultWithStaleLine);
+
+    const newSupplier = { ...burDirect, id: "sup-new-99", supplierName: "Henry Schein Pty Ltd" };
+    mockCreateSupplier.mockResolvedValue(newSupplier);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: { ...resultWithStaleLine.invoice, supplierId: "sup-new-99" },
+      duplicateInvoiceNumberWarning: null,
+    });
+    // Backend re-fetch returns the cleared line state.
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...resultWithStaleLine.invoice, supplierId: "sup-new-99" },
+      lines: [fb215ClearedLine],
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ autoDetect: true, onUploadSuccess });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    await user.click(screen.getByRole("button", { name: /Create Supplier/i }));
+
+    // PATCH called.
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        resultWithStaleLine.invoice.id,
+        expect.objectContaining({ supplierId: "sup-new-99" }),
+      );
+    });
+    // Re-fetch called after PATCH.
+    await waitFor(() => {
+      expect(mockGetSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        resultWithStaleLine.invoice.id,
+      );
+    });
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+
+    const [result] = onUploadSuccess.mock.calls[0] as [UploadAndExtractResult];
+    // Refreshed — stale exact_sku match cleared.
+    expect(result.lines[0]?.isMatched).toBe(false);
+    expect(result.lines[0]?.matchMethod).toBeNull();
+    // Stale upload-time line NOT forwarded.
+    expect(result.lines[0]?.matchMethod).not.toBe("exact_sku");
+  });
+
+  it("39. Choose Existing Supplier re-fetches authoritative invoice + lines after PATCH", async () => {
+    // Test 12+13 from requirements: choose-existing path also re-fetches.
+    const user = userEvent.setup();
+
+    const resultWithStaleLine: UploadAndExtractResult = {
+      ...needsConfirmationResult,
+      lines: [fb215MatchedLine],
+    };
+    mockUploadSupplierInvoice.mockResolvedValue(resultWithStaleLine);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: { ...resultWithStaleLine.invoice, supplierId: dentalCo.id },
+      duplicateInvoiceNumberWarning: null,
+    });
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...resultWithStaleLine.invoice, supplierId: dentalCo.id },
+      lines: [fb215ClearedLine],
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ suppliers: [dentalCo, burDirect], autoDetect: true, onUploadSuccess });
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/New supplier detected/i);
+    await user.click(screen.getByRole("button", { name: "Choose Existing Supplier" }));
+
+    await screen.findByRole("combobox");
+    await user.click(screen.getByRole("button", { name: "Confirm Supplier" }));
+
+    // PATCH called with existing supplier.
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoice).toHaveBeenCalledTimes(1);
+    });
+    // Re-fetch called.
+    await waitFor(() => {
+      expect(mockGetSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        resultWithStaleLine.invoice.id,
+      );
+    });
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+
+    const [result] = onUploadSuccess.mock.calls[0] as [UploadAndExtractResult];
+    // Refreshed lines forwarded — stale exact_sku cleared.
+    expect(result.lines[0]?.isMatched).toBe(false);
+    expect(result.lines[0]?.matchMethod).toBeNull();
+  });
 });

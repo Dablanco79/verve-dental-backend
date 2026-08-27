@@ -62,6 +62,9 @@ export type ApiErrorBody = {
   error: {
     code: string;
     message: string;
+    requestId?: string;
+    /** Field-level details returned by the backend for structured errors. */
+    details?: Array<{ field: string; message: string }>;
   };
 };
 

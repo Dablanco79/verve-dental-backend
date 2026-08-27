@@ -232,12 +232,20 @@ const SESSION_EXPIRED_EVENT = "verve:session-expired";
 class ApiRequestError extends Error {
   readonly status: number;
   readonly code: string | null;
+  /** Field-level details forwarded from the backend error response. */
+  readonly details: Array<{ field: string; message: string }>;
 
-  constructor(message: string, status: number, code: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    code: string | null,
+    details: Array<{ field: string; message: string }> = [],
+  ) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -312,6 +320,7 @@ async function request<T>(
     const errorBody = await parseJson<ApiErrorBody>(response).catch(() => null);
     const message = errorBody?.error.message ?? `Request failed (${String(response.status)})`;
     const code = errorBody?.error.code ?? null;
+    const details = errorBody?.error.details ?? [];
 
     if (response.status === 401 && accessToken && !options.skipAuthRetry) {
       // MFA-specific 401 codes are credential errors (wrong/expired TOTP code),
@@ -320,7 +329,7 @@ async function request<T>(
       // issue is that the user's authenticator code timed out.
       const mfaErrorCodes = new Set(["INVALID_MFA_CODE", "MFA_REQUIRED"]);
       if (code !== null && mfaErrorCodes.has(code)) {
-        throw new ApiRequestError(message, response.status, code);
+        throw new ApiRequestError(message, response.status, code, details);
       }
 
       try {
@@ -333,7 +342,7 @@ async function request<T>(
       }
     }
 
-    throw new ApiRequestError(message, response.status, code);
+    throw new ApiRequestError(message, response.status, code, details);
   }
 
   if (response.status === 204) {
