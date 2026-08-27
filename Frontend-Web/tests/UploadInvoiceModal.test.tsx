@@ -46,7 +46,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UploadInvoiceModal } from "../src/components/supplier/UploadInvoiceModal.js";
-import type { Supplier, UploadAndExtractResult } from "../src/types/supplier.js";
+import type { Supplier, SupplierInvoiceLine, UploadAndExtractResult } from "../src/types/supplier.js";
 import { TEST_CLINIC_ID } from "./helpers/auth.js";
 
 // ── Mock API client ───────────────────────────────────────────────────────────
@@ -54,10 +54,12 @@ import { TEST_CLINIC_ID } from "./helpers/auth.js";
 const {
   mockUploadSupplierInvoice,
   mockUpdateSupplierInvoice,
+  mockGetSupplierInvoice,
   mockCreateSupplier,
 } = vi.hoisted(() => ({
   mockUploadSupplierInvoice: vi.fn(),
   mockUpdateSupplierInvoice: vi.fn(),
+  mockGetSupplierInvoice: vi.fn(),
   mockCreateSupplier: vi.fn(),
 }));
 
@@ -65,6 +67,7 @@ vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     uploadSupplierInvoice: mockUploadSupplierInvoice,
     updateSupplierInvoice: mockUpdateSupplierInvoice,
+    getSupplierInvoice: mockGetSupplierInvoice,
     createSupplier: mockCreateSupplier,
     getHealth: vi.fn(),
     login: vi.fn(),
@@ -241,6 +244,58 @@ const notDetectedResult: UploadAndExtractResult = {
   relationshipExists: null,
 };
 
+// ── Realistic stale-line fixtures (regression: invoice 1043916) ───────────────
+//
+// The original mismatchUploadResult uses lines:[] and therefore never exposed
+// the stale-lines defect: when OCR auto-matches an exact_sku line under Supplier
+// B at upload time, "Keep Supplier A" must NOT forward those stale isMatched=true
+// lines to the review page after the backend has cleared them.
+
+/** FB215 Frostbite line as it appears in the upload response — auto-matched under Adam Dental. */
+const fb215MatchedLine: SupplierInvoiceLine = {
+  id: "line-fb215",
+  invoiceId: "inv-aaaa",
+  lineNumber: 1,
+  ocrDescription: "ADM Frostbite Cryogenic Tooth Vitality Test Spray A-CLASS DANGEROUS GOODS",
+  ocrSku: "FB215",
+  quantity: 1,
+  unitPriceCents: 8500,
+  priceIncludesTax: false,
+  discountBasisPoints: 0,
+  lineTotalCents: 9350,
+  taxRateBasisPoints: 1000,
+  taxCents: 850,
+  supplierLineTotalCents: 9350,
+  masterCatalogItemId: "master-frostbite-001",
+  masterProductName: "ADM Frostbite Cryogenic Tooth Vitality Test Spray",
+  supplierCatalogueId: "cat-adam-dental-fb215",
+  isMatched: true,
+  matchMethod: "exact_sku",
+  reviewDecision: null,
+  productCreationData: null,
+  createdAt: "2026-08-27T00:00:00.000Z",
+  updatedAt: "2026-08-27T00:00:00.000Z",
+};
+
+/** The same FB215 line as returned by the backend AFTER atomicUpdateSupplierAndClearMatches clears the match. */
+const fb215ClearedLine: SupplierInvoiceLine = {
+  ...fb215MatchedLine,
+  isMatched: false,
+  matchMethod: null,
+  masterCatalogItemId: null,
+  supplierCatalogueId: null,
+};
+
+/**
+ * Mismatch result containing the realistic FB215 exact_sku match — the defect
+ * was invisible in mismatchUploadResult because its lines array is empty.
+ * This fixture mirrors what the backend returns for invoice 1043916.
+ */
+const mismatchUploadResultWithMatchedLine: UploadAndExtractResult = {
+  ...mismatchUploadResult,
+  lines: [fb215MatchedLine],
+};
+
 function makePdfFile(name = "invoice.pdf"): File {
   return new File(["dummy content"], name, { type: "application/pdf" });
 }
@@ -283,7 +338,16 @@ describe("UploadInvoiceModal", () => {
   beforeEach(() => {
     mockUploadSupplierInvoice.mockReset();
     mockUpdateSupplierInvoice.mockReset();
+    mockGetSupplierInvoice.mockReset();
     mockCreateSupplier.mockReset();
+    // Default re-fetch: returns a valid empty-lines result so that tests which
+    // exercise handleMismatchKeepSelected without caring about line refresh
+    // do not fail on an unresolved mock.  Individual tests override this to
+    // assert specific line-state scenarios.
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: makeSampleInvoice("sup-1111"),
+      lines: [],
+    });
   });
 
   // ── Rendering ────────────────────────────────────────────────────────────────
@@ -758,6 +822,76 @@ describe("UploadInvoiceModal", () => {
 
     await waitFor(() => { expect(mockUpdateSupplierInvoice).toHaveBeenCalled(); });
     // Upload must have been called exactly once — no duplicate record creation.
+    expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
+  });
+
+  it("33. mismatch: Keep Supplier A re-fetches authoritative backend state; stale exact_sku line is NOT forwarded to review", async () => {
+    // Regression test for production invoice 1043916.
+    // The original mismatchUploadResult has lines:[] so it never exposed this
+    // defect.  This test uses a realistic fixture where FB215 was auto-matched
+    // under Adam Dental (Supplier B) at upload time.
+    //
+    // After "Keep BurDirect" (Supplier A):
+    //   1. PATCH fires → backend atomically clears the exact_sku match.
+    //   2. getSupplierInvoice fires → returns the cleared line state.
+    //   3. onUploadSuccess receives cleared lines (isMatched=false, not stale isMatched=true).
+    const user = userEvent.setup();
+
+    mockUploadSupplierInvoice.mockResolvedValue(mismatchUploadResultWithMatchedLine);
+    mockUpdateSupplierInvoice.mockResolvedValue({
+      invoice: { ...mismatchUploadResultWithMatchedLine.invoice, supplierId: burDirect.id },
+      duplicateInvoiceNumberWarning: null,
+    });
+    // Backend re-fetch returns the same line with match cleared.
+    mockGetSupplierInvoice.mockResolvedValue({
+      invoice: { ...mismatchUploadResultWithMatchedLine.invoice, supplierId: burDirect.id },
+      lines: [fb215ClearedLine],
+    });
+
+    const onUploadSuccess = vi.fn();
+    renderModal({ suppliers: [dentalCo, burDirect], defaultSupplierId: burDirect.id, onUploadSuccess });
+
+    const input = document.querySelector("input[type=file]") as HTMLInputElement;
+    await user.upload(input, makePdfFile());
+    await user.click(screen.getByRole("button", { name: "Upload & Process" }));
+
+    await screen.findByText(/Supplier mismatch detected/i);
+    await user.click(screen.getByRole("button", { name: /Keep BurDirect/i }));
+
+    // 1. Supplier PATCH was called with Supplier A (BurDirect).
+    await waitFor(() => {
+      expect(mockUpdateSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        mismatchUploadResultWithMatchedLine.invoice.id,
+        expect.objectContaining({ supplierId: burDirect.id }),
+      );
+    });
+
+    // 2. Backend re-fetch was called AFTER the PATCH.
+    await waitFor(() => {
+      expect(mockGetSupplierInvoice).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        mismatchUploadResultWithMatchedLine.invoice.id,
+      );
+    });
+
+    // 3 & 4. onUploadSuccess receives refreshed lines — NOT the stale upload lines.
+    await waitFor(() => { expect(onUploadSuccess).toHaveBeenCalled(); });
+    const [result] = onUploadSuccess.mock.calls[0] as [UploadAndExtractResult];
+
+    expect(result.lines).toHaveLength(1);
+    // Refreshed: match cleared.
+    expect(result.lines[0]?.isMatched).toBe(false);
+    expect(result.lines[0]?.matchMethod).toBeNull();
+    expect(result.lines[0]?.masterCatalogItemId).toBeNull();
+    expect(result.lines[0]?.supplierCatalogueId).toBeNull();
+    // Stale exact_sku match must NOT be present.
+    expect(result.lines[0]?.matchMethod).not.toBe("exact_sku");
+
+    // 5. Supplier A (BurDirect) is the authoritative invoice supplier.
+    expect(result.invoice.supplierId).toBe(burDirect.id);
+
+    // 6. No second upload.
     expect(mockUploadSupplierInvoice).toHaveBeenCalledTimes(1);
   });
 

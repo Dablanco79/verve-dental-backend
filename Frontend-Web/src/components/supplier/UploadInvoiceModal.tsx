@@ -582,12 +582,30 @@ export function UploadInvoiceModal({
     setPhase("attaching");
     setActionError(null);
     try {
-      const patched = await apiClient.updateSupplierInvoice(
+      await apiClient.updateSupplierInvoice(
         clinicId,
         uploadResult.invoice.id,
         { supplierId: selectedSupplierId },
       );
-      onUploadSuccess({ ...uploadResult, invoice: patched.invoice });
+      // Re-fetch the authoritative invoice + lines after the supplier change.
+      //
+      // The PATCH calls atomicUpdateSupplierAndClearMatches on the backend,
+      // which clears supplier-dependent exact_sku matches inside one transaction.
+      // However, the PATCH response contains only the updated invoice header —
+      // not the lines.  Without this re-fetch, the review page would initialise
+      // from stale upload-time lines that still have isMatched=true /
+      // matchMethod="exact_sku" even though the DB has already cleared them.
+      //
+      // Backend state is authoritative after a supplier identity change.
+      const refreshed = await apiClient.getSupplierInvoice(
+        clinicId,
+        uploadResult.invoice.id,
+      );
+      onUploadSuccess({
+        ...uploadResult,
+        invoice: refreshed.invoice,
+        lines: refreshed.lines,
+      });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to attach supplier.");
       setPhase("supplier_mismatch");
