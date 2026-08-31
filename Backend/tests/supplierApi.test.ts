@@ -658,4 +658,117 @@ describe("POST /api/v1/suppliers — ABN duplicate protection", () => {
     expect(body.data.supplierName).toBe("No ABN Supplier");
     expect(body.data.abn).toBeNull();
   });
+
+  it("11. hyphenated ABN is treated as identical to the spaced/compact form", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const first = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Hyphen ABN Test A", abn: "81 056 223 897" });
+    expect(first.status).toBe(201);
+
+    const res = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Hyphen ABN Test B", abn: "81-056-223-897" });
+
+    expect(res.status).toBe(409);
+    expect((res.body as ApiError).error.code).toBe("DUPLICATE_ABN");
+  });
+});
+
+// ─── ABN duplicate protection on UPDATE ────────────────────────────────────────
+
+describe("PATCH /api/v1/suppliers/:id — ABN duplicate protection", () => {
+  it("12. updating a supplier's ABN persists the new value correctly", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "ABN Update Test" });
+    expect(created.status).toBe(201);
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ abn: "81 056 223 897" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<Supplier>).data.abn).toBe("81 056 223 897");
+  });
+
+  it("13. updating ABN to another supplier's equivalent normalised ABN returns 409", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    // Create two suppliers
+    const first = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Owner Of ABN", abn: "81 056 223 897" });
+    expect(first.status).toBe(201);
+
+    const second = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Would Be Duplicate" });
+    expect(second.status).toBe(201);
+    const secondId = (second.body as ApiData<Supplier>).data.id;
+
+    // Attempt to PATCH the second supplier to use the same ABN (different format)
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${secondId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ abn: "81056223897" });
+
+    expect(res.status).toBe(409);
+    expect((res.body as ApiError).error.code).toBe("DUPLICATE_ABN");
+  });
+
+  it("14. supplier does not conflict with its own unchanged ABN on update", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Self ABN Test", abn: "81 056 223 897" });
+    expect(created.status).toBe(201);
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    // Patching other fields while ABN is unchanged — must not conflict with self
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Self ABN Test Updated", abn: "81 056 223 897" });
+
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<Supplier>).data.supplierName).toBe("Self ABN Test Updated");
+    expect((res.body as ApiData<Supplier>).data.abn).toBe("81 056 223 897");
+  });
+
+  it("15. clearing ABN to null on update is allowed", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ supplierName: "Clear ABN Test", abn: "81 056 223 897" });
+    expect(created.status).toBe(201);
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    const res = await request(app)
+      .patch(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ abn: null });
+
+    expect(res.status).toBe(200);
+    expect((res.body as ApiData<Supplier>).data.abn).toBeNull();
+  });
 });

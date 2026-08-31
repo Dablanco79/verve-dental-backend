@@ -370,6 +370,85 @@ describe("SuppliersPage", () => {
     expect(screen.getByRole("button", { name: "+ New Supplier" })).toBeInTheDocument();
   });
 
+  it("create modal accepts and sends ABN", async () => {
+    const user = userEvent.setup();
+    const newSupplier: Supplier = {
+      ...dentalCo,
+      id: "sup-abn-test",
+      supplierName: "ABN Supplier",
+      abn: "81 056 223 897",
+    };
+    mockCreateSupplier.mockResolvedValue(newSupplier);
+
+    renderSuppliersPage();
+
+    await screen.findByText("DentalCo Australia");
+
+    await user.click(screen.getByRole("button", { name: "+ New Supplier" }));
+
+    await user.type(screen.getByPlaceholderText("e.g. DentalCo Australia"), "ABN Supplier");
+    await user.type(screen.getByPlaceholderText("e.g. 81 056 223 897"), "81 056 223 897");
+
+    await user.click(screen.getByRole("button", { name: "Create Supplier" }));
+
+    await waitFor(() => {
+      expect(mockCreateSupplier).toHaveBeenCalledWith(
+        expect.objectContaining({ abn: "81 056 223 897" }),
+      );
+    });
+  });
+
+  it("create modal accepts and sends Address", async () => {
+    const user = userEvent.setup();
+    const newSupplier: Supplier = {
+      ...dentalCo,
+      id: "sup-addr-test",
+      supplierName: "Address Supplier",
+      address: "123 Main St, Sydney NSW 2000",
+    };
+    mockCreateSupplier.mockResolvedValue(newSupplier);
+
+    renderSuppliersPage();
+
+    await screen.findByText("DentalCo Australia");
+
+    await user.click(screen.getByRole("button", { name: "+ New Supplier" }));
+
+    await user.type(screen.getByPlaceholderText("e.g. DentalCo Australia"), "Address Supplier");
+    await user.type(
+      screen.getByPlaceholderText("e.g. 123 Main St, Sydney NSW 2000"),
+      "123 Main St, Sydney NSW 2000",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Create Supplier" }));
+
+    await waitFor(() => {
+      expect(mockCreateSupplier).toHaveBeenCalledWith(
+        expect.objectContaining({ address: "123 Main St, Sydney NSW 2000" }),
+      );
+    });
+  });
+
+  it("create modal omits null ABN when field is left blank", async () => {
+    const user = userEvent.setup();
+    mockCreateSupplier.mockResolvedValue({ ...dentalCo, id: "sup-no-abn", supplierName: "No ABN" });
+
+    renderSuppliersPage();
+
+    await screen.findByText("DentalCo Australia");
+
+    await user.click(screen.getByRole("button", { name: "+ New Supplier" }));
+    await user.type(screen.getByPlaceholderText("e.g. DentalCo Australia"), "No ABN");
+
+    await user.click(screen.getByRole("button", { name: "Create Supplier" }));
+
+    await waitFor(() => {
+      expect(mockCreateSupplier).toHaveBeenCalledWith(
+        expect.objectContaining({ abn: null }),
+      );
+    });
+  });
+
   // ── Edit supplier ────────────────────────────────────────────────────────────
 
   it("shows Edit button for manager/admin but not for clinical_staff", async () => {

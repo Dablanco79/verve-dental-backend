@@ -129,6 +129,18 @@ function SupplierOverview({ supplier }: { supplier: Supplier }) {
             </dd>
           </div>
         ) : null}
+        {supplier.abn ? (
+          <div className="supplier-detail__overview-item">
+            <dt>ABN</dt>
+            <dd>{supplier.abn}</dd>
+          </div>
+        ) : null}
+        {supplier.address ? (
+          <div className="supplier-detail__overview-item supplier-detail__overview-item--full">
+            <dt>Address</dt>
+            <dd>{supplier.address}</dd>
+          </div>
+        ) : null}
         {supplier.notes ? (
           <div className="supplier-detail__overview-item supplier-detail__overview-item--full">
             <dt>Notes</dt>

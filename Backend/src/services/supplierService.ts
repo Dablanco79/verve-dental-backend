@@ -114,6 +114,23 @@ export function createSupplierService(
         }
       }
 
+      // ABN duplicate check (exclude self) — mirrors createSupplier's check.
+      // Clearing ABN to null is always allowed; only non-null values are checked.
+      if (input.abn) {
+        const existingByAbn = await supplierRepository.findSupplierByAbn(input.abn);
+        if (existingByAbn && existingByAbn.id !== supplierId) {
+          throw new AppError(
+            409,
+            "DUPLICATE_ABN",
+            `An existing supplier already uses ABN ${input.abn.trim()}: ${existingByAbn.supplierName}`,
+            [
+              { field: "existingSupplierId", message: existingByAbn.id },
+              { field: "existingSupplierName", message: existingByAbn.supplierName },
+            ],
+          );
+        }
+      }
+
       validateMetadataFields(input);
 
       const supplier = await supplierRepository.updateSupplier(

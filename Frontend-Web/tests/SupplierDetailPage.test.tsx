@@ -191,6 +191,47 @@ describe("SupplierDetailPage", () => {
     expect(screen.getByText("DCO")).toBeInTheDocument();
   });
 
+  it("renders ABN when supplier has an ABN", async () => {
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, abn: "81 056 223 897" });
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.getByText("ABN")).toBeInTheDocument();
+    expect(screen.getByText("81 056 223 897")).toBeInTheDocument();
+  });
+
+  it("does not render ABN row when abn is null", async () => {
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, abn: null });
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.queryByText("ABN")).not.toBeInTheDocument();
+  });
+
+  it("renders Address when supplier has an address", async () => {
+    mockGetSupplier.mockResolvedValue({
+      ...sampleSupplier,
+      address: "1 Dental Drive, Sydney NSW 2000",
+    });
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.getByText("Address")).toBeInTheDocument();
+    expect(screen.getByText("1 Dental Drive, Sydney NSW 2000")).toBeInTheDocument();
+  });
+
+  it("does not render Address row when address is null", async () => {
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, address: null });
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+
+    expect(screen.queryByText("Address")).not.toBeInTheDocument();
+  });
+
   it("renders active status badge", async () => {
     renderDetailPage();
 
@@ -362,6 +403,80 @@ describe("SupplierDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "DentalCo Pty Ltd" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("edit modal pre-populates ABN when supplier has one", async () => {
+    const user = userEvent.setup();
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, abn: "81 056 223 897" });
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    expect(screen.getByDisplayValue("81 056 223 897")).toBeInTheDocument();
+  });
+
+  it("edit modal pre-populates Address when supplier has one", async () => {
+    const user = userEvent.setup();
+    mockGetSupplier.mockResolvedValue({
+      ...sampleSupplier,
+      address: "1 Dental Drive, Sydney NSW 2000",
+    });
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    expect(screen.getByDisplayValue("1 Dental Drive, Sydney NSW 2000")).toBeInTheDocument();
+  });
+
+  it("edit modal sends updated ABN in PATCH body", async () => {
+    const user = userEvent.setup();
+    const updated: Supplier = { ...sampleSupplier, abn: "81 056 223 897" };
+    mockUpdateSupplier.mockResolvedValue(updated);
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    const abnInput = screen.getByPlaceholderText("e.g. 81 056 223 897");
+    await user.type(abnInput, "81 056 223 897");
+
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplier).toHaveBeenCalledWith(
+        SUPPLIER_ID,
+        expect.objectContaining({ abn: "81 056 223 897" }),
+      );
+    });
+  });
+
+  it("edit modal sends abn: null when ABN field is cleared", async () => {
+    const user = userEvent.setup();
+    mockGetSupplier.mockResolvedValue({ ...sampleSupplier, abn: "81 056 223 897" });
+    const updated: Supplier = { ...sampleSupplier, abn: null };
+    mockUpdateSupplier.mockResolvedValue(updated);
+
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    const abnInput = screen.getByDisplayValue("81 056 223 897");
+    await user.clear(abnInput);
+
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSupplier).toHaveBeenCalledWith(
+        SUPPLIER_ID,
+        expect.objectContaining({ abn: null }),
+      );
+    });
   });
 
   // ── Deactivate / reactivate ──────────────────────────────────────────────────

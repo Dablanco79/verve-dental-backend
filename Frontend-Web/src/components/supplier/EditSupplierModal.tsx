@@ -19,6 +19,8 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
   const [email, setEmail] = useState(supplier.email ?? "");
   const [phone, setPhone] = useState(supplier.phone ?? "");
   const [website, setWebsite] = useState(supplier.website ?? "");
+  const [abn, setAbn] = useState(supplier.abn ?? "");
+  const [address, setAddress] = useState(supplier.address ?? "");
   const [notes, setNotes] = useState(supplier.notes ?? "");
   const [active, setActive] = useState(supplier.active);
   // Sprint 4C metadata
@@ -61,6 +63,8 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
       email: email.trim() || null,
       phone: phone.trim() || null,
       website: website.trim() || null,
+      abn: abn.trim() || null,
+      address: address.trim() || null,
       notes: notes.trim() || null,
       active,
       legalName: legalName.trim() || null,
@@ -199,6 +203,36 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
                 setWebsite(e.target.value);
               }}
               placeholder="https://..."
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">ABN</span>
+            <input
+              type="text"
+              className="supplier-form__control"
+              value={abn}
+              onChange={(e) => {
+                setAbn(e.target.value);
+              }}
+              maxLength={20}
+              placeholder="e.g. 81 056 223 897"
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">Address</span>
+            <textarea
+              className="supplier-form__control supplier-form__textarea"
+              value={address}
+              onChange={(e) => {
+                setAddress(e.target.value);
+              }}
+              maxLength={500}
+              rows={2}
+              placeholder="e.g. 123 Main St, Sydney NSW 2000"
               disabled={submitting}
             />
           </label>

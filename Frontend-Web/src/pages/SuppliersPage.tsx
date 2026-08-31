@@ -155,6 +155,8 @@ function CreateSupplierModal({ onClose, onCreated }: CreateModalProps) {
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [abn, setAbn] = useState("");
+  const [address, setAddress] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,6 +175,8 @@ function CreateSupplierModal({ onClose, onCreated }: CreateModalProps) {
       contactName: contactName.trim() || null,
       email: email.trim() || null,
       phone: phone.trim() || null,
+      abn: abn.trim() || null,
+      address: address.trim() || null,
     };
 
     setSubmitting(true);
@@ -278,6 +282,36 @@ function CreateSupplierModal({ onClose, onCreated }: CreateModalProps) {
               }}
               maxLength={50}
               placeholder="e.g. 1800 123 456"
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">ABN</span>
+            <input
+              type="text"
+              className="supplier-form__control"
+              value={abn}
+              onChange={(e) => {
+                setAbn(e.target.value);
+              }}
+              maxLength={20}
+              placeholder="e.g. 81 056 223 897"
+              disabled={submitting}
+            />
+          </label>
+
+          <label className="supplier-form__field">
+            <span className="supplier-form__label">Address</span>
+            <textarea
+              className="supplier-form__control supplier-form__textarea"
+              value={address}
+              onChange={(e) => {
+                setAddress(e.target.value);
+              }}
+              maxLength={500}
+              rows={2}
+              placeholder="e.g. 123 Main St, Sydney NSW 2000"
               disabled={submitting}
             />
           </label>
