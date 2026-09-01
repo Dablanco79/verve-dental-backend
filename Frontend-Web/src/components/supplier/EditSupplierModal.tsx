@@ -99,7 +99,7 @@ export function EditSupplierModal({ supplier, onClose, onSaved }: EditSupplierMo
       aria-modal="true"
       aria-labelledby="edit-supplier-modal-title"
     >
-      <div className="supplier-modal">
+      <div className="supplier-modal supplier-modal--scrollable">
         <div className="supplier-modal__header">
           <h2 className="supplier-modal__title" id="edit-supplier-modal-title">
             Edit Supplier

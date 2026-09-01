@@ -479,6 +479,34 @@ describe("SupplierDetailPage", () => {
     });
   });
 
+  // ── Edit modal viewport overflow protection ──────────────────────────────────
+
+  it("edit modal carries supplier-modal--scrollable class for viewport overflow protection", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".supplier-modal--scrollable")).not.toBeNull();
+  });
+
+  it("edit modal contains all expected fields and both action buttons", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await screen.findByRole("heading", { name: "DentalCo Australia" });
+    await user.click(screen.getByRole("button", { name: "Edit Supplier" }));
+
+    // Core identity fields
+    expect(screen.getByPlaceholderText("e.g. 81 056 223 897")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("e.g. 123 Main St, Sydney NSW 2000")).toBeInTheDocument();
+    // Action footer always present
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeInTheDocument();
+  });
+
   // ── Deactivate / reactivate ──────────────────────────────────────────────────
 
   it("shows Deactivate Supplier button for active supplier (manager)", async () => {

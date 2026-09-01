@@ -202,7 +202,7 @@ function CreateSupplierModal({ onClose, onCreated }: CreateModalProps) {
       aria-modal="true"
       aria-labelledby="create-supplier-modal-title"
     >
-      <div className="supplier-modal">
+      <div className="supplier-modal supplier-modal--scrollable">
         <div className="supplier-modal__header">
           <h2 className="supplier-modal__title" id="create-supplier-modal-title">
             New Supplier

@@ -4827,6 +4827,45 @@ body {
   color: #102a43;
 }
 
+/* ── Scrollable tall-form modal ────────────────────────────────────────────── */
+/*
+ * Applied to supplier forms that exceed typical viewport heights (Edit Supplier,
+ * New Supplier).  The modal header stays pinned; the form body scrolls; the
+ * action buttons are sticky at the bottom so they remain reachable at all times.
+ * Other modal variants (confirm, upload) are not affected.
+ */
+.supplier-modal--scrollable {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* vh fallback first, then dvh for browsers that support it (accounts for
+     mobile toolbars); on desktop pilot both resolve identically. */
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+}
+
+.supplier-modal--scrollable .supplier-modal__header {
+  flex-shrink: 0;
+  padding: 1.75rem 1.75rem 0;
+  margin-bottom: 0;
+}
+
+.supplier-modal--scrollable .supplier-form {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 1.25rem 1.75rem 0;
+}
+
+.supplier-modal--scrollable .supplier-form__actions {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  padding: 0.75rem 0 1.5rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid #e4edf5;
+}
+
 /* ── Upload Invoice Modal ──────────────────────────────────────────────────── */
 
 .supplier-modal--upload {

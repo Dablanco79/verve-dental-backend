@@ -449,6 +449,32 @@ describe("SuppliersPage", () => {
     });
   });
 
+  // ── New Supplier modal viewport overflow protection ──────────────────────────
+
+  it("new supplier modal carries supplier-modal--scrollable class for viewport overflow protection", async () => {
+    const user = userEvent.setup();
+    renderSuppliersPage();
+
+    await screen.findByText("DentalCo Australia");
+    await user.click(screen.getByRole("button", { name: "+ New Supplier" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".supplier-modal--scrollable")).not.toBeNull();
+  });
+
+  it("new supplier modal contains ABN, Address fields and both action buttons", async () => {
+    const user = userEvent.setup();
+    renderSuppliersPage();
+
+    await screen.findByText("DentalCo Australia");
+    await user.click(screen.getByRole("button", { name: "+ New Supplier" }));
+
+    expect(screen.getByPlaceholderText("e.g. 81 056 223 897")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("e.g. 123 Main St, Sydney NSW 2000")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Supplier" })).toBeInTheDocument();
+  });
+
   // ── Edit supplier ────────────────────────────────────────────────────────────
 
   it("shows Edit button for manager/admin but not for clinical_staff", async () => {
