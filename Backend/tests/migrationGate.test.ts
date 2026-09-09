@@ -378,9 +378,9 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("045_supplier_invoice_line_financial_truth is the last migration", () => {
+  it("046_supplier_catalogue_sku_exclusive is the last migration", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("045_supplier_invoice_line_financial_truth");
+    expect(ids[ids.length - 1]).toBe("046_supplier_catalogue_sku_exclusive");
   });
 
   it("detects stocktake migrations as pending on a pre-stocktake database", async () => {
