@@ -2903,6 +2903,39 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         'Supplier-stated line total exactly as extracted from the invoice (invoice financial truth). May be incl-GST or ex-GST depending on supplier presentation. NULL when not provided.';
     `,
   },
+  {
+    /**
+     * Supplier catalogue SKU exclusivity index — defence-in-depth.
+     *
+     * The application-layer `confirmSkuMappingExclusive` repository method
+     * already enforces: at most ONE active authoritative supplier_catalogue row
+     * per (supplier_id, normalised non-empty supplier_sku).
+     *
+     * This partial unique index enforces the same invariant at the database level,
+     * preventing concurrent or external processes from creating duplicate active
+     * SKU mappings.
+     *
+     * Normalisation: lower(supplier_sku) — consistent with findSupplierProductBySupplierSku
+     * and the existing idx_supplier_catalogue_supplier_sku performance index.
+     * Empty-string SKUs are excluded (supplier_sku != '') alongside NULLs so that
+     * description-only catalogue rows (no SKU) are unaffected.
+     *
+     * ⚠️  PRODUCTION SAFETY:
+     * This index will fail to create if duplicate active mappings already exist
+     * for any (supplier_id, lower(supplier_sku)) combination.
+     * Before applying to production, run the detection query in the implementation
+     * report.  If duplicates are found, manually deactivate the non-authoritative
+     * rows before running this migration.
+     */
+    id: "046_supplier_catalogue_sku_exclusive",
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_catalogue_sku_exclusive_active
+        ON supplier_catalogue (supplier_id, lower(supplier_sku))
+        WHERE supplier_sku IS NOT NULL
+          AND supplier_sku != ''
+          AND active = true;
+    `,
+  },
 ];
 
 /**

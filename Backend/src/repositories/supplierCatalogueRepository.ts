@@ -52,6 +52,28 @@ export interface SupplierCatalogueRepository {
     record: SupplierProduct;
     created: boolean;
   }>;
+
+  /**
+   * Atomically confirms a supplier SKU → Master Product mapping as the
+   * EXCLUSIVE authoritative relationship for that (supplier, normalised SKU).
+   *
+   * When `input.supplierSku` is non-null and non-empty:
+   *   1. Deactivates any other active `supplier_catalogue` rows that share the
+   *      same supplier and normalised SKU but point to a DIFFERENT Master Product.
+   *   2. Upserts the new/updated mapping for (supplierId, productId).
+   *   Both operations run in a single atomic transaction.
+   *
+   * Guarantees: after this call at most ONE active row exists for the
+   * (supplier, normalised-non-empty-SKU) combination.
+   *
+   * When `input.supplierSku` is null or empty the method behaves identically
+   * to `upsertSupplierProduct` — no SKU-based deactivation is performed.
+   */
+  confirmSkuMappingExclusive(input: CreateSupplierProductInput): Promise<{
+    record: SupplierProduct;
+    created: boolean;
+    deactivatedConflicts: number;
+  }>;
 }
 
 // ─── In-memory implementation ─────────────────────────────────────────────────
@@ -178,6 +200,34 @@ export function createInMemorySupplierCatalogueRepository(): SupplierCatalogueRe
       }
       const created = await this.createSupplierProduct(input);
       return { record: created, created: true };
+    },
+
+    async confirmSkuMappingExclusive(input: CreateSupplierProductInput): Promise<{
+      record: SupplierProduct;
+      created: boolean;
+      deactivatedConflicts: number;
+    }> {
+      const normalizedSku = input.supplierSku?.trim().toLowerCase();
+
+      // Only enforce SKU exclusivity when a non-empty SKU is provided.
+      let deactivatedConflicts = 0;
+      if (normalizedSku) {
+        for (const entry of entries) {
+          if (
+            entry.supplierId === input.supplierId &&
+            entry.supplierSku?.trim().toLowerCase() === normalizedSku &&
+            entry.productId !== input.productId &&
+            entry.active
+          ) {
+            entry.active = false;
+            entry.updatedAt = new Date();
+            deactivatedConflicts++;
+          }
+        }
+      }
+
+      const { record, created } = await this.upsertSupplierProduct(input);
+      return { record, created, deactivatedConflicts };
     },
   };
 }

@@ -221,5 +221,85 @@ export function createPostgresSupplierCatalogueRepository(
         created: row.inserted,
       };
     },
+
+    async confirmSkuMappingExclusive(input: CreateSupplierProductInput): Promise<{
+      record: SupplierProduct;
+      created: boolean;
+      deactivatedConflicts: number;
+    }> {
+      const normalizedSku = input.supplierSku?.trim().toLowerCase();
+
+      // When no SKU is available we cannot enforce SKU-based exclusivity;
+      // fall back to the plain (supplier_id, master_catalog_item_id) upsert.
+      if (!normalizedSku) {
+        const { record, created } = await this.upsertSupplierProduct(input);
+        return { record, created, deactivatedConflicts: 0 };
+      }
+
+      // Use an explicit transaction so the deactivation and upsert are atomic.
+      // supplier_catalogue is not clinic-scoped so withTenantContext is not needed.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // Step 1: Deactivate any active rows for the same (supplier, normalised SKU)
+        // that point to a DIFFERENT Master Product.  These are now superseded by the
+        // human-confirmed mapping about to be written in step 2.
+        const deactivateResult = await client.query<{ id: string }>(
+          `UPDATE supplier_catalogue
+           SET active     = false,
+               updated_at = now()
+           WHERE supplier_id            = $1
+             AND lower(supplier_sku)    = $2
+             AND master_catalog_item_id != $3
+             AND active                 = true
+           RETURNING id`,
+          [input.supplierId, normalizedSku, input.productId],
+        );
+
+        // Step 2: Upsert the authoritative mapping for (supplier_id, master_catalog_item_id).
+        const upsertResult = await client.query<SupplierCatalogueRow>(
+          `INSERT INTO supplier_catalogue
+             (supplier_id, master_catalog_item_id, supplier_sku, supplier_description,
+              unit_cost_cents, unit_of_measure, active)
+           VALUES ($1, $2, $3, $4, $5, $6, true)
+           ON CONFLICT (supplier_id, master_catalog_item_id)
+             WHERE active = true
+           DO UPDATE SET
+             supplier_sku         = EXCLUDED.supplier_sku,
+             supplier_description = EXCLUDED.supplier_description,
+             unit_cost_cents      = EXCLUDED.unit_cost_cents,
+             unit_of_measure      = EXCLUDED.unit_of_measure,
+             updated_at           = now()
+           RETURNING *, (xmax = 0) AS inserted`,
+          [
+            input.supplierId,
+            input.productId,
+            input.supplierSku ?? null,
+            input.supplierDescription ?? null,
+            input.unitCostCents,
+            input.unitOfMeasure ?? null,
+          ],
+        );
+
+        await client.query("COMMIT");
+
+        if (!upsertResult.rows[0]) {
+          throw new Error("confirmSkuMappingExclusive: UPSERT returned no rows");
+        }
+
+        const row = upsertResult.rows[0] as SupplierCatalogueRow & { inserted: boolean };
+        return {
+          record: mapSupplierProduct(row),
+          created: row.inserted,
+          deactivatedConflicts: deactivateResult.rowCount ?? 0,
+        };
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
   };
 }

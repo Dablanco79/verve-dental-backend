@@ -143,7 +143,11 @@ export function createMasterProductMatchHandlers(
         throw new AppError(422, "MATCH_VALIDATION_FAILED", validation.reason);
       }
 
-      const { record, created } = await supplierCatalogueRepository.upsertSupplierProduct({
+      // Use confirmSkuMappingExclusive so that confirming a different Master Product
+      // for the same supplier SKU atomically deactivates the previous conflicting
+      // mapping.  This enforces the invariant: at most one active authoritative
+      // mapping per (supplier, normalised non-empty SKU).
+      const { record, created } = await supplierCatalogueRepository.confirmSkuMappingExclusive({
         supplierId,
         productId: masterProductId,
         supplierSku: supplierSku ?? null,

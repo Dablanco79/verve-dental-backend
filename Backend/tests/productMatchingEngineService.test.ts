@@ -548,3 +548,287 @@ describe("POST /api/v1/master-products/match/confirm — RBAC + behaviour", () =
     expect(body.data).not.toHaveProperty("adjustmentType");
   });
 });
+
+// ─── confirmSkuMappingExclusive — invariant tests ─────────────────────────────
+//
+// All eight tests below run against the in-memory repository so they are
+// environment-independent (no PostgreSQL required).  They prove the invariant:
+//   ONE SUPPLIER + ONE NORMALISED NON-EMPTY SKU = AT MOST ONE ACTIVE MAPPING.
+
+const SUPPLIER_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SUPPLIER_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PRODUCT_BLUE = SEED_MASTER_CATALOG_IDS.nitrileGloves;
+const PRODUCT_BLACK = SEED_MASTER_CATALOG_IDS.diamondBurs;
+const PRODUCT_OTHER = SEED_MASTER_CATALOG_IDS.compositeResin;
+
+describe("confirmSkuMappingExclusive — in-memory repository invariant tests", () => {
+  // Test 1 — Initial confirmed mapping
+  it("TEST 1: creates exactly one active mapping for a fresh SKU", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    const { record, created, deactivatedConflicts } =
+      await repo.confirmSkuMappingExclusive({
+        supplierId: SUPPLIER_A,
+        productId: PRODUCT_BLUE,
+        supplierSku: "ABC123",
+        supplierDescription: null,
+        unitCostCents: 100,
+      });
+
+    expect(created).toBe(true);
+    expect(deactivatedConflicts).toBe(0);
+    expect(record.supplierId).toBe(SUPPLIER_A);
+    expect(record.productId).toBe(PRODUCT_BLUE);
+    expect(record.active).toBe(true);
+
+    // Only one active mapping for this SKU.
+    const all = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(all).toHaveLength(1);
+  });
+
+  // Test 2 — Correction to a different Master Product
+  it("TEST 2: correcting SKU to a different product deactivates the old mapping", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    // Initial mapping: SUPPLIER_A / ABC123 → BLUE
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    // Correction: SUPPLIER_A / ABC123 → BLACK
+    const { record, created, deactivatedConflicts } =
+      await repo.confirmSkuMappingExclusive({
+        supplierId: SUPPLIER_A,
+        productId: PRODUCT_BLACK,
+        supplierSku: "ABC123",
+        supplierDescription: null,
+        unitCostCents: 150,
+      });
+
+    expect(created).toBe(true);
+    expect(deactivatedConflicts).toBe(1); // the BLUE row was deactivated
+    expect(record.productId).toBe(PRODUCT_BLACK);
+    expect(record.active).toBe(true);
+
+    // No active mapping for BLUE remains.
+    const blueMapping = await repo.findSupplierProductByPair(SUPPLIER_A, PRODUCT_BLUE);
+    expect(blueMapping).toBeNull(); // active = false, findByPair filters active = true
+
+    // Future SKU lookup returns BLACK only.
+    const found = await repo.findSupplierProductBySupplierSku(SUPPLIER_A, "ABC123");
+    expect(found).not.toBeNull();
+    if (!found) throw new Error("Expected active mapping");
+    expect(found.productId).toBe(PRODUCT_BLACK);
+
+    // At most one active mapping for this supplier + SKU.
+    const active = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(active).toHaveLength(1);
+  });
+
+  // Test 3 — Reconfirm the same Master Product
+  it("TEST 3: reconfirming the same product does not create a duplicate", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    const { created, deactivatedConflicts } = await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: "Updated description",
+      unitCostCents: 110,
+    });
+
+    expect(created).toBe(false); // updated, not created
+    expect(deactivatedConflicts).toBe(0); // nothing to deactivate
+
+    const all = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(all).toHaveLength(1);
+    expect(all[0]?.supplierDescription).toBe("Updated description");
+    expect(all[0]?.unitCostCents).toBe(110);
+  });
+
+  // Test 4 — Supplier isolation
+  it("TEST 4: different suppliers with the same SKU do not interfere", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_B,
+      productId: PRODUCT_BLACK,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 200,
+    });
+
+    // Both mappings are independently active.
+    const fromA = await repo.findSupplierProductBySupplierSku(SUPPLIER_A, "ABC123");
+    const fromB = await repo.findSupplierProductBySupplierSku(SUPPLIER_B, "ABC123");
+
+    expect(fromA?.productId).toBe(PRODUCT_BLUE);
+    expect(fromB?.productId).toBe(PRODUCT_BLACK);
+
+    // Now correct SUPPLIER_B / ABC123 → OTHER.  SUPPLIER_A must be unaffected.
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_B,
+      productId: PRODUCT_OTHER,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 250,
+    });
+
+    const stillFromA = await repo.findSupplierProductBySupplierSku(SUPPLIER_A, "ABC123");
+    expect(stillFromA?.productId).toBe(PRODUCT_BLUE); // SUPPLIER_A is untouched
+
+    const nowFromB = await repo.findSupplierProductBySupplierSku(SUPPLIER_B, "ABC123");
+    expect(nowFromB?.productId).toBe(PRODUCT_OTHER);
+  });
+
+  // Test 5 — SKU normalisation (case-insensitive)
+  it("TEST 5: SKU case variants are treated as the same mapping — no duplicate active rows", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "abc123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    // Confirm the same SKU in upper-case → different Master Product.
+    const { deactivatedConflicts } = await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLACK,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 150,
+    });
+
+    // The lower-case entry is the conflicting one that gets deactivated.
+    expect(deactivatedConflicts).toBe(1);
+
+    const active = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(active).toHaveLength(1);
+    expect(active[0]?.productId).toBe(PRODUCT_BLACK);
+  });
+
+  // Test 6 — Missing/null SKU does not collapse unrelated no-SKU records
+  it("TEST 6: null/blank SKU falls back to plain upsert — does not deactivate other no-SKU rows", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    // Two description-only (no-SKU) rows for different master products.
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: null,
+      supplierDescription: "Blue gloves",
+      unitCostCents: 100,
+    });
+
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLACK,
+      supplierSku: null,
+      supplierDescription: "Black gloves",
+      unitCostCents: 120,
+    });
+
+    // Both should remain active — null SKU cannot establish exclusivity.
+    const active = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(active).toHaveLength(2);
+    expect(active.every((e) => e.active)).toBe(true);
+  });
+
+  // Test 7 — Undo semantics
+  it("TEST 7: updateSupplierProduct(active=false) does not touch supplier_catalogue; rematch to different product wins", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    // Confirm initial mapping.
+    const { record: initial } = await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    // Simulate "Undo line match": the invoice line is cleared but supplier_catalogue
+    // is NOT touched by Undo — only the invoice line columns change in the
+    // application.  The repository mapping should still be active here.
+    const still = await repo.findSupplierProductBySupplierSku(SUPPLIER_A, "ABC123");
+    expect(still?.id).toBe(initial.id);
+    expect(still?.active).toBe(true);
+
+    // Now the user re-matches to a different product (confirms a correction).
+    const { record: corrected, deactivatedConflicts } =
+      await repo.confirmSkuMappingExclusive({
+        supplierId: SUPPLIER_A,
+        productId: PRODUCT_BLACK,
+        supplierSku: "ABC123",
+        supplierDescription: null,
+        unitCostCents: 150,
+      });
+
+    expect(deactivatedConflicts).toBe(1); // BLUE deactivated
+    expect(corrected.productId).toBe(PRODUCT_BLACK);
+    expect(corrected.active).toBe(true);
+
+    // BLUE is no longer authoritative.
+    const stale = await repo.findSupplierProductByPair(SUPPLIER_A, PRODUCT_BLUE);
+    expect(stale).toBeNull(); // active = false → not returned by findByPair
+  });
+
+  // Test 8 — Exact SKU reuse after correction
+  it("TEST 8: future findSupplierProductBySupplierSku returns only the newly confirmed product after correction", async () => {
+    const repo = createInMemorySupplierCatalogueRepository();
+
+    // First confirmation: ABC123 → BLUE
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLUE,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 100,
+    });
+
+    // Correction: ABC123 → BLACK
+    await repo.confirmSkuMappingExclusive({
+      supplierId: SUPPLIER_A,
+      productId: PRODUCT_BLACK,
+      supplierSku: "ABC123",
+      supplierDescription: null,
+      unitCostCents: 150,
+    });
+
+    // Simulate another invoice arriving with the same supplier SKU (exact-SKU reuse).
+    const found = await repo.findSupplierProductBySupplierSku(SUPPLIER_A, "ABC123");
+    expect(found).not.toBeNull();
+    if (!found) throw new Error("Expected mapping after correction");
+
+    // Must deterministically return BLACK, never BLUE.
+    expect(found.productId).toBe(PRODUCT_BLACK);
+    expect(found.active).toBe(true);
+
+    // Exactly one active mapping.
+    const active = await repo.listSupplierProducts({ supplierId: SUPPLIER_A, active: true });
+    expect(active).toHaveLength(1);
+  });
+});

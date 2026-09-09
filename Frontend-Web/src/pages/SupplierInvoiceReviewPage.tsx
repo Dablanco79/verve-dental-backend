@@ -332,8 +332,9 @@ function LineRow({
                 className="link-button invoice-review__undo-btn"
                 onClick={onUndoLine}
                 disabled={isLinking}
+                title="Clears this line's match. To correct the supplier mapping, undo and re-select the correct product."
               >
-                Undo
+                Undo match
               </button>
             ) : null}
           </div>
@@ -1194,6 +1195,25 @@ export function SupplierInvoiceReviewPage() {
     setLinkingLineId(lineId);
     setMatchError(null);
     try {
+      // Step 1 — Persist the authoritative supplier catalogue mapping FIRST
+      // (only when the invoice has a known supplier).  If this fails the invoice
+      // line is never written as matched and the user sees a clear error.
+      // This prevents the false-positive state where the line appears matched
+      // but the learned supplier mapping was not durably written.
+      //
+      // confirmSkuMappingExclusive on the backend atomically deactivates any
+      // conflicting active mapping for the same supplier + normalised SKU.
+      if (invoice.supplierId) {
+        await apiClient.confirmMasterProductMatch({
+          supplierId: invoice.supplierId,
+          masterProductId,
+          supplierSku: line?.ocrSku ?? undefined,
+          supplierDescription: line?.ocrDescription ?? undefined,
+        });
+      }
+
+      // Step 2 — Only after the catalogue mapping is safely persisted (or when
+      // there is no supplier to write a mapping for), mark the invoice line matched.
       const updated = await apiClient.updateSupplierInvoiceLine(
         effectiveClinicId,
         invoice.id,
@@ -1207,15 +1227,6 @@ export function SupplierInvoiceReviewPage() {
         void _removed;
         return rest;
       });
-      // Write supplier_catalogue mapping immediately so it survives page refresh.
-      if (invoice.supplierId) {
-        void apiClient.confirmMasterProductMatch({
-          supplierId: invoice.supplierId,
-          masterProductId,
-          supplierSku: line?.ocrSku ?? undefined,
-          supplierDescription: line?.ocrDescription ?? undefined,
-        });
-      }
     } catch (err: unknown) {
       setMatchError(err instanceof Error ? err.message : "Could not link this product.");
     } finally {
