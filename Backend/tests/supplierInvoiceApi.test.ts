@@ -108,6 +108,37 @@ describe("Supplier Invoice API", () => {
     expect(body.data.invoice.fileSha256).toHaveLength(64);
   });
 
+  // ── 2b. Clinical staff cannot list invoices (Correction 2) ─────────────────
+  it("returns 403 when clinical_staff tries to list supplier invoices", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const res = await request(app)
+      .get(BASE)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  // ── 2c. Clinical staff cannot read a single invoice (Correction 2) ─────────
+  it("returns 403 when clinical_staff tries to read a supplier invoice by ID", async () => {
+    const app = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // Upload invoice as manager
+    const uploadRes = await uploadInvoice(app, managerToken);
+    expect(uploadRes.status).toBe(201);
+    const invoiceId = (uploadRes.body as ApiData<{ invoice: { id: string } }>).data.invoice.id;
+
+    // clinical_staff must receive 403 on GET /:invoiceId
+    const res = await request(app)
+      .get(`${BASE}/${invoiceId}`)
+      .set("Authorization", `Bearer ${staffToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
   // ── 6. List — empty initially ──────────────────────────────────────────────
   it("returns empty list initially", async () => {
     const app = await createTestApp();

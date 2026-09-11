@@ -152,6 +152,8 @@ describe("AppShell navigation and clinic scope", () => {
     expect(screen.getAllByText(TEST_CLINIC_NAME).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Purchase Orders" })).toBeInTheDocument();
+    // Suppliers nav label includes invoice discoverability
+    expect(screen.getByRole("link", { name: "Suppliers & Invoices" })).toBeInTheDocument();
     expect(mockListClinics).not.toHaveBeenCalled();
   });
 
@@ -166,7 +168,11 @@ describe("AppShell navigation and clinic scope", () => {
     expect(screen.getByRole("link", { name: "My Shifts" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Timesheets" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Leave" })).toBeInTheDocument();
+    // Suppliers & Invoices are not visible to clinical_staff
+    expect(screen.queryByRole("link", { name: "Suppliers & Invoices" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Suppliers" })).not.toBeInTheDocument();
+    // Purchase Orders not visible to clinical_staff
+    expect(screen.queryByRole("link", { name: "Purchase Orders" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Analytics" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Clinic scope" })).not.toBeInTheDocument();
   });

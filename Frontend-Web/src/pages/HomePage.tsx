@@ -14,8 +14,8 @@ import type { UserRole } from "../types/index.js";
 import {
   ROLE_LABELS,
   canManagePayroll,
+  canManageProcurement,
   canManageSuppliers,
-  canManageUsers,
   canViewAnalytics,
 } from "../utils/roles.js";
 
@@ -620,9 +620,6 @@ function OwnerAdminDashboard({
           <h2>Good Morning, {userName} <span aria-hidden="true">👋</span></h2>
           <p>Here&apos;s what&apos;s happening across your clinics today.</p>
         </div>
-        <button type="button" className="executive-hero__brief-button">
-          ✧ AI Morning Brief
-        </button>
       </section>
 
       <section className="executive-kpi-row" aria-label="Executive KPI Row">
@@ -973,7 +970,7 @@ export function HomePage() {
               limit: 50,
             })
           : Promise.resolve([]),
-        canManageUsers(activeUser.role)
+        canManageProcurement(activeUser.role)
           ? apiClient.listPurchaseOrders(activeClinicId)
           : Promise.resolve([]),
         canManagePayroll(activeUser.role)

@@ -134,6 +134,13 @@ export function PilotSetupPage() {
           {isAllClinicsScope ? "All Clinics selected" : selectedClinic?.name ?? user.homeClinicName}.
           Use this guide as an entry order, not as a synthetic completion tracker.
         </p>
+
+        <div className="pilot-setup__note" role="note">
+          <strong>Scanning note:</strong> Inventory (daily usage, receiving) supports phone/tablet
+          camera scanning and USB/Bluetooth barcode scanners. Stocktake uses a manual barcode lookup
+          field — enter a barcode, SKU, or product name, or use a USB/Bluetooth scanner. Camera
+          scanning is not available during Stocktake.
+        </div>
       </section>
     </AppShell>
   );

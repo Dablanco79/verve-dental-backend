@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -524,6 +524,12 @@ export function SuppliersPage() {
 
   if (!user) return null;
 
+  // Supplier management is restricted to owner_admin and group_practice_manager.
+  // clinical_staff must not access supplier data through direct URLs.
+  if (!canManageSuppliers(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+
   const canManage = canManageSuppliers(user.role);
 
   const filteredSuppliers = suppliers.filter((s) => {
@@ -573,11 +579,11 @@ export function SuppliersPage() {
       <section className="status-card">
         <div className="status-card__header">
           <div>
-            <h2>Suppliers</h2>
+            <h2>Suppliers &amp; Invoices</h2>
             <p className="inventory-page__subtitle">
               {isAllClinicsScope
                 ? "Manage the organisation supplier master list. Select a clinic for invoice upload and clinic-specific history."
-                : "Manage supplier records and track clinic procurement relationships"}
+                : "Manage supplier records, upload invoices, and track clinic procurement relationships"}
             </p>
           </div>
           <div className="inventory-page__actions">

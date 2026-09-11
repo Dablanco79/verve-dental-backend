@@ -24,7 +24,7 @@ import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { PurchasingDraftDetail, PurchasingDraftStatus } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
-import { canManageUsers } from "../utils/roles.js";
+import { canManageProcurement } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -126,7 +126,7 @@ export function PurchasingDraftPage() {
   }, [loadDetail]);
 
   if (!user) return null;
-  if (!canManageUsers(user.role)) return <Navigate to="/" replace />;
+  if (!canManageProcurement(user.role)) return <Navigate to="/" replace />;
 
   if (!pdId) return <Navigate to="/purchase-orders" replace />;
 

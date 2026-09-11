@@ -26,8 +26,8 @@ import {
 } from "../utils/inventoryDisplay.js";
 import {
   canManageInventory,
+  canManageProcurement,
   canManageProducts,
-  canManageUsers,
   canViewAdjustmentHistory,
 } from "../utils/roles.js";
 
@@ -353,7 +353,7 @@ export function InventoryPage() {
   }, [categoryFilter, items, supplierFilter, workspaceSearch]);
   const hasActiveWorkspaceFilters =
     workspaceSearch.trim().length > 0 || supplierFilter.length > 0 || categoryFilter.length > 0;
-  const canReviewPurchaseOrders = user ? canManageUsers(user.role) : false;
+  const canReviewPurchaseOrders = user ? canManageProcurement(user.role) : false;
   // Item ID to pre-check in the low-stock queue (set by clicking "Add to Order" on a row).
   const preselectId = searchParams.get("preselect") ?? undefined;
   const itemNameById = useMemo(

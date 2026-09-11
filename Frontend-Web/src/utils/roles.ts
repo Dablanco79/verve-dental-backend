@@ -8,6 +8,16 @@ export function canManageUsers(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
 }
 
+/**
+ * Purchase Orders, Purchasing Drafts, and Low Stock Queue.
+ * clinical_staff may not create, view, or manage procurement workflows.
+ * Note: this intentionally mirrors canManageUsers role set — do not replace
+ * user-management checks (Users, Pilot Setup) with this function.
+ */
+export function canManageProcurement(role: UserRole): boolean {
+  return role === "owner_admin" || role === "group_practice_manager";
+}
+
 export function canManageRoster(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
 }

@@ -307,14 +307,14 @@ describe("SuppliersPage", () => {
     expect(screen.getByRole("button", { name: "+ New Supplier" })).toBeInTheDocument();
   });
 
-  it("hides New Supplier button for clinical_staff role", async () => {
+  it("redirects clinical_staff away from SuppliersPage — no supplier data rendered", () => {
     clearAuthenticatedUser(authTestState);
     setAuthenticatedUser(authTestState, createStaffUser());
 
     renderSuppliersPage();
 
-    await screen.findByText("DentalCo Australia");
-
+    // clinical_staff is redirected to "/" — no supplier content is visible.
+    expect(screen.queryByText("DentalCo Australia")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ New Supplier" })).not.toBeInTheDocument();
   });
 
@@ -489,14 +489,14 @@ describe("SuppliersPage", () => {
     setAuthenticatedUser(authTestState, createStaffUser());
   });
 
-  it("hides Edit buttons for clinical_staff", async () => {
+  it("redirects clinical_staff away — no Edit buttons visible", () => {
     clearAuthenticatedUser(authTestState);
     setAuthenticatedUser(authTestState, createStaffUser());
 
     renderSuppliersPage();
 
-    await screen.findByText("DentalCo Australia");
-
+    // clinical_staff is redirected to "/" — supplier table never renders.
+    expect(screen.queryByText("DentalCo Australia")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
   });
 
@@ -602,14 +602,14 @@ describe("SuppliersPage", () => {
     expect(screen.getByRole("button", { name: "Reactivate" })).toBeInTheDocument();
   });
 
-  it("hides Deactivate/Reactivate buttons for clinical_staff", async () => {
+  it("redirects clinical_staff away — no Deactivate/Reactivate buttons visible", () => {
     clearAuthenticatedUser(authTestState);
     setAuthenticatedUser(authTestState, createStaffUser());
 
     renderSuppliersPage();
 
-    await screen.findByText("DentalCo Australia");
-
+    // clinical_staff is redirected to "/" — supplier table never renders.
+    expect(screen.queryByText("DentalCo Australia")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Deactivate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reactivate" })).not.toBeInTheDocument();
   });

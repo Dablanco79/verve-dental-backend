@@ -248,6 +248,26 @@ describe("GET /api/v1/suppliers/:supplierId — get", () => {
     expect(body.error.code).toBe("NOT_FOUND");
   });
 
+  it("denies clinical_staff from reading individual supplier detail (Correction 2)", async () => {
+    const app = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // Create a supplier as manager
+    const created = await request(app)
+      .post("/api/v1/suppliers")
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ supplierName: "Staff Access Denied Test" });
+    const supplierId = (created.body as ApiData<Supplier>).data.id;
+
+    // clinical_staff must receive 403 on GET /:supplierId
+    const res = await request(app)
+      .get(`/api/v1/suppliers/${supplierId}`)
+      .set("Authorization", `Bearer ${staffToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
   it("returns 400 for non-UUID supplierId", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");

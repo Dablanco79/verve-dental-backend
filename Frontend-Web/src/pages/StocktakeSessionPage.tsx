@@ -176,7 +176,7 @@ function BarcodeLookup({ lines, onFound }: BarcodeLookupProps) {
           ref={inputRef}
           type="text"
           className="stocktake-input"
-          placeholder="Scan barcode or enter SKU…"
+          placeholder="Scan with barcode scanner or type barcode / SKU…"
           value={barcodeInput}
           onChange={(e) => { setBarcodeInput(e.target.value); setError(null); }}
           onKeyDown={handleKeyDown}

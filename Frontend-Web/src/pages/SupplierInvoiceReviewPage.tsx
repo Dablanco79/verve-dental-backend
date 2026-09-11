@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { canManageSuppliers } from "../utils/roles.js";
 import { ProductCreationReviewModal } from "../components/invoice/ProductCreationReviewModal.js";
 import { MasterProductSearchModal } from "../components/masterProduct/MasterProductSearchModal.js";
 import { ProductReviewCandidateCard } from "../components/masterProduct/ProductReviewCandidateCard.js";
@@ -1091,6 +1092,12 @@ export function SupplierInvoiceReviewPage() {
   }, [loadInvoice]);
 
   if (!user) return null;
+
+  // Supplier invoice financial data is restricted to owner_admin and group_practice_manager.
+  // clinical_staff must not access invoice review through direct URLs.
+  if (!canManageSuppliers(user.role)) {
+    return <Navigate to="/" replace />;
+  }
 
   // Operational actions are clinic-specific. Block when "All Clinics" is selected
   // to prevent any operation silently targeting a fallback home clinic.

@@ -63,15 +63,20 @@ export function createSupplierInvoiceRouter(
 
   // ── GET / ─────────────────────────────────────────────────────────────────
   // List supplier invoices for a clinic (paginated).
+  // Restricted to manager/admin — invoice financial data must not be accessible
+  // to clinical_staff through direct API calls or direct URL access.
   router.get(
     "/",
+    requireWriteAccess,
     asyncHandler((req, res) => handlers.list(req, res)),
   );
 
   // ── GET /:invoiceId ────────────────────────────────────────────────────────
   // Get a single invoice with all lines.
+  // Restricted to manager/admin — invoice line pricing is financial data.
   router.get(
     "/:invoiceId",
+    requireWriteAccess,
     asyncHandler((req, res) => handlers.get(req, res)),
   );
 

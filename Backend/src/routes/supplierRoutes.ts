@@ -51,6 +51,16 @@ export function createSupplierRouter(deps: AppDependencies): Router {
     "group_practice_manager",
   );
 
+  // Restricts supplier detail, catalogue, and pricing reads to manager/admin.
+  // GET /api/v1/suppliers (list) deliberately remains open to all authenticated
+  // roles — clinical_staff requires it for inventory scan-form supplier lookup.
+  // Supplier detail pages, catalogue pricing, and individual supplier data are
+  // management information that clinical_staff must not access via direct URL.
+  const requireReadAccess = requireRoles(
+    "owner_admin",
+    "group_practice_manager",
+  );
+
   const supplierHandlers = createSupplierHandlers(deps.supplierService);
   const catalogueHandlers = createSupplierCatalogueHandlers(
     deps.supplierCatalogueService,
@@ -77,6 +87,7 @@ export function createSupplierRouter(deps: AppDependencies): Router {
   router.get(
     "/:supplierId",
     authenticate,
+    requireReadAccess,
     asyncHandler((req, res) => supplierHandlers.getSupplier(req, res)),
   );
 
@@ -93,6 +104,7 @@ export function createSupplierRouter(deps: AppDependencies): Router {
   router.get(
     "/:supplierId/catalogue",
     authenticate,
+    requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.listSupplierProducts(req, res),
     ),
@@ -110,6 +122,7 @@ export function createSupplierRouter(deps: AppDependencies): Router {
   router.get(
     "/:supplierId/catalogue/:supplierProductId",
     authenticate,
+    requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.getSupplierProduct(req, res),
     ),
@@ -156,6 +169,7 @@ export function createSupplierRouter(deps: AppDependencies): Router {
   router.get(
     "/products/:productId/pricing",
     authenticate,
+    requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.listPricingForProduct(req, res),
     ),

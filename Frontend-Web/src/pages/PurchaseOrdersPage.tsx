@@ -13,7 +13,7 @@ import type {
   PurchasingDraftStatus,
 } from "../types/inventory.js";
 import type { Supplier } from "../types/supplier.js";
-import { canManageUsers } from "../utils/roles.js";
+import { canManageProcurement } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -414,7 +414,7 @@ export function PurchaseOrdersPage() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const loadData = useCallback(async () => {
-    if (!user || !canManageUsers(user.role)) return;
+    if (!user || !canManageProcurement(user.role)) return;
     if (!selectedClinicId || isAllClinicsScope) {
       setLines([]);
       setSuppliers([]);
@@ -593,7 +593,7 @@ export function PurchaseOrdersPage() {
 
   if (!user) return null;
 
-  if (!canManageUsers(user.role)) {
+  if (!canManageProcurement(user.role)) {
     return <Navigate to="/" replace />;
   }
 

@@ -8,6 +8,7 @@ import { loadConfig } from "../../config/index.js";
 import {
   canManageBilling,
   canManageClinics,
+  canManageProcurement,
   canManageUsers,
   canViewAnalytics,
   canViewClinicSettings,
@@ -105,11 +106,11 @@ export function AppShell({ children }: AppShellProps) {
         {
           label: "Procurement",
           items: [
-            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers", icon: "SU" }] : []),
+            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers & Invoices", icon: "SU" }] : []),
             ...(canManageSuppliers(user.role)
               ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: "SI" }]
               : []),
-            ...(canManageUsers(user.role)
+            ...(canManageProcurement(user.role)
               ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: "PO" }]
               : []),
           ],
@@ -235,23 +236,7 @@ export function AppShell({ children }: AppShellProps) {
             ) : null}
           </div>
 
-          <div className="app-shell__search" role="search">
-            <span aria-hidden="true">Search</span>
-            <input type="search" placeholder="Search products, suppliers, staff..." aria-label="Global search" />
-            <kbd>Ctrl + K</kbd>
-          </div>
-
           <div className="app-shell__header-controls app-shell__header-controls--secondary">
-            <button type="button" className="app-shell__date-range" aria-label="Date range">
-              15 - 21 May 2026
-            </button>
-            <button type="button" className="app-shell__icon-button" aria-label="Notifications">
-              <span aria-hidden="true">N</span>
-              <span className="app-shell__notification-dot" />
-            </button>
-            <button type="button" className="app-shell__icon-button" aria-label="Help">
-              <span aria-hidden="true">?</span>
-            </button>
             {user ? (
               <div className="app-shell__user">
                 <NavLink to="/account" className="app-shell__profile">
