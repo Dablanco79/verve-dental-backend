@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Info, MapPin } from "lucide-react";
+import { AlertTriangle, CalendarDays, CalendarOff, CheckCircle2, Info, ScanLine } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -901,15 +901,15 @@ function ClinicalStaffDashboard({
       {/* ── Secondary quick actions ── */}
       <nav className="cs-quick-actions" aria-label="Quick actions for your shift">
         <Link to="/my-shifts" className="cs-quick-action">
-          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          <CalendarDays size={18} aria-hidden="true" className="cs-quick-action__icon" />
           My Roster
         </Link>
         <Link to="/inventory" className="cs-quick-action">
-          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          <ScanLine size={18} aria-hidden="true" className="cs-quick-action__icon" />
           Scan Inventory
         </Link>
         <Link to="/leave" className="cs-quick-action">
-          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          <CalendarOff size={18} aria-hidden="true" className="cs-quick-action__icon" />
           Leave
         </Link>
       </nav>

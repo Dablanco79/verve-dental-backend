@@ -7653,10 +7653,19 @@ textarea:focus-visible {
   }
 
   .app-shell__sidebar {
-    position: relative;
-    height: auto;
-    max-height: none;
-    border-radius: 0 0 1.25rem 1.25rem;
+    /* Stage 5 mobile: sidebar becomes a fixed off-canvas drawer */
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    width: min(296px, 88vw);
+    height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .app-shell__brand {
@@ -7664,7 +7673,8 @@ textarea:focus-visible {
   }
 
   .app-shell__nav {
-    max-height: 20rem;
+    max-height: none;
+    overflow-y: auto;
   }
 
   .app-shell__header {
@@ -9336,7 +9346,6 @@ select.vds-control {
    Namespace: cs-hub, cs-clock-hero, cs-quick-action, cs-location-status
    All tokens reference VDS :root — no local overrides, no parallel system.
    ═══════════════════════════════════════════════════════════════════════════ */
-
 /* ── Hub layout ──────────────────────────────────────────────────────────── */
 
 .cs-hub {
@@ -9549,3 +9558,151 @@ select.vds-control {
     font-size: var(--vds-font-size-sm);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Stage 5 — Mobile AppShell Drawer + Responsive Corrections
+   ─────────────────────────────────────────────────────────────────────────
+   Hamburger toggle, drawer overlay, compact metric cards, header layout.
+   Desktop behaviour is unchanged.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button: hidden on desktop, visible on mobile ─────────────── */
+.app-shell__mobile-menu-btn {
+  display: none;
+}
+
+/* ── Mobile backdrop: always in DOM when open, hidden on desktop ─────────── */
+.app-shell__mobile-backdrop {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  /* ── Open-state: slide drawer into view ────────────────────────────────── */
+  .app-shell--nav-open .app-shell__sidebar {
+    transform: translateX(0);
+  }
+
+  /* ── Backdrop: dims workspace when drawer is open ──────────────────────── */
+  .app-shell__mobile-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: rgba(35, 24, 39, 0.52);
+    /* Subtle blur helps the drawer read as a layer above content */
+    backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(1px);
+  }
+
+  /* ── Hamburger button ──────────────────────────────────────────────────── */
+  .app-shell__mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    order: -1;           /* always leftmost in the header flex row */
+    width: 2.4rem;
+    height: 2.4rem;
+    padding: 0;
+    border: 1px solid rgba(219, 210, 226, 0.78);
+    border-radius: 0.65rem;
+    background: transparent;
+    color: var(--vds-colour-heading);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .app-shell__mobile-menu-btn:hover {
+    background: rgba(75, 18, 144, 0.07);
+    border-color: var(--vds-colour-border-strong);
+  }
+
+  /* ── Header: compact, single-row with hamburger ────────────────────────── */
+  .app-shell__header {
+    flex-wrap: nowrap;
+    gap: var(--vds-space-2);
+    padding: 0.65rem 0.85rem;
+    align-items: center;
+    min-height: 3.2rem;
+  }
+
+  /* Primary controls: clinic selector only — hide org selector text on mobile */
+  .app-shell__header-controls--primary {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    justify-content: flex-start;
+  }
+
+  /* Hide the static org selector on very small screens — takes too much width */
+  .app-shell__selector--static {
+    display: none;
+  }
+
+  /* Clinic control compact */
+  .app-shell__clinic-control {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  /* Secondary controls: show avatar + log-out only on mobile */
+  .app-shell__header-controls--secondary {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .app-shell__user {
+    flex-wrap: nowrap;
+    gap: var(--vds-space-2);
+    padding: 0.25rem 0.3rem;
+  }
+
+  /* Collapse profile: show avatar only, hide name/email/role */
+  .app-shell__profile-text {
+    display: none;
+  }
+
+  /* Hide "Security" link on mobile — accessible via sidebar nav */
+  .app-shell__user-link {
+    display: none;
+  }
+
+  /* Keep Log out visible and compact */
+  .app-shell__logout {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.78rem;
+  }
+
+  /* ── Today's Work metric cards: compact 2-column on phone ──────────────── */
+  /* The auto-fit layout stacks to 1-col by default; force 2-col for small cards */
+  .cs-hub .analytics-cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--vds-space-3);
+  }
+
+  .cs-hub .analytics-card {
+    padding: var(--vds-space-3) var(--vds-space-3);
+  }
+
+  .cs-hub .analytics-card__stat {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .cs-hub .analytics-card__stat dd {
+    font-size: 1.35rem;
+    line-height: 1.1;
+  }
+
+  .cs-hub .analytics-card__stat dt {
+    font-size: 0.72rem;
+    margin-top: 0;
+  }
+
+  .cs-hub .analytics-card__footer {
+    margin-top: var(--vds-space-2);
+    padding-top: var(--vds-space-2);
+  }
+}
+

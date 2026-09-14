@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -15,6 +15,7 @@ import {
   FileDown,
   LayoutDashboard,
   LineChart,
+  Menu,
   Package,
   Receipt,
   RotateCcw,
@@ -26,6 +27,7 @@ import {
   UserCog,
   Users,
   Wrench,
+  X,
 } from "lucide-react";
 
 import { useAuth } from "../../auth/useAuth.js";
@@ -78,6 +80,7 @@ export function AppShell({ children }: AppShellProps) {
     setDashboardScope,
   } = useSelectedClinic();
   const navigate = useNavigate();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const profileInitials = user?.email.slice(0, 2).toUpperCase() ?? "VB";
   const scopeLabel =
     selectedDashboardScope?.type === "all_clinics"
@@ -91,6 +94,10 @@ export function AppShell({ children }: AppShellProps) {
   async function handleLogout(): Promise<void> {
     await logout();
     await navigate("/login");
+  }
+
+  function closeNav(): void {
+    setMobileNavOpen(false);
   }
 
   const navGroups: NavGroup[] = user
@@ -181,7 +188,17 @@ export function AppShell({ children }: AppShellProps) {
     : [];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${mobileNavOpen ? " app-shell--nav-open" : ""}`}>
+
+      {/* Mobile navigation backdrop — closes drawer on outside tap */}
+      {mobileNavOpen ? (
+        <div
+          className="app-shell__mobile-backdrop"
+          onClick={closeNav}
+          aria-hidden="true"
+        />
+      ) : null}
+
       <aside className="app-shell__sidebar">
         <div className="app-shell__brand">
           <span className="app-shell__logo-mark" aria-hidden="true">V</span>
@@ -199,7 +216,12 @@ export function AppShell({ children }: AppShellProps) {
                 {group.items.map((item) => {
                     const NavIcon = item.icon;
                     return (
-                      <NavLink key={item.to} to={item.to} end={item.end}>
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.end}
+                        onClick={closeNav}
+                      >
                         <span className="app-shell__nav-icon" aria-hidden="true">
                           <NavIcon size={16} strokeWidth={1.75} />
                         </span>
@@ -223,6 +245,18 @@ export function AppShell({ children }: AppShellProps) {
 
       <div className="app-shell__workspace">
         <header className="app-shell__header">
+
+          {/* Hamburger — visible on mobile only (hidden ≥641px via CSS) */}
+          <button
+            type="button"
+            className="app-shell__mobile-menu-btn"
+            onClick={() => { setMobileNavOpen((prev) => !prev); }}
+            aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileNavOpen}
+          >
+            {mobileNavOpen ? <X size={20} strokeWidth={2} /> : <Menu size={20} strokeWidth={2} />}
+          </button>
+
           <div className="app-shell__header-controls app-shell__header-controls--primary">
             <div className="app-shell__selector app-shell__selector--static" aria-label="Organisation selector">
               <span className="app-shell__selector-icon" aria-hidden="true">OG</span>
@@ -273,7 +307,7 @@ export function AppShell({ children }: AppShellProps) {
               <div className="app-shell__user">
                 <NavLink to="/account" className="app-shell__profile">
                   <span className="app-shell__avatar" aria-hidden="true">{profileInitials}</span>
-                  <span>
+                  <span className="app-shell__profile-text">
                     <span className="app-shell__profile-name">{user.email}</span>
                     <span className="app-shell__profile-role">{user.role.replace(/_/g, " ")}</span>
                   </span>
