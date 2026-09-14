@@ -1,5 +1,32 @@
 import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import type { LucideIcon } from "lucide-react";
+import {
+  BarChart3,
+  BookOpen,
+  Boxes,
+  Building,
+  Building2,
+  CalendarDays,
+  CalendarOff,
+  ClipboardList,
+  Clock,
+  Database,
+  FileDown,
+  LayoutDashboard,
+  LineChart,
+  Package,
+  Receipt,
+  RotateCcw,
+  Settings2,
+  Shield,
+  ShoppingCart,
+  Timer,
+  TrendingDown,
+  UserCog,
+  Users,
+  Wrench,
+} from "lucide-react";
 
 import { useAuth } from "../../auth/useAuth.js";
 import { ALL_CLINICS_DASHBOARD_SCOPE } from "../../clinic/clinicContext.js";
@@ -27,7 +54,7 @@ type AppShellProps = {
 type NavItem = {
   to: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   end?: boolean;
 };
 
@@ -70,83 +97,83 @@ export function AppShell({ children }: AppShellProps) {
     ? [
         {
           label: "Daily",
-          items: [{ to: "/", label: "Daily Hub", icon: "DH", end: true }],
+          items: [{ to: "/", label: "Daily Hub", icon: LayoutDashboard, end: true }],
         },
         {
           label: "Operations",
           items: [
-            { to: "/inventory", label: "Inventory", icon: "IN" },
+            { to: "/inventory", label: "Inventory", icon: Package },
             ...(canPerformStocktake()
-              ? [{ to: "/inventory/stocktakes", label: "Stocktake", icon: "ST" }]
+              ? [{ to: "/inventory/stocktakes", label: "Stocktake", icon: ClipboardList }]
               : []),
             ...(canManageProducts(user.role)
-              ? [{ to: "/inventory/products", label: "Products", icon: "PR" }]
+              ? [{ to: "/inventory/products", label: "Products", icon: Boxes }]
               : []),
-            { to: "/inventory/master-products", label: "Master Products", icon: "MP" },
+            { to: "/inventory/master-products", label: "Master Products", icon: Database },
             ...(canManageProducts(user.role)
-              ? [{ to: "/inventory/catalogue-import", label: "Catalogue Import", icon: "CI" }]
+              ? [{ to: "/inventory/catalogue-import", label: "Catalogue Import", icon: FileDown }]
               : []),
             ...(canManageProducts(user.role)
               ? [
                   {
                     to: "/inventory/master-product-library-import",
                     label: "Master Product Library",
-                    icon: "ML",
+                    icon: BookOpen,
                   },
                 ]
               : []),
             ...(canViewMaterialsForecast(user.role)
-              ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: "MF" }]
+              ? [{ to: "/forecast/materials", label: "Materials Forecast", icon: TrendingDown }]
               : []),
             ...(canViewLaborForecast(user.role)
-              ? [{ to: "/forecast/labor", label: "Labor Forecast", icon: "LF" }]
+              ? [{ to: "/forecast/labor", label: "Labor Forecast", icon: Users }]
               : []),
           ],
         },
         {
           label: "Procurement",
           items: [
-            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers & Invoices", icon: "SU" }] : []),
+            ...(canManageSuppliers(user.role) ? [{ to: "/suppliers", label: "Suppliers & Invoices", icon: Building2 }] : []),
             ...(canManageSuppliers(user.role)
-              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: "SI" }]
+              ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: LineChart }]
               : []),
             ...(canManageProcurement(user.role)
-              ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: "PO" }]
+              ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: ShoppingCart }]
               : []),
           ],
         },
         {
           label: "People",
           items: [
-            { to: "/roster", label: "Roster", icon: "RO" },
-            { to: "/my-shifts", label: "My Shifts", icon: "MS" },
-            { to: "/timesheets", label: "Timesheets", icon: "TS" },
-            { to: "/leave", label: "Leave", icon: "LV" },
+            { to: "/roster", label: "Roster", icon: CalendarDays },
+            { to: "/my-shifts", label: "My Shifts", icon: Clock },
+            { to: "/timesheets", label: "Timesheets", icon: Timer },
+            { to: "/leave", label: "Leave", icon: CalendarOff },
           ],
         },
         {
           label: "Reporting",
           items: [
-            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics", icon: "AN" }] : []),
+            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics", icon: BarChart3 }] : []),
             ...(canViewAnalytics(user.role)
-              ? [{ to: "/analytics/audit", label: "Audit Events", icon: "AU" }]
+              ? [{ to: "/analytics/audit", label: "Audit Events", icon: Shield }]
               : []),
-            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing", icon: "BL" }] : []),
+            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing", icon: Receipt }] : []),
           ],
         },
         {
           label: "Admin / Settings",
           items: [
-            ...(canManageUsers(user.role) ? [{ to: "/pilot-setup", label: "Pilot Setup", icon: "PS" }] : []),
+            ...(canManageUsers(user.role) ? [{ to: "/pilot-setup", label: "Pilot Setup", icon: Wrench }] : []),
             ...(canManageClinics(user.role)
-              ? [{ to: "/settings/clinics", label: "Clinics", icon: "CL" }]
+              ? [{ to: "/settings/clinics", label: "Clinics", icon: Building }]
               : []),
-            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users", icon: "US" }] : []),
+            ...(canManageUsers(user.role) ? [{ to: "/users", label: "Users", icon: UserCog }] : []),
             ...(canViewClinicSettings(user.role)
-              ? [{ to: "/settings/clinic", label: "Clinic Settings", icon: "CS" }]
+              ? [{ to: "/settings/clinic", label: "Clinic Settings", icon: Settings2 }]
               : []),
             ...(appConfig.pilotResetEnabled && user.role === "owner_admin"
-              ? [{ to: "/admin/pilot-reset", label: "Pilot Reset", icon: "PR" }]
+              ? [{ to: "/admin/pilot-reset", label: "Pilot Reset", icon: RotateCcw }]
               : []),
           ],
         },
@@ -169,12 +196,17 @@ export function AppShell({ children }: AppShellProps) {
             <section key={group.label} className="app-shell__nav-group">
               <p className="app-shell__nav-heading">{group.label}</p>
               <div className="app-shell__nav-links">
-                {group.items.map((item) => (
-                  <NavLink key={item.to} to={item.to} end={item.end}>
-                    <span className="app-shell__nav-icon" aria-hidden="true">{item.icon}</span>
-                    <span>{item.label}</span>
-                  </NavLink>
-                ))}
+                {group.items.map((item) => {
+                    const NavIcon = item.icon;
+                    return (
+                      <NavLink key={item.to} to={item.to} end={item.end}>
+                        <span className="app-shell__nav-icon" aria-hidden="true">
+                          <NavIcon size={16} strokeWidth={1.75} />
+                        </span>
+                        <span>{item.label}</span>
+                      </NavLink>
+                    );
+                  })}
               </div>
             </section>
           ))}
