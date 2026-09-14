@@ -406,7 +406,7 @@ describe("HomePage role dashboards", () => {
         name: `What ${TEST_CLINIC_NAME} needs today`,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Today’s Operational Summary")).toBeInTheDocument();
+    expect(screen.getByText("Today's Operational Summary")).toBeInTheDocument();
     expect(screen.getByText("Clinic Alerts")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Receive Stock" })).toHaveAttribute(
       "href",
@@ -422,14 +422,24 @@ describe("HomePage role dashboards", () => {
 
     renderHomePage();
 
+    // H1 greeting replaces the old "Your day at..." heading (Stage 5)
     expect(
       await screen.findByRole("heading", {
-        name: `Your day at ${TEST_CLINIC_NAME}`,
+        name: /good (morning|afternoon|evening), staff/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Today’s Work")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Clock In / Out" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Scan Inventory" })).toBeInTheDocument();
+
+    // Today's Work section is preserved
+    expect(screen.getByText("Today's Work")).toBeInTheDocument();
+
+    // Dominant clock hero card: shows Clock Out because test data has an open timesheet
+    expect(screen.getByRole("link", { name: "Clock Out" })).toBeInTheDocument();
+
+    // Secondary quick actions
+    expect(screen.getByRole("link", { name: /My Roster/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Scan Inventory/i })).toBeInTheDocument();
+
+    // Executive and procurement sections must NOT be visible to clinical staff
     expect(screen.queryByText("Executive KPIs")).not.toBeInTheDocument();
     expect(screen.queryByText("Purchase Orders")).not.toBeInTheDocument();
     expect(screen.queryByText("Pending OCR")).not.toBeInTheDocument();

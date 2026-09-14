@@ -9329,3 +9329,223 @@ select.vds-control {
 }
 
 /* ── End VDS Shared Primitives ────────────────────────────── */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Clinical Staff Daily Hub  (Stage 5)
+   ─────────────────────────────────────────────────────────────────────────
+   Namespace: cs-hub, cs-clock-hero, cs-quick-action, cs-location-status
+   All tokens reference VDS :root — no local overrides, no parallel system.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Hub layout ──────────────────────────────────────────────────────────── */
+
+.cs-hub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-5);
+}
+
+/* ── Page heading (visible H1) ───────────────────────────────────────────── */
+
+.cs-hub__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-1);
+}
+
+.cs-hub__greeting {
+  margin: 0;
+  font-size: var(--vds-font-size-xl);
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.cs-hub__clinic-label {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+}
+
+/* ── Clock hero card ─────────────────────────────────────────────────────── */
+
+.cs-clock-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--vds-space-4);
+  padding: var(--vds-space-6);
+  border: var(--vds-card-border);
+  border-radius: var(--vds-card-radius);
+  background: var(--vds-card-background);
+  box-shadow: var(--vds-shadow-sm);
+}
+
+.cs-clock-hero--active {
+  border-color: var(--vds-colour-success);
+  background: linear-gradient(160deg, #f0fdf9 0%, #ffffff 60%);
+}
+
+.cs-clock-hero__detail {
+  margin: 0;
+  font-size: var(--vds-font-size-md);
+  color: var(--vds-colour-body);
+  line-height: 1.5;
+}
+
+.cs-clock-hero--active .cs-clock-hero__detail {
+  color: var(--vds-colour-heading);
+}
+
+/* Extends the VDS primary button to a comfortable touch target */
+.cs-clock-hero__action {
+  min-height: 3rem;
+  padding: 0 var(--vds-space-8);
+  font-size: var(--vds-font-size-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+/* ── Location status strip ───────────────────────────────────────────────── */
+
+.cs-location-status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vds-space-2);
+  width: 100%;
+  padding: var(--vds-space-2) var(--vds-space-3);
+  border-radius: var(--vds-radius-sm);
+  font-size: var(--vds-font-size-sm);
+  line-height: 1.4;
+}
+
+.cs-location-status--within {
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+.cs-location-status--outside,
+.cs-location-status--unavailable {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+.cs-location-status--denied {
+  background: var(--vds-colour-panel-subtle);
+  color: var(--vds-colour-muted);
+  border: 1px solid var(--vds-colour-border);
+}
+
+.cs-location-status__icon {
+  flex-shrink: 0;
+  margin-top: 0.1em; /* optical alignment with text cap-height */
+}
+
+/* ── Secondary quick actions ─────────────────────────────────────────────── */
+
+.cs-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--vds-space-3);
+}
+
+.cs-quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--vds-space-2);
+  min-height: 5rem;
+  padding: var(--vds-space-4) var(--vds-space-3);
+  border: 1px solid var(--vds-colour-border-strong);
+  border-radius: var(--vds-radius-md);
+  background: var(--vds-colour-panel);
+  color: var(--vds-colour-purple);
+  font-size: var(--vds-font-size-sm);
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.cs-quick-action:hover {
+  background: var(--vds-colour-hover);
+  border-color: var(--vds-colour-purple);
+  box-shadow: var(--vds-shadow-xs);
+  color: var(--vds-colour-purple);
+}
+
+.cs-quick-action:focus-visible {
+  outline: 2px solid var(--vds-colour-focus-solid);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--vds-colour-focus);
+}
+
+.cs-quick-action__icon {
+  color: var(--vds-colour-purple);
+  opacity: 0.75;
+}
+
+/* ── Responsive — tablet (768px) ─────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .cs-hub__greeting {
+    font-size: calc(var(--vds-font-size-xl) * 0.9);
+  }
+
+  .cs-clock-hero {
+    padding: var(--vds-space-5);
+  }
+}
+
+/* ── Responsive — phone (480px) ──────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .cs-hub__greeting {
+    font-size: var(--vds-font-size-lg);
+  }
+
+  .cs-clock-hero {
+    padding: var(--vds-space-4);
+  }
+
+  .cs-clock-hero__action {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .cs-quick-action {
+    min-height: 4rem;
+    padding: var(--vds-space-3) var(--vds-space-2);
+    font-size: var(--vds-font-size-xs);
+    gap: var(--vds-space-1);
+  }
+
+  .cs-quick-action__icon {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* ── Responsive — very small phone (360px and below) ────────────────────── */
+
+@media (max-width: 360px) {
+  .cs-quick-actions {
+    grid-template-columns: 1fr;
+    gap: var(--vds-space-2);
+  }
+
+  .cs-quick-action {
+    flex-direction: row;
+    justify-content: flex-start;
+    min-height: 3rem;
+    padding: var(--vds-space-3) var(--vds-space-4);
+    gap: var(--vds-space-3);
+    font-size: var(--vds-font-size-sm);
+  }
+}

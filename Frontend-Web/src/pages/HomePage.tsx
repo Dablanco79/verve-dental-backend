@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, Info, MapPin } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -677,7 +678,7 @@ function PracticeManagerDashboard({
       />
 
       <DashboardSection
-        title="Today’s Operational Summary"
+        title="Today's Operational Summary"
         subtitle="Prioritised work queues for the selected clinic."
       >
         <div className="analytics-cards-grid">
@@ -757,6 +758,126 @@ function PracticeManagerDashboard({
   );
 }
 
+// ── Clinical Staff Hub helpers ────────────────────────────────────────────────
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function formatClockTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+// ── Geolocation visual states ─────────────────────────────────────────────────
+//
+// Stage 5: These four states are visual-only. The `status` prop is always `null`
+// in the current implementation — the functional geolocation change (navigator
+// .geolocation, Haversine distance, backend flag write) is a separate approved
+// task that has NOT been implemented yet.
+//
+// Do NOT pass hardcoded fixture values in production code paths.
+// The component is built and ready to accept real status values once the
+// functional change is implemented.
+
+type ClockLocationState = "within_range" | "outside_range" | "unavailable" | "denied" | null;
+
+const LOCATION_STATE_CONFIG = {
+  within_range: {
+    label: "Location verified — within 100m of clinic.",
+    className: "cs-location-status--within",
+    Icon: CheckCircle2,
+  },
+  outside_range: {
+    label: "Outside normal clock area — timesheet flagged for manager review. You may continue.",
+    className: "cs-location-status--outside",
+    Icon: AlertTriangle,
+  },
+  unavailable: {
+    label: "Location unavailable — clock-in recorded without location data.",
+    className: "cs-location-status--unavailable",
+    Icon: AlertTriangle,
+  },
+  denied: {
+    label: "Location permission not granted — clock-in recorded. Manager will be notified.",
+    className: "cs-location-status--denied",
+    Icon: Info,
+  },
+} as const;
+
+function ClockLocationStatus({ status }: { status: ClockLocationState }) {
+  if (status === null) return null;
+
+  const config = LOCATION_STATE_CONFIG[status];
+  const { Icon } = config;
+
+  return (
+    <div
+      className={`cs-location-status ${config.className}`}
+      role="status"
+      aria-live="polite"
+    >
+      <Icon size={15} aria-hidden="true" className="cs-location-status__icon" />
+      <span className="cs-location-status__text">{config.label}</span>
+    </div>
+  );
+}
+
+// ── Staff Clock Hero Card ─────────────────────────────────────────────────────
+//
+// The dominant action on the Clinical Staff Daily Hub.
+// Clicking Clock In / Clock Out navigates to /timesheets where the
+// existing functional clock widget lives — no clock behaviour changes here.
+//
+// locationStatus is null until the geolocation functional change is
+// implemented. Do NOT pass fixture values in production paths.
+
+function StaffClockHeroCard({ openEntry }: { openEntry: TimesheetEntry | null }) {
+  const isActive = openEntry !== null;
+
+  return (
+    <section
+      className={`cs-clock-hero${isActive ? " cs-clock-hero--active" : ""}`}
+      aria-label="Clock in or out of your shift"
+    >
+      <span className={`vds-badge ${isActive ? "vds-badge--success" : "vds-badge--neutral"}`}>
+        {isActive ? "Active shift" : "No active shift"}
+      </span>
+
+      <p className="cs-clock-hero__detail">
+        {isActive ? (
+          <>
+            Clocked in at{" "}
+            <strong>{formatClockTime(openEntry.clockInAt)}</strong>
+            {" "}— clock out when your shift ends.
+          </>
+        ) : (
+          "Start your shift by clocking in."
+        )}
+      </p>
+
+      <Link
+        to="/timesheets"
+        className="cs-clock-hero__action vds-btn vds-btn--primary"
+      >
+        {isActive ? "Clock Out" : "Clock In"}
+      </Link>
+
+      {/* Stage 5: status is null — component is wired but not yet receiving live data */}
+      <ClockLocationStatus status={null} />
+    </section>
+  );
+}
+
+// ── Clinical Staff Dashboard ──────────────────────────────────────────────────
+
 function ClinicalStaffDashboard({
   userName,
   selectedClinicName,
@@ -764,25 +885,43 @@ function ClinicalStaffDashboard({
   stats,
 }: DashboardProps) {
   return (
-    <>
-      <DashboardIntro
-        title={`Your day at ${selectedClinicName}`}
-        subtitle={`Welcome, ${userName}. Here are the essentials for your shift.`}
-        actions={[
-          { label: "Clock In / Out", to: "/timesheets" },
-          { label: "My Roster", to: "/my-shifts" },
-          { label: "Scan Inventory", to: "/inventory" },
-          { label: "Leave", to: "/leave" },
-        ]}
-      />
+    <div className="cs-hub">
 
+      {/* ── Visible page H1 ── */}
+      <header className="cs-hub__header">
+        <h1 className="cs-hub__greeting">
+          {getGreeting()}, {userName}
+        </h1>
+        <p className="cs-hub__clinic-label">{selectedClinicName}</p>
+      </header>
+
+      {/* ── Dominant Clock In / Clock Out hero card ── */}
+      <StaffClockHeroCard openEntry={stats.openTimesheet} />
+
+      {/* ── Secondary quick actions ── */}
+      <nav className="cs-quick-actions" aria-label="Quick actions for your shift">
+        <Link to="/my-shifts" className="cs-quick-action">
+          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          My Roster
+        </Link>
+        <Link to="/inventory" className="cs-quick-action">
+          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          Scan Inventory
+        </Link>
+        <Link to="/leave" className="cs-quick-action">
+          <MapPin size={18} aria-hidden="true" className="cs-quick-action__icon" />
+          Leave
+        </Link>
+      </nav>
+
+      {/* ── Today's Work metrics (unchanged data, preserved role restrictions) ── */}
       <DashboardSection
-        title="Today’s Work"
-        subtitle="Simple actions for clinical staff without executive or procurement detail."
+        title="Today's Work"
+        subtitle="Your shift and clinic tasks at a glance."
       >
         <div className="analytics-cards-grid">
           <MetricCard
-            title="Today’s Shift"
+            title="Today's Shift"
             value={stats.openTimesheet ? "Clocked in" : "Ready"}
             description={
               stats.openTimesheet
@@ -812,7 +951,7 @@ function ClinicalStaffDashboard({
           />
         </div>
       </DashboardSection>
-    </>
+    </div>
   );
 }
 
