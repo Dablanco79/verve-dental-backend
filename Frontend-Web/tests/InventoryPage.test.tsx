@@ -512,7 +512,7 @@ describe("InventoryPage", () => {
       );
     });
 
-    expect(await screen.findByText("✅ Product Created Successfully")).toBeInTheDocument();
+    expect(await screen.findByText("Product Created Successfully")).toBeInTheDocument();
     const productSummary = await screen.findByLabelText("Scanned product summary");
     expect(within(productSummary).getByText("New Scan Product")).toBeInTheDocument();
     expect(within(productSummary).getByText("Supplier: DentalCo AU")).toBeInTheDocument();

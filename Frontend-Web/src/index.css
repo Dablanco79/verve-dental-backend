@@ -10508,5 +10508,203 @@ select.vds-control {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   STAGE 5 — INVENTORY / SCANNER HUB (inv-hub)
+   ─ Page H1 header
+   ─ Scan / Receive mode toggle (VDS purple active + green receive exception)
+   ─ Scan result notice VDS treatment
+   ─ Inventory table — row and badge semantic colours
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page H1 header ──────────────────────────────────────────────────────── */
+
+.inv-hub__header {
+  margin-bottom: var(--vds-space-3);
+}
+
+.inv-hub__title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--vds-colour-heading);
+  line-height: 1.15;
+}
+
+/* ── Scan / Receive mode toggle — VDS colours ────────────────────────────── */
+
+/* Deduct / "Use stock" active state — VDS purple (was dark navy) */
+.scan-mode-toggle__btn--active {
+  background: var(--vds-colour-purple);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(118, 2, 163, 0.18);
+}
+
+/* Receive active state — green operational treatment (deliberate exception) */
+.scan-mode-toggle__btn--receive.scan-mode-toggle__btn--active {
+  background: #166534;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(22, 101, 52, 0.2);
+}
+
+/* Increase touch targets for mobile */
+.scan-mode-toggle__btn {
+  min-height: 36px;
+}
+
+/* ── Camera button — icon alignment ─────────────────────────────────────── */
+
+.scan-form__camera-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+}
+
+/* ── Scan result notices — VDS semantic treatment ────────────────────────── */
+
+/* Base success notice — green */
+.inventory-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  margin: var(--vds-space-3) 0 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--vds-card-radius);
+  border-left: 3px solid var(--vds-colour-success);
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+/* Info notice — teal (was amber/yellow — corrected to teal per spec) */
+.inventory-notice--info {
+  border-left-color: var(--vds-colour-info, #0891b2);
+  background: var(--vds-colour-info-bg, #e0f2fe);
+  color: var(--vds-colour-info, #0369a1);
+}
+
+/* Receive notice — green receive-mode treatment (distinct from standard success) */
+.inventory-notice--receive {
+  border-left-color: #166534;
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Product-created confirmation inside ScanForm */
+.inventory-notice--product-created {
+  border-left-color: var(--vds-colour-success);
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+/* Icon + message layout within a notice */
+.inventory-notice__body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vds-space-2);
+}
+
+.inventory-notice__icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.inventory-notice__message {
+  margin: 0;
+  flex: 1 1 auto;
+  line-height: 1.5;
+}
+
+/* ── Inventory table — corrected row semantic colours ────────────────────── */
+
+/* Low-stock rows — subtle amber background (was pinkish) */
+.inventory-table__row--low {
+  background: #fffbeb;
+}
+
+.inventory-table__row--low:hover td {
+  background: #fef9c3 !important;
+}
+
+/* Out-of-stock rows — subtle danger background */
+.inventory-table__row--out {
+  background: #fff1f2;
+}
+
+.inventory-table__row--out:hover td {
+  background: #ffe4e6 !important;
+}
+
+/* Sticky column headers — only safe when table is not inside an overflow-x: auto
+   container. The .inventory-table-wrap has overflow-x: auto, so sticky is applied
+   to the INNER scroll wrapper instead; this is a best-effort CSS-only treatment.
+   Note: browsers require overflow-x: clip (not auto) on ancestors for sticky to work;
+   this is a known limitation and full sticky support requires a scroll-wrapper refactor. */
+.inventory-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f7fafc;
+  box-shadow: inset 0 -2px 0 #d9e2ec;
+}
+
+/* ── Inventory badge improvements ────────────────────────────────────────── */
+
+/* OK — success green */
+.inventory-badge--ok {
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+/* Low — warning amber */
+.inventory-badge--low {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+/* Out — danger red */
+.inventory-badge--out {
+  background: var(--vds-colour-danger-bg);
+  color: var(--vds-colour-danger);
+}
+
+/* ── Mobile responsive ───────────────────────────────────────────────────── */
+
+/* Tablet / medium (≤ 768px) */
+@media (max-width: 768px) {
+  .inv-hub__title {
+    font-size: 1.4rem;
+  }
+}
+
+/* Phone (≤ 480px) */
+@media (max-width: 480px) {
+  .inv-hub__title {
+    font-size: 1.2rem;
+  }
+
+  /* Mode toggle — larger tap targets */
+  .scan-mode-toggle {
+    width: 100%;
+  }
+
+  .scan-mode-toggle__btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+    font-size: 0.9rem;
+  }
+
+  /* Camera button — full tap target */
+  .scan-form__camera-button {
+    min-height: 44px;
+  }
+
+  /* Submit button — full-width, 48px minimum */
+  .scan-form__submit {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+}
+
 
 

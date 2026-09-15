@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Camera, CheckCircle2 } from "lucide-react";
 
 import {
   RECEIVING_UNIT_OPTIONS,
@@ -555,7 +556,7 @@ export function ScanForm({
           disabled={cameraStatus !== "idle" || isSubmitting}
           aria-label="Scan product with camera"
         >
-          <span aria-hidden="true">📷</span>
+          <Camera size={16} aria-hidden="true" />
           Scan Product
         </button>
 
@@ -972,8 +973,9 @@ export function ScanForm({
       ) : null}
 
       {productCreatedMessage ? (
-        <p className="inventory-notice" role="status">
-          ✅ {productCreatedMessage}
+        <p className="inventory-notice inventory-notice--product-created" role="status">
+          <CheckCircle2 size={14} aria-hidden="true" className="inventory-notice__icon" />
+          {productCreatedMessage}
         </p>
       ) : null}
 

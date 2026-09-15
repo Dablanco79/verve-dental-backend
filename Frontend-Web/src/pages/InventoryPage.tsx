@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { CheckCircle2, Info, Package } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -381,8 +383,18 @@ export function InventoryPage() {
         ? "inventory-notice inventory-notice--receive"
         : "inventory-notice";
 
+  const SCAN_NOTICE_ICONS: Record<ScanNotice["tone"], LucideIcon> = {
+    success: CheckCircle2,
+    info: Info,
+    receive: Package,
+  };
+
   return (
     <AppShell>
+      {/* ── Page H1 ── */}
+      <header className="inv-hub__header">
+        <h1 className="inv-hub__title">Inventory</h1>
+      </header>
       <section className="status-card inventory-page__section">
         <div className="status-card__header">
           <div>
@@ -459,7 +471,13 @@ export function InventoryPage() {
 
         {scanNotice ? (
           <div className={noticeClassName} role="status">
-            <p>{scanNotice.message}</p>
+            <span className="inventory-notice__body">
+              {(() => {
+                const NoticeIcon = SCAN_NOTICE_ICONS[scanNotice.tone];
+                return <NoticeIcon size={16} aria-hidden="true" className="inventory-notice__icon" />;
+              })()}
+              <p className="inventory-notice__message">{scanNotice.message}</p>
+            </span>
             {scanNotice.tone === "receive" ? (
               <Link to="/inventory/adjustments" className="inventory-notice__link">
                 View receiving history
