@@ -401,14 +401,15 @@ describe("HomePage role dashboards", () => {
 
     renderHomePage();
 
+    // New H1: greeting + manager name (Stage 5 PM hub)
     expect(
       await screen.findByRole("heading", {
-        name: `What ${TEST_CLINIC_NAME} needs today`,
+        name: /good (morning|afternoon|evening), manager/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Today's Operational Summary")).toBeInTheDocument();
     expect(screen.getByText("Clinic Alerts")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Receive Stock" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Receive Stock/i })).toHaveAttribute(
       "href",
       "/inventory?mode=receive",
     );
@@ -455,11 +456,14 @@ describe("HomePage role dashboards", () => {
 
     renderHomePage();
 
+    // PM hub H1 greeting still loads (clinic name appears in subtitle tag)
     expect(
       await screen.findByRole("heading", {
-        name: `What ${TEST_CLINIC_B_NAME} needs today`,
+        name: /good (morning|afternoon|evening), manager/i,
       }),
     ).toBeInTheDocument();
+    // Clinic B name should appear in the pm-hub clinic context tag
+    expect(screen.getAllByText(TEST_CLINIC_B_NAME).length).toBeGreaterThan(0);
     expect(mockListInventory).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
     expect(mockListSupplierInvoices).toHaveBeenCalledWith(TEST_CLINIC_B_ID, {
       status: "pending_review",

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CalendarDays, CalendarOff, CheckCircle2, Info, ScanLine } from "lucide-react";
+import { AlertTriangle, CalendarDays, CalendarOff, CheckCircle2, FileText, Info, Package, ScanLine } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -48,7 +48,7 @@ type DashboardProps = {
   isAllClinicsScope: boolean;
 };
 
-type DashboardCardTone = "default" | "positive" | "warning" | "danger";
+type DashboardCardTone = "default" | "positive" | "warning" | "danger" | "teal";
 
 type MetricCardProps = {
   title: string;
@@ -56,11 +56,7 @@ type MetricCardProps = {
   description: string;
   to?: string;
   tone?: DashboardCardTone;
-};
-
-type QuickAction = {
-  label: string;
-  to: string;
+  className?: string;
 };
 
 type ExecutiveKpi = {
@@ -162,6 +158,7 @@ function valueClassName(tone: DashboardCardTone): string {
   if (tone === "danger") return "analytics-card__value analytics-card__value--danger";
   if (tone === "warning") return "analytics-card__value analytics-card__value--warning";
   if (tone === "positive") return "analytics-card__value analytics-card__value--positive";
+  if (tone === "teal") return "analytics-card__value analytics-card__value--teal";
   return "analytics-card__value analytics-card__value--primary";
 }
 
@@ -171,6 +168,7 @@ function MetricCard({
   description,
   to,
   tone = "default",
+  className,
 }: MetricCardProps) {
   const content = (
     <>
@@ -182,47 +180,13 @@ function MetricCard({
 
   if (to) {
     return (
-      <Link to={to} className="analytics-card daily-hub__priority-card">
+      <Link to={to} className={`analytics-card daily-hub__priority-card${className ? ` ${className}` : ""}`}>
         {content}
       </Link>
     );
   }
 
-  return <section className="analytics-card">{content}</section>;
-}
-
-function DashboardIntro({
-  title,
-  subtitle,
-  actions,
-}: {
-  title: string;
-  subtitle: string;
-  actions: QuickAction[];
-}) {
-  return (
-    <section className="status-card">
-      <div className="status-card__header">
-        <div>
-          <h2>{title}</h2>
-          <p className="inventory-page__subtitle">{subtitle}</p>
-        </div>
-        <QuickActions actions={actions} />
-      </div>
-    </section>
-  );
-}
-
-function QuickActions({ actions }: { actions: QuickAction[] }) {
-  return (
-    <div className="inventory-page__actions">
-      {actions.map((action) => (
-        <Link key={`${action.label}:${action.to}`} to={action.to} className="button-link">
-          {action.label}
-        </Link>
-      ))}
-    </div>
-  );
+  return <section className={`analytics-card${className ? ` ${className}` : ""}`}>{content}</section>;
 }
 
 function DashboardSection({
@@ -655,108 +619,192 @@ function OwnerAdminDashboard({
   );
 }
 
+// ── Practice Manager Dashboard ───────────────────────────────────────────────
+
 function PracticeManagerDashboard({
   userName,
-  roleLabel,
   selectedClinicName,
   summary,
   stats,
 }: DashboardProps) {
+  const lowStock = stats.lowStockItems.length;
+  const pendingOcr = summary.pendingSupplierInvoices.length;
+  const pendingTimesheets = summary.pendingTimesheets.length;
+  const draftPoLines = stats.draftPurchaseOrderLines.length;
+  const pendingLeave = summary.pendingLeaveRequests.length;
+  const commissionChecks = summary.pendingCommissionChecks.length;
+
   return (
-    <>
-      <DashboardIntro
-        title={`What ${selectedClinicName} needs today`}
-        subtitle={`Welcome, ${userName}. ${roleLabel} view focused on today's operational work.`}
-        actions={[
-          { label: "Inventory", to: "/inventory" },
-          { label: "Receive Stock", to: "/inventory?mode=receive" },
-          { label: "OCR Queue", to: "/suppliers" },
-          { label: "Purchase Orders", to: "/purchase-orders" },
-          { label: "Staff Rosters", to: "/roster" },
-          { label: "Timesheets", to: "/timesheets" },
-        ]}
-      />
+    <div className="pm-hub">
 
-      <DashboardSection
-        title="Today's Operational Summary"
-        subtitle="Prioritised work queues for the selected clinic."
-      >
-        <div className="analytics-cards-grid">
-          <MetricCard
-            title="Low Stock"
-            value={stats.lowStockItems.length}
-            description="items requiring stock review"
-            to="/inventory?focus=low-stock"
-            tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
-          />
-          <MetricCard
-            title="Pending OCR"
-            value={summary.pendingSupplierInvoices.length}
-            description="invoices waiting for review"
-            to="/suppliers"
-            tone={summary.pendingSupplierInvoices.length > 0 ? "warning" : "positive"}
-          />
-          <MetricCard
-            title="Purchase Orders"
-            value={stats.draftPurchaseOrderLines.length}
-            description="draft PO lines ready to action"
-            to="/purchase-orders"
-            tone={stats.draftPurchaseOrderLines.length > 0 ? "warning" : "positive"}
-          />
-          <MetricCard
-            title="Timesheets"
-            value={summary.pendingTimesheets.length}
-            description="approvals waiting"
-            to="/timesheets"
-            tone={summary.pendingTimesheets.length > 0 ? "warning" : "positive"}
-          />
-          <MetricCard
-            title="Leave"
-            value={summary.pendingLeaveRequests.length}
-            description="leave requests waiting"
-            to="/leave"
-            tone={summary.pendingLeaveRequests.length > 0 ? "warning" : "positive"}
-          />
-          <MetricCard
-            title="Receiving"
-            value="Ready"
-            description="scan deliveries as stock arrives"
-            to="/inventory?mode=receive"
-          />
+      {/* ── H1 Page Header ── */}
+      <header className="pm-hub__header">
+        <div>
+          <h1 className="pm-hub__title">
+            {getGreeting()}, {userName}.
+          </h1>
+          <p className="pm-hub__subtitle">
+            <span className="pm-hub__clinic-tag">{selectedClinicName}</span>
+            {" — operational summary for today."}
+          </p>
         </div>
-      </DashboardSection>
+      </header>
 
-      <DashboardSection title="Clinic Alerts" subtitle="Operational reminders for the day.">
+      {/* ── Quick Actions ── */}
+      <section aria-label="Quick actions" className="pm-hub__quick-actions">
+
+        {/* Primary: Receive Stock + OCR Invoice Queue (VDS secondary card treatment) */}
+        <div className="pm-hub__primary-actions">
+
+          <Link to="/inventory?mode=receive" className="pm-hub__primary-action">
+            <span className="pm-hub__primary-action-icon" aria-hidden="true">
+              <Package size={20} strokeWidth={1.75} />
+            </span>
+            <span className="pm-hub__primary-action-label">Receive Stock</span>
+            <span className="pm-hub__primary-action-desc">
+              Scan deliveries as stock arrives
+            </span>
+          </Link>
+
+          <Link to="/suppliers" className="pm-hub__primary-action pm-hub__primary-action--invoice">
+            <span className="pm-hub__primary-action-icon pm-hub__primary-action-icon--invoice" aria-hidden="true">
+              <FileText size={20} strokeWidth={1.75} />
+            </span>
+            <span className="pm-hub__primary-action-label">OCR Invoice Queue</span>
+            <span className="pm-hub__primary-action-desc">
+              {pendingOcr > 0
+                ? `${String(pendingOcr)} invoice${pendingOcr !== 1 ? "s" : ""} awaiting review`
+                : "No invoices pending"}
+            </span>
+          </Link>
+
+        </div>
+
+        {/* Secondary: ghost/tertiary treatment for remaining actions */}
+        <nav className="pm-hub__secondary-actions" aria-label="More quick actions">
+          <Link to="/inventory" className="pm-hub__secondary-action">Inventory</Link>
+          <Link to="/purchase-orders" className="pm-hub__secondary-action">Purchase Orders</Link>
+          <Link to="/roster" className="pm-hub__secondary-action">Staff Rosters</Link>
+          <Link to="/timesheets" className="pm-hub__secondary-action">Timesheets</Link>
+        </nav>
+
+      </section>
+
+      {/* ── Today's Operational Summary — visually grouped ── */}
+      <section className="status-card" aria-label="Today's operational summary">
+        <div className="status-card__header">
+          <div>
+            <h2>{"Today's Operational Summary"}</h2>
+            <p className="inventory-page__subtitle">
+              Prioritised work queues for {selectedClinicName}.
+            </p>
+          </div>
+        </div>
+
+        {/* Action Required group */}
+        <div className="pm-hub__metric-group">
+          <h3 className="pm-hub__group-heading">Action Required</h3>
+          <div className="analytics-cards-grid">
+            <MetricCard
+              title="Low Stock"
+              value={lowStock}
+              description="items requiring stock review"
+              to="/inventory?focus=low-stock"
+              tone={lowStock > 0 ? "warning" : "positive"}
+            />
+            <MetricCard
+              title="Pending OCR"
+              value={pendingOcr}
+              description="invoices waiting for review"
+              to="/suppliers"
+              tone={pendingOcr > 0 ? "warning" : "positive"}
+            />
+            <MetricCard
+              title="Timesheets"
+              value={pendingTimesheets}
+              description="approvals waiting"
+              to="/timesheets"
+              tone={pendingTimesheets > 0 ? "warning" : "positive"}
+            />
+          </div>
+        </div>
+
+        <div className="pm-hub__group-divider" role="separator" aria-hidden="true" />
+
+        {/* Operational Status group */}
+        <div className="pm-hub__metric-group">
+          <h3 className="pm-hub__group-heading">Operational Status</h3>
+          <div className="analytics-cards-grid">
+            <MetricCard
+              title="Purchase Orders"
+              value={draftPoLines}
+              description="draft PO lines ready to action"
+              to="/purchase-orders"
+              tone={draftPoLines > 0 ? "warning" : "positive"}
+            />
+            <MetricCard
+              title="Leave"
+              value={pendingLeave}
+              description="leave requests waiting"
+              to="/leave"
+              tone={pendingLeave > 0 ? "warning" : "positive"}
+            />
+            <MetricCard
+              title="Receiving"
+              value="Ready"
+              description="scan deliveries as stock arrives"
+              to="/inventory?mode=receive"
+              tone="teal"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── Clinic Alerts — visually differentiated from routine metrics ── */}
+      <section className="status-card pm-hub__alerts-section" aria-label="Clinic alerts">
+        <div className="status-card__header">
+          <div className="pm-hub__alerts-heading">
+            <AlertTriangle size={16} aria-hidden="true" className="pm-hub__alerts-icon" />
+            <h2>Clinic Alerts</h2>
+          </div>
+          <p className="inventory-page__subtitle">Operational reminders for today.</p>
+        </div>
         <div className="analytics-cards-grid">
           <MetricCard
             title="Inventory Attention"
-            value={stats.lowStockItems.length > 0 ? "Review" : "Clear"}
+            value={lowStock > 0 ? "Review" : "Clear"}
             description={
-              stats.lowStockItems.length > 0
+              lowStock > 0
                 ? "low stock items may need ordering"
                 : "no low stock items in the current list"
             }
             to="/inventory?focus=low-stock"
-            tone={stats.lowStockItems.length > 0 ? "warning" : "positive"}
+            tone={lowStock > 0 ? "warning" : "positive"}
+            className={`pm-hub__alert-card ${lowStock > 0 ? "pm-hub__alert-card--warning" : "pm-hub__alert-card--positive"}`}
           />
           <MetricCard
             title="Attendance Checks"
-            value={summary.pendingCommissionChecks.length}
+            value={commissionChecks}
             description="commission attendance records to verify"
             to="/timesheets"
-            tone={summary.pendingCommissionChecks.length > 0 ? "warning" : "positive"}
+            tone={commissionChecks > 0 ? "warning" : "positive"}
+            className={`pm-hub__alert-card ${commissionChecks > 0 ? "pm-hub__alert-card--warning" : "pm-hub__alert-card--positive"}`}
           />
           <MetricCard
             title="Roster"
             value={summary.analytics?.roster.shiftsScheduled ?? "Open"}
             description="scheduled shifts in the reporting window"
             to="/roster"
+            tone="teal"
+            className="pm-hub__alert-card pm-hub__alert-card--info"
           />
         </div>
-      </DashboardSection>
-    </>
+      </section>
+
+    </div>
   );
 }
+
 
 // ── Clinical Staff Hub helpers ────────────────────────────────────────────────
 

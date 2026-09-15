@@ -9706,3 +9706,283 @@ select.vds-control {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Practice Manager Daily Hub  (Stage 5)
+   ─────────────────────────────────────────────────────────────────────────
+   Namespace: pm-hub
+   All tokens reference VDS :root — no local overrides, no parallel system.
+   Functional firewall: no business logic, APIs, or permissions changed.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Teal value tone (shared, used by pm-hub Receiving card) ────────────── */
+.analytics-card__value--teal {
+  color: var(--vds-colour-teal);
+  font-weight: 700;
+}
+
+/* ── Page wrapper ───────────────────────────────────────────────────────── */
+.pm-hub {
+  display: grid;
+  gap: var(--vds-space-5);
+  align-content: start;
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+.pm-hub__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-4);
+  padding: var(--vds-space-1) 0;
+}
+
+.pm-hub__title {
+  margin: 0 0 var(--vds-space-2);
+  font-size: var(--vds-font-size-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--vds-colour-heading);
+}
+
+.pm-hub__subtitle {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  line-height: 1.5;
+}
+
+.pm-hub__clinic-tag {
+  display: inline;
+  padding: 0.08rem 0.5rem;
+  border-radius: 0.3rem;
+  background: rgba(75, 18, 144, 0.08);
+  color: var(--vds-colour-purple);
+  font-weight: 600;
+}
+
+/* ── Quick actions ──────────────────────────────────────────────────────── */
+.pm-hub__quick-actions {
+  display: grid;
+  gap: var(--vds-space-3);
+}
+
+.pm-hub__primary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--vds-space-4);
+}
+
+/* VDS secondary card treatment — prominent but not loud */
+.pm-hub__primary-action {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  padding: var(--vds-card-padding);
+  border: 1.5px solid rgba(75, 18, 144, 0.2);
+  border-radius: var(--vds-card-radius);
+  background: rgba(75, 18, 144, 0.035);
+  color: var(--vds-colour-heading);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.pm-hub__primary-action:hover {
+  background: rgba(75, 18, 144, 0.07);
+  border-color: rgba(75, 18, 144, 0.4);
+  box-shadow: 0 4px 18px rgba(75, 18, 144, 0.1);
+  text-decoration: none;
+}
+
+/* Invoice variant gets teal accent to visually differentiate the pair */
+.pm-hub__primary-action--invoice {
+  border-color: rgba(0, 142, 170, 0.2);
+  background: rgba(0, 142, 170, 0.03);
+}
+
+.pm-hub__primary-action--invoice:hover {
+  background: rgba(0, 142, 170, 0.07);
+  border-color: rgba(0, 142, 170, 0.4);
+  box-shadow: 0 4px 18px rgba(0, 142, 170, 0.1);
+}
+
+.pm-hub__primary-action-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.65rem;
+  background: rgba(75, 18, 144, 0.1);
+  color: var(--vds-colour-purple);
+  flex-shrink: 0;
+}
+
+.pm-hub__primary-action-icon--invoice {
+  background: rgba(0, 142, 170, 0.1);
+  color: var(--vds-colour-teal);
+}
+
+.pm-hub__primary-action-label {
+  font-size: var(--vds-font-size-base);
+  font-weight: 600;
+  color: var(--vds-colour-heading);
+  line-height: 1.2;
+}
+
+.pm-hub__primary-action-desc {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  line-height: 1.4;
+}
+
+/* Secondary (ghost/tertiary) actions */
+.pm-hub__secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vds-space-2);
+  align-items: center;
+}
+
+.pm-hub__secondary-action {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.38rem 1rem;
+  border: 1px solid var(--vds-colour-border);
+  border-radius: 2rem;
+  background: transparent;
+  color: var(--vds-colour-body);
+  font-size: var(--vds-font-size-sm);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+
+.pm-hub__secondary-action:hover {
+  border-color: var(--vds-colour-purple);
+  color: var(--vds-colour-purple);
+  background: rgba(75, 18, 144, 0.04);
+  text-decoration: none;
+}
+
+/* ── Grouped metric section ─────────────────────────────────────────────── */
+.pm-hub__metric-group {
+  display: grid;
+  gap: var(--vds-space-3);
+  padding: var(--vds-space-3) 0 var(--vds-space-1);
+}
+
+.pm-hub__group-heading {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--vds-colour-muted);
+}
+
+/* Thin rule between groups */
+.pm-hub__group-divider {
+  height: 1px;
+  margin: 0;
+  background: var(--vds-colour-border);
+  border: 0;
+}
+
+/* ── Clinic Alerts section ──────────────────────────────────────────────── */
+/* Heading row with alert icon */
+.pm-hub__alerts-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+}
+
+.pm-hub__alerts-icon {
+  color: var(--vds-colour-amber);
+  flex-shrink: 0;
+}
+
+/* Alert card: left colour accent bar to distinguish from routine metric cards */
+.pm-hub__alert-card {
+  position: relative;
+  padding-left: 0.55rem !important;
+  border-left: 3px solid transparent;
+  border-radius: var(--vds-card-radius);
+}
+
+.pm-hub__alert-card--warning {
+  border-left-color: var(--vds-colour-amber);
+}
+
+.pm-hub__alert-card--positive {
+  border-left-color: var(--vds-colour-green);
+}
+
+.pm-hub__alert-card--info {
+  border-left-color: var(--vds-colour-teal);
+}
+
+/* Ensure the alert card itself doesn't double-add border radius */
+.pm-hub__alert-card .analytics-card,
+.pm-hub__alert-card.analytics-card,
+.pm-hub__alert-card .daily-hub__priority-card,
+.pm-hub__alert-card.daily-hub__priority-card {
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* ── Responsive — tablet (max-width: 768px) ─────────────────────────────── */
+@media (max-width: 768px) {
+  .pm-hub__title {
+    font-size: var(--vds-font-size-lg);
+  }
+}
+
+/* ── Responsive — mobile phone (max-width: 640px) ─────────────────────── */
+@media (max-width: 640px) {
+  .pm-hub__primary-actions {
+    grid-template-columns: 1fr;
+    gap: var(--vds-space-3);
+  }
+
+  .pm-hub__primary-action {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: var(--vds-space-3);
+  }
+
+  .pm-hub__primary-action-icon {
+    margin-top: 0.1rem;
+  }
+
+  .pm-hub__secondary-actions {
+    gap: var(--vds-space-2);
+  }
+
+  .pm-hub__secondary-action {
+    padding: 0.34rem 0.85rem;
+    font-size: 0.8rem;
+  }
+
+  .pm-hub__metric-group {
+    padding: var(--vds-space-2) 0 0;
+  }
+
+  /* Keep metric cards 2-column on phone for the 3-card groups */
+  .pm-hub .analytics-cards-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  }
+
+  .pm-hub__alert-card {
+    padding-left: 0.4rem !important;
+  }
+}
+
+
