@@ -6317,6 +6317,48 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+/* ── Drawer clinic selector — visible on mobile only (≤640px) ───────────────
+   Hidden by default on desktop; activated inside the @media (max-width: 640px)
+   block below. owner_admin only; rendered from canSwitchClinics gate in JSX. */
+.app-shell__drawer-clinic {
+  display: none;
+}
+
+.app-shell__drawer-clinic-label {
+  display: block;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.45rem;
+}
+
+.app-shell__drawer-clinic-select {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  /* Use a white caret for contrast on the dark drawer background */
+  appearance: auto;
+}
+
+.app-shell__drawer-clinic-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-shell__drawer-clinic-select option {
+  background: #2d1040;
+  color: #ffffff;
+}
+
 .app-shell__main {
   align-content: start;
   gap: var(--vds-space-5);
@@ -9631,7 +9673,7 @@ select.vds-control {
   .app-shell__header-controls--primary {
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
+    /* overflow: hidden removed — it clipped the clinic selector at 375px */
     justify-content: flex-start;
   }
 
@@ -9640,10 +9682,16 @@ select.vds-control {
     display: none;
   }
 
-  /* Clinic control compact */
+  /* On mobile the clinic scope is handled by the drawer selector, not the header.
+     Hide the header clinic control so there is no duplicate. */
   .app-shell__clinic-control {
-    max-width: 100%;
-    min-width: 0;
+    display: none;
+  }
+
+  /* Activate the drawer clinic selector on mobile */
+  .app-shell__drawer-clinic {
+    display: block;
+    padding: 0 0.85rem 0.15rem;
   }
 
   /* Secondary controls: show avatar + log-out only on mobile */

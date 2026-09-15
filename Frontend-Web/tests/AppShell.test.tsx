@@ -91,7 +91,9 @@ describe("AppShell navigation and clinic scope", () => {
 
     const selector = await screen.findByRole("combobox", { name: "Clinic scope" });
     expect(selector).toHaveValue("all_clinics");
-    expect(screen.getByRole("option", { name: "All Clinics" })).toBeInTheDocument();
+    // Both the header selector and the drawer selector render the same options in JSDOM
+    // (CSS display:none is not applied); use getAllByRole to handle both.
+    expect(screen.getAllByRole("option", { name: "All Clinics" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
     expect(screen.getByText("Procurement")).toBeInTheDocument();
 

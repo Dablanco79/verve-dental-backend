@@ -208,6 +208,36 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         </div>
 
+        {/* Clinic scope selector — mobile drawer only (hidden on desktop via CSS).
+            Owner/admin only; clinical_staff and group_practice_manager are always
+            fixed to their home clinic and never see this control. */}
+        {hasClinicProvider && canSwitchClinics ? (
+          <div className="app-shell__drawer-clinic">
+            <span className="app-shell__drawer-clinic-label">Clinic scope</span>
+            <select
+              id="clinic-scope-drawer"
+              className="app-shell__drawer-clinic-select"
+              value={selectorValue}
+              onChange={(event) => {
+                if (event.target.value === ALL_CLINICS_DASHBOARD_SCOPE) {
+                  setDashboardScope({ type: "all_clinics" });
+                } else {
+                  setDashboardScope({ type: "clinic", clinicId: event.target.value });
+                }
+                closeNav();
+              }}
+              disabled={isLoadingClinics}
+            >
+              {canSelectAllClinics ? (
+                <option value={ALL_CLINICS_DASHBOARD_SCOPE}>All Clinics</option>
+              ) : null}
+              {availableClinics.map((clinic) => (
+                <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
         <nav className="app-shell__nav" aria-label="Main navigation">
           {navGroups.map((group) => (
             <section key={group.label} className="app-shell__nav-group">
@@ -234,11 +264,10 @@ export function AppShell({ children }: AppShellProps) {
           ))}
         </nav>
 
-        {hasClinicProvider && selectedClinic ? (
+        {hasClinicProvider && selectedClinic && !canSwitchClinics ? (
           <div className="app-shell__sidebar-scope">
             <span className="app-shell__sidebar-scope-label">Current Clinic</span>
             <strong>{scopeLabel}</strong>
-            <span>Change clinic from the header</span>
           </div>
         ) : null}
       </aside>
