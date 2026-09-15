@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CalendarDays, CalendarOff, CheckCircle2, FileText, Info, Package, ScanLine } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { AlertTriangle, Building2, CalendarDays, CalendarOff, CheckCircle2, ClipboardList, DollarSign, FileText, Info, Layers, Package, ScanLine, ShoppingCart, Sparkles, Timer, TrendingUp, Users } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -63,7 +64,7 @@ type ExecutiveKpi = {
   title: string;
   value: string;
   trend: string;
-  icon: string;
+  icon: LucideIcon;
   tone: "green" | "purple" | "orange" | "teal" | "red";
   to?: string;
 };
@@ -87,7 +88,7 @@ type ActionCentreItem = {
   title: string;
   subtitle: string;
   badge: string | number;
-  icon: string;
+  icon: LucideIcon;
   tone: "red" | "orange" | "purple" | "blue" | "teal";
   to: string;
 };
@@ -212,11 +213,12 @@ function DashboardSection({
 }
 
 function ExecutiveKpiCard({ item }: { item: ExecutiveKpi }) {
+  const KpiIcon = item.icon;
   const content = (
     <>
       <div className="executive-kpi__header">
         <span className={`executive-kpi__icon executive-kpi__icon--${item.tone}`} aria-hidden="true">
-          {item.icon}
+          <KpiIcon size={18} strokeWidth={1.75} />
         </span>
         <h3>{item.title}</h3>
       </div>
@@ -241,8 +243,8 @@ function OperationalBrief({ items }: { items: BriefItem[] }) {
   return (
     <section className="executive-brief" aria-label="Today's Operational Brief">
       <div className="executive-brief__title">
-        <span aria-hidden="true">✦</span>
-        <h2>Today&apos;s Operational Brief</h2>
+        <ClipboardList size={16} aria-hidden="true" />
+        <h2>{"Today's Operational Brief"}</h2>
       </div>
       <div className="executive-brief__items">
         {items.map((item) => (
@@ -275,7 +277,7 @@ function ClinicHealthTable({ rows }: { rows: HealthRow[] }) {
           <Link key={row.clinicName} to={row.to} className="clinic-health-row" role="row">
             <span className="clinic-health-row__clinic">
               <span className={`clinic-health-row__icon clinic-health-row__icon--${scoreTone(row.score)}`} aria-hidden="true">
-                CL
+                <Building2 size={14} strokeWidth={1.75} />
               </span>
               <span>{row.clinicName}</span>
             </span>
@@ -304,7 +306,7 @@ function SpendBudgetPanel() {
       <div className="dashboard-panel__header">
         <div>
           <h2>Spend vs Budget</h2>
-          <p>(This Month)</p>
+          <p className="dashboard-panel__subheading">(This Month)</p>
         </div>
         <Link to="/analytics" className="dashboard-panel__link">View report</Link>
       </div>
@@ -322,14 +324,11 @@ function SpendBudgetPanel() {
           <span>Variance</span>
         </div>
       </div>
-      <div className="spend-chart" aria-label="Empty spend versus budget chart">
-        <div className="spend-chart__legend">
-          <span><i />Actual Spend</span>
-          <span><i />Budget</span>
-        </div>
-        <div className="spend-chart__grid" />
+      <div className="oa-empty-state">
+        <DollarSign size={28} strokeWidth={1.25} className="oa-empty-state__icon" aria-hidden="true" />
+        <p className="oa-empty-state__message">Budget module not configured.</p>
+        <p className="oa-empty-state__hint">Live spend data will appear here once the budget module is set up.</p>
       </div>
-      <p className="dashboard-placeholder-note">No live spend or budget data available. Budget module not configured.</p>
     </section>
   );
 }
@@ -342,20 +341,23 @@ function ActionCentre({ items }: { items: ActionCentreItem[] }) {
         <span className="action-centre__count">{items.length}</span>
       </div>
       <div className="action-centre__list">
-        {items.map((item) => (
-          <Link key={item.title} to={item.to} className="action-centre-card">
-            <span className={`action-centre-card__icon action-centre-card__icon--${item.tone}`} aria-hidden="true">
-              {item.icon}
-            </span>
-            <span>
-              <strong>{item.title}</strong>
-              <small>{item.subtitle}</small>
-            </span>
-            <span className={`action-centre-card__badge action-centre-card__badge--${item.tone}`}>
-              {item.badge}
-            </span>
-          </Link>
-        ))}
+        {items.map((item) => {
+          const ItemIcon = item.icon;
+          return (
+            <Link key={item.title} to={item.to} className="action-centre-card">
+              <span className={`action-centre-card__icon action-centre-card__icon--${item.tone}`} aria-hidden="true">
+                <ItemIcon size={16} strokeWidth={1.75} />
+              </span>
+              <span>
+                <strong>{item.title}</strong>
+                <small>{item.subtitle}</small>
+              </span>
+              <span className={`action-centre-card__badge action-centre-card__badge--${item.tone}`}>
+                {item.badge}
+              </span>
+            </Link>
+          );
+        })}
       </div>
     </section>
   );
@@ -392,11 +394,16 @@ function AiInsights() {
   return (
     <section className="dashboard-panel dashboard-panel--ai">
       <div className="dashboard-panel__header">
-        <h2>AI Insights <span>Beta</span></h2>
+        <h2>
+          AI Insights{" "}
+          <span className="dashboard-panel__beta-badge">Beta</span>
+        </h2>
         <Link to="/supplier-intelligence" className="dashboard-panel__link">View all</Link>
       </div>
-      <div className="ai-insights-list">
-        <p className="dashboard-placeholder-note">No insights available yet.</p>
+      <div className="oa-empty-state">
+        <Sparkles size={28} strokeWidth={1.25} className="oa-empty-state__icon oa-empty-state__icon--purple" aria-hidden="true" />
+        <p className="oa-empty-state__message">No insights available yet.</p>
+        <p className="oa-empty-state__hint">AI-powered supplier and inventory insights will appear here once enough data is collected.</p>
       </div>
     </section>
   );
@@ -480,7 +487,7 @@ function OwnerAdminDashboard({
         : lowStockCount > 0
           ? `${String(lowStockCount)} items need attention`
           : "Live inventory data",
-      icon: "IH",
+      icon: Package,
       tone: "green",
       to: "/inventory?focus=low-stock",
     },
@@ -488,14 +495,14 @@ function OwnerAdminDashboard({
       title: "Forecast Spend",
       value: "—",
       trend: "Forecast engine coming soon",
-      icon: "$",
+      icon: DollarSign,
       tone: "purple",
     },
     {
       title: "Payroll Forecast",
       value: "—",
       trend: "Awaiting payroll forecast",
-      icon: "PF",
+      icon: Users,
       tone: "orange",
       to: "/forecast/labor",
     },
@@ -503,7 +510,7 @@ function OwnerAdminDashboard({
       title: "Budget Variance",
       value: "—",
       trend: "Budget module not configured",
-      icon: "BV",
+      icon: TrendingUp,
       tone: "teal",
       to: "/analytics",
     },
@@ -511,7 +518,7 @@ function OwnerAdminDashboard({
       title: "Stock At Risk",
       value: String(lowStockCount),
       trend: lowStockCount > 0 ? "Items need attention" : "No urgent stock risks",
-      icon: "SR",
+      icon: AlertTriangle,
       tone: "red",
       to: "/inventory?focus=low-stock",
     },
@@ -547,7 +554,7 @@ function OwnerAdminDashboard({
       title: "Approve Purchase Orders",
       subtitle: `${String(stats.draftPurchaseOrderLines.length)} draft lines`,
       badge: stats.draftPurchaseOrderLines.length,
-      icon: "PO",
+      icon: ShoppingCart,
       tone: "red",
       to: "/purchase-orders",
     },
@@ -555,7 +562,7 @@ function OwnerAdminDashboard({
       title: "Supplier Invoice Review",
       subtitle: `${String(summary.pendingSupplierInvoices.length)} invoices`,
       badge: summary.pendingSupplierInvoices.length,
-      icon: "OCR",
+      icon: FileText,
       tone: "orange",
       to: "/suppliers",
     },
@@ -563,7 +570,7 @@ function OwnerAdminDashboard({
       title: "Stock Adjustments",
       subtitle: analytics ? `${String(analytics.inventory.adjustmentsCount)} this period` : "No live adjustment data",
       badge: analytics ? analytics.inventory.adjustmentsCount : "—",
-      icon: "ST",
+      icon: Layers,
       tone: "orange",
       to: "/inventory/adjustments",
     },
@@ -571,7 +578,7 @@ function OwnerAdminDashboard({
       title: "Timesheet Approvals",
       subtitle: `${String(summary.pendingTimesheets.length)} pending`,
       badge: summary.pendingTimesheets.length,
-      icon: "TS",
+      icon: Timer,
       tone: "purple",
       to: "/timesheets",
     },
@@ -580,12 +587,23 @@ function OwnerAdminDashboard({
 
   return (
     <div className="executive-dashboard">
-      <section className="executive-hero">
+
+      {/* ── H1 page header ── */}
+      <header className="oa-hub__header">
         <div>
-          <h2>Good Morning, {userName} <span aria-hidden="true">👋</span></h2>
-          <p>Here&apos;s what&apos;s happening across your clinics today.</p>
+          <h1 className="oa-hub__title">
+            {getGreeting()}, {userName}.
+          </h1>
+          <p className="oa-hub__subtitle">
+            {isAllClinicsScope
+              ? `${String(availableClinicCount)} clinic${availableClinicCount !== 1 ? "s" : ""} · group overview`
+              : `${selectedClinicName} · owner overview`}
+            {pendingApprovals > 0
+              ? ` · ${String(pendingApprovals)} approval${pendingApprovals !== 1 ? "s" : ""} pending`
+              : ""}
+          </p>
         </div>
-      </section>
+      </header>
 
       <section className="executive-kpi-row" aria-label="Executive KPI Row">
         {kpis.map((item) => (
@@ -608,13 +626,9 @@ function OwnerAdminDashboard({
       </div>
 
       <button type="button" className="executive-ai-fab" aria-label="Open AI assistant">
-        ✦
+        <Sparkles size={18} strokeWidth={1.75} aria-hidden="true" />
       </button>
 
-      <span className="executive-dashboard__meta" aria-hidden="true">
-        {isAllClinicsScope ? `${String(availableClinicCount)} locations` : selectedClinicName}
-        {pendingApprovals > 0 ? ` · ${String(pendingApprovals)} approvals pending` : ""}
-      </span>
     </div>
   );
 }

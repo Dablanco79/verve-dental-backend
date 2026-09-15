@@ -9985,4 +9985,151 @@ select.vds-control {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Owner / Admin Daily Hub  (Stage 5)
+   ─────────────────────────────────────────────────────────────────────────
+   Namespace: oa-hub
+   Targets existing executive-dashboard component set.
+   All tokens reference VDS :root — no parallel design system.
+   Functional firewall: no business logic, APIs or permissions changed.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Max-width container — prevents excessive stretch on wide monitors ─── */
+.executive-dashboard {
+  max-width: 1440px;
+  margin-inline: auto;
+}
+
+/* ── H1 page header ─────────────────────────────────────────────────────── */
+.oa-hub__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-4);
+  padding: var(--vds-space-1) 0;
+}
+
+.oa-hub__title {
+  margin: 0 0 var(--vds-space-2);
+  font-size: var(--vds-font-size-xl);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--vds-colour-heading);
+}
+
+.oa-hub__subtitle {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  line-height: 1.5;
+}
+
+/* ── Executive KPI icon — icon-size fix for SVG (was sized for text) ───── */
+.executive-kpi__icon {
+  font-size: 0;          /* suppress any residual text rendering */
+}
+
+/* ── Operational Brief — icon inherits purple from parent class ─────────── */
+.executive-brief__title > svg {
+  color: var(--vds-colour-purple);
+  flex-shrink: 0;
+}
+
+/* ── Clinic health row icon — icon-size fix for SVG ────────────────────── */
+.clinic-health-row__icon {
+  font-size: 0;
+}
+
+/* ── Action Centre icon — icon-size fix for SVG ─────────────────────────── */
+.action-centre-card__icon {
+  font-size: 0;
+}
+
+/* ── VDS empty-state treatment for placeholder panels ───────────────────── */
+.oa-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--vds-space-2);
+  padding: var(--vds-space-6) var(--vds-space-4);
+  text-align: center;
+}
+
+.oa-empty-state__icon {
+  color: var(--vds-colour-border-strong);
+  opacity: 0.7;
+}
+
+.oa-empty-state__icon--purple {
+  color: var(--vds-colour-purple);
+  opacity: 0.45;
+}
+
+.oa-empty-state__message {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  font-weight: 600;
+  color: var(--vds-colour-muted);
+}
+
+.oa-empty-state__hint {
+  margin: 0;
+  max-width: 26rem;
+  font-size: 0.77rem;
+  color: var(--vds-colour-muted);
+  line-height: 1.5;
+  opacity: 0.75;
+}
+
+/* ── Dashboard panel subheading / beta badge ─────────────────────────────── */
+.dashboard-panel__subheading {
+  margin: 0.1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--vds-colour-muted);
+}
+
+.dashboard-panel__beta-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.45rem;
+  margin-left: 0.35rem;
+  border-radius: 0.35rem;
+  background: rgba(75, 18, 144, 0.1);
+  color: var(--vds-colour-purple);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+/* ── AI FAB — icon-size fix ─────────────────────────────────────────────── */
+.executive-ai-fab {
+  font-size: 0;
+  line-height: 1;
+}
+
+/* ── Responsive — tablet (max-width: 768px) ─────────────────────────────── */
+@media (max-width: 768px) {
+  .oa-hub__title {
+    font-size: var(--vds-font-size-lg);
+  }
+}
+
+/* ── Responsive — mobile phone (max-width: 640px) ──────────────────────── */
+@media (max-width: 640px) {
+  .oa-hub__header {
+    flex-direction: column;
+    gap: var(--vds-space-2);
+  }
+
+  .oa-hub__title {
+    font-size: var(--vds-font-size-base);
+    letter-spacing: -0.01em;
+  }
+}
+
+
 
