@@ -10144,12 +10144,14 @@ select.vds-control {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--vds-space-4);
+  gap: var(--vds-space-3);
   margin-bottom: var(--vds-space-4);
-  flex-wrap: wrap;
+  /* Never stack to a column — keep the Refresh button right-aligned at all widths */
+  flex-wrap: nowrap;
 }
 
 .ts-hub__header-text {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -10176,9 +10178,37 @@ select.vds-control {
 
 .ts-hub__header-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--vds-space-2);
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  /* Keep the button at the top-right corner regardless of title height */
+  padding-top: 0.2rem;
+}
+
+/* ── Manager personal-shifts callout ────────────────────────────────────────
+   Layout fix: the inventory-receiving-callout base sets `p { margin: 0 }`
+   which removes all spacing between the paragraph and the link/button below.
+   The `.pr-self-service-callout` modifier restores clear vertical separation
+   and ensures the button always sits on its own row.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.pr-self-service-callout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-3);
+}
+
+.pr-self-service-callout p {
+  /* Cap line length so the paragraph doesn't become excessively tall on
+     any viewport — especially on narrow mobile screens.                 */
+  max-width: 60ch;
+  /* Restore readable bottom spacing overridden by the base callout rule  */
+  margin: 0;
+}
+
+.pr-self-service-callout .link-button {
+  /* Pin to the start of the flex column so it doesn't stretch full-width */
+  align-self: flex-start;
 }
 
 /* Remove the extra top padding the status-card adds when it immediately
@@ -10430,17 +10460,17 @@ select.vds-control {
 
 /* Phone (≤ 480px) */
 @media (max-width: 480px) {
+  /* Header stays as a row at all widths — title shrinks, Refresh stays right-aligned */
   .ts-hub__header {
-    flex-direction: column;
     gap: var(--vds-space-2);
   }
 
   .ts-hub__title {
-    font-size: 1.2rem;
+    font-size: 1.15rem;
   }
 
   .ts-hub__subtitle {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
   }
 
   .ts-clock-card {
