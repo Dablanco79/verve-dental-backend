@@ -356,7 +356,7 @@ describe("HomePage role dashboards", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: /Good Morning, admin/i,
+        name: /good (morning|afternoon|evening), admin/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Today's Operational Brief")).toBeInTheDocument();
@@ -383,7 +383,7 @@ describe("HomePage role dashboards", () => {
 
     expect(
       await screen.findByRole("heading", {
-        name: /Good Morning, admin/i,
+        name: /good (morning|afternoon|evening), admin/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Clinic opening status not connected")).toBeInTheDocument();

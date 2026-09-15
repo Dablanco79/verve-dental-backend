@@ -10131,5 +10131,352 @@ select.vds-control {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   STAGE 5 — TIMESHEETS HUB (ts-hub)
+   ─ Personal Staff Timesheet / Clock In–Out experience
+   ─ Manager Approval & Commission Verification experience
+   ─ Location visual states (VISUAL ONLY — not connected to live GPS)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page H1 header ──────────────────────────────────────────────────────── */
+
+.ts-hub__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-4);
+  margin-bottom: var(--vds-space-4);
+  flex-wrap: wrap;
+}
+
+.ts-hub__header-text {
+  min-width: 0;
+}
+
+.ts-hub__title {
+  margin: 0 0 var(--vds-space-1);
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--vds-colour-heading);
+  line-height: 1.15;
+}
+
+.ts-hub__subtitle {
+  margin: 0;
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  line-height: 1.5;
+}
+
+.ts-hub__subtitle-sep {
+  margin: 0 0.4em;
+  opacity: 0.5;
+}
+
+.ts-hub__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+  flex-shrink: 0;
+}
+
+/* Remove the extra top padding the status-card adds when it immediately
+   follows the ts-hub header — the header already provides breathing room. */
+.ts-hub__content {
+  margin-top: 0;
+}
+
+/* ── Clock section — give more vertical breathing room ───────────────────── */
+
+.ts-hub__clock-section {
+  padding-bottom: var(--vds-space-4);
+  border-bottom: 1px solid var(--vds-colour-border);
+  margin-bottom: var(--vds-space-5);
+}
+
+/* ── Clock card improvements ─────────────────────────────────────────────── */
+
+/* Make the clock card full-width rather than inline-flex shrink-to-content */
+.ts-clock-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 540px;
+  gap: var(--vds-space-3);
+}
+
+.ts-clock-card--idle {
+  /* Slightly stronger visual treatment for the dominant Clock In action */
+  border: 1.5px solid var(--vds-colour-border);
+  background: var(--vds-colour-card-background, #fff);
+}
+
+/* Row: badge + location signal side-by-side */
+.ts-clock-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+  flex-wrap: wrap;
+}
+
+/* Scale the badge up slightly inside the clock card */
+.ts-clock-badge {
+  font-size: 0.75rem;
+  padding: 0.28rem 0.7rem;
+}
+
+/* Monospace time values inside the clock card info rows */
+.ts-clock-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--vds-colour-heading);
+}
+
+/* Clock form layout within the card */
+.ts-clock-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vds-space-3);
+  align-items: flex-end;
+}
+
+/* Action row: location badge + action button */
+.ts-clock-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+  flex-wrap: wrap;
+}
+
+/* Clock In primary button — large touch target, full VDS purple */
+.ts-clock-btn-primary {
+  min-width: 140px;
+  min-height: 48px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ── Clock Out — success/green treatment (NOT destructive red) ───────────── */
+
+.pr-action-btn--clock-out {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.pr-action-btn--clock-out:not(:disabled):hover {
+  background: #a7f3d0;
+}
+
+/* ── Location visual states ──────────────────────────────────────────────────
+   Stage 5: All `status` props are null in runtime → nothing renders.
+   These styles exist to validate the visual treatment and are ready
+   to receive live values once functional geolocation is implemented.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.ts-loc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* VERIFIED — success green */
+.ts-loc-badge--verified {
+  background: var(--vds-colour-success-bg);
+  color: var(--vds-colour-success);
+}
+
+/* OUTSIDE RANGE — amber warning */
+.ts-loc-badge--outside {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+/* UNAVAILABLE — amber */
+.ts-loc-badge--unavailable {
+  background: var(--vds-colour-warning-bg);
+  color: var(--vds-colour-warning);
+}
+
+/* PERMISSION DENIED — muted amber/neutral */
+.ts-loc-badge--denied {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* HISTORICAL / NOT RECORDED — neutral */
+.ts-loc-badge--historical {
+  background: var(--vds-colour-panel-subtle);
+  color: var(--vds-colour-muted);
+}
+
+/* Clamp label text on small viewports */
+.ts-loc-badge__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24ch;
+}
+
+/* ── Table: inline clock time + location signal ──────────────────────────── */
+
+/* Clock In / Clock Out cells contain time + (future) location badge stacked */
+.pr-table__td--clocked {
+  display: table-cell;
+  vertical-align: top;
+}
+
+.pr-table__td-time {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Rejection form — VDS textarea treatment ─────────────────────────────── */
+
+.pr-inline-form--rejection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  padding: var(--vds-space-3);
+  background: var(--vds-colour-danger-bg, #fee2e2);
+  border-radius: 8px;
+  border: 1px solid #fca5a5;
+}
+
+.pr-inline-form__rejection-header {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-1);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #9b1c1c;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pr-inline-form__rejection-icon {
+  color: #dc2626;
+  flex-shrink: 0;
+}
+
+/* VDS textarea — matches control look of pr-inline-form__input */
+.pr-inline-form__textarea {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.48rem 0.7rem;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  color: #102a43;
+  background: #fff;
+  resize: vertical;
+  min-height: 3rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.pr-inline-form__textarea:focus {
+  outline: 2px solid #2d6a9f;
+  outline-offset: 1px;
+}
+
+.pr-inline-form__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Button row inside the rejection form */
+.pr-inline-form__row-actions {
+  display: flex;
+  gap: var(--vds-space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+/* Tablet (≤ 768px) */
+@media (max-width: 768px) {
+  .ts-hub__title {
+    font-size: 1.4rem;
+  }
+
+  .ts-clock-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ts-clock-form .pr-clock-form__field {
+    width: 100%;
+  }
+
+  .ts-clock-actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .ts-clock-btn-primary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Phone (≤ 480px) */
+@media (max-width: 480px) {
+  .ts-hub__header {
+    flex-direction: column;
+    gap: var(--vds-space-2);
+  }
+
+  .ts-hub__title {
+    font-size: 1.2rem;
+  }
+
+  .ts-hub__subtitle {
+    font-size: 0.75rem;
+  }
+
+  .ts-clock-card {
+    max-width: 100%;
+  }
+
+  .ts-clock-btn-primary {
+    min-height: 52px;
+    font-size: 1.05rem;
+  }
+
+  /* Clock Out button also needs a good touch target on mobile */
+  .pr-action-btn--clock-out {
+    min-height: 44px;
+    padding: 0.6rem 1.2rem;
+    font-size: 0.95rem;
+  }
+
+  .pr-inline-form__row-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pr-inline-form__row-actions .pr-action-btn,
+  .pr-inline-form__row-actions .pr-inline-form__cancel {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
+  }
+
+  /* Compact ledger table on phone — allow horizontal scroll */
+  .ts-hub__content .pr-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 
 

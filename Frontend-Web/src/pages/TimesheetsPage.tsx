@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock, Info } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
@@ -45,6 +46,71 @@ function toDatetimeLocal(date: Date): string {
     [String(date.getFullYear()), pad(date.getMonth() + 1), pad(date.getDate())].join("-") +
     "T" +
     [pad(date.getHours()), pad(date.getMinutes())].join(":")
+  );
+}
+
+// ── Stage 5: Timesheet Location Visual States ────────────────────────────────
+//
+// VISUAL STATES ONLY — not connected to navigator.geolocation or any live GPS
+// data. The `status` prop will be `null` in all current runtime paths.
+// These components are ready to receive real values once the functional
+// geolocation change is implemented (post–Stage 5).
+//
+// DO NOT pass hardcoded fixture values in production code paths.
+
+type TsLocationState =
+  | "verified"       // within 100m — success green
+  | "outside_range"  // > 100m, clock still allowed — amber warning
+  | "unavailable"    // location service unavailable — amber
+  | "denied"         // permission denied — amber/neutral
+  | "not_recorded"   // historical entry, no GPS — neutral
+  | null;            // status unknown / pre-functional — renders nothing
+
+const TS_LOCATION_CONFIG = {
+  verified: {
+    label: "Location verified",
+    hint: null as string | null,
+    className: "ts-loc-badge--verified",
+    Icon: CheckCircle2,
+  },
+  outside_range: {
+    label: "Outside normal clock area",
+    hint: "Timesheet can still be submitted — manager review required",
+    className: "ts-loc-badge--outside",
+    Icon: AlertTriangle,
+  },
+  unavailable: {
+    label: "Location unavailable",
+    hint: "Recorded without GPS",
+    className: "ts-loc-badge--unavailable",
+    Icon: AlertTriangle,
+  },
+  denied: {
+    label: "Location permission not granted",
+    hint: null as string | null,
+    className: "ts-loc-badge--denied",
+    Icon: Info,
+  },
+  not_recorded: {
+    label: "Location not recorded",
+    hint: "Historical entry",
+    className: "ts-loc-badge--historical",
+    Icon: Clock,
+  },
+} as const;
+
+/** Inline location-state badge. Renders nothing when status is null. */
+function TsLocationBadge({ status }: { status: TsLocationState }) {
+  if (status === null) return null;
+  const { Icon, label, hint, className } = TS_LOCATION_CONFIG[status];
+  return (
+    <span
+      className={`ts-loc-badge ${className}`}
+      title={hint ?? label}
+    >
+      <Icon size={12} aria-hidden="true" />
+      <span className="ts-loc-badge__text">{label}</span>
+    </span>
   );
 }
 
@@ -151,8 +217,15 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                 <td className="pr-table__td">
                   <PayrollTypeBadge type={entry.payrollType} />
                 </td>
-                <td className="pr-table__td">{formatDateTime(entry.clockInAt)}</td>
-                <td className="pr-table__td">{formatDateTime(entry.clockOutAt)}</td>
+                {/* Stage 5: TsLocationBadge status=null — visual treatment wired, not live */}
+                <td className="pr-table__td pr-table__td--clocked">
+                  <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
+                  <TsLocationBadge status={null} />
+                </td>
+                <td className="pr-table__td pr-table__td--clocked">
+                  <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
+                  <TsLocationBadge status={null} />
+                </td>
                 <td className="pr-table__td pr-table__td--mono">
                   {formatHours(entry.totalHoursWorked)}
                 </td>
@@ -187,34 +260,42 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {rejectingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
                   <td colSpan={8} className="pr-table__td">
-                    <div className="pr-inline-form">
-                      <input
-                        className="pr-inline-form__input"
-                        type="text"
+                    <div className="pr-inline-form pr-inline-form--rejection">
+                      <div className="pr-inline-form__rejection-header">
+                        <AlertTriangle size={14} aria-hidden="true" className="pr-inline-form__rejection-icon" />
+                        <span>Rejection reason</span>
+                      </div>
+                      {/* VDS textarea — required reason field */}
+                      <textarea
+                        className="pr-inline-form__textarea"
                         placeholder="Rejection reason (required)…"
                         value={rejectNotes}
                         onChange={(e) => { setRejectNotes(e.target.value); }}
                         disabled={isBusy}
+                        rows={2}
+                        aria-required="true"
                       />
-                      <button
-                        type="button"
-                        className="pr-action-btn pr-action-btn--reject"
-                        onClick={() => { void handleRejectSubmit(entry.id); }}
-                        disabled={isBusy}
-                      >
-                        {isBusy ? "Saving…" : "Confirm"}
-                      </button>
-                      <button
-                        type="button"
-                        className="pr-inline-form__cancel"
-                        onClick={() => {
-                          setRejectingId(null);
-                          setActionError(null);
-                        }}
-                        disabled={isBusy}
-                      >
-                        Cancel
-                      </button>
+                      <div className="pr-inline-form__row-actions">
+                        <button
+                          type="button"
+                          className="pr-action-btn pr-action-btn--reject"
+                          onClick={() => { void handleRejectSubmit(entry.id); }}
+                          disabled={isBusy}
+                        >
+                          {isBusy ? "Saving…" : "Submit Rejection"}
+                        </button>
+                        <button
+                          type="button"
+                          className="pr-inline-form__cancel"
+                          onClick={() => {
+                            setRejectingId(null);
+                            setActionError(null);
+                          }}
+                          disabled={isBusy}
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                     {actionError ? (
                       <p className="pr-inline-form__error" role="alert">
@@ -396,7 +477,6 @@ function ClockWidget({
   const nowDate = new Date();
   const laterDate = new Date(nowDate.getTime() + 8 * 60 * 60 * 1000);
 
-  const [showForm, setShowForm] = useState(false);
   const [startAt, setStartAt] = useState(() => toDatetimeLocal(nowDate));
   const [endAt, setEndAt] = useState(() => toDatetimeLocal(laterDate));
   const [clockOutAt, setClockOutAt] = useState(() => toDatetimeLocal(nowDate));
@@ -414,7 +494,6 @@ function ClockWidget({
         shiftStartAt: new Date(startAt).toISOString(),
         shiftEndAt: new Date(endAt).toISOString(),
       });
-      setShowForm(false);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-in failed. Try again.");
     } finally {
@@ -443,17 +522,27 @@ function ClockWidget({
     }
   }
 
+  // ── Active shift: Clock Out ──────────────────────────────────────────────
   if (openEntry) {
     return (
-      <div className="pr-clock-card pr-clock-card--active">
-        <p className="pr-clock-card__status-label">Active Shift</p>
+      <div className="pr-clock-card pr-clock-card--active ts-clock-card">
+        {/* Status row — badge + location signal (Stage 5: status=null, renders nothing) */}
+        <div className="ts-clock-status-row">
+          <span className="vds-badge vds-badge--success ts-clock-badge">Active shift</span>
+          {/* Clock-in location: Stage 5 visual slot — not live */}
+          <TsLocationBadge status={null} />
+        </div>
+
         <p className="pr-clock-card__shift-info">
-          Clocked in at <strong>{formatDateTime(openEntry.clockInAt)}</strong>
+          Clocked in at{" "}
+          <strong className="ts-clock-time">{formatDateTime(openEntry.clockInAt)}</strong>
         </p>
         <p className="pr-clock-card__shift-info">
-          Planned end: <strong>{formatDateTime(openEntry.shiftEndAt)}</strong>
+          Planned end:{" "}
+          <strong className="ts-clock-time">{formatDateTime(openEntry.shiftEndAt)}</strong>
         </p>
-        <div className="pr-clock-form pr-clock-form--out">
+
+        <div className="pr-clock-form pr-clock-form--out ts-clock-form">
           <div className="pr-clock-form__field">
             <label className="pr-clock-form__label" htmlFor="clock-out-at">
               Clock-out time
@@ -482,14 +571,16 @@ function ClockWidget({
               disabled={isBusy}
             />
           </div>
-          <div className="pr-clock-form__actions">
+          <div className="pr-clock-form__actions ts-clock-actions">
+            {/* Clock-out location: Stage 5 visual slot — not live */}
+            <TsLocationBadge status={null} />
             <button
               type="button"
-              className="pr-action-btn pr-action-btn--reject"
+              className="pr-action-btn pr-action-btn--clock-out"
               onClick={() => { void handleClockOut(); }}
               disabled={isBusy}
             >
-              {isBusy ? "Saving…" : "End Shift"}
+              {isBusy ? "Saving…" : "Clock Out"}
             </button>
           </div>
           {formError ? (
@@ -502,73 +593,60 @@ function ClockWidget({
     );
   }
 
+  // ── No active shift: Clock In ────────────────────────────────────────────
   return (
-    <div className="pr-clock-card">
-      <p className="pr-clock-card__status-label">No active shift</p>
-      {!showForm ? (
-        <button
-          type="button"
-          className="pr-action-btn pr-action-btn--submit"
-          onClick={() => { setShowForm(true); }}
-        >
-          Start Shift
-        </button>
-      ) : (
-        <div className="pr-clock-form">
-          <div className="pr-clock-form__field">
-            <label className="pr-clock-form__label" htmlFor="shift-start">
-              Shift start
-            </label>
-            <input
-              id="shift-start"
-              type="datetime-local"
-              className="pr-clock-form__control"
-              value={startAt}
-              onChange={(e) => { setStartAt(e.target.value); }}
-              disabled={isBusy}
-            />
-          </div>
-          <div className="pr-clock-form__field">
-            <label className="pr-clock-form__label" htmlFor="shift-end">
-              Planned end
-            </label>
-            <input
-              id="shift-end"
-              type="datetime-local"
-              className="pr-clock-form__control"
-              value={endAt}
-              onChange={(e) => { setEndAt(e.target.value); }}
-              disabled={isBusy}
-            />
-          </div>
-          <div className="pr-clock-form__actions">
-            <button
-              type="button"
-              className="pr-action-btn pr-action-btn--submit"
-              onClick={() => { void handleClockIn(); }}
-              disabled={isBusy}
-            >
-              {isBusy ? "Clocking in…" : "Clock In"}
-            </button>
-            <button
-              type="button"
-              className="pr-inline-form__cancel"
-              onClick={() => {
-                setShowForm(false);
-                setFormError(null);
-              }}
-              disabled={isBusy}
-            >
-              Cancel
-            </button>
-          </div>
-          {formError ? (
-            <p className="pr-clock-form__error" role="alert">
-              {formError}
-            </p>
-          ) : null}
+    <div className="pr-clock-card ts-clock-card ts-clock-card--idle">
+      {/* Status row — badge + location signal (Stage 5: status=null, renders nothing) */}
+      <div className="ts-clock-status-row">
+        <span className="vds-badge vds-badge--neutral ts-clock-badge">No active shift</span>
+        {/* Clock-in location: Stage 5 visual slot — not live */}
+        <TsLocationBadge status={null} />
+      </div>
+
+      {/* Clock In form — dominant action, shown directly */}
+      <div className="pr-clock-form ts-clock-form">
+        <div className="pr-clock-form__field">
+          <label className="pr-clock-form__label" htmlFor="shift-start">
+            Shift start
+          </label>
+          <input
+            id="shift-start"
+            type="datetime-local"
+            className="pr-clock-form__control"
+            value={startAt}
+            onChange={(e) => { setStartAt(e.target.value); }}
+            disabled={isBusy}
+          />
         </div>
-      )}
+        <div className="pr-clock-form__field">
+          <label className="pr-clock-form__label" htmlFor="shift-end">
+            Planned end
+          </label>
+          <input
+            id="shift-end"
+            type="datetime-local"
+            className="pr-clock-form__control"
+            value={endAt}
+            onChange={(e) => { setEndAt(e.target.value); }}
+            disabled={isBusy}
+          />
+        </div>
+        <div className="pr-clock-form__actions ts-clock-actions">
+          <button
+            type="button"
+            className="vds-btn vds-btn--primary ts-clock-btn-primary"
+            onClick={() => { void handleClockIn(); }}
+            disabled={isBusy}
+          >
+            {isBusy ? "Clocking in…" : "Clock In"}
+          </button>
+        </div>
+        {formError ? (
+          <p className="pr-clock-form__error" role="alert">
+            {formError}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -607,8 +685,15 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
                 <PayrollTypeBadge type={entry.payrollType} />
               </td>
               <td className="pr-table__td">{entry.rosteredClinicName}</td>
-              <td className="pr-table__td">{formatDateTime(entry.clockInAt)}</td>
-              <td className="pr-table__td">{formatDateTime(entry.clockOutAt)}</td>
+              {/* Stage 5: TsLocationBadge status=null — visual treatment wired, not live */}
+              <td className="pr-table__td pr-table__td--clocked">
+                <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
+                <TsLocationBadge status={null} />
+              </td>
+              <td className="pr-table__td pr-table__td--clocked">
+                <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
+                <TsLocationBadge status={null} />
+              </td>
               <td className="pr-table__td pr-table__td--mono">
                 {formatHours(entry.totalHoursWorked)}
               </td>
@@ -689,30 +774,37 @@ export function TimesheetsPage() {
 
   const subtitleText = isManager
     ? `${String(pendingApproval.length)} pending hourly approval · ${String(pendingCommission.length)} pending commission verification`
-    : "your shift history and clock-in/out";
+    : "your shift history and clock in / out";
+
+  const clinicDisplay = clinicName ?? user.homeClinicName;
 
   return (
     <AppShell>
-      <section className="status-card">
-        <div className="status-card__header">
-          <div>
-            <h2>Timesheets</h2>
-            <p className="inventory-page__subtitle">
-              {clinicName ?? user.homeClinicName} — {subtitleText}
-            </p>
-          </div>
-          <div className="inventory-page__actions">
-            <button
-              type="button"
-              className="button-link"
-              onClick={refetch}
-              disabled={isLoading}
-            >
-              {isLoading ? "Loading…" : "Refresh"}
-            </button>
-          </div>
+      {/* ── Page H1 ── */}
+      <header className="ts-hub__header">
+        <div className="ts-hub__header-text">
+          <h1 className="ts-hub__title">
+            {isManager ? "Timesheets" : "My Timesheets"}
+          </h1>
+          <p className="ts-hub__subtitle">
+            {clinicDisplay}
+            <span className="ts-hub__subtitle-sep">—</span>
+            {subtitleText}
+          </p>
         </div>
+        <div className="ts-hub__header-actions">
+          <button
+            type="button"
+            className="vds-btn vds-btn--ghost vds-btn--sm"
+            onClick={refetch}
+            disabled={isLoading}
+          >
+            {isLoading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+      </header>
 
+      <section className="status-card ts-hub__content">
         {error ? (
           <p className="status-card__error" role="alert">
             {error}
@@ -722,7 +814,7 @@ export function TimesheetsPage() {
         ) : isManager ? (
           <>
             <div className="inventory-receiving-callout pr-self-service-callout" role="note">
-              <h3>Personal shifts and clock in/out</h3>
+              <h3>Personal shifts and clock in / out</h3>
               <p>
                 Owner/Admin timesheets open in approval mode. Personal roster visibility remains
                 under My Shifts; clock in/out is shown here for users with staff timekeeping access.
@@ -734,14 +826,14 @@ export function TimesheetsPage() {
 
             {/* ── Manager: Hourly approval queue ── */}
             <div className="pr-section">
-              <h3 className="pr-section__title">
+              <h2 className="pr-section__title">
                 Hourly Approval Queue
                 {pendingApproval.length > 0 ? (
                   <span className="pr-section__count pr-section__count--warn">
                     {pendingApproval.length}
                   </span>
                 ) : null}
-              </h3>
+              </h2>
               <ApprovalQueue
                 entries={pendingApproval}
                 onApprove={async (id) => {
@@ -755,14 +847,14 @@ export function TimesheetsPage() {
 
             {/* ── Manager: Commission attendance verification ── */}
             <div className="pr-section">
-              <h3 className="pr-section__title">
+              <h2 className="pr-section__title">
                 Commission Attendance Verification
                 {pendingCommission.length > 0 ? (
                   <span className="pr-section__count pr-section__count--warn">
                     {pendingCommission.length}
                   </span>
                 ) : null}
-              </h3>
+              </h2>
               <p className="pr-section__hint">
                 Attendance status directly controls materials forecast accuracy. Only mark{" "}
                 <strong>Present</strong> if the provider was physically at the clinic and treated
@@ -781,9 +873,9 @@ export function TimesheetsPage() {
           </>
         ) : (
           <>
-            {/* ── Staff: Clock widget ── */}
-            <div className="pr-section">
-              <h3 className="pr-section__title">Today&apos;s Session</h3>
+            {/* ── Staff: Clock In / Clock Out ── */}
+            <div className="pr-section ts-hub__clock-section">
+              <h2 className="pr-section__title">Today&apos;s Session</h2>
               <ClockWidget
                 openEntry={openEntry}
                 homeClinicId={user.homeClinicId}
@@ -795,7 +887,7 @@ export function TimesheetsPage() {
 
             {/* ── Staff: Personal timesheet ledger ── */}
             <div className="pr-section">
-              <h3 className="pr-section__title">My Timesheet Ledger (Last 30 Days)</h3>
+              <h2 className="pr-section__title">My Timesheet Ledger (Last 30 Days)</h2>
               <MyLedger entries={timesheets} />
             </div>
           </>
