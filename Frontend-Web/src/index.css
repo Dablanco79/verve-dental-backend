@@ -10754,5 +10754,31 @@ select.vds-control {
   }
 }
 
+/* ── Inventory table — mobile horizontal scroll ──────────────────────────────
+   The .inventory-table-wrap already has overflow-x: auto.  Without a minimum
+   width the table compresses to fit the viewport, collapsing columns to single
+   characters.  Setting min-width forces the table to maintain usable column
+   widths; the wrap's overflow-x: auto then provides horizontal scrolling.
+   No component change required. ─────────────────────────────────────────── */
+.inventory-table {
+  min-width: 900px;
+}
+
+/* ── Receive-mode submit button — approved green treatment ──────────────────
+   The base .scan-form__submit rule in the VDS shared-button block (specificity
+   0-1-0) comes after the old .scan-form__submit--receive rule (also 0-1-0) in
+   document order, so cascade overrides green with purple.  Chained selector
+   raises specificity to 0-2-0 so green wins regardless of document order.
+   Matches the same #166534 green used by the Receive mode toggle active state. */
+.scan-form__submit.scan-form__submit--receive {
+  background: linear-gradient(135deg, #166534, #0f5132);
+  box-shadow: 0 10px 24px rgba(22, 101, 52, 0.14);
+}
+
+.scan-form__submit.scan-form__submit--receive:hover:not(:disabled) {
+  background: linear-gradient(135deg, #15803d, #166534);
+  transform: translateY(-1px);
+}
+
 
 
