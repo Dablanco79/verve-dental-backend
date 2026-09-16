@@ -58,7 +58,7 @@ export function createRosterService(
    */
   clinicRepository: ClinicRepository,
   /**
-   * Multi-clinic access foundation (Migration 046).
+   * Multi-clinic access foundation (Migration 047).
    * Used for roster-eligibility checks and eligible-staff queries.
    */
   assignmentsRepository: UserClinicAssignmentsRepository,

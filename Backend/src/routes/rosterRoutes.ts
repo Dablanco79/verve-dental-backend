@@ -25,7 +25,7 @@ export function createRosterRouter(deps: AppDependencies): Router {
     deps.userRepository,
     // ── Module 06 — canonical clinic lookup ────────────────────────────────
     deps.clinicRepository,
-    // ── Multi-clinic access foundation (Migration 046) ─────────────────────
+    // ── Multi-clinic access foundation (Migration 047) ─────────────────────
     deps.clinicAssignmentsRepository,
     // Inject the timesheet completion hook so the roster service auto-generates
     // timesheet entries when a shift is marked 'completed'.

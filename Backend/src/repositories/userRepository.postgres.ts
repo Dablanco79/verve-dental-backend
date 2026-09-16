@@ -111,35 +111,63 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
       const id = randomUUID();
       const derivedDisplayName =
         input.displayName ?? `${input.firstName} ${input.lastName}`;
-      const { rows } = await pool.query<UserRow>(
-        `INSERT INTO users (
-           id, email, password_hash, role,
-           home_clinic_id, home_clinic_name,
-           first_name, last_name, display_name,
-           payroll_track, mfa_enabled, is_active
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, true)
-         RETURNING *`,
-        [
-          id,
-          input.email.trim().toLowerCase(),
-          input.passwordHash,
-          input.role,
-          input.homeClinicId,
-          input.homeClinicName,
-          input.firstName,
-          input.lastName,
-          derivedDisplayName,
-          input.payrollTrack ?? "hourly",
-        ],
-      );
 
-      const row = rows[0];
-      if (!row) {
-        throw new AppError(500, "INTERNAL_ERROR", "Failed to create user");
+      // Wrap user creation and initial home-clinic assignment in a single
+      // transaction so every new user unconditionally receives a
+      // user_clinic_assignments row (can_roster=true, can_operate=true) for
+      // their home clinic.  Migration 047 backfills users that existed at
+      // deployment time; this path covers all users created after deployment.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const { rows } = await client.query<UserRow>(
+          `INSERT INTO users (
+             id, email, password_hash, role,
+             home_clinic_id, home_clinic_name,
+             first_name, last_name, display_name,
+             payroll_track, mfa_enabled, is_active
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, true)
+           RETURNING *`,
+          [
+            id,
+            input.email.trim().toLowerCase(),
+            input.passwordHash,
+            input.role,
+            input.homeClinicId,
+            input.homeClinicName,
+            input.firstName,
+            input.lastName,
+            derivedDisplayName,
+            input.payrollTrack ?? "hourly",
+          ],
+        );
+
+        const row = rows[0];
+        if (!row) {
+          throw new AppError(500, "INTERNAL_ERROR", "Failed to create user");
+        }
+
+        // Insert initial home-clinic assignment.
+        // ON CONFLICT DO NOTHING is idempotent and harmless if a row already
+        // exists (e.g. re-running seed against an existing database).
+        await client.query(
+          `INSERT INTO user_clinic_assignments
+             (user_id, clinic_id, can_roster, can_operate, assigned_at)
+           VALUES ($1, $2, true, true, now())
+           ON CONFLICT (user_id, clinic_id) DO NOTHING`,
+          [id, input.homeClinicId],
+        );
+
+        await client.query("COMMIT");
+        return rowToUserRecord(row);
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
       }
-
-      return rowToUserRecord(row);
     },
 
     async listByClinic(clinicId: string): Promise<UserRecord[]> {

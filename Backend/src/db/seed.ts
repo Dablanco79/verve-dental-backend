@@ -293,6 +293,19 @@ export async function seedDemoUsers(
             user.homeClinicName,
           ],
         );
+
+        // Mirror the createUser lifecycle: every user receives a home-clinic
+        // assignment (can_roster=true, can_operate=true) so they are immediately
+        // eligible to be rostered and can operate at their home clinic.
+        // ON CONFLICT DO NOTHING is idempotent — safe if migration 047 backfill
+        // already inserted the row.
+        await client.query(
+          `INSERT INTO user_clinic_assignments
+             (user_id, clinic_id, can_roster, can_operate, assigned_at)
+           VALUES ($1, $2, true, true, now())
+           ON CONFLICT (user_id, clinic_id) DO NOTHING`,
+          [user.id, user.homeClinicId],
+        );
       }
 
       logger.info(

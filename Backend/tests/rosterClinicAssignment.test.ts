@@ -1,7 +1,7 @@
 /**
  * Roster Clinic Assignment API Tests
  *
- * Tests the multi-clinic rostering package introduced in Migration 046/047:
+ * Tests the multi-clinic rostering package introduced in Migrations 047/048:
  *  - Roster-eligible staff endpoint (GET /clinics/:id/roster/eligible-staff)
  *  - Clinic-agnostic My Shifts endpoint (GET /roster/me)
  *  - Roster eligibility enforcement (STAFF_NOT_ELIGIBLE_FOR_CLINIC)

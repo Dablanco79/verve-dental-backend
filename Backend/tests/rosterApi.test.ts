@@ -120,7 +120,7 @@ describe("Roster API (Module 04)", () => {
 
     expect(res.status).toBe(403);
     const body = res.body as ApiError;
-    // Since Migration 046 the rejection happens earlier — the rlsTenantContextMiddleware
+    // Since Migration 047 the rejection happens earlier — the rlsTenantContextMiddleware
     // checks can_operate=true before the request even reaches the roster service.
     // TENANT_ACCESS_DENIED (middleware) replaces the old FORBIDDEN (service layer).
     // Both error codes correctly express that the GPM cannot access Clinic B.

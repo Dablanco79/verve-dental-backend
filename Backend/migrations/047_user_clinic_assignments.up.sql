@@ -1,4 +1,4 @@
--- Migration 046: user_clinic_assignments
+-- Migration 047: user_clinic_assignments
 -- Establishes the many-to-many relationship between users and clinics that
 -- separates three previously conflated concepts:
 --

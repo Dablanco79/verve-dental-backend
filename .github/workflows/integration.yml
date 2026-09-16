@@ -44,7 +44,15 @@ jobs:
           --health-retries 10
 
     env:
+      # ── Shared integration test database (migrated + seeded by test:db:setup) ──
       DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test
+      # ── Fresh empty database for clean-slate migration gate ───────────────────
+      # freshDbMigration.integration.test.ts uses this URL to prove the full
+      # migration chain applies to a brand-new database from scratch.
+      # verve_test_fresh is created empty in the "Create fresh migration gate DB"
+      # step below and is never touched by test:db:setup, ensuring it stays blank
+      # until the migration gate test itself runs.
+      FRESH_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_fresh
       REDIS_URL: redis://localhost:6379
       NODE_ENV: test
       JWT_ACCESS_SECRET: integration-test-access-secret-minimum-32-chars-long
@@ -72,6 +80,16 @@ jobs:
             echo "Waiting for postgres to accept connections as verve@verve_test…"
             sleep 2
           done
+
+      # ── Create fresh empty database for the migration gate ───────────────────
+      # verve_test_fresh is never touched by test:db:setup (which only targets
+      # verve_test).  It stays blank until freshDbMigration.integration.test.ts
+      # runs and applies all migrations from scratch, proving the full chain is
+      # idempotent and correct on a brand-new database.
+      - name: Create fresh migration gate database (verve_test_fresh)
+        run: |
+          PGPASSWORD=verve_test psql -h localhost -U verve -d verve_test \
+            -c "CREATE DATABASE verve_test_fresh OWNER verve;"
 
       # ── P0 explicit gates ─────────────────────────────────────────────────────
       # Each named step is a hard gate: if the targeted suite fails, registers

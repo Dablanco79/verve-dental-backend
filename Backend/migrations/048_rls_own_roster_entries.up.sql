@@ -1,4 +1,4 @@
--- Migration 047: RLS — staff may read own roster entries across clinics.
+-- Migration 048: RLS — staff may read own roster entries across clinics.
 --
 -- Problem (confirmed audit finding):
 --   The existing roster_entries SELECT policy only allows rows where
