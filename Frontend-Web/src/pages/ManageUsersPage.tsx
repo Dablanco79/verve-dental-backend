@@ -47,6 +47,15 @@ type ResetPasswordState = {
   success: boolean;
 };
 
+type ClinicAccessState = {
+  userId: string;
+  isLoading: boolean;
+  isSaving: boolean;
+  error: string | null;
+  availableClinics: { id: string; name: string }[];
+  assignments: { clinicId: string; canRoster: boolean; canOperate: boolean }[];
+};
+
 type EditState = {
   userId: string;
   firstName: string;
@@ -92,6 +101,9 @@ export function ManageUsersPage() {
 
   // ── Inline edit ────────────────────────────────────────────────────────────
   const [editState, setEditState] = useState<EditState | null>(null);
+
+  // ── Clinic access (owner_admin only) ───────────────────────────────────────
+  const [clinicAccess, setClinicAccess] = useState<ClinicAccessState | null>(null);
 
   // ── Init form when user is known ───────────────────────────────────────────
   function buildInitialForm(targetClinicId: string, targetClinicName: string): FormState {
@@ -195,6 +207,90 @@ export function ManageUsersPage() {
 
   function closeEdit(): void {
     setEditState(null);
+  }
+
+  // ── Clinic access handlers ─────────────────────────────────────────────────
+
+  async function openClinicAccess(u: StaffUser): Promise<void> {
+    if (!user || user.role !== "owner_admin") return;
+    setClinicAccess({
+      userId: u.id,
+      isLoading: true,
+      isSaving: false,
+      error: null,
+      availableClinics: [],
+      assignments: [],
+    });
+    setEditState(null);
+    setResetState(null);
+    setShowForm(false);
+    try {
+      const data = await apiClient.getUserClinicAccess(u.homeClinicId, u.id);
+      setClinicAccess({
+        userId: u.id,
+        isLoading: false,
+        isSaving: false,
+        error: null,
+        availableClinics: data.availableClinics,
+        assignments: data.assignments.map((a) => ({
+          clinicId: a.clinicId,
+          canRoster: a.canRoster,
+          canOperate: a.canOperate,
+        })),
+      });
+    } catch (err: unknown) {
+      setClinicAccess((s) =>
+        s
+          ? { ...s, isLoading: false, error: err instanceof Error ? err.message : "Failed to load clinic access" }
+          : s,
+      );
+    }
+  }
+
+  async function saveClinicAccess(targetUser: StaffUser): Promise<void> {
+    if (!clinicAccess) return;
+    setClinicAccess((s) => s && { ...s, isSaving: true, error: null });
+    try {
+      await apiClient.putUserClinicAccess(
+        targetUser.homeClinicId,
+        targetUser.id,
+        clinicAccess.assignments,
+      );
+      setClinicAccess(null);
+    } catch (err: unknown) {
+      setClinicAccess((s) =>
+        s
+          ? { ...s, isSaving: false, error: err instanceof Error ? err.message : "Failed to save clinic access" }
+          : s,
+      );
+    }
+  }
+
+  function toggleAssignment(
+    clinicId: string,
+    field: "canRoster" | "canOperate",
+    value: boolean,
+  ): void {
+    setClinicAccess((s) => {
+      if (!s) return s;
+      const exists = s.assignments.some((a) => a.clinicId === clinicId);
+      if (!exists) {
+        // Add a new row for this clinic if it doesn't exist yet.
+        return {
+          ...s,
+          assignments: [
+            ...s.assignments,
+            { clinicId, canRoster: field === "canRoster" ? value : false, canOperate: field === "canOperate" ? value : false },
+          ],
+        };
+      }
+      return {
+        ...s,
+        assignments: s.assignments.map((a) =>
+          a.clinicId === clinicId ? { ...a, [field]: value } : a,
+        ),
+      };
+    });
   }
 
   async function handleSaveEdit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
@@ -527,6 +623,23 @@ export function ManageUsersPage() {
                               {isEditingThis ? "Cancel" : "Edit"}
                             </button>
 
+                            {/* Clinic access — owner_admin only */}
+                            {isAdmin ? (
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => {
+                                  if (clinicAccess?.userId === u.id) {
+                                    setClinicAccess(null);
+                                  } else {
+                                    void openClinicAccess(u);
+                                  }
+                                }}
+                              >
+                                {clinicAccess?.userId === u.id ? "Close access" : "Clinic access"}
+                              </button>
+                            ) : null}
+
                             {/* Reset password action */}
                             {!isEditingThis ? (
                               isResettingThis && resetState.success ? (
@@ -728,6 +841,105 @@ export function ManageUsersPage() {
                                 {resetState.isSubmitting ? "Resetting…" : "Set new password"}
                               </button>
                             </form>
+                          </td>
+                        </tr>
+                      ) : null}
+
+                      {/* Clinic access panel — owner_admin only */}
+                      {isAdmin && clinicAccess?.userId === u.id ? (
+                        <tr key={`${u.id}-clinic-access`}>
+                          <td colSpan={5}>
+                            <div className="product-form" aria-label={`Clinic access for ${u.email}`}>
+                              <h3 style={{ marginBottom: "0.75rem" }}>
+                                Clinic access — {nameLabel(u)}
+                              </h3>
+                              <p className="inventory-page__subtitle" style={{ marginBottom: "1rem" }}>
+                                Home clinic: <strong>{u.homeClinicName}</strong>
+                                {" · "}
+                                Home clinic assignments cannot be removed here.
+                              </p>
+
+                              {clinicAccess.isLoading ? (
+                                <p className="loading-message">Loading assignments…</p>
+                              ) : clinicAccess.error ? (
+                                <p className="status-card__error">{clinicAccess.error}</p>
+                              ) : (
+                                <>
+                                  <div className="inventory-table-wrapper">
+                                    <table className="inventory-table">
+                                      <thead>
+                                        <tr>
+                                          <th>Clinic</th>
+                                          <th>Can be rostered</th>
+                                          <th>Operational access</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {clinicAccess.availableClinics.map((clinic) => {
+                                          const asgn = clinicAccess.assignments.find(
+                                            (a) => a.clinicId === clinic.id,
+                                          );
+                                          const canRoster = asgn?.canRoster ?? false;
+                                          const canOperate = asgn?.canOperate ?? false;
+                                          const isHome = clinic.id === u.homeClinicId;
+                                          return (
+                                            <tr key={clinic.id}>
+                                              <td>
+                                                {clinic.name}
+                                                {isHome ? (
+                                                  <span className="inventory-badge" style={{ marginLeft: "0.5rem" }}>
+                                                    Home
+                                                  </span>
+                                                ) : null}
+                                              </td>
+                                              <td>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={canRoster}
+                                                  disabled={isHome}
+                                                  aria-label={`Can roster at ${clinic.name}`}
+                                                  onChange={(e) => {
+                                                    toggleAssignment(clinic.id, "canRoster", e.target.checked);
+                                                  }}
+                                                />
+                                              </td>
+                                              <td>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={canOperate}
+                                                  disabled={isHome}
+                                                  aria-label={`Operational access at ${clinic.name}`}
+                                                  onChange={(e) => {
+                                                    toggleAssignment(clinic.id, "canOperate", e.target.checked);
+                                                  }}
+                                                />
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="product-form__actions">
+                                    <button
+                                      type="button"
+                                      disabled={clinicAccess.isSaving}
+                                      onClick={() => void saveClinicAccess(u)}
+                                    >
+                                      {clinicAccess.isSaving ? "Saving…" : "Save clinic access"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      disabled={clinicAccess.isSaving}
+                                      onClick={() => { setClinicAccess(null); }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ) : null}

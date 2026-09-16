@@ -30,6 +30,10 @@ import {
 } from "../repositories/rosterRepository.js";
 import { createPostgresRosterRepository } from "../repositories/rosterRepository.postgres.js";
 import {
+  createInMemoryUserClinicAssignmentsRepository,
+} from "../repositories/userClinicAssignmentsRepository.js";
+import { createPostgresUserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.postgres.js";
+import {
   createInMemoryTimesheetRepository,
 } from "../repositories/timesheetRepository.js";
 import { createPostgresTimesheetRepository } from "../repositories/timesheetRepository.postgres.js";
@@ -123,6 +127,7 @@ import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { PermissionRepository } from "../repositories/permissionRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { SupplierRepository } from "../repositories/supplierRepository.js";
 import type { SupplierCatalogueRepository } from "../repositories/supplierCatalogueRepository.js";
 import type { SupplierInvoiceRepository } from "../repositories/supplierInvoiceRepository.js";
@@ -171,6 +176,7 @@ export type AppDependencies = {
   permissionRepository: PermissionRepository;
   catalogRepository: CatalogRepository;
   clinicRepository: ClinicRepository;
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository;
   inventoryRepository: InventoryRepository;
   rosterRepository: RosterRepository;
   timesheetRepository: TimesheetRepository;
@@ -237,6 +243,7 @@ export async function createAppDependencies(
   let permissionRepository: PermissionRepository;
   let catalogRepository: CatalogRepository;
   let clinicRepository: ClinicRepository;
+  let clinicAssignmentsRepository: UserClinicAssignmentsRepository;
   let inventoryRepository: InventoryRepository;
   let rosterRepository: RosterRepository;
   let timesheetRepository: TimesheetRepository;
@@ -338,10 +345,10 @@ export async function createAppDependencies(
     permissionRepository = createPostgresPermissionRepository(connectedPool);
     catalogRepository = createPostgresCatalogRepository(connectedPool);
     clinicRepository = createPostgresClinicRepository(connectedPool);
+    clinicAssignmentsRepository = createPostgresUserClinicAssignmentsRepository(connectedPool);
     inventoryRepository = createPostgresInventoryRepository(connectedPool);
     rosterRepository = createPostgresRosterRepository(connectedPool);
-    timesheetRepository = createPostgresTimesheetRepository(connectedPool);
-    leaveRepository = createPostgresLeaveRepository(connectedPool);
+    timesheetRepository = createPostgresTimesheetRepository(connectedPool);    leaveRepository = createPostgresLeaveRepository(connectedPool);
     billingRepository = createPostgresBillingRepository(connectedPool);
     analyticsRepository = createPostgresAnalyticsRepository(connectedPool);
     supplierRepository = createPostgresSupplierRepository(connectedPool);
@@ -367,6 +374,7 @@ export async function createAppDependencies(
     permissionRepository = createInMemoryPermissionRepository();
     catalogRepository = createInMemoryCatalogRepository();
     clinicRepository = createInMemoryClinicRepository();
+    clinicAssignmentsRepository = createInMemoryUserClinicAssignmentsRepository();
     inventoryRepository = createInMemoryInventoryRepository(catalogRepository);
     rosterRepository = createInMemoryRosterRepository();
     timesheetRepository = createInMemoryTimesheetRepository();
@@ -549,6 +557,7 @@ export async function createAppDependencies(
     permissionRepository,
     catalogRepository,
     clinicRepository,
+    clinicAssignmentsRepository,
     inventoryRepository,
     rosterRepository,
     timesheetRepository,

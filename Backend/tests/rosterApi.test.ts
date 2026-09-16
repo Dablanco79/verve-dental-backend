@@ -120,7 +120,11 @@ describe("Roster API (Module 04)", () => {
 
     expect(res.status).toBe(403);
     const body = res.body as ApiError;
-    expect(body.error.code).toBe("FORBIDDEN");
+    // Since Migration 046 the rejection happens earlier — the rlsTenantContextMiddleware
+    // checks can_operate=true before the request even reaches the roster service.
+    // TENANT_ACCESS_DENIED (middleware) replaces the old FORBIDDEN (service layer).
+    // Both error codes correctly express that the GPM cannot access Clinic B.
+    expect(["FORBIDDEN", "TENANT_ACCESS_DENIED"]).toContain(body.error.code);
   });
 
   it("clinical_staff cannot create roster entries", async () => {

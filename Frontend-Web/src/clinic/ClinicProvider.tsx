@@ -103,7 +103,8 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const homeClinic = homeClinicOption(user);
 
-    if (user.role !== "owner_admin") {
+    // clinical_staff: always single home clinic, no switching.
+    if (user.role === "clinical_staff") {
       setAvailableClinics([homeClinic]);
       setSelectedClinic(homeClinic);
       setSelectedDashboardScope({ type: "clinic", clinic: homeClinic });
@@ -112,35 +113,86 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // owner_admin: fetch all clinics across the organisation.
+    if (user.role === "owner_admin") {
+      setIsLoadingClinics(true);
+      setClinicError(null);
+
+      void apiClient
+        .listClinics()
+        .then((clinics) => {
+          if (cancelled) {
+            return;
+          }
+
+          const clinicOptions = clinics.map((clinic) => ({
+            id: clinic.id,
+            name: clinic.name,
+          }));
+          const nextSelectedClinic = selectDefaultClinic(
+            clinicOptions,
+            homeClinic,
+            getStoredClinicId(user.id),
+          );
+          const nextAvailableClinics = clinicOptions.length > 0 ? clinicOptions : [homeClinic];
+          const nextDashboardScope = selectDefaultDashboardScope(
+            nextAvailableClinics,
+            nextSelectedClinic,
+            getStoredDashboardScope(user.id),
+          );
+
+          setAvailableClinics(nextAvailableClinics);
+          setSelectedClinic(nextSelectedClinic);
+          setSelectedDashboardScope(nextDashboardScope);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) {
+            return;
+          }
+
+          setAvailableClinics([homeClinic]);
+          setSelectedClinic(homeClinic);
+          setSelectedDashboardScope({ type: "clinic", clinic: homeClinic });
+          setClinicError(err instanceof Error ? err.message : "Unable to load clinics.");
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsLoadingClinics(false);
+          }
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // group_practice_manager: fetch only the clinics they have can_operate=true for.
+    // This prevents GPMs from seeing or accessing clinics not assigned by Owner/Admin.
     setIsLoadingClinics(true);
     setClinicError(null);
 
     void apiClient
-      .listClinics()
+      .getMyOperationalClinics()
       .then((clinics) => {
         if (cancelled) {
           return;
         }
 
-        const clinicOptions = clinics.map((clinic) => ({
-          id: clinic.id,
-          name: clinic.name,
-        }));
+        // Operational clinics list may or may not include the home clinic.
+        // Always ensure home clinic is present (backfill gave it can_operate=true).
+        const clinicOptions: ClinicOption[] = clinics.length > 0
+          ? clinics.map((c) => ({ id: c.id, name: c.name }))
+          : [homeClinic];
+
         const nextSelectedClinic = selectDefaultClinic(
           clinicOptions,
           homeClinic,
           getStoredClinicId(user.id),
         );
-        const nextAvailableClinics = clinicOptions.length > 0 ? clinicOptions : [homeClinic];
-        const nextDashboardScope = selectDefaultDashboardScope(
-          nextAvailableClinics,
-          nextSelectedClinic,
-          getStoredDashboardScope(user.id),
-        );
 
-        setAvailableClinics(nextAvailableClinics);
+        setAvailableClinics(clinicOptions);
         setSelectedClinic(nextSelectedClinic);
-        setSelectedDashboardScope(nextDashboardScope);
+        setSelectedDashboardScope({ type: "clinic", clinic: nextSelectedClinic });
       })
       .catch((err: unknown) => {
         if (cancelled) {
@@ -165,7 +217,9 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
 
   const setSelectedClinicId = useCallback(
     (clinicId: string) => {
-      if (!user || user.role !== "owner_admin") {
+      const canSwitch =
+        user?.role === "owner_admin" || user?.role === "group_practice_manager";
+      if (!user || !canSwitch) {
         return;
       }
 
@@ -184,7 +238,12 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
 
   const setDashboardScope = useCallback(
     (scope: DashboardScopeSelection) => {
-      if (!user || user.role !== "owner_admin") {
+      // Only owner_admin may select All Clinics scope.
+      // GPMs may switch among their assigned operational clinics (clinic scope only).
+      if (!user || (user.role !== "owner_admin" && user.role !== "group_practice_manager")) {
+        return;
+      }
+      if (scope.type === "all_clinics" && user.role !== "owner_admin") {
         return;
       }
 
@@ -212,7 +271,7 @@ export function ClinicProvider({ children }: { children: ReactNode }) {
       selectedClinic,
       selectedDashboardScope,
       availableClinics,
-      canSwitchClinics: user?.role === "owner_admin" && availableClinics.length > 1,
+      canSwitchClinics: (user?.role === "owner_admin" || user?.role === "group_practice_manager") && availableClinics.length > 1,
       canSelectAllClinics: user?.role === "owner_admin",
       isLoadingClinics,
       clinicError,

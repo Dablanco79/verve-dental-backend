@@ -6,6 +6,7 @@ import {
   createAuthenticateMiddleware,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
 import { createRosterService } from "../services/rosterService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
@@ -22,16 +23,14 @@ export function createRosterRouter(deps: AppDependencies): Router {
   const rosterService = createRosterService(
     deps.rosterRepository,
     deps.userRepository,
-    // ── Module 06 — canonical clinic lookup ──────────────────────────────────
-    // clinicRepository replaces the previous userRepository.getClinicName()
-    // workaround; clinic names are now resolved from the authoritative source.
+    // ── Module 06 — canonical clinic lookup ────────────────────────────────
     deps.clinicRepository,
+    // ── Multi-clinic access foundation (Migration 046) ─────────────────────
+    deps.clinicAssignmentsRepository,
     // Inject the timesheet completion hook so the roster service auto-generates
     // timesheet entries when a shift is marked 'completed'.
     deps.timesheetService,
-    // ── Module 08 — audit trail ───────────────────────────────────────────────
-    // Write roster lifecycle events (created, updated, completed, cancelled)
-    // to the append-only audit_events log.
+    // ── Module 08 — audit trail ─────────────────────────────────────────────
     deps.analyticsRepository,
   );
   const handlers = createRosterHandlers(rosterService);
@@ -55,7 +54,13 @@ export function createRosterRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.createEntry(req, res)),
   );
 
-  // /me must be declared before /:entryId to avoid route shadowing.
+  // /eligible-staff and /me must be declared before /:entryId to avoid shadowing.
+  router.get(
+    "/eligible-staff",
+    requireRoles("owner_admin", "group_practice_manager"),
+    asyncHandler((req, res) => handlers.listEligibleStaff(req, res)),
+  );
+
   router.get(
     "/me",
     requireRoles(...ROSTER_READ_ROLES),
@@ -78,6 +83,41 @@ export function createRosterRouter(deps: AppDependencies): Router {
     "/:entryId",
     requireRoles(...ROSTER_WRITE_ROLES),
     asyncHandler((req, res) => handlers.cancelEntry(req, res)),
+  );
+
+  return router;
+}
+
+/**
+ * Clinic-agnostic personal roster router.
+ * Mounted at /api/v1/roster (no :clinicId in path).
+ * Returns the authenticated user's own shifts across all clinics.
+ */
+export function createPersonalRosterRouter(deps: AppDependencies): Router {
+  const router = Router();
+  const rosterService = createRosterService(
+    deps.rosterRepository,
+    deps.userRepository,
+    deps.clinicRepository,
+    deps.clinicAssignmentsRepository,
+    deps.timesheetService,
+    deps.analyticsRepository,
+  );
+  const handlers = createRosterHandlers(rosterService);
+  const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+
+  router.use(authenticate);
+  // Establishes per-request RLS context (clinicId = homeClinicId, userId = caller.id).
+  // This populates app.current_user_id so the narrow roster_entries RLS policy
+  // (staff_user_id = app_current_user_id()) can authorise cross-clinic own-row reads
+  // without any owner_admin bypass.
+  router.use(rlsTenantContextMiddleware());
+
+  // GET /roster/me — returns caller's shifts across ALL rostered clinics.
+  router.get(
+    "/me",
+    requireRoles("owner_admin", "group_practice_manager", "clinical_staff"),
+    asyncHandler((req, res) => handlers.getMyShiftsAllClinics(req, res)),
   );
 
   return router;

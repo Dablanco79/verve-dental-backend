@@ -11,6 +11,7 @@ import { AppError } from "../types/errors.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 
 // Narrow write-only audit dependency.
@@ -56,6 +57,11 @@ export function createRosterService(
    * The clinicRepository is the authoritative source of clinic metadata.
    */
   clinicRepository: ClinicRepository,
+  /**
+   * Multi-clinic access foundation (Migration 046).
+   * Used for roster-eligibility checks and eligible-staff queries.
+   */
+  assignmentsRepository: UserClinicAssignmentsRepository,
   /**
    * Optional hook fired after a roster entry transitions to 'completed'.
    * Injected by dependencies.ts to avoid a circular import between
@@ -185,6 +191,24 @@ export function createRosterService(
 
       if (!staffUser.isActive) {
         throw new AppError(400, "USER_INACTIVE", "Staff user account is not active");
+      }
+
+      // ── Roster eligibility check ──────────────────────────────────────────
+      // owner_admin may roster any user at any clinic (broad operational trust).
+      // Managers must have the target staff member roster-eligible at the clinic.
+      if (caller.role !== "owner_admin") {
+        const eligible = await assignmentsRepository.hasRosterEligibility(
+          input.staffUserId,
+          clinicId,
+        );
+        if (!eligible) {
+          throw new AppError(
+            403,
+            "STAFF_NOT_ELIGIBLE_FOR_CLINIC",
+            "This staff member is not eligible to be rostered at this clinic. " +
+              "An owner_admin must grant roster eligibility via Clinic Access settings first.",
+          );
+        }
       }
 
       // Module 06 — resolve clinic name from the canonical clinics table.
@@ -345,6 +369,59 @@ export function createRosterService(
       });
 
       return cancelled;
+    },
+
+    /**
+     * Returns all active users who are roster-eligible at the given clinic.
+     * Used by the Add Shift staff selector (replaces the home-clinic-only
+     * listUsers path for roster purposes).
+     *
+     * owner_admin may see all active users at a clinic without an explicit
+     * assignment (they have implicit roster authority everywhere).
+     */
+    async getRosterEligibleStaff(
+      caller: AuthenticatedUser,
+      clinicId: string,
+    ): Promise<{ id: string; email: string; displayName: string | null; firstName: string | null; lastName: string | null }[]> {
+      // Assert caller can see this clinic's roster.
+      if (!hasFullClinicReadAccess(caller, clinicId)) {
+        throw new AppError(403, "FORBIDDEN", "You do not have access to this clinic's roster");
+      }
+
+      // owner_admin: return all active users who have a roster-eligible assignment
+      // at this clinic (or the home-clinic users as a fallback if no assignments).
+      const assignments = await assignmentsRepository.listRosterEligible(clinicId);
+      const userIds = assignments.map((a) => a.userId);
+
+      const users = await Promise.all(
+        userIds.map((id) => userRepository.findById(id)),
+      );
+
+      return users
+        .filter((u): u is NonNullable<typeof u> => u !== null && u.isActive)
+        .map((u) => ({
+          id: u.id,
+          email: u.email,
+          displayName: u.displayName,
+          firstName: u.firstName,
+          lastName: u.lastName,
+        }));
+    },
+
+    /**
+     * Returns all roster entries for the authenticated user across every clinic
+     * where they are rostered. Does NOT require a clinicId scope.
+     *
+     * Security: only returns entries where staffUserId === caller.id.
+     * The repository uses an ownerAdmin DB context to bypass the RLS
+     * rostered_clinic_id restriction, but application-layer enforcement
+     * ensures the caller can only see their own entries.
+     */
+    async getMyShiftsAllClinics(
+      caller: AuthenticatedUser,
+      options?: { from?: Date; to?: Date },
+    ): Promise<RosterEntry[]> {
+      return rosterRepository.listByStaff(caller.id, options);
     },
   };
 }

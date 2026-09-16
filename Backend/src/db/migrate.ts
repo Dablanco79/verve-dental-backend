@@ -2936,6 +2936,112 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
           AND active = true;
     `,
   },
+  {
+    /**
+     * Migration 047: user_clinic_assignments
+     *
+     * Establishes the many-to-many relationship between users and clinics that
+     * separates three previously conflated concepts:
+     *
+     *   A. Home clinic       — still represented by users.clinic_id (unchanged)
+     *   B. Roster eligibility — can_roster = true rows in this table
+     *   C. Operational access — can_operate = true rows in this table
+     *
+     * Backfill: every existing user receives one row for their home clinic with
+     *   can_roster=true, can_operate=true  (no change in current behaviour).
+     *
+     * users.clinic_id is deliberately NOT removed. It remains the canonical
+     * payroll/home clinic reference for Timesheets, JWT context, and existing
+     * single-clinic RBAC. This table ADDS multi-clinic assignment on top of it.
+     */
+    id: "047_user_clinic_assignments",
+    sql: `
+      CREATE TABLE IF NOT EXISTS user_clinic_assignments (
+        id                  uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id             uuid        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        clinic_id           uuid        NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+        can_roster          boolean     NOT NULL DEFAULT true,
+        can_operate         boolean     NOT NULL DEFAULT false,
+        assigned_by_user_id uuid        REFERENCES users(id) ON DELETE SET NULL,
+        assigned_at         timestamptz NOT NULL DEFAULT now(),
+        updated_at          timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT user_clinic_assignments_unique UNIQUE (user_id, clinic_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_uca_user_id
+        ON user_clinic_assignments (user_id);
+      CREATE INDEX IF NOT EXISTS idx_uca_clinic_id
+        ON user_clinic_assignments (clinic_id);
+      CREATE INDEX IF NOT EXISTS idx_uca_clinic_roster
+        ON user_clinic_assignments (clinic_id, can_roster)
+        WHERE can_roster = true;
+      CREATE INDEX IF NOT EXISTS idx_uca_user_operate
+        ON user_clinic_assignments (user_id, can_operate)
+        WHERE can_operate = true;
+      CREATE INDEX IF NOT EXISTS idx_uca_user_roster
+        ON user_clinic_assignments (user_id, can_roster)
+        WHERE can_roster = true;
+      CREATE INDEX IF NOT EXISTS idx_uca_clinic_operate
+        ON user_clinic_assignments (clinic_id, can_operate)
+        WHERE can_operate = true;
+
+      -- SET LOCAL enables owner_admin RLS bypass so the SELECT can read all users rows.
+      -- This is transaction-local: the bypass is automatically reverted on COMMIT.
+      -- The migration runner wraps every migration in a BEGIN/COMMIT transaction.
+      SET LOCAL app.owner_admin_mode = 'true';
+      SET LOCAL app.current_clinic_id = '00000000-0000-0000-0000-000000000000';
+
+      INSERT INTO user_clinic_assignments (user_id, clinic_id, can_roster, can_operate, assigned_at)
+      SELECT id, home_clinic_id, true, true, now()
+      FROM users
+      ON CONFLICT (user_id, clinic_id) DO NOTHING;
+
+      SET LOCAL app.owner_admin_mode = 'false';
+    `,
+  },
+  {
+    /**
+     * Migration 048: RLS — staff may read own roster entries across clinics.
+     *
+     * Adds app_current_user_id() helper function and extends the
+     * rls_roster_entries_tenant policy so staff can read entries where
+     * staff_user_id matches the session variable app.current_user_id.
+     *
+     * This variable is only set by the /roster/me personal endpoint via
+     * rlsTenantContextMiddleware + pool hook. Normal clinic-scoped requests
+     * leave it empty, so existing clinic isolation is not weakened.
+     *
+     * WITH CHECK (write guard) is unchanged — writes still require owner_admin
+     * or matching rostered_clinic_id.
+     *
+     * See Backend/migrations/048_rls_own_roster_entries.up.sql for full notes.
+     */
+    id: "048_rls_own_roster_entries",
+    sql: `
+      CREATE OR REPLACE FUNCTION app_current_user_id() RETURNS text
+        LANGUAGE sql STABLE PARALLEL SAFE
+      AS $$
+        SELECT COALESCE(current_setting('app.current_user_id', true), '');
+      $$;
+
+      DROP POLICY IF EXISTS rls_roster_entries_tenant ON roster_entries;
+
+      CREATE POLICY rls_roster_entries_tenant ON roster_entries
+        FOR ALL
+        USING (
+          app_is_owner_admin()
+          OR rostered_clinic_id = app_current_clinic_id()
+          OR (
+            app_current_user_id() <> ''
+            AND staff_user_id::text = app_current_user_id()
+          )
+        )
+        WITH CHECK (
+          app_is_owner_admin()
+          OR rostered_clinic_id = app_current_clinic_id()
+        );
+    `,
+  },
 ];
 
 /**

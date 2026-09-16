@@ -6,7 +6,16 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
-import type { StaffUser } from "../types/index.js";
+
+// Slimmer staff type used for the roster-eligible staff selector.
+// The full StaffUser shape is not needed here — only identity fields.
+type EligibleStaff = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+};
 import type {
   RosterEntry,
   ShiftType,
@@ -175,7 +184,7 @@ export function RosterCalendarPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [entries, setEntries] = useState<RosterEntry[]>([]);
-  const [staffList, setStaffList] = useState<StaffUser[]>([]);
+  const [staffList, setStaffList] = useState<EligibleStaff[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -249,7 +258,7 @@ export function RosterCalendarPage() {
   useEffect(() => {
     if (!user || !clinicId || !canWrite) return;
     void apiClient
-      .listUsers(clinicId)
+      .listRosterEligibleStaff(clinicId)
       .then(setStaffList)
       .catch(() => undefined);
   }, [user, clinicId, canWrite]);

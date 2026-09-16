@@ -185,6 +185,11 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       staffUserId: string,
       options?: { from?: Date; to?: Date },
     ): Promise<RosterEntry[]> {
+      // Cross-clinic own-row query. RLS is satisfied by the narrow policy added in
+      // migration 047: `staff_user_id::text = app_current_user_id()`. The pool hook
+      // populates app.current_user_id from the authenticated request context (set by
+      // rlsTenantContextMiddleware on the /roster/me router). No owner_admin bypass
+      // is required or used here.
       const params: unknown[] = [staffUserId];
       const conditions: string[] = ["staff_user_id = $1"];
 
@@ -203,7 +208,6 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
          ORDER BY shift_start_at ASC`,
         params,
       );
-
       return rows.map(toRosterEntry);
     },
 

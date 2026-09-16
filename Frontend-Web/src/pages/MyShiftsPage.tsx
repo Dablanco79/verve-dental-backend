@@ -53,7 +53,9 @@ export function MyShiftsPage() {
     try {
       const from = new Date().toISOString();
       const to = new Date(Date.now() + LOOK_AHEAD_MS).toISOString();
-      const result = await apiClient.getMyShifts(user.homeClinicId, { from, to });
+      // Use the clinic-agnostic endpoint so shifts across ALL rostered clinics
+      // are returned, not just the user's home clinic.
+      const result = await apiClient.getMyShiftsAllClinics({ from, to });
       setEntries(result.filter((e) => e.status !== "cancelled"));
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load shifts");

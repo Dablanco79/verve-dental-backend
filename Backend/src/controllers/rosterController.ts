@@ -224,6 +224,32 @@ export function createRosterHandlers(rosterService: RosterService) {
       const entry = await rosterService.cancelEntry(caller, clinicId, entryId);
       res.status(200).json({ data: serializeEntry(entry) });
     },
+
+    /** GET /clinics/:clinicId/roster/eligible-staff */
+    async listEligibleStaff(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const staff = await rosterService.getRosterEligibleStaff(caller, clinicId);
+      res.status(200).json({ data: staff });
+    },
+
+    /** GET /roster/me (clinic-agnostic personal endpoint) */
+    async getMyShiftsAllClinics(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const parsed = listQuerySchema.safeParse(req.query);
+
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+
+      const options = {
+        from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+        to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+      };
+
+      const entries = await rosterService.getMyShiftsAllClinics(caller, options);
+      res.status(200).json({ data: entries.map(serializeEntry) });
+    },
   };
 }
 

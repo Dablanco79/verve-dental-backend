@@ -37,6 +37,8 @@ import { createLeaveRouter, createTimesheetRouter } from "./payrollRoutes.js";
 import { createProductRouter } from "./productRoutes.js";
 import { createPurchaseOrderRouter, createPurchasingDraftRouter } from "./purchaseOrderRoutes.js";
 import { createRosterRouter } from "./rosterRoutes.js";
+import { createPersonalRosterRouter } from "./rosterRoutes.js";
+import { createClinicAssignmentRouter, createUserAccessRouter } from "./userClinicAssignmentRoutes.js";
 import { createScanRouter } from "./scanRoutes.js";
 import { createUserRouter } from "./userRoutes.js";
 import { createPermissionRouter } from "./permissionRoutes.js";
@@ -80,7 +82,11 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const mfaSetupAuth = createMfaSetupMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage
   // context so installRlsPoolHook can inject app.current_clinic_id on every checkout.
-  const rlsContext = rlsTenantContextMiddleware();
+  // GPM multi-clinic: passes an operational-access checker so GPMs can switch between
+  // clinics where can_operate=true without needing owner_admin privileges.
+  const rlsContext = rlsTenantContextMiddleware(
+    (userId, clinicId) => deps.clinicAssignmentsRepository.hasOperationalAccess(userId, clinicId),
+  );
 
   const authRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -158,6 +164,13 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   // outside /clinics/:clinicId so no synthetic clinic ID enters tenant-scoped routes.
   router.use("/analytics", createGlobalAnalyticsRouter(deps));
 
+  // Personal cross-clinic roster — GET /roster/me returns the caller's own shifts
+  // across ALL clinics regardless of rostered_clinic_id. Clinic-agnostic by design.
+  router.use("/roster", createPersonalRosterRouter(deps));
+
+  // User access queries (operational clinics for current user, etc.).
+  router.use("/users", createUserAccessRouter(deps));
+
   // rlsContext runs on all /clinics/:clinicId/* routes — sets the per-request
   // RLS session variable so installRlsPoolHook injects it on every DB checkout.
   router.use("/clinics/:clinicId", authenticate, rlsContext);
@@ -171,6 +184,9 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.use("/clinics/:clinicId/purchase-orders", createPurchaseOrderRouter(deps));
   router.use("/clinics/:clinicId/purchasing-drafts", createPurchasingDraftRouter(deps));
   router.use("/clinics/:clinicId/roster", createRosterRouter(deps));
+
+  // Clinic Access assignment routes — Owner/Admin only.
+  router.use("/clinics/:clinicId/users", createClinicAssignmentRouter(deps));
   router.use("/clinics/:clinicId/forecast", createForecastRouter(deps));
   // Labor cost projection mounts at the same /forecast prefix — Express matches
   // each request against registered routes in order, so /materials and /alerts

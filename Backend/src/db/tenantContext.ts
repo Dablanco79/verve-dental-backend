@@ -96,7 +96,8 @@ export async function withTenantContext<T>(
     await client.query(
       `SELECT
          set_config('app.current_clinic_id', $1, true),
-         set_config('app.owner_admin_mode',  $2, true)`,
+         set_config('app.owner_admin_mode',  $2, true),
+         set_config('app.current_user_id',   '',  true)`,
       [clinicId, ownerAdmin ? "true" : "false"],
     );
     const result = await fn(client);
@@ -117,6 +118,8 @@ export async function withTenantContext<T>(
 type TenantCtx = {
   clinicId: string;
   ownerAdmin: boolean;
+  /** Authenticated user's UUID, used to populate app.current_user_id in RLS. */
+  userId?: string;
 };
 
 /**
@@ -248,8 +251,9 @@ export function installRlsPoolHook(pool: DatabasePool): void {
       await client.query(
         `SELECT
            set_config('app.current_clinic_id', $1, false),
-           set_config('app.owner_admin_mode',  $2, false)`,
-        [ctx.clinicId, ctx.ownerAdmin ? "true" : "false"],
+           set_config('app.owner_admin_mode',  $2, false),
+           set_config('app.current_user_id',   $3, false)`,
+        [ctx.clinicId, ctx.ownerAdmin ? "true" : "false", ctx.userId ?? ""],
       );
     } catch (injectionErr) {
       // Fail-closed: destroy this connection rather than returning it with
@@ -288,7 +292,8 @@ export function installRlsPoolHook(pool: DatabasePool): void {
           .query(
             `SELECT
                set_config('app.current_clinic_id', '', false),
-               set_config('app.owner_admin_mode',  '', false)`,
+               set_config('app.owner_admin_mode',  '', false),
+               set_config('app.current_user_id',   '', false)`,
           )
           .then(() => { originalRelease(); })
           .catch((resetErr: unknown) => {
@@ -363,6 +368,12 @@ export function installRlsPoolHook(pool: DatabasePool): void {
  *   owner_admin may legitimately access any clinic; the URL clinicId drives
  *   which clinic's data the current request is scoped to.
  *
+ * group_practice_manager (multi-clinic):
+ *   If a checkOperationalAccess callback is provided and the GPM has
+ *   can_operate=true for the requested clinic, clinicId = params.clinicId.
+ *   If not permitted: throws TENANT_ACCESS_DENIED.
+ *   Falls back to homeClinicId when no callback is provided (legacy behaviour).
+ *
  * all other roles: clinicId = req.user.homeClinicId (ALWAYS from JWT)
  *   Non-admin users are ALWAYS scoped to the clinic in their JWT, regardless
  *   of the URL parameter.  This means even if enforceTenantParam has a bug,
@@ -372,8 +383,13 @@ export function installRlsPoolHook(pool: DatabasePool): void {
  *
  * The AsyncLocalStorage context propagates automatically through all
  * async/await chains spawned within the request handler.
+ *
+ * @param checkOperationalAccess Optional async callback. When provided, used
+ *   for GPM clinic-switching validation without a synchronous RLS context.
  */
-export function rlsTenantContextMiddleware(): (req: Request, res: Response, next: NextFunction) => void {
+export function rlsTenantContextMiddleware(
+  checkOperationalAccess?: (userId: string, clinicId: string) => Promise<boolean>,
+): (req: Request, res: Response, next: NextFunction) => void {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       next();
@@ -382,13 +398,41 @@ export function rlsTenantContextMiddleware(): (req: Request, res: Response, next
 
     const params = req.params as Record<string, string | undefined>;
     const isOwnerAdmin = req.user.role === "owner_admin";
+    const isGPM = req.user.role === "group_practice_manager";
+    const requestedClinicId = params["clinicId"];
 
-    // For non-owner users the RLS context is always derived from the JWT
-    // homeClinicId — never from the raw URL parameter.  This prevents a
-    // URL-manipulation attack from escalating the DB-layer context even if
-    // the application-layer check has a gap.
+    // Async resolution path for GPM multi-clinic access.
+    if (
+      isGPM &&
+      requestedClinicId &&
+      requestedClinicId !== req.user.homeClinicId &&
+      checkOperationalAccess
+    ) {
+      const user = req.user;
+      checkOperationalAccess(user.id, requestedClinicId)
+        .then((canOperate) => {
+          if (!canOperate) {
+            next(
+              new AppError(
+                403,
+                "TENANT_ACCESS_DENIED",
+                "You do not have operational access to this clinic",
+              ),
+            );
+            return;
+          }
+          const ctx: TenantCtx = { clinicId: requestedClinicId, ownerAdmin: false, userId: user.id };
+          tenantStorage.run(ctx, next);
+        })
+        .catch((err: unknown) => {
+          next(err instanceof Error ? err : new Error(String(err)));
+        });
+      return;
+    }
+
+    // Synchronous path for all other cases.
     const clinicId = isOwnerAdmin
-      ? (params["clinicId"] ?? req.user.homeClinicId)
+      ? (requestedClinicId ?? req.user.homeClinicId)
       : req.user.homeClinicId;
 
     if (!clinicId) {
@@ -399,6 +443,7 @@ export function rlsTenantContextMiddleware(): (req: Request, res: Response, next
     const ctx: TenantCtx = {
       clinicId,
       ownerAdmin: isOwnerAdmin,
+      userId: req.user.id,
     };
 
     tenantStorage.run(ctx, next);

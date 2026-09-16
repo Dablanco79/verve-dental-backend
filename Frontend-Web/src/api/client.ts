@@ -895,6 +895,98 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * GET /api/v1/roster/me — clinic-agnostic personal roster.
+   * Returns the authenticated user's own shifts across ALL rostered clinics.
+   * Used by My Shifts / My Roster personal views.
+   */
+  async function getMyShiftsAllClinics(
+    params?: { from?: string; to?: string },
+  ): Promise<RosterEntry[]> {
+    const query = new URLSearchParams();
+    if (params?.from) query.set("from", params.from);
+    if (params?.to) query.set("to", params.to);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<RosterEntry[]>(
+      config,
+      `/api/v1/roster/me${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /api/v1/clinics/:clinicId/roster/eligible-staff
+   * Returns users with can_roster=true at the specified clinic.
+   * Used by the Add Shift staff selector in the Roster page.
+   */
+  async function listRosterEligibleStaff(clinicId: string): Promise<{
+    id: string;
+    email: string;
+    displayName: string | null;
+    firstName: string | null;
+    lastName: string | null;
+  }[]> {
+    return request<{ id: string; email: string; displayName: string | null; firstName: string | null; lastName: string | null }[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/eligible-staff`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /api/v1/clinics/:clinicId/users/:userId/clinic-access
+   * Returns a user's clinic assignments. owner_admin only.
+   */
+  async function getUserClinicAccess(clinicId: string, userId: string): Promise<{
+    userId: string;
+    assignments: { id: string; userId: string; clinicId: string; canRoster: boolean; canOperate: boolean }[];
+    availableClinics: { id: string; name: string }[];
+  }> {
+    return request<{
+      userId: string;
+      assignments: { id: string; userId: string; clinicId: string; canRoster: boolean; canOperate: boolean }[];
+      availableClinics: { id: string; name: string }[];
+    }>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/clinic-access`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * PUT /api/v1/clinics/:clinicId/users/:userId/clinic-access
+   * Replaces all clinic assignments for a user. owner_admin only.
+   */
+  async function putUserClinicAccess(
+    clinicId: string,
+    userId: string,
+    assignments: { clinicId: string; canRoster: boolean; canOperate: boolean }[],
+  ): Promise<void> {
+    await request<unknown>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/clinic-access`,
+      { method: "PUT", body: JSON.stringify({ assignments }) },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /api/v1/users/me/operational-clinics
+   * Returns clinics where the caller has can_operate=true.
+   * Used by GPM multi-clinic selector.
+   */
+  async function getMyOperationalClinics(): Promise<{ id: string; name: string }[]> {
+    return request<{ id: string; name: string }[]>(
+      config,
+      `/api/v1/users/me/operational-clinics`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function createShift(
     clinicId: string,
     body: CreateShiftRequest,
@@ -2416,6 +2508,11 @@ export function createApiClient(config: AppConfig) {
     getPurchasingDraftDetail,
     listRoster,
     getMyShifts,
+    getMyShiftsAllClinics,
+    listRosterEligibleStaff,
+    getUserClinicAccess,
+    putUserClinicAccess,
+    getMyOperationalClinics,
     createShift,
     updateShift,
     cancelShift,

@@ -65,6 +65,7 @@ vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listRoster: mockListRoster,
     listUsers: mockListUsers,
+    listRosterEligibleStaff: mockListUsers,
     createShift: vi.fn(),
     updateShift: vi.fn(),
     cancelShift: vi.fn(),

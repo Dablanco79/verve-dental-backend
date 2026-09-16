@@ -17,11 +17,21 @@ import {
 } from "./helpers/auth.js";
 import { setAuthenticatedUser, type AuthTestState } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockListClinics, mockLogout } = vi.hoisted(() => {
+const { authTestState, mockListClinics, mockGetMyOperationalClinics, mockLogout } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
     authTestState,
     mockListClinics: vi.fn(),
+    // GPM path: returns just the home clinic (single operational clinic → no selector shown)
+    mockGetMyOperationalClinics: vi.fn().mockResolvedValue([
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Verve Dental Clinic A",
+        timezone: "Australia/Sydney",
+        subscriptionTier: "standard",
+        isActive: true,
+      },
+    ]),
     mockLogout: vi.fn(),
   };
 });
@@ -39,6 +49,7 @@ vi.mock("../src/auth/useAuth.js", () => ({
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listClinics: mockListClinics,
+    getMyOperationalClinics: mockGetMyOperationalClinics,
   }),
 }));
 
@@ -145,10 +156,15 @@ describe("AppShell navigation and clinic scope", () => {
     expect(window.localStorage.getItem(`verve:dashboardScope:${owner.id}`)).toBe("all_clinics");
   });
 
-  it("shows a fixed home clinic for group_practice_manager without cross-clinic switching", () => {
+  it("shows a fixed home clinic for group_practice_manager with one operational clinic (no cross-clinic switching)", async () => {
     setAuthenticatedUser(authTestState, createManagerUser());
 
     renderShell();
+
+    // GPM fetches operational clinics; when only one is returned the selector is not shown.
+    await waitFor(() => {
+      expect(mockGetMyOperationalClinics).toHaveBeenCalled();
+    });
 
     expect(screen.queryByRole("combobox", { name: "Clinic scope" })).not.toBeInTheDocument();
     expect(screen.getAllByText(TEST_CLINIC_NAME).length).toBeGreaterThan(0);
