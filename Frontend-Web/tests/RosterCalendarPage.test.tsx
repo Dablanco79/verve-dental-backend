@@ -224,8 +224,12 @@ describe("RosterCalendarPage — shift cards", () => {
 
     renderPage();
 
+    // Month is the default view; shift cards render compact initials, not full name.
+    // Verify the resolved name is present via the shift button's accessible label.
     await waitFor(() =>
-      expect(screen.getByText("Alice Jones")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /Shift: Alice Jones/i }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -240,8 +244,11 @@ describe("RosterCalendarPage — shift cards", () => {
 
     renderPage();
 
+    // Month compact cells show initials "JD"; verify the resolved name via aria-label.
     await waitFor(() =>
-      expect(screen.getByText("John Doe")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /Shift: John Doe/i }),
+      ).toBeInTheDocument(),
     );
   });
 });

@@ -10781,4 +10781,666 @@ select.vds-control {
 }
 
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   STAGE 5 — ROSTER VDS TREATMENT
+   ─────────────────────────────────────────────────────────────────────────
+   All roster-hub__* classes are new in Stage 5.
+   Existing roster-* classes (roster-day, roster-shift, roster-modal…) are
+   enhanced by the overrides at the bottom of this block.
+   No backend logic, APIs, or RBAC were changed.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page header H1 ──────────────────────────────────────────────────────── */
+
+.roster-hub__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vds-space-4);
+  flex-wrap: wrap;
+}
+
+.roster-hub__title {
+  font-size: var(--vds-font-size-2xl);
+  font-weight: 800;
+  color: var(--vds-colour-heading);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.roster-hub__subtitle {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  margin: 0.25rem 0 0;
+}
+
+/* ── Toolbar: view selector + navigation in one row ─────────────────────── */
+
+.roster-hub__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-4);
+  flex-wrap: wrap;
+}
+
+/* ── View mode segmented control ─────────────────────────────────────────── */
+
+.roster-view-selector {
+  display: flex;
+  background: var(--vds-colour-panel-subtle);
+  border: var(--vds-card-border);
+  border-radius: var(--vds-control-radius);
+  padding: 0.18rem;
+  gap: 0.12rem;
+}
+
+.roster-view-btn {
+  border: 0;
+  background: transparent;
+  border-radius: calc(var(--vds-control-radius) - 0.18rem);
+  padding: 0.38rem 0.9rem;
+  font: inherit;
+  font-size: var(--vds-font-size-sm);
+  font-weight: 600;
+  color: var(--vds-colour-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+  line-height: 1.4;
+}
+
+.roster-view-btn:hover:not(.roster-view-btn--active) {
+  background: rgba(118, 2, 163, 0.07);
+  color: var(--vds-colour-purple);
+}
+
+.roster-view-btn--active {
+  background: var(--vds-colour-purple);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(118, 2, 163, 0.22);
+}
+
+/* ── Range label — widen to fit Day view full date string ────────────────── */
+
+.roster-cal__week-label {
+  min-width: 16rem;
+  text-align: center;
+}
+
+/* ── Content card ─────────────────────────────────────────────────────────── */
+
+.roster-hub__content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.roster-hub__content > .loading-message,
+.roster-hub__content > .status-card__error {
+  padding: 1.25rem 1.5rem;
+}
+
+/* ── Today treatment — purple instead of blue ───────────────────────────── */
+
+.roster-day--today {
+  border-top: 3px solid var(--vds-colour-purple);
+}
+
+.roster-day--today .roster-day__head {
+  background: rgba(118, 2, 163, 0.045);
+}
+
+.roster-day--today .roster-day__date {
+  color: var(--vds-colour-purple);
+  font-weight: 800;
+}
+
+/* ── Shift card left-border semantic status accent ──────────────────────── */
+
+.roster-shift--scheduled {
+  border-left: 3px solid var(--vds-colour-info);
+}
+
+.roster-shift--confirmed {
+  border-left: 3px solid var(--vds-colour-success);
+}
+
+.roster-shift--completed {
+  border-left: 3px solid var(--vds-colour-muted);
+}
+
+.roster-shift--cancelled {
+  border-left: 3px solid var(--vds-colour-danger);
+}
+
+/* ── Badge row in week shift cards ───────────────────────────────────────── */
+
+.roster-shift__badges {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  margin-top: 0.1rem;
+}
+
+/* ── Status badges ────────────────────────────────────────────────────────── */
+
+.roster-status-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.roster-status-badge--scheduled { background: var(--vds-colour-info-bg);     color: var(--vds-colour-info); }
+.roster-status-badge--confirmed  { background: var(--vds-colour-success-bg);  color: var(--vds-colour-success); }
+.roster-status-badge--completed  { background: var(--vds-colour-panel-subtle); color: var(--vds-colour-muted); }
+.roster-status-badge--cancelled  { background: var(--vds-colour-danger-bg);   color: var(--vds-colour-danger); }
+
+/* ── Day view ─────────────────────────────────────────────────────────────── */
+
+.roster-day-view {
+  padding: 1rem 1.5rem;
+}
+
+.roster-day-view--today {
+  border-top: 3px solid var(--vds-colour-purple);
+}
+
+.roster-day-view__shifts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 680px;
+}
+
+.roster-day-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--vds-radius-lg);
+  border: 1px solid var(--vds-colour-border);
+  background: var(--vds-colour-panel);
+  text-align: left;
+  width: 100%;
+  cursor: default;
+}
+
+.roster-day-card.roster-shift--clickable {
+  cursor: pointer;
+}
+
+.roster-day-card.roster-shift--clickable:hover {
+  filter: brightness(0.97);
+}
+
+.roster-day-card--scheduled {
+  background: var(--vds-colour-info-bg);
+  border-color: var(--vds-colour-info);
+  border-left: 4px solid var(--vds-colour-info);
+}
+
+.roster-day-card--confirmed {
+  background: var(--vds-colour-success-bg);
+  border-color: var(--vds-colour-success);
+  border-left: 4px solid var(--vds-colour-success);
+}
+
+.roster-day-card--completed {
+  background: var(--vds-colour-soft);
+  border-color: var(--vds-colour-border);
+  border-left: 4px solid var(--vds-colour-muted);
+}
+
+.roster-day-card--cancelled {
+  background: var(--vds-colour-danger-bg);
+  border-color: var(--vds-colour-danger);
+  border-left: 4px solid var(--vds-colour-danger);
+  opacity: 0.65;
+}
+
+.roster-day-card__main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.roster-day-card__name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+}
+
+.roster-day-card__time {
+  font-size: 0.9rem;
+  color: var(--vds-colour-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.roster-day-card__badges {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.roster-day-card__notes {
+  font-size: 0.8rem;
+  color: var(--vds-colour-muted);
+  margin: 0;
+  font-style: italic;
+}
+
+.roster-empty {
+  color: var(--vds-colour-muted);
+  font-size: var(--vds-font-size-sm);
+  padding: 1rem 0;
+  margin: 0;
+}
+
+.roster-add-btn--day {
+  max-width: 680px;
+}
+
+/* ── Month view ───────────────────────────────────────────────────────────── */
+
+.roster-month-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-3);
+  padding: 1rem 1.5rem 1.5rem;
+}
+
+.roster-month-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vds-space-2);
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--vds-radius-md);
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: var(--vds-font-size-xs);
+  line-height: 1.5;
+}
+
+.roster-month-notice__icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: #d97706;
+}
+
+.roster-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border: 1px solid #e5e7eb;
+  border-radius: var(--vds-radius-lg);
+  overflow: hidden;
+}
+
+.roster-month__col-head {
+  padding: 0.45rem 0.35rem;
+  background: var(--vds-colour-panel-subtle);
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vds-colour-muted);
+  border-bottom: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+}
+
+.roster-month__col-head:last-child {
+  border-right: 0;
+}
+
+.roster-month-cell {
+  min-height: 90px;
+  padding: 0.35rem 0.3rem 0.3rem;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.roster-month-cell:nth-child(7n) {
+  border-right: 0;
+}
+
+.roster-month-cell:nth-last-child(-n+7) {
+  border-bottom: 0;
+}
+
+.roster-month-cell--out {
+  background: #f9fafb;
+}
+
+.roster-month-cell--out .roster-month-cell__num {
+  color: #d1d5db;
+}
+
+.roster-month-cell--today {
+  border-top: 2px solid var(--vds-colour-purple) !important;
+  background: rgba(118, 2, 163, 0.025);
+}
+
+.roster-month-cell--today .roster-month-cell__num {
+  color: var(--vds-colour-purple);
+  font-weight: 800;
+}
+
+.roster-month-cell__num {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #374151;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.roster-month-cell__entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.roster-month-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+  padding: 0.12rem 0.22rem;
+  border-radius: 3px;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: default;
+  font: inherit;
+  font-size: 0.67rem;
+  overflow: hidden;
+  line-height: 1.3;
+}
+
+.roster-month-entry.roster-shift--clickable {
+  cursor: pointer;
+}
+
+.roster-month-entry.roster-shift--clickable:hover {
+  filter: brightness(0.94);
+}
+
+.roster-month-entry--scheduled { background: var(--vds-colour-info-bg); }
+.roster-month-entry--confirmed  { background: var(--vds-colour-success-bg); }
+.roster-month-entry--completed  { background: var(--vds-colour-soft); }
+.roster-month-entry--cancelled  { background: var(--vds-colour-danger-bg); opacity: 0.65; }
+
+.roster-month-entry__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.roster-month-entry__dot--scheduled { background: var(--vds-colour-info); }
+.roster-month-entry__dot--confirmed  { background: var(--vds-colour-success); }
+.roster-month-entry__dot--completed  { background: var(--vds-colour-muted); }
+.roster-month-entry__dot--cancelled  { background: var(--vds-colour-danger); }
+
+.roster-month-entry__initials {
+  font-weight: 700;
+  color: #374151;
+  flex-shrink: 0;
+}
+
+.roster-month-entry__time {
+  color: #6b7280;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.roster-month-cell__more {
+  font-size: 0.65rem;
+  color: var(--vds-colour-muted);
+  padding: 0 0.22rem;
+}
+
+.roster-month-cell__add {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vds-colour-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.roster-month-cell:hover .roster-month-cell__add {
+  display: flex;
+}
+
+.roster-month-cell__add:hover {
+  background: rgba(118, 2, 163, 0.08);
+  color: var(--vds-colour-purple);
+}
+
+/* ── Pre-pilot placeholder (2 Months / Quarter) ─────────────────────────── */
+
+.roster-pre-pilot-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--vds-space-4);
+  padding: 3.5rem 2rem;
+  text-align: center;
+}
+
+.roster-pre-pilot-notice__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.85rem;
+  border-radius: 99px;
+  background: rgba(118, 2, 163, 0.08);
+  color: var(--vds-colour-purple);
+  font-size: var(--vds-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.roster-pre-pilot-notice__heading {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--vds-colour-heading);
+  margin: 0;
+}
+
+.roster-pre-pilot-notice p {
+  font-size: var(--vds-font-size-sm);
+  color: var(--vds-colour-muted);
+  margin: 0;
+  max-width: 44ch;
+  line-height: 1.65;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+
+@media (max-width: 960px) {
+  .roster-hub__toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--vds-space-3);
+  }
+}
+
+@media (max-width: 768px) {
+  .roster-view-selector {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    max-width: 100%;
+  }
+
+  .roster-view-btn {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+  }
+
+  .roster-month-cell {
+    min-height: 72px;
+  }
+
+  .roster-month-entry__time {
+    display: none;
+  }
+
+  .roster-cal__week-label {
+    min-width: 12rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .roster-hub__title {
+    font-size: 1.35rem;
+  }
+
+  .roster-month-view {
+    padding: 0.75rem;
+  }
+
+  .roster-month-cell {
+    min-height: 56px;
+    padding: 0.22rem 0.18rem 0.18rem;
+  }
+
+  .roster-month-cell__num {
+    font-size: 0.7rem;
+  }
+
+  .roster-month-entry {
+    font-size: 0.6rem;
+    padding: 0.08rem 0.12rem;
+  }
+
+  .roster-day-view {
+    padding: 0.75rem;
+  }
+
+  .roster-day-card__name {
+    font-size: 0.95rem;
+  }
+
+  .roster-modal {
+    max-height: 90dvh;
+    overflow-y: auto;
+    margin: 0.5rem;
+  }
+}
+
+/* ── Clinic / location labels on shift representations ───────────────────── */
+
+/* Week shift card — small muted clinic label below the time */
+.roster-shift__clinic {
+  font-size: 0.65rem;
+  color: var(--vds-colour-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Day card — clinic label between time row and badges */
+.roster-day-card__clinic {
+  font-size: 0.82rem;
+  color: var(--vds-colour-muted);
+  font-style: italic;
+}
+
+/* Month compact entry — short clinic name wraps below initials/time row.
+   Kept visible at ALL viewport widths — clinic identity is critical for staff
+   working across multiple locations (touch devices cannot use hover tooltips).
+   NOTE: shortClinicName() currently slices the first two words of the stored
+   clinic name. Long-term, the clinic entity should carry a dedicated
+   `shortLabel` / `abbreviation` field (e.g. "BE", "Heath", "Chelt") set by
+   Owner/Admin, suitable for dense multi-location calendar cells. Do not add
+   that schema field in Stage 5. */
+.roster-month-entry__clinic {
+  /* Force onto its own line within the flex row */
+  flex-basis: 100%;
+  font-size: 0.6rem;
+  color: var(--vds-colour-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 0.45rem;  /* align under initials */
+  font-style: italic;
+  /* max-width matches the cell width at 375 px / 7 columns ≈ 53 px;
+     text-overflow truncates gracefully */
+  max-width: 100%;
+}
+
+/* ── Export action buttons ────────────────────────────────────────────────── */
+/* Visual prototype — disabled until PDF/Excel implementation is complete.    */
+
+.roster-hub__export-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-2);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.roster-hub__export-label {
+  font-size: var(--vds-font-size-xs);
+  font-weight: 700;
+  color: var(--vds-colour-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.roster-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: var(--vds-card-border);
+  border-radius: var(--vds-control-radius);
+  padding: 0.35rem 0.75rem;
+  background: var(--vds-colour-panel);
+  color: var(--vds-colour-muted);
+  font: inherit;
+  font-size: var(--vds-font-size-xs);
+  font-weight: 600;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* On mobile, collapse export actions below the H1 */
+@media (max-width: 640px) {
+  .roster-hub__export-actions {
+    margin-left: 0;
+    margin-top: var(--vds-space-2);
+  }
+}
+
+
 
