@@ -209,10 +209,27 @@ describe("Cross-clinic roster conflict detection", () => {
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const staffId = SEED_USER_IDS.clinicBAdmin;
 
-    // Morning 07:00–12:00 (will overlap with proposed 08:00–17:00)
+    // In Melbourne (AEST = UTC+10), BASE is UTC midnight = Melbourne 10:00 AEST.
+    // Melbourne Day N window = UTC [Day N-1 14:00, Day N 13:59:59].
+    //
+    // Proposed (STD): h(8)–h(17) = 08:00–17:00 UTC = 18:00 AEST Day N → 03:00 AEST Day N+1
+    //
+    // Overlapping fixture: MORN h(7)–h(12) = 07:00–12:00 UTC = 17:00–22:00 AEST Day N
+    //   overlaps (morn_start 07 < proposed_end 17, morn_end 12 > proposed_start 08)
+    //
+    // Same-day-only fixture: h(0)–h(6) = 00:00–06:00 UTC = 10:00–16:00 AEST Day N
+    //   within Melbourne Day N window ✓, shift_end 06:00 UTC < proposed_start 08:00 UTC → no overlap ✓
+    //
+    // AFT_START (h(17) = 17:00 UTC = 03:00 AEST Day N+1) was the original fixture but falls on
+    // the *next* Melbourne calendar day, so it was correctly excluded by melbourneDayWindow.
+    // The fixture was stale (authored with UTC-day assumptions, not Melbourne-day awareness).
+    const SAME_DAY_START = h(0);  // 00:00 UTC = 10:00 AEST Day N — same Melbourne day, no overlap
+    const SAME_DAY_END   = h(6);  // 06:00 UTC = 16:00 AEST Day N — ends 2 h before proposed
+
+    // Overlapping shift (MORN)
     await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, MORN_START, MORN_END);
-    // Afternoon 17:00–22:00 (touches proposed end — same day but not overlapping)
-    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, AFT_START, AFT_END);
+    // Same-day non-overlapping shift
+    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, SAME_DAY_START, SAME_DAY_END);
 
     const conflictRes = await request(app)
       .get(
@@ -226,11 +243,13 @@ describe("Cross-clinic roster conflict detection", () => {
 
     const { data } = conflictRes.body as ApiData<{ overlapping: RosterEntryDto[]; sameDay: RosterEntryDto[] }>;
 
-    expect(data.overlapping.length).toBeGreaterThanOrEqual(1);  // morning overlaps
-    expect(data.sameDay.length).toBeGreaterThanOrEqual(1);      // afternoon is sameDay
-    // Afternoon shift must not appear in overlapping
-    const aftEntry = data.sameDay.find((e) => new Date(e.shiftStartAt).getTime() === new Date(AFT_START).getTime());
-    expect(aftEntry).toBeDefined();
+    expect(data.overlapping.length).toBeGreaterThanOrEqual(1);  // MORN overlaps
+    expect(data.sameDay.length).toBeGreaterThanOrEqual(1);      // same-day-only appears
+    // Same-day shift must be present and must not appear in overlapping
+    const sameDayEntry = data.sameDay.find(
+      (e) => new Date(e.shiftStartAt).getTime() === new Date(SAME_DAY_START).getTime(),
+    );
+    expect(sameDayEntry).toBeDefined();
   });
 
   // ─── Test 8: clinical_staff cannot call /conflicts ─────────────────────────
