@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
@@ -175,7 +175,12 @@ function computeConflictingEntryIds(entries: RosterEntry[]): Set<string> {
 
 // ── Local state types ─────────────────────────────────────────────────────────
 
+// "all" means load from all accessible clinics; otherwise a specific clinic UUID.
+// The `& Record<never, never>` prevents TypeScript from collapsing `"all" | string → string`.
+type RosterClinicScope = "all" | (string & Record<never, never>);
+
 type ShiftFormState = {
+  clinicId: string;       // required — which clinic this shift is for
   staffUserId: string;
   date: string;
   startTime: string;
@@ -184,8 +189,9 @@ type ShiftFormState = {
   notes: string;
 };
 
-function blankForm(date = ""): ShiftFormState {
+function blankForm(date = "", defaultClinicId = ""): ShiftFormState {
   return {
+    clinicId: defaultClinicId,
     staffUserId: "",
     date,
     startTime: "08:00",
@@ -197,6 +203,7 @@ function blankForm(date = ""): ShiftFormState {
 
 function formFromEntry(entry: RosterEntry): ShiftFormState {
   return {
+    clinicId: entry.rosteredClinicId,
     staffUserId: entry.staffUserId,
     date: toDateInput(new Date(entry.shiftStartAt)),
     startTime: toTimeInput(entry.shiftStartAt),
@@ -210,7 +217,7 @@ function formFromEntry(entry: RosterEntry): ShiftFormState {
 
 export function RosterCalendarPage() {
   const { user } = useAuth();
-  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
+  const { clinicId, clinicName } = useOperationalClinic();
 
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
@@ -219,11 +226,19 @@ export function RosterCalendarPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // ── Roster scope selector (managers only) ────────────────────────────────
+  const [rosterScope, setRosterScope] = useState<RosterClinicScope>(() => clinicId ?? "all");
+  const [accessibleClinics, setAccessibleClinics] = useState<{ id: string; name: string }[]>([]);
+
   const [showModal, setShowModal] = useState(false);
   const [editingEntry, setEditingEntry] = useState<RosterEntry | null>(null);
   const [form, setForm] = useState<ShiftFormState>(blankForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // ── Per-clinic form staff list (reloads when form.clinicId changes) ───────
+  const [formStaffList, setFormStaffList] = useState<EligibleStaff[]>([]);
+  const [isLoadingFormStaff, setIsLoadingFormStaff] = useState(false);
 
   // ── Conflict detection state ──────────────────────────────────────────────
   const [conflictResult, setConflictResult] = useState<{
@@ -241,8 +256,23 @@ export function RosterCalendarPage() {
     return found ? staffDisplayName(found) : staffLabelFromEmail(email);
   }
 
+  // ── Load accessible clinics for managers ──────────────────────────────────
+  useEffect(() => {
+    if (!user || !canWrite) return;
+    void apiClient
+      .getRosterAccessibleClinics()
+      .then((clinics) => {
+        setAccessibleClinics(clinics);
+        // Default scope: if exactly one clinic, use it; otherwise keep current
+        if (clinics.length === 1 && clinics[0]) {
+          setRosterScope(clinics[0].id);
+        }
+      })
+      .catch(() => undefined);
+  }, [user, canWrite]);
+
   const loadEntries = useCallback(async () => {
-    if (!user || !clinicId) {
+    if (!user) {
       setIsLoading(false);
       return;
     }
@@ -270,43 +300,78 @@ export function RosterCalendarPage() {
         from = ws.toISOString();
         to = addDays(ws, 7).toISOString();
       } else {
-        // month — single request, may be incomplete beyond backend page limit
         const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
-        const monthLastDay = new Date(
-          anchorDate.getFullYear(),
-          anchorDate.getMonth() + 1,
-          0,
-        );
+        const monthLastDay = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0);
         from = monthStart.toISOString();
         to = addDays(monthLastDay, 1).toISOString();
       }
 
-      const result = await apiClient.listRoster(clinicId, { from, to });
-      setEntries(result);
+      if (rosterScope === "all" && accessibleClinics.length > 0) {
+        // Load from all accessible clinics concurrently
+        const results = await Promise.all(
+          accessibleClinics.map((c) => apiClient.listRoster(c.id, { from, to })),
+        );
+        setEntries(results.flat());
+      } else if (rosterScope !== "all" && rosterScope) {
+        const result = await apiClient.listRoster(rosterScope, { from, to });
+        setEntries(result);
+      } else if (clinicId) {
+        // Fallback: use global clinic context (clinical_staff / initial load)
+        const result = await apiClient.listRoster(clinicId, { from, to });
+        setEntries(result);
+      } else {
+        setEntries([]);
+      }
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load roster");
     } finally {
       setIsLoading(false);
     }
-  }, [user, clinicId, viewMode, anchorDate]);
+  }, [user, clinicId, rosterScope, accessibleClinics, viewMode, anchorDate]);
 
   useEffect(() => {
     void loadEntries();
   }, [loadEntries]);
 
+  // ── Load staff list for the grid (resolving staff names) ─────────────────
   useEffect(() => {
-    if (!user || !clinicId || !canWrite) return;
+    if (!user || !canWrite) return;
+    const targetClinicId = rosterScope !== "all" ? rosterScope : clinicId;
+    if (!targetClinicId) return;
     void apiClient
-      .listRosterEligibleStaff(clinicId)
+      .listRosterEligibleStaff(targetClinicId)
       .then(setStaffList)
       .catch(() => undefined);
-  }, [user, clinicId, canWrite]);
+  }, [user, clinicId, rosterScope, canWrite]);
+
+  // ── Load staff list for the form (reloads when form.clinicId changes) ─────
+  useEffect(() => {
+    if (!showModal || !form.clinicId) {
+      setFormStaffList([]);
+      return;
+    }
+    setIsLoadingFormStaff(true);
+    apiClient
+      .listRosterEligibleStaff(form.clinicId)
+      .then((list) => {
+        setFormStaffList(list);
+        // Retain staff if still eligible at new clinic, otherwise clear
+        setForm((prev) => {
+          if (prev.staffUserId && !list.some((s) => s.id === prev.staffUserId)) {
+            return { ...prev, staffUserId: "" };
+          }
+          return prev;
+        });
+      })
+      .catch(() => { setFormStaffList([]); })
+      .finally(() => { setIsLoadingFormStaff(false); });
+  }, [showModal, form.clinicId]);
 
   // ── Conflict check for modal ──────────────────────────────────────────────
-  // Fires whenever the modal is open and the staff/date/time fields change.
+  // Fires whenever the modal is open and the staff/date/time/clinic fields change.
   // Debounced to avoid hammering the API on every keystroke.
   useEffect(() => {
-    if (!showModal || !clinicId) {
+    if (!showModal || !form.clinicId) {
       setConflictResult(null);
       return;
     }
@@ -326,7 +391,7 @@ export function RosterCalendarPage() {
     conflictDebounceRef.current = setTimeout(() => {
       setIsCheckingConflict(true);
       apiClient
-        .checkShiftConflicts(clinicId, {
+        .checkShiftConflicts(form.clinicId, {
           staffUserId: form.staffUserId,
           start,
           end,
@@ -348,7 +413,7 @@ export function RosterCalendarPage() {
       if (conflictDebounceRef.current) clearTimeout(conflictDebounceRef.current);
     };
     // The dependency list intentionally omits apiClient (module-level stable reference).
-  }, [showModal, form.staffUserId, form.date, form.startTime, form.endTime, clinicId, editingEntry?.id]);
+  }, [showModal, form.clinicId, form.staffUserId, form.date, form.startTime, form.endTime, editingEntry?.id]);
 
   // ── Compute grid-level conflict indicators ────────────────────────────────
   // Detect any pairs of entries for the same staff member whose times overlap
@@ -356,20 +421,6 @@ export function RosterCalendarPage() {
   const conflictingEntryIds = computeConflictingEntryIds(entries);
 
   if (!user) return null;
-
-  if (isAllClinicsScope) {
-    return (
-      <AppShell>
-        <section className="status-card inventory-receiving-callout" role="status">
-          <h2>Select a clinic to view the roster</h2>
-          <p>
-            The roster is clinic-specific. Choose a clinic from the clinic selector to view and
-            manage scheduled shifts.
-          </p>
-        </section>
-      </AppShell>
-    );
-  }
 
   // ── Navigation ────────────────────────────────────────────────────────────────
 
@@ -415,8 +466,12 @@ export function RosterCalendarPage() {
   // ── Modal helpers ─────────────────────────────────────────────────────────────
 
   function openCreate(dayDate: Date) {
+    const defaultClinicId =
+      rosterScope !== "all"
+        ? rosterScope
+        : (accessibleClinics[0]?.id ?? clinicId ?? "");
     setEditingEntry(null);
-    setForm(blankForm(toDateInput(dayDate)));
+    setForm(blankForm(toDateInput(dayDate), defaultClinicId));
     setFormError(null);
     setConflictResult(null);
     setShowModal(true);
@@ -449,16 +504,23 @@ export function RosterCalendarPage() {
       const notes = form.notes.trim() || null;
 
       if (editingEntry) {
+        // Pass rosteredClinicId if clinic was changed
+        const newClinicId = editingEntry.rosteredClinicId !== form.clinicId ? form.clinicId : undefined;
         const updated = await apiClient.updateShift(
-          clinicId ?? user.homeClinicId,
+          editingEntry.rosteredClinicId,  // URL path = original clinic
           editingEntry.id,
-          { shiftStartAt, shiftEndAt, shiftType: form.shiftType, notes },
+          {
+            shiftStartAt,
+            shiftEndAt,
+            shiftType: form.shiftType,
+            notes,
+            ...(newClinicId ? { rosteredClinicId: newClinicId } : {}),
+          },
         );
         setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
       } else {
-        const created = await apiClient.createShift(clinicId ?? user.homeClinicId, {
+        const created = await apiClient.createShift(form.clinicId, {
           staffUserId: form.staffUserId,
-          rosteredClinicName: clinicName ?? user.homeClinicName,
           shiftStartAt,
           shiftEndAt,
           shiftType: form.shiftType,
@@ -481,7 +543,7 @@ export function RosterCalendarPage() {
     setIsSubmitting(true);
     try {
       const cancelled = await apiClient.cancelShift(
-        clinicId ?? user.homeClinicId,
+        editingEntry.rosteredClinicId,
         editingEntry.id,
       );
       setEntries((prev) => prev.map((e) => (e.id === cancelled.id ? cancelled : e)));
@@ -676,16 +738,6 @@ export function RosterCalendarPage() {
 
     return (
       <div className="roster-month-view">
-        {/* Truncation warning — month data comes from a single API page */}
-        <div className="roster-month-notice" role="status">
-          <AlertTriangle size={14} aria-hidden="true" className="roster-month-notice__icon" />
-          <span>
-            <strong>⚠ Pilot blocker:</strong> Month is the default view but currently loads
-            a single API page only. Complete paginated month data loading must be implemented
-            before pilot launch. This notice will be removed once pagination is in place.
-          </span>
-        </div>
-
         <div className="roster-month-grid">
           {/* Column headers */}
           {(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const).map((d) => (
@@ -840,6 +892,34 @@ export function RosterCalendarPage() {
         </div>
       </div>
 
+      {/* ── Roster scope selector (managers with multiple accessible clinics) ── */}
+      {canWrite && accessibleClinics.length > 1 ? (
+        <div className="roster-scope-selector">
+          <label className="roster-scope-selector__label">Roster scope:</label>
+          <div className="roster-scope-selector__controls" role="group" aria-label="Roster clinic scope">
+            <button
+              type="button"
+              className={`roster-scope-btn${rosterScope === "all" ? " roster-scope-btn--active" : ""}`}
+              onClick={() => { setRosterScope("all"); }}
+              aria-pressed={rosterScope === "all"}
+            >
+              All assigned clinics
+            </button>
+            {accessibleClinics.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={`roster-scope-btn${rosterScope === c.id ? " roster-scope-btn--active" : ""}`}
+                onClick={() => { setRosterScope(c.id); }}
+                aria-pressed={rosterScope === c.id}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* ── Toolbar: view selector + navigation ── */}
       <div className="roster-hub__toolbar">
         {/* View mode segmented control */}
@@ -955,40 +1035,55 @@ export function RosterCalendarPage() {
                 void handleSubmit(e);
               }}
             >
-              {/* Staff member — static display when editing, selector when creating */}
-              {editingEntry ? (
-                <div className="roster-form__field-static">
-                  <span className="roster-form__static-label">Staff member</span>
-                  <span className="roster-form__static-value">
-                    {resolveStaffName(editingEntry.staffUserId, editingEntry.staffEmail)}
-                    <span className="roster-form__static-secondary">
-                      {editingEntry.staffEmail}
-                    </span>
-                  </span>
-                </div>
-              ) : (
-                <label className="roster-form__field">
-                  Staff member
-                  <select
-                    required
-                    value={form.staffUserId}
-                    onChange={(e) => {
-                      setForm((f) => ({ ...f, staffUserId: e.target.value }));
-                    }}
-                    className="roster-form__control"
-                  >
-                    <option value="">— Select staff member —</option>
-                    {staffList.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {staffDisplayName(s)}
-                        {s.firstName || s.lastName || s.displayName
-                          ? ` (${s.email})`
-                          : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+              {/* Clinic / Location — always an editable dropdown (pre-populated from formFromEntry in edit mode) */}
+              <label className="roster-form__field">
+                Clinic / Location
+                <select
+                  required
+                  value={form.clinicId}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, clinicId: e.target.value }));
+                  }}
+                  className="roster-form__control"
+                >
+                  <option value="">— Select clinic —</option>
+                  {accessibleClinics.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Staff member — always a selector (pre-populated from formFromEntry in edit mode) */}
+              <label className="roster-form__field">
+                Staff member
+                <select
+                  required
+                  value={form.staffUserId}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, staffUserId: e.target.value }));
+                  }}
+                  className="roster-form__control"
+                  disabled={isLoadingFormStaff || !form.clinicId}
+                >
+                  <option value="">
+                    {isLoadingFormStaff
+                      ? "Loading staff…"
+                      : form.clinicId
+                        ? "— Select staff member —"
+                        : "— Select clinic first —"}
+                  </option>
+                  {formStaffList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {staffDisplayName(s)}
+                      {s.firstName || s.lastName || s.displayName
+                        ? ` (${s.email})`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               {/* Date */}
               <label className="roster-form__field">

@@ -29,6 +29,13 @@ export interface ClinicRepository {
    */
   findAll(): Promise<Clinic[]>;
 
+  /**
+   * Returns ALL clinics (active and inactive) ordered by name ascending.
+   * Used by the roster service for cross-clinic access lookups.
+   * Callers that need active-only must filter on `clinic.isActive`.
+   */
+  listAll(): Promise<Clinic[]>;
+
   /** Persists a new clinic record and returns the hydrated entity. */
   create(input: CreateClinicInput): Promise<Clinic>;
 
@@ -90,6 +97,14 @@ export function createInMemoryClinicRepository(): ClinicRepository {
       return Promise.resolve(
         clinics
           .filter((c) => c.isActive)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((c) => ({ ...c })),
+      );
+    },
+
+    listAll(): Promise<Clinic[]> {
+      return Promise.resolve(
+        clinics
           .sort((a, b) => a.name.localeCompare(b.name))
           .map((c) => ({ ...c })),
       );

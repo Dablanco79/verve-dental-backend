@@ -866,17 +866,50 @@ export function createApiClient(config: AppConfig) {
     clinicId: string,
     params?: { from?: string; to?: string; status?: string },
   ): Promise<RosterEntry[]> {
+    const PAGE_SIZE = 100;
     const query = new URLSearchParams();
     if (params?.from) query.set("from", params.from);
     if (params?.to) query.set("to", params.to);
     if (params?.status) query.set("status", params.status);
-    const qs = query.toString() ? `?${query.toString()}` : "";
-    return request<RosterEntry[]>(
-      config,
-      `/api/v1/clinics/${clinicId}/roster${qs}`,
-      {},
-      requireAccessToken(),
-    );
+
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const accessToken = requireAccessToken();
+
+    let offset = 0;
+    let total = Infinity;
+    const allItems: RosterEntry[] = [];
+
+    while (offset === 0 || offset < total) {
+      const q = new URLSearchParams(query);
+      q.set("limit", String(PAGE_SIZE));
+      q.set("offset", String(offset));
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/clinics/${clinicId}/roster?${q.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          credentials: "include",
+        },
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+        throw new Error(errorBody?.error.message ?? `Request failed (${String(response.status)})`);
+      }
+
+      type PageEnvelope = {
+        data: RosterEntry[];
+        pagination: { limit: number; offset: number; total: number };
+      };
+      const envelope = await response.json() as PageEnvelope;
+      total = envelope.pagination.total;
+      allItems.push(...envelope.data);
+
+      if (allItems.length >= total) break;
+      offset += PAGE_SIZE;
+    }
+
+    return allItems;
   }
 
   async function getMyShifts(
@@ -930,6 +963,20 @@ export function createApiClient(config: AppConfig) {
     return request<{ id: string; email: string; displayName: string | null; firstName: string | null; lastName: string | null }[]>(
       config,
       `/api/v1/clinics/${clinicId}/roster/eligible-staff`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * GET /api/v1/roster/accessible-clinics
+   * Returns the list of clinics the authenticated user can view/manage rosters for.
+   * Available to owner_admin and group_practice_manager only.
+   */
+  async function getRosterAccessibleClinics(): Promise<{ id: string; name: string }[]> {
+    return request<{ id: string; name: string }[]>(
+      config,
+      "/api/v1/roster/accessible-clinics",
       {},
       requireAccessToken(),
     );
@@ -2538,6 +2585,7 @@ export function createApiClient(config: AppConfig) {
     listRoster,
     getMyShifts,
     getMyShiftsAllClinics,
+    getRosterAccessibleClinics,
     listRosterEligibleStaff,
     checkShiftConflicts,
     getUserClinicAccess,

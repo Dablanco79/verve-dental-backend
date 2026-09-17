@@ -8,6 +8,51 @@ import type {
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
+
+// ─── Melbourne timezone helpers ───────────────────────────────────────────────
+
+const MELBOURNE_TZ = "Australia/Melbourne";
+
+/**
+ * Returns the UTC [start, end] range spanning the full calendar day of
+ * `utcDate` in Australia/Melbourne (handles both AEST +10:00 and AEDT +11:00).
+ *
+ * Node.js setHours(0,0,0,0) uses process-local time (UTC on servers), not
+ * Melbourne time. This function derives the Melbourne UTC offset dynamically
+ * using Intl.DateTimeFormat so the day window is always correct regardless of
+ * where the server runs.
+ *
+ * Example: utcDate = 2026-09-21T22:00:00Z (= 08:00 AEST 22 Sep)
+ *   → dayStart = 2026-09-21T14:00:00Z (= midnight AEST on 22 Sep)
+ *   → dayEnd   = 2026-09-22T13:59:59.999Z (= 23:59:59.999 AEST on 22 Sep)
+ */
+function melbourneDayWindow(utcDate: Date): { dayStart: Date; dayEnd: Date } {
+  // Step 1: Get the calendar date string "YYYY-MM-DD" in Melbourne timezone.
+  const localDateStr = new Intl.DateTimeFormat("sv", {
+    timeZone: MELBOURNE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(utcDate);
+
+  // Step 2: Determine the UTC offset at approximately midnight of that local
+  // date. Melbourne DST transitions happen at 2:00 AM local, never at midnight,
+  // so using the offset near midnight is always correct for midnight itself.
+  const approxUtcMidnight = new Date(`${localDateStr}T00:00:00Z`);
+  const tzParts = new Intl.DateTimeFormat("en-AU", {
+    timeZone: MELBOURNE_TZ,
+    timeZoneName: "longOffset",
+  }).formatToParts(approxUtcMidnight);
+  const rawOffset = tzParts.find((p) => p.type === "timeZoneName")?.value ?? "GMT+10:00";
+  // "GMT+10:00" → "+10:00", "GMT+11:00" → "+11:00"
+  const isoOffset = rawOffset.slice(3);
+
+  const dayStart = new Date(`${localDateStr}T00:00:00.000${isoOffset}`);
+  // End = start of next local day minus 1ms (DST-safe: avoids 24h assumption)
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  return { dayStart, dayEnd };
+}
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
@@ -80,36 +125,38 @@ export function createRosterService(
 ) {
   /**
    * Returns true when the caller is entitled to see the full clinic roster.
-   * Only owner_admin (any clinic) and group_practice_manager (home clinic only)
-   * receive unrestricted read access.
+   * owner_admin sees any clinic; GPMs see their home clinic plus any clinic
+   * where they have can_operate=true in user_clinic_assignments.
    */
-  function hasFullClinicReadAccess(
+  async function hasFullClinicReadAccess(
     user: AuthenticatedUser,
     requestedClinicId: string,
-  ): boolean {
+  ): Promise<boolean> {
     if (user.role === "owner_admin") return true;
-    if (
-      user.role === "group_practice_manager" &&
-      user.homeClinicId === requestedClinicId
-    )
-      return true;
+    if (user.role === "group_practice_manager") {
+      if (user.homeClinicId === requestedClinicId) return true;
+      // Also allow clinics where manager has can_operate=true
+      return assignmentsRepository.hasOperationalAccess(user.id, requestedClinicId);
+    }
     return false;
   }
 
-  /** Only owner_admin and group_practice_manager at their home clinic may write. */
-  function assertClinicWriteAccess(
+  /**
+   * Asserts the caller may write to the given clinic's roster.
+   * owner_admin has unrestricted write access.
+   * GPMs may write to their home clinic and any clinic where they have
+   * can_operate=true in user_clinic_assignments.
+   */
+  async function assertClinicWriteAccess(
     user: AuthenticatedUser,
     requestedClinicId: string,
-  ): void {
+  ): Promise<void> {
     if (user.role === "owner_admin") return;
-
-    if (
-      user.role === "group_practice_manager" &&
-      user.homeClinicId === requestedClinicId
-    ) {
-      return;
+    if (user.role === "group_practice_manager") {
+      if (user.homeClinicId === requestedClinicId) return;
+      const hasAccess = await assignmentsRepository.hasOperationalAccess(user.id, requestedClinicId);
+      if (hasAccess) return;
     }
-
     throw new AppError(
       403,
       "FORBIDDEN",
@@ -123,8 +170,8 @@ export function createRosterService(
       clinicId: string,
       options?: ListRosterOptions,
     ): Promise<RosterEntry[]> {
-      // owner_admin and group_practice_manager (own clinic) get the full list.
-      if (hasFullClinicReadAccess(caller, clinicId)) {
+      // owner_admin and group_practice_manager (own/assigned clinic) get the full list.
+      if (await hasFullClinicReadAccess(caller, clinicId)) {
         return rosterRepository.listByClinic(clinicId, options);
       }
 
@@ -139,7 +186,7 @@ export function createRosterService(
       clinicId: string,
       options?: ListRosterPageOptions,
     ): Promise<RosterPage> {
-      if (hasFullClinicReadAccess(caller, clinicId)) {
+      if (await hasFullClinicReadAccess(caller, clinicId)) {
         return rosterRepository.listByClinicPaginated(clinicId, options);
       }
       return rosterRepository.listByStaffAtClinicPaginated(caller.id, clinicId, options);
@@ -157,10 +204,8 @@ export function createRosterService(
       }
 
       // Privileged roles see any entry; others can only see their own.
-      if (
-        !hasFullClinicReadAccess(caller, clinicId) &&
-        entry.staffUserId !== caller.id
-      ) {
+      const canReadAll = await hasFullClinicReadAccess(caller, clinicId);
+      if (!canReadAll && entry.staffUserId !== caller.id) {
         throw new AppError(404, "NOT_FOUND", "Roster entry not found");
       }
 
@@ -180,7 +225,7 @@ export function createRosterService(
       clinicId: string,
       input: CreateRosterInput,
     ): Promise<RosterEntry> {
-      assertClinicWriteAccess(caller, clinicId);
+      await assertClinicWriteAccess(caller, clinicId);
 
       if (input.shiftEndAt <= input.shiftStartAt) {
         throw new AppError(
@@ -287,7 +332,7 @@ export function createRosterService(
       entryId: string,
       input: UpdateRosterEntryInput,
     ): Promise<RosterEntry> {
-      assertClinicWriteAccess(caller, clinicId);
+      await assertClinicWriteAccess(caller, clinicId);
 
       const existing = await rosterRepository.findEntryById(entryId);
 
@@ -297,6 +342,33 @@ export function createRosterService(
 
       if (existing.status === "cancelled") {
         throw new AppError(409, "ENTRY_CANCELLED", "Cannot update a cancelled roster entry");
+      }
+
+      // ── Clinic move validation ────────────────────────────────────────────
+      let newRosteredClinicName: string | undefined;
+      if (input.rosteredClinicId && input.rosteredClinicId !== existing.rosteredClinicId) {
+        // Validate caller has write access to the new clinic too
+        await assertClinicWriteAccess(caller, input.rosteredClinicId);
+
+        const newClinic = await clinicRepository.findById(input.rosteredClinicId);
+        if (!newClinic) throw new AppError(404, "CLINIC_NOT_FOUND", "Target clinic not found");
+        if (!newClinic.isActive) throw new AppError(400, "CLINIC_INACTIVE", "Cannot move shift to an inactive clinic");
+
+        // Staff eligibility at new clinic (owner_admin is unrestricted)
+        if (caller.role !== "owner_admin") {
+          const eligible = await assignmentsRepository.hasRosterEligibility(
+            existing.staffUserId,
+            input.rosteredClinicId,
+          );
+          if (!eligible) {
+            throw new AppError(
+              403,
+              "STAFF_NOT_ELIGIBLE_FOR_CLINIC",
+              "This staff member is not eligible at the target clinic.",
+            );
+          }
+        }
+        newRosteredClinicName = newClinic.name;
       }
 
       const newStart = input.shiftStartAt ?? existing.shiftStartAt;
@@ -318,7 +390,7 @@ export function createRosterService(
 
       const updated = await rosterRepository.updateEntry(
         entryId,
-        input,
+        { ...input, rosteredClinicName: newRosteredClinicName },
         { userId: caller.id, email: caller.email },
         timesChanged
           ? {
@@ -366,7 +438,7 @@ export function createRosterService(
       clinicId: string,
       entryId: string,
     ): Promise<RosterEntry> {
-      assertClinicWriteAccess(caller, clinicId);
+      await assertClinicWriteAccess(caller, clinicId);
 
       const existing = await rosterRepository.findEntryById(entryId);
 
@@ -416,7 +488,7 @@ export function createRosterService(
       clinicId: string,
     ): Promise<{ id: string; email: string; displayName: string | null; firstName: string | null; lastName: string | null }[]> {
       // Assert caller can see this clinic's roster.
-      if (!hasFullClinicReadAccess(caller, clinicId)) {
+      if (!(await hasFullClinicReadAccess(caller, clinicId))) {
         throw new AppError(403, "FORBIDDEN", "You do not have access to this clinic's roster");
       }
 
@@ -478,7 +550,7 @@ export function createRosterService(
         excludeEntryId?: string;
       },
     ): Promise<ConflictCheckResult> {
-      assertClinicWriteAccess(caller, clinicId);
+      await assertClinicWriteAccess(caller, clinicId);
 
       const { staffUserId, proposedStart, proposedEnd, excludeEntryId } = params;
 
@@ -490,11 +562,10 @@ export function createRosterService(
         excludeEntryId,
       );
 
-      // Same calendar day (full day window), excluding overlaps already found.
-      const dayStart = new Date(proposedStart);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(proposedStart);
-      dayEnd.setHours(23, 59, 59, 999);
+      // Same calendar day (full day window in Melbourne local time), excluding
+      // overlaps already found. Uses timezone-aware calculation so that shifts
+      // on different Melbourne calendar days are never falsely flagged.
+      const { dayStart, dayEnd } = melbourneDayWindow(proposedStart);
 
       const overlappingIds = new Set(overlapping.map((e) => e.id));
       const allOnDay = await rosterRepository.findOverlappingShifts(
@@ -506,6 +577,39 @@ export function createRosterService(
       const sameDay = allOnDay.filter((e) => !overlappingIds.has(e.id));
 
       return { overlapping, sameDay };
+    },
+
+    /**
+     * Returns the list of clinics a manager can view/manage rosters for.
+     * owner_admin → all active clinics.
+     * group_practice_manager → home clinic + any clinic with can_operate=true.
+     * clinical_staff → their home clinic only (informational; staff use /roster/me).
+     */
+    async getAccessibleRosterClinics(
+      caller: AuthenticatedUser,
+    ): Promise<{ id: string; name: string }[]> {
+      if (caller.role === "owner_admin") {
+        const all = await clinicRepository.findAll();
+        return all.map((c) => ({ id: c.id, name: c.name }));
+      }
+      if (caller.role === "group_practice_manager") {
+        // Clinics where manager has can_operate=true
+        const operationalIds = await assignmentsRepository.listOperationalClinicIds(caller.id);
+        const clinicIds = new Set(operationalIds);
+        // Also include home clinic even if not explicitly assigned
+        clinicIds.add(caller.homeClinicId);
+        const clinics = await Promise.all(
+          [...clinicIds].map((id) => clinicRepository.findById(id)),
+        );
+        return clinics
+          .filter((c): c is NonNullable<typeof c> => c !== null && c.isActive)
+          .map((c) => ({ id: c.id, name: c.name }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+      }
+      // clinical_staff — only their home clinic
+      const home = await clinicRepository.findById(caller.homeClinicId);
+      if (!home || !home.isActive) return [];
+      return [{ id: home.id, name: home.name }];
     },
   };
 }

@@ -267,7 +267,7 @@ describe("Cross-clinic roster conflict detection", () => {
       .set("Authorization", `Bearer ${gpmToken}`)
       .expect(200);
 
-    // Clinic B (not home) — should 403
+    // Clinic B (not home, no can_operate assignment) — should 403
     await request(app)
       .get(
         `/api/v1/clinics/${SEED_CLINIC_B_ID}/roster/conflicts` +
@@ -277,5 +277,136 @@ describe("Cross-clinic roster conflict detection", () => {
       )
       .set("Authorization", `Bearer ${gpmToken}`)
       .expect(403);
+  });
+});
+
+// ─── Melbourne timezone conflict tests ─────────────────────────────────────────
+
+describe("Melbourne timezone same-day comparison", () => {
+  // UTC timestamps for 21 Sep 2026 and 22 Sep 2026 in Melbourne (AEST = UTC+10)
+  // 21 Sep AEST 08:00 = 2026-09-20T22:00:00Z
+  // 21 Sep AEST 17:00 = 2026-09-21T07:00:00Z
+  // 22 Sep AEST 08:00 = 2026-09-21T22:00:00Z
+  // 22 Sep AEST 17:00 = 2026-09-22T07:00:00Z
+  const EXISTING_START = "2026-09-20T22:00:00.000Z"; // 21 Sep 08:00 AEST
+  const EXISTING_END   = "2026-09-21T07:00:00.000Z"; // 21 Sep 17:00 AEST
+  const PROPOSED_START = "2026-09-21T22:00:00.000Z"; // 22 Sep 08:00 AEST
+  const PROPOSED_END   = "2026-09-22T07:00:00.000Z"; // 22 Sep 17:00 AEST
+
+  it("proposed shift on 22 Sep AEST does NOT trigger same-day warning for existing shift on 21 Sep AEST", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffId = SEED_USER_IDS.clinicAStaff;
+
+    // Create existing shift on 21 Sep AEST
+    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, EXISTING_START, EXISTING_END, 201);
+
+    // Check conflicts for proposed shift on 22 Sep AEST
+    const conflictRes = await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/conflicts` +
+          `?staffUserId=${staffId}` +
+          `&start=${encodeURIComponent(PROPOSED_START)}` +
+          `&end=${encodeURIComponent(PROPOSED_END)}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    const { data } = conflictRes.body as ApiData<{ overlapping: RosterEntryDto[]; sameDay: RosterEntryDto[] }>;
+    // Different Melbourne calendar days → sameDay must be empty
+    expect(data.overlapping).toHaveLength(0);
+    expect(data.sameDay).toHaveLength(0);
+  });
+
+  it("adjacent Melbourne local dates do not trigger same-day warning", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffId = SEED_USER_IDS.clinicAStaff;
+
+    // Shift ending at 23:00 AEST on 21 Sep = 2026-09-21T13:00:00Z
+    const lateShiftStart = "2026-09-21T07:00:00.000Z";  // 17:00 AEST 21 Sep
+    const lateShiftEnd   = "2026-09-21T13:00:00.000Z";  // 23:00 AEST 21 Sep
+
+    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, lateShiftStart, lateShiftEnd, 201);
+
+    // Proposed shift starting at 00:30 AEST on 22 Sep = 2026-09-21T14:30:00Z
+    const nextDayStart = "2026-09-21T14:30:00.000Z"; // 00:30 AEST 22 Sep
+    const nextDayEnd   = "2026-09-21T23:00:00.000Z"; // 09:00 AEST 22 Sep
+
+    const conflictRes = await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/conflicts` +
+          `?staffUserId=${staffId}` +
+          `&start=${encodeURIComponent(nextDayStart)}` +
+          `&end=${encodeURIComponent(nextDayEnd)}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    const { data } = conflictRes.body as ApiData<{ overlapping: RosterEntryDto[]; sameDay: RosterEntryDto[] }>;
+    // Different Melbourne calendar days → no sameDay warning
+    expect(data.overlapping).toHaveLength(0);
+    expect(data.sameDay).toHaveLength(0);
+  });
+
+  it("genuine same-day non-overlapping shifts in Melbourne produce amber sameDay result", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffId = SEED_USER_IDS.clinicAStaff;
+
+    // Morning on 22 Sep AEST: 08:00–12:00 = 22:00–02:00 UTC
+    const mornStart = "2026-09-21T22:00:00.000Z"; // 08:00 AEST 22 Sep
+    const mornEnd   = "2026-09-22T02:00:00.000Z"; // 12:00 AEST 22 Sep
+
+    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, mornStart, mornEnd, 201);
+
+    // Afternoon on 22 Sep AEST: 14:00–18:00 = 04:00–08:00 UTC
+    const aftStart = "2026-09-22T04:00:00.000Z"; // 14:00 AEST 22 Sep
+    const aftEnd   = "2026-09-22T08:00:00.000Z"; // 18:00 AEST 22 Sep
+
+    const conflictRes = await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/conflicts` +
+          `?staffUserId=${staffId}` +
+          `&start=${encodeURIComponent(aftStart)}` +
+          `&end=${encodeURIComponent(aftEnd)}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    const { data } = conflictRes.body as ApiData<{ overlapping: RosterEntryDto[]; sameDay: RosterEntryDto[] }>;
+    // Same Melbourne calendar day, no time overlap → sameDay warning
+    expect(data.overlapping).toHaveLength(0);
+    expect(data.sameDay).toHaveLength(1);
+  });
+
+  it("genuine overlap on the same Melbourne day remains blocked", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffId = SEED_USER_IDS.clinicAStaff;
+
+    // Shift 08:00–17:00 AEST on 22 Sep
+    const existStart = "2026-09-21T22:00:00.000Z"; // 08:00 AEST 22 Sep
+    const existEnd   = "2026-09-22T07:00:00.000Z"; // 17:00 AEST 22 Sep
+
+    await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, existStart, existEnd, 201);
+
+    // Attempt overlapping 10:00–14:00 AEST on 22 Sep → conflict
+    const overlapStart = "2026-09-22T00:00:00.000Z"; // 10:00 AEST 22 Sep
+    const overlapEnd   = "2026-09-22T04:00:00.000Z"; // 14:00 AEST 22 Sep
+
+    const conflictRes = await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/conflicts` +
+          `?staffUserId=${staffId}` +
+          `&start=${encodeURIComponent(overlapStart)}` +
+          `&end=${encodeURIComponent(overlapEnd)}`,
+      )
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+
+    const { data } = conflictRes.body as ApiData<{ overlapping: RosterEntryDto[]; sameDay: RosterEntryDto[] }>;
+    expect(data.overlapping).toHaveLength(1);
+    expect(data.sameDay).toHaveLength(0);
   });
 });

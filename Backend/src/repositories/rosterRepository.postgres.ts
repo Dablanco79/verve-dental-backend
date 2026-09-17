@@ -369,6 +369,14 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         params.push(input.notes);
         setClauses.push(`notes = $${String(params.length)}`);
       }
+      if (input.rosteredClinicId !== undefined) {
+        params.push(input.rosteredClinicId);
+        setClauses.push(`rostered_clinic_id = $${String(params.length)}`);
+      }
+      if (input.rosteredClinicName !== undefined) {
+        params.push(input.rosteredClinicName);
+        setClauses.push(`rostered_clinic_name = $${String(params.length)}`);
+      }
 
       params.push(entryId);
       const idIdx = params.length;

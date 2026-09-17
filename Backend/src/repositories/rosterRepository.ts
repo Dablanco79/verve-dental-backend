@@ -305,6 +305,8 @@ export function createInMemoryRosterRepository(): RosterRepository {
         ...(input.shiftType !== undefined && { shiftType: input.shiftType }),
         ...(input.status !== undefined && { status: input.status }),
         ...(input.notes !== undefined && { notes: input.notes }),
+        ...(input.rosteredClinicId !== undefined && { rosteredClinicId: input.rosteredClinicId }),
+        ...(input.rosteredClinicName !== undefined && { rosteredClinicName: input.rosteredClinicName }),
         updatedAt: new Date(),
       };
 

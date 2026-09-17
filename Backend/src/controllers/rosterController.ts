@@ -39,6 +39,7 @@ const updateEntrySchema = z
       .enum(["scheduled", "confirmed", "completed", "cancelled"])
       .optional(),
     notes: z.string().trim().max(1000).nullable().optional(),
+    rosteredClinicId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -219,6 +220,7 @@ export function createRosterHandlers(rosterService: RosterService) {
         shiftType: body.shiftType,
         status: body.status,
         notes: body.notes,
+        rosteredClinicId: body.rosteredClinicId,
       });
 
       res.status(200).json({ data: serializeEntry(entry) });
@@ -256,6 +258,17 @@ export function createRosterHandlers(rosterService: RosterService) {
 
       const entries = await rosterService.getMyShiftsAllClinics(caller, options);
       res.status(200).json({ data: entries.map(serializeEntry) });
+    },
+
+    /**
+     * GET /roster/accessible-clinics
+     * Returns the list of clinics the authenticated user can view/manage rosters for.
+     * Available to owner_admin and group_practice_manager only.
+     */
+    async getAccessibleClinics(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinics = await rosterService.getAccessibleRosterClinics(caller);
+      res.status(200).json({ data: clinics });
     },
 
     /**

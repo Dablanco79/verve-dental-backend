@@ -22,7 +22,8 @@ export type RosterEntry = {
 
 export type CreateShiftRequest = {
   staffUserId: string;
-  rosteredClinicName: string;
+  // rosteredClinicName is intentionally absent — the service derives it
+  // server-side from the DB to prevent client spoofing.
   shiftStartAt: string;
   shiftEndAt: string;
   shiftType: ShiftType;
@@ -35,6 +36,7 @@ export type UpdateShiftRequest = {
   shiftType?: ShiftType;
   status?: RosterStatus;
   notes?: string | null;
+  rosteredClinicId?: string;
 };
 
 export const SHIFT_TYPE_LABELS: Record<ShiftType, string> = {

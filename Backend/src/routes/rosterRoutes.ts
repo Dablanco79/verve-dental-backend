@@ -120,6 +120,14 @@ export function createPersonalRosterRouter(deps: AppDependencies): Router {
   // without any owner_admin bypass.
   router.use(rlsTenantContextMiddleware());
 
+  // GET /roster/accessible-clinics — returns clinics the caller can manage.
+  // Must be declared before /me to avoid shadowing.
+  router.get(
+    "/accessible-clinics",
+    requireRoles("owner_admin", "group_practice_manager"),
+    asyncHandler((req, res) => handlers.getAccessibleClinics(req, res)),
+  );
+
   // GET /roster/me — returns caller's shifts across ALL rostered clinics.
   router.get(
     "/me",

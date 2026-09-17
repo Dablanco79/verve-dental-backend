@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MyShiftsPage } from "../src/pages/MyShiftsPage.js";
 import {
   createStaffUser,
+  TEST_CLINIC_ID,
   TEST_CLINIC_NAME,
   TEST_CLINIC_B_NAME,
   TEST_CLINIC_B_ID,
@@ -215,6 +216,146 @@ describe("MyShiftsPage — Calendar shows cross-clinic names", () => {
       expect(
         screen.getByText((content) => content.includes(TEST_CLINIC_B_NAME)),
       ).toBeInTheDocument();
+    });
+  });
+
+  it("Week calendar shows cross-clinic shifts from all clinics", async () => {
+    const user = userEvent.setup();
+    mockGetMyShiftsAllClinics.mockResolvedValue([
+      buildTodayEntry({ id: "entry-a", rosteredClinicName: TEST_CLINIC_NAME }),
+      buildTodayEntry({
+        id: "entry-b",
+        rosteredClinicId: TEST_CLINIC_B_ID,
+        rosteredClinicName: TEST_CLINIC_B_NAME,
+      }),
+    ]);
+    renderPage();
+
+    const calBtn = await screen.findByRole("button", { name: "Calendar" });
+    await user.click(calBtn);
+    const weekBtn = screen.getByRole("button", { name: "Week" });
+    await user.click(weekBtn);
+
+    await waitFor(() => {
+      // Multiple elements may contain the clinic name (e.g. page subtitle + week card).
+      // Use getAllByText and check at least one is present.
+      const clinicAEls = screen.getAllByText((content) => content.includes(TEST_CLINIC_NAME));
+      expect(clinicAEls.length).toBeGreaterThan(0);
+      const clinicBEls = screen.getAllByText((content) => content.includes(TEST_CLINIC_B_NAME));
+      expect(clinicBEls.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("Home clinic shift and cross-clinic shift both display clinic name", async () => {
+    mockGetMyShiftsAllClinics.mockResolvedValue([
+      buildTodayEntry({ id: "entry-home", rosteredClinicName: TEST_CLINIC_NAME }),
+      buildTodayEntry({
+        id: "entry-other",
+        rosteredClinicId: TEST_CLINIC_B_ID,
+        rosteredClinicName: TEST_CLINIC_B_NAME,
+      }),
+    ]);
+    renderPage();
+
+    // In list view both clinic names should appear
+    const clinicAEl = await screen.findByText(
+      (content) => content.includes(TEST_CLINIC_NAME),
+    );
+    expect(clinicAEl).toBeInTheDocument();
+
+    const clinicBEl = await screen.findByText(
+      (content) => content.includes(TEST_CLINIC_B_NAME),
+    );
+    expect(clinicBEl).toBeInTheDocument();
+  });
+});
+
+// ── GAP 2: Month calendar cross-clinic visibility ─────────────────────────────
+
+describe("MyShiftsPage — Month calendar cross-clinic visibility", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, staffUser);
+  });
+
+  it("Month calendar shows shifts from Bentleigh East, Heathmont and Cheltenham all on the same view", async () => {
+    const user = userEvent.setup();
+
+    // Place the three entries on different days so they each get their own
+    // calendar cell (the month view caps visible entries to 2 per day).
+    const year = new Date().getFullYear();
+    const month = new Date().getMonth();
+    const makeShiftDates = (day: number) => ({
+      shiftStartAt: new Date(year, month, day, 8, 0, 0, 0).toISOString(),
+      shiftEndAt: new Date(year, month, day, 17, 0, 0, 0).toISOString(),
+    });
+
+    mockGetMyShiftsAllClinics.mockResolvedValue([
+      buildTodayEntry({
+        id: "entry-bentleigh",
+        rosteredClinicName: "Bentleigh East",
+        rosteredClinicId: TEST_CLINIC_ID,
+        ...makeShiftDates(3),
+      }),
+      buildTodayEntry({
+        id: "entry-heathmont",
+        rosteredClinicName: "Heathmont",
+        rosteredClinicId: TEST_CLINIC_B_ID,
+        ...makeShiftDates(10),
+      }),
+      buildTodayEntry({
+        id: "entry-cheltenham",
+        rosteredClinicName: "Cheltenham",
+        rosteredClinicId: "33333333-3333-4333-8333-333333333333",
+        ...makeShiftDates(20),
+      }),
+    ]);
+
+    renderPage();
+
+    // Switch to Calendar mode — Month is the default sub-view
+    const calBtn = await screen.findByRole("button", { name: "Calendar" });
+    await user.click(calBtn);
+
+    // All three clinic names should appear in the month grid
+    await waitFor(() => {
+      expect(
+        screen.getAllByText((content) => content.includes("Bentleigh East")).length,
+      ).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText((content) => content.includes("Heathmont")).length,
+      ).toBeGreaterThan(0);
+      expect(
+        screen.getAllByText((content) => content.includes("Cheltenham")).length,
+      ).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ── Calendar anchor navigation ────────────────────────────────────────────────
+
+describe("MyShiftsPage — Calendar reloads on anchor navigation", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, staffUser);
+  });
+
+  it("Month calendar reloads data when anchor date changes", async () => {
+    const user = userEvent.setup();
+    mockGetMyShiftsAllClinics.mockResolvedValue([]);
+    renderPage();
+
+    // Switch to Calendar → Month
+    const calBtn = await screen.findByRole("button", { name: "Calendar" });
+    await user.click(calBtn);
+    // Should have been called at least once on mount and again on calendar switch
+    const callCountAfterCalendar = mockGetMyShiftsAllClinics.mock.calls.length;
+
+    // Navigate to next month
+    const nextBtn = screen.getByRole("button", { name: /Next month/i });
+    await user.click(nextBtn);
+
+    // Data should reload for the new month range
+    await waitFor(() => {
+      expect(mockGetMyShiftsAllClinics.mock.calls.length).toBeGreaterThan(callCountAfterCalendar);
     });
   });
 });

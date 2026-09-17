@@ -118,8 +118,27 @@ export function MyShiftsPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const from = new Date(Date.now() - LOOK_BACK_WEEKS * 7 * 24 * 60 * 60 * 1000).toISOString();
-      const to = new Date(Date.now() + LOOK_AHEAD_WEEKS * 7 * 24 * 60 * 60 * 1000).toISOString();
+      let from: string;
+      let to: string;
+
+      if (displayMode === "calendar") {
+        if (calendarView === "month") {
+          const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+          const monthEnd = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 1);
+          // Add padding to capture shifts near month boundaries
+          from = new Date(monthStart.getTime() - 7 * 86400000).toISOString();
+          to = new Date(monthEnd.getTime() + 7 * 86400000).toISOString();
+        } else {
+          const ws = getWeekStart(anchorDate);
+          from = new Date(ws.getTime() - 7 * 86400000).toISOString();
+          to = new Date(ws.getTime() + 14 * 86400000).toISOString();
+        }
+      } else {
+        // List mode: ±5 weeks
+        from = new Date(Date.now() - LOOK_BACK_WEEKS * 7 * 86400000).toISOString();
+        to = new Date(Date.now() + LOOK_AHEAD_WEEKS * 7 * 86400000).toISOString();
+      }
+
       // Use the clinic-agnostic endpoint so shifts across ALL rostered clinics
       // are returned, not just the user's home clinic.
       const result = await apiClient.getMyShiftsAllClinics({ from, to });
@@ -129,7 +148,7 @@ export function MyShiftsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, displayMode, calendarView, anchorDate]);
 
   useEffect(() => {
     void loadShifts();

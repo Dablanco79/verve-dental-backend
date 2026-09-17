@@ -74,6 +74,10 @@ export type UpdateRosterEntryInput = {
   shiftType?: ShiftType;
   status?: RosterStatus;
   notes?: string | null;
+  /** Optional: move the shift to a different clinic. Service validates access + eligibility. */
+  rosteredClinicId?: string;
+  /** Set by service after clinic name lookup; not client-supplied. */
+  rosteredClinicName?: string;
 };
 
 export type ListRosterOptions = {

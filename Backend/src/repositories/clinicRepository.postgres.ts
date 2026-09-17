@@ -71,6 +71,15 @@ export function createPostgresClinicRepository(
       return rows.map(toClinic);
     },
 
+    async listAll(): Promise<Clinic[]> {
+      const { rows } = await pool.query<ClinicRow>(
+        `SELECT ${SELECT_COLUMNS}
+         FROM clinics
+         ORDER BY name ASC`,
+      );
+      return rows.map(toClinic);
+    },
+
     async create(input: CreateClinicInput): Promise<Clinic> {
       // Use the caller-supplied id (for seeding with fixed UUIDs) or fall back
       // to the database-generated gen_random_uuid().
