@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { createApiClient } from "../api/client.js";
@@ -142,6 +142,37 @@ function shortClinicName(name: string): string {
   return name.slice(0, 14);
 }
 
+/**
+ * Returns the set of entry IDs that have a strict time overlap with at least
+ * one other non-cancelled entry for the same staff member in the given list.
+ * Used to show a conflict indicator on affected roster cards.
+ */
+function computeConflictingEntryIds(entries: RosterEntry[]): Set<string> {
+  const conflicting = new Set<string>();
+  const active = entries.filter((e) => e.status !== "cancelled");
+
+  for (let i = 0; i < active.length; i++) {
+    const a = active[i];
+    if (!a) continue;
+    for (let j = i + 1; j < active.length; j++) {
+      const b = active[j];
+      if (!b) continue;
+      if (a.staffUserId !== b.staffUserId) continue;
+      const aStart = new Date(a.shiftStartAt).getTime();
+      const aEnd = new Date(a.shiftEndAt).getTime();
+      const bStart = new Date(b.shiftStartAt).getTime();
+      const bEnd = new Date(b.shiftEndAt).getTime();
+      // Strict overlap (touching is not a conflict)
+      if (aStart < bEnd && aEnd > bStart) {
+        conflicting.add(a.id);
+        conflicting.add(b.id);
+      }
+    }
+  }
+
+  return conflicting;
+}
+
 // ── Local state types ─────────────────────────────────────────────────────────
 
 type ShiftFormState = {
@@ -193,6 +224,14 @@ export function RosterCalendarPage() {
   const [form, setForm] = useState<ShiftFormState>(blankForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // ── Conflict detection state ──────────────────────────────────────────────
+  const [conflictResult, setConflictResult] = useState<{
+    overlapping: RosterEntry[];
+    sameDay: RosterEntry[];
+  } | null>(null);
+  const [isCheckingConflict, setIsCheckingConflict] = useState(false);
+  const conflictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canWrite = user ? canManageRoster(user.role) : false;
 
@@ -263,6 +302,59 @@ export function RosterCalendarPage() {
       .catch(() => undefined);
   }, [user, clinicId, canWrite]);
 
+  // ── Conflict check for modal ──────────────────────────────────────────────
+  // Fires whenever the modal is open and the staff/date/time fields change.
+  // Debounced to avoid hammering the API on every keystroke.
+  useEffect(() => {
+    if (!showModal || !clinicId) {
+      setConflictResult(null);
+      return;
+    }
+    if (!form.staffUserId || !form.date || !form.startTime || !form.endTime) {
+      setConflictResult(null);
+      return;
+    }
+
+    const start = buildIso(form.date, form.startTime);
+    const end = buildIso(form.date, form.endTime);
+    if (new Date(end) <= new Date(start)) {
+      setConflictResult(null);
+      return;
+    }
+
+    if (conflictDebounceRef.current) clearTimeout(conflictDebounceRef.current);
+    conflictDebounceRef.current = setTimeout(() => {
+      setIsCheckingConflict(true);
+      apiClient
+        .checkShiftConflicts(clinicId, {
+          staffUserId: form.staffUserId,
+          start,
+          end,
+          excludeEntryId: editingEntry?.id,
+        })
+        .then((result) => {
+          setConflictResult(result);
+        })
+        .catch(() => {
+          // Non-fatal: if conflict check fails, don't block the form
+          setConflictResult(null);
+        })
+        .finally(() => {
+          setIsCheckingConflict(false);
+        });
+    }, 350);
+
+    return () => {
+      if (conflictDebounceRef.current) clearTimeout(conflictDebounceRef.current);
+    };
+    // The dependency list intentionally omits apiClient (module-level stable reference).
+  }, [showModal, form.staffUserId, form.date, form.startTime, form.endTime, clinicId, editingEntry?.id]);
+
+  // ── Compute grid-level conflict indicators ────────────────────────────────
+  // Detect any pairs of entries for the same staff member whose times overlap
+  // within the currently loaded set.  Surfaces a warning icon on those cards.
+  const conflictingEntryIds = computeConflictingEntryIds(entries);
+
   if (!user) return null;
 
   if (isAllClinicsScope) {
@@ -326,6 +418,7 @@ export function RosterCalendarPage() {
     setEditingEntry(null);
     setForm(blankForm(toDateInput(dayDate)));
     setFormError(null);
+    setConflictResult(null);
     setShowModal(true);
   }
 
@@ -333,6 +426,7 @@ export function RosterCalendarPage() {
     setEditingEntry(entry);
     setForm(formFromEntry(entry));
     setFormError(null);
+    setConflictResult(null);
     setShowModal(true);
   }
 
@@ -340,6 +434,7 @@ export function RosterCalendarPage() {
     setShowModal(false);
     setEditingEntry(null);
     setFormError(null);
+    setConflictResult(null);
   }
 
   async function handleSubmit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
@@ -433,12 +528,17 @@ export function RosterCalendarPage() {
                     <button
                       key={entry.id}
                       type="button"
-                      className={`roster-shift roster-shift--${entry.status}${canWrite ? " roster-shift--clickable" : ""}`}
+                      className={`roster-shift roster-shift--${entry.status}${canWrite ? " roster-shift--clickable" : ""}${conflictingEntryIds.has(entry.id) ? " roster-shift--conflict" : ""}`}
                       onClick={() => {
                         if (canWrite) openEdit(entry);
                       }}
-                      aria-label={`Shift: ${resolveStaffName(entry.staffUserId, entry.staffEmail)}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
+                      aria-label={`Shift: ${resolveStaffName(entry.staffUserId, entry.staffEmail)}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}${conflictingEntryIds.has(entry.id) ? " (conflict)" : ""}`}
                     >
+                      {conflictingEntryIds.has(entry.id) ? (
+                        <span className="roster-shift__conflict-icon" aria-hidden="true" title="This shift overlaps another shift for the same staff member">
+                          ⚠
+                        </span>
+                      ) : null}
                       <span className="roster-shift__name">
                         {resolveStaffName(entry.staffUserId, entry.staffEmail)}
                       </span>
@@ -508,12 +608,17 @@ export function RosterCalendarPage() {
             <button
               key={entry.id}
               type="button"
-              className={`roster-day-card roster-day-card--${entry.status}${canWrite ? " roster-shift--clickable" : ""}`}
+              className={`roster-day-card roster-day-card--${entry.status}${canWrite ? " roster-shift--clickable" : ""}${conflictingEntryIds.has(entry.id) ? " roster-shift--conflict" : ""}`}
               onClick={() => {
                 if (canWrite) openEdit(entry);
               }}
-              aria-label={`Shift: ${resolveStaffName(entry.staffUserId, entry.staffEmail)}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
+              aria-label={`Shift: ${resolveStaffName(entry.staffUserId, entry.staffEmail)}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}${conflictingEntryIds.has(entry.id) ? " (conflict)" : ""}`}
             >
+              {conflictingEntryIds.has(entry.id) ? (
+                <span className="roster-shift__conflict-icon" aria-hidden="true" title="Overlapping shift">
+                  ⚠
+                </span>
+              ) : null}
               <div className="roster-day-card__main">
                 <span className="roster-day-card__name">
                   {resolveStaffName(entry.staffUserId, entry.staffEmail)}
@@ -629,17 +734,20 @@ export function RosterCalendarPage() {
                       <button
                         key={entry.id}
                         type="button"
-                        className={`roster-month-entry roster-month-entry--${entry.status}${canWrite ? " roster-shift--clickable" : ""}`}
+                        className={`roster-month-entry roster-month-entry--${entry.status}${canWrite ? " roster-shift--clickable" : ""}${conflictingEntryIds.has(entry.id) ? " roster-shift--conflict" : ""}`}
                         onClick={() => {
                           if (canWrite) openEdit(entry);
                         }}
-                        aria-label={`Shift: ${staffName}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
-                        title={`${staffName} ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}`}
+                        aria-label={`Shift: ${staffName}, ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}${conflictingEntryIds.has(entry.id) ? " (conflict)" : ""}`}
+                        title={`${staffName} ${formatTime(entry.shiftStartAt)}–${formatTime(entry.shiftEndAt)}${conflictingEntryIds.has(entry.id) ? " ⚠ Overlapping shift" : ""}`}
                       >
                         <span
                           className={`roster-month-entry__dot roster-month-entry__dot--${entry.status}`}
                           aria-hidden="true"
                         />
+                        {conflictingEntryIds.has(entry.id) ? (
+                          <span className="roster-shift__conflict-icon" aria-hidden="true">⚠</span>
+                        ) : null}
                         <span className="roster-month-entry__initials">{initials}</span>
                         <span className="roster-month-entry__time">
                           {formatTime(entry.shiftStartAt)}
@@ -962,6 +1070,60 @@ export function RosterCalendarPage() {
                 />
               </label>
 
+              {/* ── Conflict detection banners ── */}
+              {isCheckingConflict ? (
+                <p className="roster-conflict-checking">Checking for conflicts…</p>
+              ) : null}
+
+              {conflictResult && conflictResult.overlapping.length > 0 ? (
+                <div className="roster-conflict-banner roster-conflict-banner--error" role="alert">
+                  <strong>⛔ Roster conflict detected</strong>
+                  <ul className="roster-conflict-list">
+                    {conflictResult.overlapping.map((e) => {
+                      const fmt = (iso: string) =>
+                        new Date(iso).toLocaleTimeString("en-AU", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        });
+                      const staffName = resolveStaffName(e.staffUserId, e.staffEmail);
+                      return (
+                        <li key={e.id}>
+                          {staffName} is already rostered at{" "}
+                          <strong>{e.rosteredClinicName}</strong> from{" "}
+                          {fmt(e.shiftStartAt)}–{fmt(e.shiftEndAt)}.
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <p className="roster-conflict-hint">
+                    Resolve the existing shift before saving.
+                  </p>
+                </div>
+              ) : conflictResult && conflictResult.sameDay.length > 0 ? (
+                <div className="roster-conflict-banner roster-conflict-banner--warning" role="status">
+                  <strong>⚠ Same-day shift notice</strong>
+                  <ul className="roster-conflict-list">
+                    {conflictResult.sameDay.map((e) => {
+                      const fmt = (iso: string) =>
+                        new Date(iso).toLocaleTimeString("en-AU", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        });
+                      return (
+                        <li key={e.id}>
+                          {resolveStaffName(e.staffUserId, e.staffEmail)} also has a shift at{" "}
+                          <strong>{e.rosteredClinicName}</strong>{" "}
+                          {fmt(e.shiftStartAt)}–{fmt(e.shiftEndAt)} on this day. Times
+                          do not overlap.
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+
               {formError ? (
                 <p className="status-card__error">{formError}</p>
               ) : null}
@@ -994,7 +1156,7 @@ export function RosterCalendarPage() {
                   <button
                     type="submit"
                     className="roster-form__submit-btn"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || (conflictResult?.overlapping.length ?? 0) > 0}
                   >
                     {isSubmitting
                       ? editingEntry

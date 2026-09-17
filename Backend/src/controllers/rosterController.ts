@@ -71,6 +71,13 @@ const listQuerySchema = z
     }
   });
 
+const conflictQuerySchema = z.object({
+  staffUserId: z.string().uuid(),
+  start: isoDatetime(),
+  end: isoDatetime(),
+  excludeEntryId: z.string().uuid().optional(),
+});
+
 // UUID v4 path param — rejects malformed values before they reach Postgres.
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -249,6 +256,47 @@ export function createRosterHandlers(rosterService: RosterService) {
 
       const entries = await rosterService.getMyShiftsAllClinics(caller, options);
       res.status(200).json({ data: entries.map(serializeEntry) });
+    },
+
+    /**
+     * GET /clinics/:clinicId/roster/conflicts
+     * Pre-flight conflict check for Add/Edit shift modals.
+     * Returns overlapping (blocking) and same-day (warning) entries.
+     */
+    async checkConflicts(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+
+      const parsed = conflictQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(parsed.error),
+        );
+      }
+
+      const proposedStart = new Date(parsed.data.start);
+      const proposedEnd = new Date(parsed.data.end);
+
+      if (proposedEnd <= proposedStart) {
+        throw new AppError(400, "INVALID_SHIFT_TIMES", "end must be after start");
+      }
+
+      const result = await rosterService.checkConflictsForShift(caller, clinicId, {
+        staffUserId: parsed.data.staffUserId,
+        proposedStart,
+        proposedEnd,
+        excludeEntryId: parsed.data.excludeEntryId,
+      });
+
+      res.status(200).json({
+        data: {
+          overlapping: result.overlapping.map(serializeEntry),
+          sameDay: result.sameDay.map(serializeEntry),
+        },
+      });
     },
   };
 }

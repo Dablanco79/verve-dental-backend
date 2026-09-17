@@ -61,6 +61,13 @@ export function createRosterRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.listEligibleStaff(req, res)),
   );
 
+  // Conflict pre-flight check — must be before /:entryId to avoid shadowing.
+  router.get(
+    "/conflicts",
+    requireRoles(...ROSTER_WRITE_ROLES),
+    asyncHandler((req, res) => handlers.checkConflicts(req, res)),
+  );
+
   router.get(
     "/me",
     requireRoles(...ROSTER_READ_ROLES),

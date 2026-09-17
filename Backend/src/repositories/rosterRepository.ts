@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { AppError } from "../types/errors.js";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
@@ -9,8 +10,40 @@ import type {
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 
+/**
+ * Parameters for the atomic conflict-check that is acquired INSIDE the same
+ * DB transaction as the INSERT / UPDATE.  Providing this struct causes the
+ * Postgres repository to:
+ *   1. Acquire pg_advisory_xact_lock keyed to the staff user  (serialises
+ *      concurrent requests for the same person — other staff unaffected).
+ *   2. Run the overlap query on the same client / transaction.
+ *   3. Throw ROSTER_CONFLICT if any overlap is found — before the write.
+ *
+ * For in-memory tests the check is already synchronous so the check is
+ * simply applied inline; no lock is needed.
+ */
+export type ConflictCheckParams = {
+  /** Proposed shift start (inclusive). */
+  windowStart: Date;
+  /** Proposed shift end (exclusive). */
+  windowEnd: Date;
+  /**
+   * Human-readable name used in the error message.
+   * Falls back to staffEmail when absent.
+   */
+  staffDisplayName?: string;
+};
+
+/** Extended variant used during updateEntry (needs staffUserId + self-exclusion). */
+export type ConflictCheckUpdateParams = ConflictCheckParams & {
+  /** ID of the staff member being rostered. */
+  staffUserId: string;
+  /** Exclude this entry ID from the conflict check (edit must not conflict with itself). */
+  excludeEntryId?: string;
+};
+
 export interface RosterRepository {
-  createEntry(input: CreateRosterEntryInput): Promise<RosterEntry>;
+  createEntry(input: CreateRosterEntryInput, conflictCheck?: ConflictCheckParams): Promise<RosterEntry>;
   findEntryById(entryId: string): Promise<RosterEntry | null>;
   listByClinic(clinicId: string, options?: ListRosterOptions): Promise<RosterEntry[]>;
   listByClinicPaginated(clinicId: string, options?: ListRosterPageOptions): Promise<RosterPage>;
@@ -41,19 +74,76 @@ export interface RosterRepository {
     entryId: string,
     input: UpdateRosterEntryInput,
     changedBy: { userId: string; email: string },
+    conflictCheck?: ConflictCheckUpdateParams,
   ): Promise<RosterEntry>;
   /**
    * Returns true if the user has any non-cancelled roster entry at the given clinic.
    * Used by RosterService to grant cross-clinic read access to rostered staff.
    */
   hasActiveShiftAtClinic(staffUserId: string, clinicId: string): Promise<boolean>;
+  /**
+   * Returns all non-cancelled roster entries for a staff member that overlap the
+   * given time window across ALL clinics.
+   *
+   * Overlap condition (strict — touching is not a conflict):
+   *   existingStart < windowEnd  AND  existingEnd > windowStart
+   *
+   * `excludeEntryId` is omitted during create checks and set to the current
+   * entry ID during edit checks so a shift does not conflict with itself.
+   *
+   * Called with owner-admin DB context so managers can check conflicts
+   * across clinics they do not directly manage.
+   */
+  findOverlappingShifts(
+    staffUserId: string,
+    windowStart: Date,
+    windowEnd: Date,
+    excludeEntryId?: string,
+  ): Promise<RosterEntry[]>;
 }
 
 export function createInMemoryRosterRepository(): RosterRepository {
   const entries: RosterEntry[] = [];
 
+  // ── Internal helpers ──────────────────────────────────────────────────────
+
+  function overlapsWindow(
+    e: RosterEntry,
+    staffUserId: string,
+    windowStart: Date,
+    windowEnd: Date,
+    excludeEntryId?: string,
+  ): boolean {
+    if (e.staffUserId !== staffUserId) return false;
+    if (e.status === "cancelled") return false;
+    if (excludeEntryId && e.id === excludeEntryId) return false;
+    return e.shiftStartAt < windowEnd && e.shiftEndAt > windowStart;
+  }
+
+  function fmt(d: Date): string {
+    return d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+
   return {
-    createEntry(input: CreateRosterEntryInput): Promise<RosterEntry> {
+    createEntry(input: CreateRosterEntryInput, conflictCheck?: ConflictCheckParams): Promise<RosterEntry> {
+      // Inline atomic conflict check for in-memory implementation.
+      // Single-threaded JS means this is already concurrent-safe.
+      if (conflictCheck) {
+        const conflict = entries.find((e) =>
+          overlapsWindow(e, input.staffUserId, conflictCheck.windowStart, conflictCheck.windowEnd),
+        );
+        if (conflict) {
+          const name = conflictCheck.staffDisplayName ?? input.staffEmail;
+          return Promise.reject(
+            new AppError(
+              409,
+              "ROSTER_CONFLICT",
+              `Roster conflict: ${name} is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The proposed shift overlaps this roster.`,
+            ),
+          );
+        }
+      }
+
       const now = new Date();
       const entry: RosterEntry = {
         ...input,
@@ -176,8 +266,32 @@ export function createInMemoryRosterRepository(): RosterRepository {
       entryId: string,
       input: UpdateRosterEntryInput,
       _changedBy: { userId: string; email: string },
+      conflictCheck?: ConflictCheckUpdateParams,
     ): Promise<RosterEntry> {
       void _changedBy;
+
+      // Inline atomic conflict check for in-memory implementation.
+      if (conflictCheck) {
+        const conflict = entries.find((e) =>
+          overlapsWindow(
+            e,
+            conflictCheck.staffUserId,
+            conflictCheck.windowStart,
+            conflictCheck.windowEnd,
+            conflictCheck.excludeEntryId,
+          ),
+        );
+        if (conflict) {
+          return Promise.reject(
+            new AppError(
+              409,
+              "ROSTER_CONFLICT",
+              `Roster conflict: staff member is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The updated shift times overlap this roster.`,
+            ),
+          );
+        }
+      }
+
       const index = entries.findIndex((e) => e.id === entryId);
       const existing = entries[index];
 
@@ -209,6 +323,26 @@ export function createInMemoryRosterRepository(): RosterRepository {
             e.rosteredClinicId === clinicId &&
             e.status !== "cancelled",
         ),
+      );
+    },
+
+    findOverlappingShifts(
+      staffUserId: string,
+      windowStart: Date,
+      windowEnd: Date,
+      excludeEntryId?: string,
+    ): Promise<RosterEntry[]> {
+      return Promise.resolve(
+        entries
+          .filter((e) => {
+            if (e.staffUserId !== staffUserId) return false;
+            if (e.status === "cancelled") return false;
+            if (excludeEntryId && e.id === excludeEntryId) return false;
+            // Strict overlap: existing starts before window ends AND existing ends after window starts
+            return e.shiftStartAt < windowEnd && e.shiftEndAt > windowStart;
+          })
+          .sort((a, b) => a.shiftStartAt.getTime() - b.shiftStartAt.getTime())
+          .map((e) => ({ ...e })),
       );
     },
   };

@@ -1,4 +1,5 @@
 import { AppError } from "../types/errors.js";
+import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "../db/tenantContext.js";
 import type { DatabasePool } from "../db/pool.js";
 import type {
   CreateRosterEntryInput,
@@ -11,6 +12,7 @@ import type {
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 import type { RosterRepository } from "./rosterRepository.js";
+import type { ConflictCheckParams, ConflictCheckUpdateParams } from "./rosterRepository.js";
 
 type RosterEntryRow = {
   id: string;
@@ -48,10 +50,55 @@ function toRosterEntry(row: RosterEntryRow): RosterEntry {
 
 export function createPostgresRosterRepository(pool: DatabasePool): RosterRepository {
   return {
-    async createEntry(input: CreateRosterEntryInput): Promise<RosterEntry> {
+    async createEntry(input: CreateRosterEntryInput, conflictCheck?: ConflictCheckParams): Promise<RosterEntry> {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+
+        if (conflictCheck) {
+          // ── Advisory-lock + inline conflict check ────────────────────────
+          // 1. Set transaction-local owner-admin context so the SELECT below can
+          //    read roster_entries across ALL clinics, bypassing RLS.
+          // 2. Acquire a per-staff-member advisory lock (transaction-scoped).
+          //    Two concurrent requests for the same staff member will execute
+          //    their check-then-insert SERIALLY; different staff do not block
+          //    each other.  hashtext(uuid) → int4, which pg casts to bigint.
+          // 3. Run the strict-overlap query.
+          // 4. Throw ROSTER_CONFLICT before writing if any overlap is found.
+          await client.query(
+            `SELECT set_config('app.current_clinic_id', $1, true),
+                    set_config('app.owner_admin_mode',  'true', true),
+                    set_config('app.current_user_id',   '',     true)`,
+            [AUTH_BYPASS_CLINIC_ID],
+          );
+          await client.query(
+            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            [input.staffUserId],
+          );
+          const { rows: conflictRows } = await client.query<RosterEntryRow>(
+            `SELECT * FROM roster_entries
+             WHERE staff_user_id = $1
+               AND status != 'cancelled'
+               AND shift_start_at < $2
+               AND shift_end_at   > $3
+             ORDER BY shift_start_at ASC
+             LIMIT 1`,
+            [input.staffUserId, conflictCheck.windowEnd, conflictCheck.windowStart],
+          );
+          if (conflictRows.length > 0) {
+            const firstRow = conflictRows[0];
+            if (!firstRow) throw new AppError(500, "INTERNAL_ERROR", "Unexpected empty conflict rows");
+            const first = toRosterEntry(firstRow);
+            const fmtT = (d: Date) =>
+              d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+            const name = conflictCheck.staffDisplayName ?? input.staffEmail;
+            throw new AppError(
+              409,
+              "ROSTER_CONFLICT",
+              `Roster conflict: ${name} is already rostered at ${first.rosteredClinicName} from ${fmtT(first.shiftStartAt)}–${fmtT(first.shiftEndAt)}. The proposed shift overlaps this roster.`,
+            );
+          }
+        }
 
         const { rows } = await client.query<RosterEntryRow>(
           `INSERT INTO roster_entries
@@ -297,6 +344,7 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       entryId: string,
       input: UpdateRosterEntryInput,
       changedBy: { userId: string; email: string },
+      conflictCheck?: ConflictCheckUpdateParams,
     ): Promise<RosterEntry> {
       const setClauses: string[] = ["updated_at = now()"];
       const params: unknown[] = [];
@@ -328,6 +376,52 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+
+        if (conflictCheck) {
+          // ── Advisory-lock + inline conflict check (same pattern as createEntry) ──
+          await client.query(
+            `SELECT set_config('app.current_clinic_id', $1, true),
+                    set_config('app.owner_admin_mode',  'true', true),
+                    set_config('app.current_user_id',   '',     true)`,
+            [AUTH_BYPASS_CLINIC_ID],
+          );
+          await client.query(
+            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            [conflictCheck.staffUserId],
+          );
+
+          const params: unknown[] = [
+            conflictCheck.staffUserId,
+            conflictCheck.windowEnd,
+            conflictCheck.windowStart,
+          ];
+          let sql = `
+            SELECT * FROM roster_entries
+            WHERE staff_user_id = $1
+              AND status != 'cancelled'
+              AND shift_start_at < $2
+              AND shift_end_at   > $3`;
+
+          if (conflictCheck.excludeEntryId) {
+            params.push(conflictCheck.excludeEntryId);
+            sql += `\n              AND id != $${String(params.length)}`;
+          }
+          sql += "\n            ORDER BY shift_start_at ASC LIMIT 1";
+
+          const { rows: conflictRows } = await client.query<RosterEntryRow>(sql, params);
+          if (conflictRows.length > 0) {
+            const firstRow = conflictRows[0];
+            if (!firstRow) throw new AppError(500, "INTERNAL_ERROR", "Unexpected empty conflict rows");
+            const first = toRosterEntry(firstRow);
+            const fmtT = (d: Date) =>
+              d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+            throw new AppError(
+              409,
+              "ROSTER_CONFLICT",
+              `Roster conflict: staff member is already rostered at ${first.rosteredClinicName} from ${fmtT(first.shiftStartAt)}–${fmtT(first.shiftEndAt)}. The updated shift times overlap this roster.`,
+            );
+          }
+        }
 
         // The AND status <> 'cancelled' guard prevents a concurrent cancel
         // from being silently overwritten (race-condition protection).
@@ -385,6 +479,43 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       );
 
       return rows[0]?.exists ?? false;
+    },
+
+    async findOverlappingShifts(
+      staffUserId: string,
+      windowStart: Date,
+      windowEnd: Date,
+      excludeEntryId?: string,
+    ): Promise<RosterEntry[]> {
+      // Runs with owner-admin context so it can scan shifts across ALL clinics,
+      // not just the manager's current clinic.  This is required for cross-clinic
+      // conflict detection during roster create / update.
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const params: unknown[] = [staffUserId, windowEnd, windowStart];
+          // Strict overlap: existingStart < windowEnd AND existingEnd > windowStart
+          // (touching — existingEnd === windowStart — is NOT a conflict)
+          let sql = `
+            SELECT * FROM roster_entries
+            WHERE staff_user_id = $1
+              AND status != 'cancelled'
+              AND shift_start_at < $2
+              AND shift_end_at   > $3`;
+
+          if (excludeEntryId) {
+            params.push(excludeEntryId);
+            sql += `\n              AND id != $${String(params.length)}`;
+          }
+
+          sql += "\n            ORDER BY shift_start_at ASC";
+
+          const { rows } = await client.query<RosterEntryRow>(sql, params);
+          return rows.map(toRosterEntry);
+        },
+        true, // ownerAdmin — bypass clinic-scoped RLS to see all clinics
+      );
     },
   };
 }

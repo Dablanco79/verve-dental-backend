@@ -112,5 +112,12 @@ jobs:
       - name: "P0 — Pilot Reset RLS integration tests (31 FORCE-RLS regression tests, verve_app NOSUPERUSER)"
         run: npm run test:pilotresetrls-integration --workspace=@verve/backend
 
+      # ── Roster concurrency gate ───────────────────────────────────────────────
+      # Proves that pg_advisory_xact_lock prevents two concurrent overlapping
+      # shift creations for the same staff member from both succeeding.
+      # Exactly one must win; the other must receive ROSTER_CONFLICT (409).
+      - name: "P0 — Roster concurrency gate (advisory lock: simultaneous overlapping creations → exactly one ROSTER_CONFLICT)"
+        run: npm test --workspace=@verve/backend -- --testPathPattern=rosterConcurrency --forceExit
+
       - name: Run full test suite with real infrastructure
         run: npm run test --workspace=@verve/backend -- --forceExit

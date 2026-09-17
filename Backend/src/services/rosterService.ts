@@ -45,6 +45,13 @@ export type CreateRosterInput = Omit<
   | "rosteredClinicName"
 >;
 
+export type ConflictCheckResult = {
+  /** Strict time overlaps — block the save (RED). */
+  overlapping: RosterEntry[];
+  /** Same calendar day, no time overlap — informational only (AMBER). */
+  sameDay: RosterEntry[];
+};
+
 export type RosterService = ReturnType<typeof createRosterService>;
 
 export function createRosterService(
@@ -212,8 +219,6 @@ export function createRosterService(
       }
 
       // Module 06 — resolve clinic name from the canonical clinics table.
-      // The clinic record is the authoritative source; its name is independent
-      // of which users happen to be homed at the clinic.
       const rosteredClinic = await clinicRepository.findById(clinicId);
 
       if (!rosteredClinic) {
@@ -234,14 +239,26 @@ export function createRosterService(
 
       const rosteredClinicName = rosteredClinic.name;
 
-      const entry = await rosterRepository.createEntry({
-        ...input,
-        rosteredClinicId: clinicId,
-        rosteredClinicName,
-        staffEmail: staffUser.email,
-        createdByUserId: caller.id,
-        createdByEmail: caller.email,
-      });
+      // ── Cross-clinic conflict check (atomic, advisory-locked in Postgres) ──
+      // The repository acquires a per-staff advisory lock, re-checks for
+      // overlaps on the SAME connection/transaction, then inserts — all
+      // atomically.  Concurrent managers cannot both succeed for the same
+      // staff member.
+      const entry = await rosterRepository.createEntry(
+        {
+          ...input,
+          rosteredClinicId: clinicId,
+          rosteredClinicName,
+          staffEmail: staffUser.email,
+          createdByUserId: caller.id,
+          createdByEmail: caller.email,
+        },
+        {
+          windowStart: input.shiftStartAt,
+          windowEnd: input.shiftEndAt,
+          staffDisplayName: staffUser.displayName ?? staffUser.email,
+        },
+      );
 
       auditWriter?.recordEvent({
         clinicId,
@@ -293,10 +310,25 @@ export function createRosterService(
         );
       }
 
-      const updated = await rosterRepository.updateEntry(entryId, input, {
-        userId: caller.id,
-        email: caller.email,
-      });
+      // ── Cross-clinic conflict check (atomic, advisory-locked in Postgres) ──
+      // Only needed when times are changing.  The excludeEntryId prevents
+      // self-conflict on the entry being edited.
+      const timesChanged =
+        input.shiftStartAt !== undefined || input.shiftEndAt !== undefined;
+
+      const updated = await rosterRepository.updateEntry(
+        entryId,
+        input,
+        { userId: caller.id, email: caller.email },
+        timesChanged
+          ? {
+              staffUserId: existing.staffUserId,
+              windowStart: newStart,
+              windowEnd: newEnd,
+              excludeEntryId: entryId,
+            }
+          : undefined,
+      );
 
       // ── Roster-completion hook ───────────────────────────────────────────
       // Fire after a successful status transition to 'completed'.
@@ -422,6 +454,58 @@ export function createRosterService(
       options?: { from?: Date; to?: Date },
     ): Promise<RosterEntry[]> {
       return rosterRepository.listByStaff(caller.id, options);
+    },
+
+    /**
+     * Checks whether a proposed shift would conflict with any of the staff
+     * member's existing shifts across ALL clinics.
+     *
+     * Returns two lists:
+     *  - overlapping: strict time overlaps → RED, Save must be blocked
+     *  - sameDay:     same calendar day, no time overlap → AMBER, informational
+     *
+     * Callers must have roster-write access to the target clinic.
+     * `excludeEntryId` should be set to the current entry ID during edit
+     * operations so the shift does not conflict with itself.
+     */
+    async checkConflictsForShift(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      params: {
+        staffUserId: string;
+        proposedStart: Date;
+        proposedEnd: Date;
+        excludeEntryId?: string;
+      },
+    ): Promise<ConflictCheckResult> {
+      assertClinicWriteAccess(caller, clinicId);
+
+      const { staffUserId, proposedStart, proposedEnd, excludeEntryId } = params;
+
+      // Strict time overlaps.
+      const overlapping = await rosterRepository.findOverlappingShifts(
+        staffUserId,
+        proposedStart,
+        proposedEnd,
+        excludeEntryId,
+      );
+
+      // Same calendar day (full day window), excluding overlaps already found.
+      const dayStart = new Date(proposedStart);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(proposedStart);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const overlappingIds = new Set(overlapping.map((e) => e.id));
+      const allOnDay = await rosterRepository.findOverlappingShifts(
+        staffUserId,
+        dayStart,
+        dayEnd,
+        excludeEntryId,
+      );
+      const sameDay = allOnDay.filter((e) => !overlappingIds.has(e.id));
+
+      return { overlapping, sameDay };
     },
   };
 }

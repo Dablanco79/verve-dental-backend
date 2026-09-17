@@ -936,6 +936,35 @@ export function createApiClient(config: AppConfig) {
   }
 
   /**
+   * GET /api/v1/clinics/:clinicId/roster/conflicts
+   * Pre-flight conflict check for Add/Edit shift modals.
+   * Returns overlapping (blocking, RED) and sameDay (informational, AMBER) entries.
+   * `excludeEntryId` must be set during edit to avoid self-conflict.
+   */
+  async function checkShiftConflicts(
+    clinicId: string,
+    params: {
+      staffUserId: string;
+      start: string;
+      end: string;
+      excludeEntryId?: string;
+    },
+  ): Promise<{ overlapping: RosterEntry[]; sameDay: RosterEntry[] }> {
+    const q = new URLSearchParams({
+      staffUserId: params.staffUserId,
+      start: params.start,
+      end: params.end,
+    });
+    if (params.excludeEntryId) q.set("excludeEntryId", params.excludeEntryId);
+    return request<{ overlapping: RosterEntry[]; sameDay: RosterEntry[] }>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/conflicts?${q.toString()}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
    * GET /api/v1/clinics/:clinicId/users/:userId/clinic-access
    * Returns a user's clinic assignments. owner_admin only.
    */
@@ -2510,6 +2539,7 @@ export function createApiClient(config: AppConfig) {
     getMyShifts,
     getMyShiftsAllClinics,
     listRosterEligibleStaff,
+    checkShiftConflicts,
     getUserClinicAccess,
     putUserClinicAccess,
     getMyOperationalClinics,

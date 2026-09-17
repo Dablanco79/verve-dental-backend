@@ -1844,6 +1844,71 @@ body {
   cursor: not-allowed;
 }
 
+/* ── Roster Conflict detection UI ────────────────────────────────────────── */
+
+.roster-conflict-checking {
+  font-size: 0.82rem;
+  color: #9ab5cc;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+
+.roster-conflict-banner {
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+}
+
+.roster-conflict-banner--error {
+  background: #fff5f5;
+  border: 1.5px solid #fc8181;
+  color: #c53030;
+}
+
+.roster-conflict-banner--error strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.roster-conflict-banner--warning {
+  background: #fffbeb;
+  border: 1.5px solid #f6ad55;
+  color: #7b341e;
+}
+
+.roster-conflict-banner--warning strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.roster-conflict-list {
+  margin: 0.25rem 0 0.5rem 1.1rem;
+  padding: 0;
+  font-size: 0.84rem;
+}
+
+.roster-conflict-list li {
+  margin-bottom: 0.2rem;
+}
+
+.roster-conflict-hint {
+  font-size: 0.78rem;
+  margin: 0;
+  opacity: 0.85;
+}
+
+/* Conflict indicator on roster shift cards */
+.roster-shift--conflict {
+  outline: 2px solid #f6ad55;
+  outline-offset: -2px;
+}
+
+.roster-shift__conflict-icon {
+  font-size: 0.72rem;
+  margin-right: 0.15rem;
+  color: #d97706;
+}
+
 /* ── My Shifts Page ───────────────────────────────────────────────────────── */
 
 .my-shifts-empty {
@@ -1959,6 +2024,344 @@ body {
   font-size: 0.82rem;
   color: #9ab5cc;
   font-style: italic;
+}
+
+/* ── My Shifts: View toggle + calendar controls ───────────────────────────── */
+
+.my-shifts-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.my-shifts-view-toggle {
+  display: flex;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.my-shifts-toggle-btn {
+  padding: 0.35rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  color: #627d98;
+  transition: background 0.15s, color 0.15s;
+}
+
+.my-shifts-toggle-btn + .my-shifts-toggle-btn {
+  border-left: 1px solid #bcccdc;
+}
+
+.my-shifts-toggle-btn--active,
+.my-shifts-toggle-btn:hover {
+  background: #e8f4fd;
+  color: #1a6fa0;
+}
+
+.my-shifts-cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #e8f0f5;
+  flex-wrap: wrap;
+}
+
+.my-shifts-cal-view-selector {
+  display: flex;
+  border: 1px solid #bcccdc;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.my-shifts-cal-btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  color: #627d98;
+  transition: background 0.15s, color 0.15s;
+}
+
+.my-shifts-cal-btn + .my-shifts-cal-btn {
+  border-left: 1px solid #bcccdc;
+}
+
+.my-shifts-cal-btn--active,
+.my-shifts-cal-btn:hover {
+  background: #e8f4fd;
+  color: #1a6fa0;
+}
+
+/* ── My Shifts: Month calendar view ──────────────────────────────────────── */
+
+.my-shifts-month-view {
+  margin-top: 0.75rem;
+}
+
+.my-shifts-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-top: 1px solid #e8f0f5;
+  border-left: 1px solid #e8f0f5;
+}
+
+.my-shifts-month__col-head {
+  padding: 0.4rem 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9ab5cc;
+  text-align: center;
+  border-right: 1px solid #e8f0f5;
+  border-bottom: 1px solid #e8f0f5;
+}
+
+.my-shifts-month-cell {
+  min-height: 80px;
+  padding: 0.3rem 0.35rem;
+  border-right: 1px solid #e8f0f5;
+  border-bottom: 1px solid #e8f0f5;
+  background: #fff;
+  position: relative;
+}
+
+.my-shifts-month-cell--out {
+  background: #f8fafc;
+}
+
+.my-shifts-month-cell--today {
+  background: #f0f8ff;
+}
+
+.my-shifts-month-cell__num {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #627d98;
+  margin-bottom: 0.2rem;
+}
+
+.my-shifts-month-cell--today .my-shifts-month-cell__num {
+  color: #1a6fa0;
+}
+
+.my-shifts-month-cell__entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.my-shifts-month-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  background: #e8f4fd;
+  overflow: hidden;
+}
+
+.my-shifts-month-entry--scheduled { background: #dbeafe; }
+.my-shifts-month-entry--confirmed { background: #dcfce7; }
+.my-shifts-month-entry--completed { background: #f0f4f8; }
+
+.my-shifts-month-entry__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.my-shifts-month-entry__dot--scheduled { background: #4a9fde; }
+.my-shifts-month-entry__dot--confirmed { background: #22a84c; }
+.my-shifts-month-entry__dot--completed { background: #9ab5cc; }
+
+.my-shifts-month-entry__time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #1e3a5f;
+  white-space: nowrap;
+}
+
+.my-shifts-month-entry__clinic {
+  color: #627d98;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.my-shifts-month-entry__status {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.my-shifts-month-entry__status--scheduled { color: #1e40af; }
+.my-shifts-month-entry__status--confirmed { color: #166534; }
+.my-shifts-month-entry__status--completed { color: #627d98; }
+
+.my-shifts-month-cell__more,
+.my-shifts-month-cell__collapse {
+  font-size: 0.68rem;
+  color: #4a9fde;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.1rem 0;
+  text-align: left;
+  font-weight: 600;
+}
+
+/* ── My Shifts: Week calendar view ───────────────────────────────────────── */
+
+.my-shifts-week-view {
+  margin-top: 0.75rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.my-shifts-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  gap: 0.5rem;
+  min-width: 640px;
+}
+
+.my-shifts-week-day {
+  border: 1px solid #e8f0f5;
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  background: #fff;
+}
+
+.my-shifts-week-day--today {
+  border-color: #4a9fde;
+  background: #f0f8ff;
+}
+
+.my-shifts-week-day__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+  border-bottom: 1px solid #e8f0f5;
+}
+
+.my-shifts-week-day__weekday {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #9ab5cc;
+}
+
+.my-shifts-week-day__date {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #486581;
+}
+
+.my-shifts-week-day__shifts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.my-shifts-week-empty {
+  color: #c8d8e4;
+  font-size: 0.9rem;
+  text-align: center;
+  margin: 0;
+}
+
+.my-shifts-week-card {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: #f0f8ff;
+  border-left: 3px solid #4a9fde;
+}
+
+.my-shifts-week-card--scheduled { border-left-color: #4a9fde; background: #eff8ff; }
+.my-shifts-week-card--confirmed { border-left-color: #22a84c; background: #f0fdf4; }
+.my-shifts-week-card--completed { border-left-color: #9ab5cc; background: #f8fafc; }
+
+.my-shifts-week-card__time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #102a43;
+}
+
+.my-shifts-week-card__clinic {
+  font-size: 0.78rem;
+  color: #486581;
+  margin-top: 0.15rem;
+  font-weight: 600;
+}
+
+.my-shifts-week-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.my-shifts-week-card__type,
+.my-shifts-week-card__status {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+}
+
+.my-shifts-week-card__type--standard { background: #dbeafe; color: #1e40af; }
+.my-shifts-week-card__type--overtime { background: #fef3c7; color: #92400e; }
+.my-shifts-week-card__type--on_call  { background: #ede9fe; color: #5b21b6; }
+.my-shifts-week-card__type--training { background: #dcfce7; color: #166534; }
+
+.my-shifts-week-card__status--scheduled { background: #dbeafe; color: #1e40af; }
+.my-shifts-week-card__status--confirmed { background: #dcfce7; color: #166534; }
+.my-shifts-week-card__status--completed { background: #f0f4f8; color: #627d98; }
+
+.my-shifts-week-card__notes {
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: #9ab5cc;
+  font-style: italic;
+}
+
+/* Responsive: collapse to horizontal scroll on narrow screens */
+@media (max-width: 600px) {
+  .my-shifts-week-grid {
+    grid-template-columns: repeat(7, minmax(100px, 1fr));
+    min-width: 560px;
+  }
+  .my-shifts-month-grid {
+    font-size: 0.65rem;
+  }
+  .my-shifts-month-entry__status {
+    display: none;
+  }
+  .my-shifts-cal-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* ── Labor Forecast Page ──────────────────────────────────────────────────── */
