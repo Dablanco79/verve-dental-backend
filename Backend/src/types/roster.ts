@@ -30,6 +30,12 @@ export type RosterEntry = {
   staffEmail: string;
   rosteredClinicId: string;
   rosteredClinicName: string;
+  /**
+   * Optional short display name from the clinics table (derived at query time via JOIN).
+   * NULL when the clinic has no preferred_name set.
+   * Use `rosteredClinicPreferredName?.trim() || rosteredClinicName` for compact display.
+   */
+  rosteredClinicPreferredName: string | null;
   /** UTC timestamp — shift start time. */
   shiftStartAt: Date;
   /** UTC timestamp — shift end time. May be after midnight (overnight shifts). */

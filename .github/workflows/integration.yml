@@ -119,5 +119,13 @@ jobs:
       - name: "P0 — Roster concurrency gate (advisory lock: simultaneous overlapping creations → exactly one ROSTER_CONFLICT)"
         run: npm test --workspace=@verve/backend -- --testPathPattern=rosterConcurrency --forceExit
 
+      # ── Preferred name RLS gate ───────────────────────────────────────────────
+      # Proves that the LEFT JOIN clinics in roster queries safely returns
+      # preferred_name even for cross-clinic entries, because clinics has NO RLS
+      # by design (migration 015 documents this explicitly).  Also confirms
+      # owner_admin can set/clear preferred_name and that GPM/staff cannot.
+      - name: "P0 — preferred_name RLS gate (clinics JOIN safety, cross-clinic preferred name propagation)"
+        run: npm test --workspace=@verve/backend -- --testPathPattern=preferredNameRls --forceExit
+
       - name: Run full test suite with real infrastructure
         run: npm run test --workspace=@verve/backend -- --forceExit

@@ -31,6 +31,17 @@ export type Clinic = {
   timezone: string;
   subscriptionTier: ClinicSubscriptionTier;
   isActive: boolean;
+  /**
+   * Optional short display name for compact operational UI (My Shifts, roster calendars).
+   * Falls back to the canonical `name` when NULL.
+   * Must not replace or mutate the official clinic name.
+   */
+  preferredName: string | null;
+  /**
+   * UUID of the organisation this clinic belongs to.
+   * Derived from organisation_id in the DB. Used for preferred_name uniqueness checks.
+   */
+  organisationId: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -74,6 +85,12 @@ export type UpdateClinicInput = {
   postcode?: string | null;
   timezone?: string;
   isActive?: boolean;
+  /**
+   * Optional short display name for compact operational UI.
+   * Pass null to clear it; pass a non-blank string to set it.
+   * Validated and trimmed by the service layer before persisting.
+   */
+  preferredName?: string | null;
 };
 
 /**

@@ -115,6 +115,13 @@ const updateClinicSchema = z
 
     isActive: z.boolean().optional(),
 
+    /**
+     * Optional short display name for compact operational UI (My Shifts, roster calendars).
+     * Pass null to clear it; a blank string is rejected at the service layer.
+     * Max 80 characters — enough for any reasonable short label.
+     */
+    preferredName: z.string().trim().max(80).nullable().optional(),
+
     // subscriptionTier intentionally omitted — client-side tier escalation vector.
     // Any request body that includes this key will be rejected by .strict() below.
   })
@@ -175,7 +182,11 @@ export function createClinicHandlers(clinicService: ClinicService) {
       const caller = req.user;
       const { clinicId } = req.params as { clinicId: string };
 
-      const input = parseBody(updateClinicSchema, req.body);
+      const body = parseBody(updateClinicSchema, req.body);
+      const input = {
+        ...body,
+        ...(body.preferredName !== undefined && { preferredName: body.preferredName }),
+      };
       const clinic = await clinicService.updateClinic(caller, clinicId, input);
       res.status(200).json({ data: clinic });
     },

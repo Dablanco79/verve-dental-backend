@@ -7,6 +7,7 @@ import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
 import type { RosterEntry } from "../types/roster.js";
 import { ROSTER_STATUS_LABELS, SHIFT_TYPE_LABELS } from "../types/roster.js";
+import { displayClinicName } from "../utils/clinicDisplay.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -463,7 +464,7 @@ function MyShiftsMonthView({
                       {formatTime(entry.shiftStartAt)}
                     </span>
                     <span className="my-shifts-month-entry__clinic">
-                      {shortClinicName(entry.rosteredClinicName)}
+                      {displayClinicName(entry.rosteredClinicName, entry.rosteredClinicPreferredName)}
                     </span>
                     <span
                       className={`my-shifts-month-entry__status my-shifts-month-entry__status--${entry.status}`}
@@ -585,14 +586,3 @@ function MyShiftsWeekView({
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
-
-/**
- * Short clinic label for compact cells.
- * "Bentleigh East Dental" → "Bentleigh East"
- */
-function shortClinicName(name: string): string {
-  const words = name.split(/\s+/);
-  if (words.length >= 3) return `${words[0] ?? ""} ${words[1] ?? ""}`.trim();
-  if (words.length === 2) return name;
-  return name.slice(0, 14);
-}

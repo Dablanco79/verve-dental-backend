@@ -331,6 +331,81 @@ describe("MyShiftsPage — Month calendar cross-clinic visibility", () => {
   });
 });
 
+// ── Preferred name display in Month calendar ──────────────────────────────────
+
+describe("MyShiftsPage — preferred name display in Month calendar", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, staffUser);
+  });
+
+  it("Month calendar uses preferredName when set", async () => {
+    const user = userEvent.setup();
+    const year = new Date().getFullYear();
+    const month = new Date().getMonth();
+    const makeShiftDates = (day: number) => ({
+      shiftStartAt: new Date(year, month, day, 8, 0, 0, 0).toISOString(),
+      shiftEndAt: new Date(year, month, day, 17, 0, 0, 0).toISOString(),
+    });
+
+    mockGetMyShiftsAllClinics.mockResolvedValue([
+      buildTodayEntry({
+        id: "pref-bentleigh",
+        rosteredClinicName: "Verve Dental - Bentleigh East",
+        rosteredClinicPreferredName: "Bentleigh East",
+        rosteredClinicId: TEST_CLINIC_ID,
+        ...makeShiftDates(3),
+      }),
+      buildTodayEntry({
+        id: "pref-heathmont",
+        rosteredClinicName: "Verve Dental - Heathmont",
+        rosteredClinicPreferredName: "Heathmont",
+        rosteredClinicId: TEST_CLINIC_B_ID,
+        ...makeShiftDates(10),
+      }),
+      buildTodayEntry({
+        id: "pref-cheltenham",
+        rosteredClinicName: "Verve Dental - Cheltenham",
+        rosteredClinicPreferredName: "Cheltenham",
+        rosteredClinicId: "33333333-3333-4333-8333-333333333333",
+        ...makeShiftDates(20),
+      }),
+    ]);
+
+    renderPage();
+    const calBtn = await screen.findByRole("button", { name: "Calendar" });
+    await user.click(calBtn);
+
+    await waitFor(() => {
+      // Each preferredName must appear (in the compact month cell)
+      expect(screen.getAllByText((c) => c.includes("Bentleigh East")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((c) => c.includes("Heathmont")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((c) => c.includes("Cheltenham")).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("Month calendar falls back to official name when preferredName is null", async () => {
+    const user = userEvent.setup();
+    const today = new Date();
+    mockGetMyShiftsAllClinics.mockResolvedValue([
+      buildTodayEntry({
+        id: "pref-null",
+        rosteredClinicName: TEST_CLINIC_NAME,
+        rosteredClinicPreferredName: null,
+        shiftStartAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0, 0).toISOString(),
+        shiftEndAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 17, 0, 0).toISOString(),
+      }),
+    ]);
+
+    renderPage();
+    const calBtn = await screen.findByRole("button", { name: "Calendar" });
+    await user.click(calBtn);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((c) => c.includes(TEST_CLINIC_NAME)).length).toBeGreaterThan(0);
+    });
+  });
+});
+
 // ── Calendar anchor navigation ────────────────────────────────────────────────
 
 describe("MyShiftsPage — Calendar reloads on anchor navigation", () => {

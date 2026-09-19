@@ -24,6 +24,11 @@ export type ClinicData = {
   timezone: string;
   subscriptionTier: ClinicSubscriptionTier;
   isActive: boolean;
+  /**
+   * Optional short display name for compact operational UI (My Shifts, roster calendars).
+   * Falls back to the canonical `name` when null.
+   */
+  preferredName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -42,6 +47,11 @@ export type UpdateClinicData = {
   state?: string | null;
   postcode?: string | null;
   timezone?: string;
+  /**
+   * Optional short display name for compact operational UI.
+   * Pass null to clear it; pass a non-blank string to set it.
+   */
+  preferredName?: string | null;
 };
 
 /**

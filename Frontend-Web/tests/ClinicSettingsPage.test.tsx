@@ -76,6 +76,7 @@ const homeClinic: ClinicData = {
   timezone: "Australia/Melbourne",
   subscriptionTier: "standard",
   isActive: true,
+  preferredName: null,
   createdAt: "2024-01-01T00:00:00Z",
   updatedAt: "2024-06-01T10:00:00Z",
 };
@@ -91,6 +92,7 @@ const otherClinic: ClinicData = {
   timezone: "Australia/Brisbane",
   subscriptionTier: "premium",
   isActive: true,
+  preferredName: null,
   createdAt: "2024-06-01T00:00:00Z",
   updatedAt: "2024-06-15T08:00:00Z",
 };

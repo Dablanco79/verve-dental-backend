@@ -103,6 +103,7 @@ function serializeEntry(entry: RosterEntry) {
     staffEmail: entry.staffEmail,
     rosteredClinicId: entry.rosteredClinicId,
     rosteredClinicName: entry.rosteredClinicName,
+    rosteredClinicPreferredName: entry.rosteredClinicPreferredName,
     shiftStartAt: entry.shiftStartAt.toISOString(),
     shiftEndAt: entry.shiftEndAt.toISOString(),
     shiftType: entry.shiftType,

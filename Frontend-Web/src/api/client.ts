@@ -973,8 +973,8 @@ export function createApiClient(config: AppConfig) {
    * Returns the list of clinics the authenticated user can view/manage rosters for.
    * Available to owner_admin and group_practice_manager only.
    */
-  async function getRosterAccessibleClinics(): Promise<{ id: string; name: string }[]> {
-    return request<{ id: string; name: string }[]>(
+  async function getRosterAccessibleClinics(): Promise<{ id: string; name: string; preferredName: string | null }[]> {
+    return request<{ id: string; name: string; preferredName: string | null }[]>(
       config,
       "/api/v1/roster/accessible-clinics",
       {},

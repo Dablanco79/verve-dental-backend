@@ -149,6 +149,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
         ...input,
         id: randomUUID(),
         status: "scheduled",
+        rosteredClinicPreferredName: null,
         createdAt: now,
         updatedAt: now,
       };

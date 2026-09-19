@@ -20,6 +20,7 @@ type RosterEntryRow = {
   staff_email: string;
   rostered_clinic_id: string;
   rostered_clinic_name: string;
+  rostered_clinic_preferred_name: string | null;
   shift_start_at: Date;
   shift_end_at: Date;
   shift_type: string;
@@ -37,6 +38,7 @@ function toRosterEntry(row: RosterEntryRow): RosterEntry {
     staffEmail: row.staff_email,
     rosteredClinicId: row.rostered_clinic_id,
     rosteredClinicName: row.rostered_clinic_name,
+    rosteredClinicPreferredName: row.rostered_clinic_preferred_name ?? null,
     shiftStartAt: row.shift_start_at,
     shiftEndAt: row.shift_end_at,
     shiftType: row.shift_type as ShiftType,
@@ -76,12 +78,14 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
             [input.staffUserId],
           );
           const { rows: conflictRows } = await client.query<RosterEntryRow>(
-            `SELECT * FROM roster_entries
-             WHERE staff_user_id = $1
-               AND status != 'cancelled'
-               AND shift_start_at < $2
-               AND shift_end_at   > $3
-             ORDER BY shift_start_at ASC
+            `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+             FROM roster_entries re
+             LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
+             WHERE re.staff_user_id = $1
+               AND re.status != 'cancelled'
+               AND re.shift_start_at < $2
+               AND re.shift_end_at   > $3
+             ORDER BY re.shift_start_at ASC
              LIMIT 1`,
             [input.staffUserId, conflictCheck.windowEnd, conflictCheck.windowStart],
           );
@@ -101,11 +105,16 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         }
 
         const { rows } = await client.query<RosterEntryRow>(
-          `INSERT INTO roster_entries
-             (staff_user_id, staff_email, rostered_clinic_id, rostered_clinic_name,
-              shift_start_at, shift_end_at, shift_type, notes, created_by_user_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING *`,
+          `WITH ins AS (
+             INSERT INTO roster_entries
+               (staff_user_id, staff_email, rostered_clinic_id, rostered_clinic_name,
+                shift_start_at, shift_end_at, shift_type, notes, created_by_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *
+           )
+           SELECT ins.*, c.preferred_name AS rostered_clinic_preferred_name
+           FROM ins
+           LEFT JOIN clinics c ON c.id = ins.rostered_clinic_id`,
           [
             input.staffUserId,
             input.staffEmail,
@@ -144,7 +153,10 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
     async findEntryById(entryId: string): Promise<RosterEntry | null> {
       const { rows } = await pool.query<RosterEntryRow>(
-        "SELECT * FROM roster_entries WHERE id = $1",
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
+         WHERE re.id = $1`,
         [entryId],
       );
 
@@ -156,28 +168,30 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       options?: ListRosterOptions,
     ): Promise<RosterEntry[]> {
       const params: unknown[] = [clinicId];
-      const conditions: string[] = ["rostered_clinic_id = $1"];
+      const conditions: string[] = ["re.rostered_clinic_id = $1"];
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${String(params.length)}`);
+        conditions.push(`re.status = $${String(params.length)}`);
       }
       // Overlap math: the shift overlaps [from, to) when
       //   shift_start_at < to  AND  shift_end_at > from
       // This correctly captures overnight shifts that straddle a boundary.
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${String(params.length)}`);
+        conditions.push(`re.shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${String(params.length)}`);
+        conditions.push(`re.shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
-        `SELECT * FROM roster_entries
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
          WHERE ${conditions.join(" AND ")}
-         ORDER BY shift_start_at ASC`,
+         ORDER BY re.shift_start_at ASC`,
         params,
       );
 
@@ -192,25 +206,25 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       const offset = options?.offset ?? 0;
 
       const params: unknown[] = [clinicId];
-      const conditions: string[] = ["rostered_clinic_id = $1"];
+      const conditions: string[] = ["re.rostered_clinic_id = $1"];
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${String(params.length)}`);
+        conditions.push(`re.status = $${String(params.length)}`);
       }
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${String(params.length)}`);
+        conditions.push(`re.shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${String(params.length)}`);
+        conditions.push(`re.shift_start_at < $${String(params.length)}`);
       }
 
       const where = conditions.join(" AND ");
 
       const countResult = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM roster_entries WHERE ${where}`,
+        `SELECT COUNT(*) AS count FROM roster_entries re WHERE ${where}`,
         params,
       );
       const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
@@ -218,9 +232,11 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       const idx = params.length + 1;
       params.push(limit, offset);
       const { rows } = await pool.query<RosterEntryRow>(
-        `SELECT * FROM roster_entries
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
          WHERE ${where}
-         ORDER BY shift_start_at ASC
+         ORDER BY re.shift_start_at ASC
          LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
         params,
       );
@@ -238,21 +254,23 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       // rlsTenantContextMiddleware on the /roster/me router). No owner_admin bypass
       // is required or used here.
       const params: unknown[] = [staffUserId];
-      const conditions: string[] = ["staff_user_id = $1"];
+      const conditions: string[] = ["re.staff_user_id = $1"];
 
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${String(params.length)}`);
+        conditions.push(`re.shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${String(params.length)}`);
+        conditions.push(`re.shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
-        `SELECT * FROM roster_entries
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
          WHERE ${conditions.join(" AND ")}
-         ORDER BY shift_start_at ASC`,
+         ORDER BY re.shift_start_at ASC`,
         params,
       );
       return rows.map(toRosterEntry);
@@ -265,27 +283,29 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
     ): Promise<RosterEntry[]> {
       const params: unknown[] = [staffUserId, clinicId];
       const conditions: string[] = [
-        "staff_user_id = $1",
-        "rostered_clinic_id = $2",
+        "re.staff_user_id = $1",
+        "re.rostered_clinic_id = $2",
       ];
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${String(params.length)}`);
+        conditions.push(`re.status = $${String(params.length)}`);
       }
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${String(params.length)}`);
+        conditions.push(`re.shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${String(params.length)}`);
+        conditions.push(`re.shift_start_at < $${String(params.length)}`);
       }
 
       const { rows } = await pool.query<RosterEntryRow>(
-        `SELECT * FROM roster_entries
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
          WHERE ${conditions.join(" AND ")}
-         ORDER BY shift_start_at ASC`,
+         ORDER BY re.shift_start_at ASC`,
         params,
       );
 
@@ -302,27 +322,27 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
 
       const params: unknown[] = [staffUserId, clinicId];
       const conditions: string[] = [
-        "staff_user_id = $1",
-        "rostered_clinic_id = $2",
+        "re.staff_user_id = $1",
+        "re.rostered_clinic_id = $2",
       ];
 
       if (options?.status) {
         params.push(options.status);
-        conditions.push(`status = $${String(params.length)}`);
+        conditions.push(`re.status = $${String(params.length)}`);
       }
       if (options?.from) {
         params.push(options.from);
-        conditions.push(`shift_end_at > $${String(params.length)}`);
+        conditions.push(`re.shift_end_at > $${String(params.length)}`);
       }
       if (options?.to) {
         params.push(options.to);
-        conditions.push(`shift_start_at < $${String(params.length)}`);
+        conditions.push(`re.shift_start_at < $${String(params.length)}`);
       }
 
       const where = conditions.join(" AND ");
 
       const countResult = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM roster_entries WHERE ${where}`,
+        `SELECT COUNT(*) AS count FROM roster_entries re WHERE ${where}`,
         params,
       );
       const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
@@ -330,9 +350,11 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
       const idx = params.length + 1;
       params.push(limit, offset);
       const { rows } = await pool.query<RosterEntryRow>(
-        `SELECT * FROM roster_entries
+        `SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+         FROM roster_entries re
+         LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
          WHERE ${where}
-         ORDER BY shift_start_at ASC
+         ORDER BY re.shift_start_at ASC
          LIMIT $${String(idx)} OFFSET $${String(idx + 1)}`,
         params,
       );
@@ -416,6 +438,8 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
           }
           sql += "\n            ORDER BY shift_start_at ASC LIMIT 1";
 
+          // Wrap conflict check with LEFT JOIN to satisfy RosterEntryRow type (preferred_name).
+          sql = `WITH base AS (${sql}) SELECT base.*, c.preferred_name AS rostered_clinic_preferred_name FROM base LEFT JOIN clinics c ON c.id = base.rostered_clinic_id`;
           const { rows: conflictRows } = await client.query<RosterEntryRow>(sql, params);
           if (conflictRows.length > 0) {
             const firstRow = conflictRows[0];
@@ -434,10 +458,15 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
         // The AND status <> 'cancelled' guard prevents a concurrent cancel
         // from being silently overwritten (race-condition protection).
         const { rows } = await client.query<RosterEntryRow>(
-          `UPDATE roster_entries
-           SET ${setClauses.join(", ")}
-           WHERE id = $${String(idIdx)} AND status <> 'cancelled'
-           RETURNING *`,
+          `WITH upd AS (
+             UPDATE roster_entries
+             SET ${setClauses.join(", ")}
+             WHERE id = $${String(idIdx)} AND status <> 'cancelled'
+             RETURNING *
+           )
+           SELECT upd.*, c.preferred_name AS rostered_clinic_preferred_name
+           FROM upd
+           LEFT JOIN clinics c ON c.id = upd.rostered_clinic_id`,
           params,
         );
 
@@ -506,18 +535,20 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
           // Strict overlap: existingStart < windowEnd AND existingEnd > windowStart
           // (touching — existingEnd === windowStart — is NOT a conflict)
           let sql = `
-            SELECT * FROM roster_entries
-            WHERE staff_user_id = $1
-              AND status != 'cancelled'
-              AND shift_start_at < $2
-              AND shift_end_at   > $3`;
+            SELECT re.*, c.preferred_name AS rostered_clinic_preferred_name
+            FROM roster_entries re
+            LEFT JOIN clinics c ON c.id = re.rostered_clinic_id
+            WHERE re.staff_user_id = $1
+              AND re.status != 'cancelled'
+              AND re.shift_start_at < $2
+              AND re.shift_end_at   > $3`;
 
           if (excludeEntryId) {
             params.push(excludeEntryId);
-            sql += `\n              AND id != $${String(params.length)}`;
+            sql += `\n              AND re.id != $${String(params.length)}`;
           }
 
-          sql += "\n            ORDER BY shift_start_at ASC";
+          sql += "\n            ORDER BY re.shift_start_at ASC";
 
           const { rows } = await client.query<RosterEntryRow>(sql, params);
           return rows.map(toRosterEntry);

@@ -130,6 +130,28 @@ export function createClinicService(
         throw new AppError(404, "CLINIC_NOT_FOUND", "Clinic not found");
       }
 
+      // ── Preferred name validation and duplicate check ──────────────────────
+      if (input.preferredName !== undefined && input.preferredName !== null) {
+        const trimmed = input.preferredName.trim();
+        if (trimmed.length === 0) {
+          throw new AppError(400, "INVALID_PREFERRED_NAME", "Preferred name must not be blank.");
+        }
+        const duplicate = await clinicRepository.findDuplicatePreferredName(
+          trimmed,
+          clinicId,
+          existing.organisationId,
+        );
+        if (duplicate) {
+          throw new AppError(
+            409,
+            "DUPLICATE_PREFERRED_NAME",
+            `Another clinic already uses the preferred name "${trimmed}". Choose a unique preferred name within your organisation.`,
+          );
+        }
+        // Store the trimmed value
+        input = { ...input, preferredName: trimmed };
+      }
+
       const updated = await clinicRepository.update(clinicId, input);
 
       // update() returns null only when the ID doesn't exist — we already

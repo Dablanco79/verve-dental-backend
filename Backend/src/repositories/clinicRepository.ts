@@ -45,6 +45,13 @@ export interface ClinicRepository {
    * Returns the updated entity, or null when the clinic ID does not exist.
    */
   update(id: string, input: UpdateClinicInput): Promise<Clinic | null>;
+
+  /**
+   * Returns any OTHER active clinic in the same organisation that has the given preferred_name.
+   * Used to enforce uniqueness of preferred names within an organisation.
+   * Returns null if no duplicate exists.
+   */
+  findDuplicatePreferredName(preferredName: string, excludeId: string, organisationId: string | null): Promise<Clinic | null>;
 }
 
 // ─── In-Memory implementation (used in tests + DATABASE_URL-less dev) ────────
@@ -68,6 +75,8 @@ export function createInMemoryClinicRepository(): ClinicRepository {
       timezone: "Australia/Sydney",
       subscriptionTier: "standard",
       isActive: true,
+      preferredName: null,
+      organisationId: null,
       createdAt: SEED_CREATED_AT,
       updatedAt: SEED_CREATED_AT,
     },
@@ -82,6 +91,8 @@ export function createInMemoryClinicRepository(): ClinicRepository {
       timezone: "Australia/Sydney",
       subscriptionTier: "standard",
       isActive: true,
+      preferredName: null,
+      organisationId: null,
       createdAt: SEED_CREATED_AT,
       updatedAt: SEED_CREATED_AT,
     },
@@ -123,6 +134,8 @@ export function createInMemoryClinicRepository(): ClinicRepository {
         timezone: input.timezone ?? "Australia/Sydney",
         subscriptionTier: input.subscriptionTier ?? "standard",
         isActive: true,
+        preferredName: null,
+        organisationId: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -144,10 +157,26 @@ export function createInMemoryClinicRepository(): ClinicRepository {
         ...(input.postcode !== undefined && { postcode: input.postcode }),
         ...(input.timezone !== undefined && { timezone: input.timezone }),
         ...(input.isActive !== undefined && { isActive: input.isActive }),
+        ...(input.preferredName !== undefined && { preferredName: input.preferredName }),
         updatedAt: new Date(),
       };
       clinics[index] = updated;
       return Promise.resolve({ ...updated });
+    },
+
+    findDuplicatePreferredName(
+      preferredName: string,
+      excludeId: string,
+      organisationId: string | null,
+    ): Promise<Clinic | null> {
+      const found = clinics.find(
+        (c) =>
+          c.preferredName === preferredName &&
+          c.id !== excludeId &&
+          c.isActive &&
+          c.organisationId === organisationId,
+      );
+      return Promise.resolve(found ? { ...found } : null);
     },
   };
 }

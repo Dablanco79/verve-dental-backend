@@ -471,3 +471,61 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
     });
   });
 });
+
+// ── Preferred name in Month compact labels ────────────────────────────────────
+
+describe("RosterCalendarPage — preferred name in Month compact labels", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, managerUser);
+    mockListUsers.mockResolvedValue([namedStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME, preferredName: null },
+    ]);
+  });
+
+  it("Month compact shift card uses preferredName when available", async () => {
+    const user = userEvent.setup();
+
+    const today = new Date();
+    const entry = buildEntry({
+      rosteredClinicName: "Verve Dental - Bentleigh East",
+      rosteredClinicPreferredName: "Bentleigh East",
+      shiftStartAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0, 0).toISOString(),
+      shiftEndAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 17, 0, 0).toISOString(),
+    });
+    mockListRoster.mockResolvedValue([entry]);
+
+    renderPage();
+
+    // Switch to Month view
+    const monthBtn = await screen.findByRole("button", { name: "Month" });
+    await user.click(monthBtn);
+
+    await waitFor(() => {
+      // The compact cell should show the preferredName
+      expect(screen.getAllByText((c) => c.includes("Bentleigh East")).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("Month compact shift card uses full name when preferredName is null", async () => {
+    const user = userEvent.setup();
+
+    const today = new Date();
+    const entry = buildEntry({
+      rosteredClinicName: TEST_CLINIC_NAME,
+      rosteredClinicPreferredName: null,
+      shiftStartAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0, 0).toISOString(),
+      shiftEndAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 17, 0, 0).toISOString(),
+    });
+    mockListRoster.mockResolvedValue([entry]);
+
+    renderPage();
+
+    const monthBtn = await screen.findByRole("button", { name: "Month" });
+    await user.click(monthBtn);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((c) => c.includes(TEST_CLINIC_NAME)).length).toBeGreaterThan(0);
+    });
+  });
+});

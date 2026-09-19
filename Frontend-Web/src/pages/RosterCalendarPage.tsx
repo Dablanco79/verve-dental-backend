@@ -6,6 +6,7 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
+import { displayClinicName } from "../utils/clinicDisplay.js";
 
 // Slimmer staff type used for the roster-eligible staff selector.
 // The full StaffUser shape is not needed here — only identity fields.
@@ -130,17 +131,6 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
-/**
- * Short clinic label for compact cells.
- * "Bentleigh East Dental" → "Bentleigh East"
- * Falls back to first 14 chars for single-word or very long names.
- */
-function shortClinicName(name: string): string {
-  const words = name.split(/\s+/);
-  if (words.length >= 3) return `${words[0] ?? ""} ${words[1] ?? ""}`.trim();
-  if (words.length === 2) return name;
-  return name.slice(0, 14);
-}
 
 /**
  * Returns the set of entry IDs that have a strict time overlap with at least
@@ -805,7 +795,7 @@ export function RosterCalendarPage() {
                           {formatTime(entry.shiftStartAt)}
                         </span>
                         <span className="roster-month-entry__clinic">
-                          {shortClinicName(entry.rosteredClinicName)}
+                          {displayClinicName(entry.rosteredClinicName, entry.rosteredClinicPreferredName)}
                         </span>
                       </button>
                     );

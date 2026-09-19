@@ -21,13 +21,16 @@ type ClinicRow = {
   timezone: string;
   subscription_tier: string;
   is_active: boolean;
+  preferred_name: string | null;
+  organisation_id: string | null;
   created_at: Date;
   updated_at: Date;
 };
 
 const SELECT_COLUMNS = `
   id, name, abn, address_line1, suburb, state, postcode,
-  timezone, subscription_tier, is_active, created_at, updated_at
+  timezone, subscription_tier, is_active, preferred_name, organisation_id,
+  created_at, updated_at
 `;
 
 function toClinic(row: ClinicRow): Clinic {
@@ -42,6 +45,8 @@ function toClinic(row: ClinicRow): Clinic {
     timezone: row.timezone,
     subscriptionTier: row.subscription_tier as ClinicSubscriptionTier,
     isActive: row.is_active,
+    preferredName: row.preferred_name ?? null,
+    organisationId: row.organisation_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -138,6 +143,7 @@ export function createPostgresClinicRepository(
       if (input.postcode !== undefined) push("postcode", input.postcode);
       if (input.timezone !== undefined) push("timezone", input.timezone);
       if (input.isActive !== undefined) push("is_active", input.isActive);
+      if (input.preferredName !== undefined) push("preferred_name", input.preferredName);
 
       // Nothing changed besides updated_at — skip the round-trip and return
       // the current record as-is.
@@ -154,6 +160,28 @@ export function createPostgresClinicRepository(
         params,
       );
 
+      return rows[0] ? toClinic(rows[0]) : null;
+    },
+
+    async findDuplicatePreferredName(
+      preferredName: string,
+      excludeId: string,
+      organisationId: string | null,
+    ): Promise<Clinic | null> {
+      // Match on preferred_name, excluding the current clinic ID.
+      // Scopes the check to the same organisation (or NULL-org group).
+      const { rows } = await pool.query<ClinicRow>(
+        `SELECT ${SELECT_COLUMNS} FROM clinics
+         WHERE preferred_name = $1
+           AND id != $2
+           AND (
+             ($3::uuid IS NULL AND organisation_id IS NULL)
+             OR organisation_id = $3::uuid
+           )
+           AND is_active = TRUE
+         LIMIT 1`,
+        [preferredName, excludeId, organisationId],
+      );
       return rows[0] ? toClinic(rows[0]) : null;
     },
   };

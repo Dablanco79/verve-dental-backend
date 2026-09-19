@@ -587,10 +587,10 @@ export function createRosterService(
      */
     async getAccessibleRosterClinics(
       caller: AuthenticatedUser,
-    ): Promise<{ id: string; name: string }[]> {
+    ): Promise<{ id: string; name: string; preferredName: string | null }[]> {
       if (caller.role === "owner_admin") {
         const all = await clinicRepository.findAll();
-        return all.map((c) => ({ id: c.id, name: c.name }));
+        return all.map((c) => ({ id: c.id, name: c.name, preferredName: c.preferredName }));
       }
       if (caller.role === "group_practice_manager") {
         // Clinics where manager has can_operate=true
@@ -603,13 +603,13 @@ export function createRosterService(
         );
         return clinics
           .filter((c): c is NonNullable<typeof c> => c !== null && c.isActive)
-          .map((c) => ({ id: c.id, name: c.name }))
+          .map((c) => ({ id: c.id, name: c.name, preferredName: c.preferredName }))
           .sort((a, b) => a.name.localeCompare(b.name));
       }
       // clinical_staff — only their home clinic
       const home = await clinicRepository.findById(caller.homeClinicId);
       if (!home || !home.isActive) return [];
-      return [{ id: home.id, name: home.name }];
+      return [{ id: home.id, name: home.name, preferredName: home.preferredName }];
     },
   };
 }

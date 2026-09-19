@@ -7,6 +7,8 @@ export type RosterEntry = {
   staffEmail: string;
   rosteredClinicId: string;
   rosteredClinicName: string;
+  /** Short display name from the clinics table. NULL when not set. */
+  rosteredClinicPreferredName?: string | null;
   /** UTC ISO-8601 timestamp */
   shiftStartAt: string;
   /** UTC ISO-8601 timestamp */

@@ -50,6 +50,7 @@ type FormValues = {
   state: string;
   postcode: string;
   timezone: string;
+  preferredName: string;
 };
 
 type FieldErrors = Partial<Record<keyof FormValues, string>>;
@@ -58,13 +59,14 @@ type FieldErrors = Partial<Record<keyof FormValues, string>>;
 
 function clinicToForm(clinic: ClinicData): FormValues {
   return {
-    name:        clinic.name,
-    abn:         clinic.abn ?? "",
+    name:         clinic.name,
+    abn:          clinic.abn ?? "",
     addressLine1: clinic.addressLine1 ?? "",
-    suburb:      clinic.suburb ?? "",
-    state:       clinic.state ?? "",
-    postcode:    clinic.postcode ?? "",
-    timezone:    clinic.timezone,
+    suburb:       clinic.suburb ?? "",
+    state:        clinic.state ?? "",
+    postcode:     clinic.postcode ?? "",
+    timezone:     clinic.timezone,
+    preferredName: clinic.preferredName ?? "",
   };
 }
 
@@ -103,13 +105,14 @@ function validateForm(values: FormValues): FieldErrors {
 function buildPayload(values: FormValues): UpdateClinicData {
   const abn = normaliseAbn(values.abn);
   return {
-    name:        values.name.trim(),
-    abn:         abn.length > 0 ? abn : null,
+    name:         values.name.trim(),
+    abn:          abn.length > 0 ? abn : null,
     addressLine1: values.addressLine1.trim() || null,
-    suburb:      values.suburb.trim() || null,
-    state:       values.state !== "" ? (values.state) : null,
-    postcode:    values.postcode.trim() || null,
-    timezone:    values.timezone,
+    suburb:       values.suburb.trim() || null,
+    state:        values.state !== "" ? (values.state) : null,
+    postcode:     values.postcode.trim() || null,
+    timezone:     values.timezone,
+    preferredName: values.preferredName.trim() || null,
   };
 }
 
@@ -239,9 +242,18 @@ export function ClinicSettingsPage() {
       setForm(clinicToForm(updated));
       setSubmitSuccess(true);
     } catch (err: unknown) {
-      setSubmitError(
-        err instanceof Error ? err.message : "Failed to save clinic settings.",
-      );
+      // Surface duplicate preferred name as a field-level error for clarity.
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as { code?: string }).code === "DUPLICATE_PREFERRED_NAME"
+      ) {
+        setFieldErrors((prev) => ({ ...prev, preferredName: err.message }));
+      } else {
+        setSubmitError(
+          err instanceof Error ? err.message : "Failed to save clinic settings.",
+        );
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -337,6 +349,35 @@ export function ClinicSettingsPage() {
                         {fieldErrors.name}
                       </span>
                     ) : null}
+                  </label>
+
+                  {/* Preferred name (compact display label) */}
+                  <label className="product-form__full">
+                    Preferred Name
+                    <span className="cs-field-hint">
+                      Short label used in compact calendar views (e.g. &ldquo;Bentleigh East&rdquo; instead of &ldquo;Verve Dental – Bentleigh East&rdquo;). Leave blank to use the official name.
+                    </span>
+                    <input
+                      id="preferredName"
+                      type="text"
+                      maxLength={80}
+                      className="settings-form__control"
+                      value={form.preferredName}
+                      onChange={(e) => { handleChange("preferredName", e.target.value); }}
+                      placeholder="e.g. Bentleigh East"
+                      disabled={isReadOnly || isSubmitting}
+                      aria-describedby={fieldErrors.preferredName ? "err-preferred-name" : "hint-preferred-name"}
+                      aria-invalid={!!fieldErrors.preferredName}
+                    />
+                    {fieldErrors.preferredName ? (
+                      <span id="err-preferred-name" className="cs-field-error" role="alert">
+                        {fieldErrors.preferredName}
+                      </span>
+                    ) : (
+                      <span id="hint-preferred-name" className="cs-field-hint">
+                        Max 80 characters. Must be unique within your organisation.
+                      </span>
+                    )}
                   </label>
 
                   {/* ABN */}

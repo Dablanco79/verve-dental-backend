@@ -84,6 +84,7 @@ const createdClinic: ClinicData = {
   timezone: "Australia/Melbourne",
   subscriptionTier: "standard",
   isActive: true,
+  preferredName: null,
   createdAt: "2024-06-01T00:00:00Z",
   updatedAt: "2024-06-01T00:00:00Z",
 };
