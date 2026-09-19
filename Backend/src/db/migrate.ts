@@ -3042,6 +3042,23 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         );
     `,
   },
+  {
+    /**
+     * Migration 049: Add preferred_name to clinics.
+     *
+     * Adds an optional short display name for compact operational UI
+     * (My Shifts calendar, roster month/week compact labels).
+     * Falls back to the canonical `name` when NULL.
+     * Must not replace or mutate the official clinic name.
+     *
+     * See Backend/migrations/049_clinic_preferred_name.up.sql for full notes.
+     */
+    id: "049_clinic_preferred_name",
+    sql: `
+      ALTER TABLE clinics
+        ADD COLUMN IF NOT EXISTS preferred_name text;
+    `,
+  },
 ];
 
 /**

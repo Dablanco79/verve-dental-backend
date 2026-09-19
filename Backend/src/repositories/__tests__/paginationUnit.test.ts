@@ -587,7 +587,8 @@ describe("PostgresRosterRepository.listByClinicPaginated", () => {
     expect(countParams[0]).toBe(CLINIC_A);
 
     const [dataSql, dataParams] = nthCall(query, 1);
-    expect(dataSql).toMatch(/ORDER BY shift_start_at ASC/i);
+    // Column is now qualified because the query contains LEFT JOIN clinics c.
+    expect(dataSql).toMatch(/ORDER BY re\.shift_start_at ASC/i);
     // With 1 WHERE param (clinic_id), LIMIT = $2, OFFSET = $3.
     expect(dataSql).toMatch(/LIMIT \$2 OFFSET \$3/i);
     expect(dataParams[1]).toBe(5);
