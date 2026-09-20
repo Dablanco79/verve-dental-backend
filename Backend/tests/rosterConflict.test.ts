@@ -143,18 +143,33 @@ describe("Cross-clinic roster conflict detection", () => {
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const staffId = SEED_USER_IDS.clinicAStaff;
 
-    // Morning shift 07:00–12:00 at clinic A
+    // Morning shift 07:00–12:00 UTC at clinic A.
+    // h(7)/h(12) = UTC 07:00–12:00. In AEST (UTC+10) = Melbourne 17:00–22:00 Day N;
+    // in AEDT (UTC+11) = Melbourne 18:00–23:00 Day N.  Both are on Melbourne Day N.
     await mkShiftAt(app, token, SEED_CLINIC_A_ID, staffId, MORN_START, MORN_END);
 
-    // Pre-flight check BEFORE creating the afternoon shift:
-    // The morning shift (07:00–12:00) should appear in sameDay when
-    // checking for an afternoon slot (13:00–18:00) on the same calendar day.
+    // Proposed afternoon slot — must be on the same Melbourne Day N as MORN.
+    //
+    // WHY NOT h(13): BASE = Date.now() + 14 days anchored to UTC midnight.
+    // When the test runs on Sep 20 CI, BASE = Oct 4 2026 UTC midnight.
+    // Australia's DST transition (AEST → AEDT) is Oct 4 at 02:00 AEST = UTC 16:00 Oct 3,
+    // meaning all h() offsets on Oct 4 UTC are already in AEDT (UTC+11).
+    // h(13) = UTC 13:00 Oct 4 = AEDT 00:00 Oct 5 = Melbourne midnight = Day N+1.
+    // melbourneDayWindow(h(13)) returns Day N+1; MORN is on Day N → sameDay empty → fail.
+    //
+    // SAFE WINDOW: UTC 12:30–12:55.
+    //   AEST (UTC+10): Melbourne 22:30–22:55 Oct 4 = Day N ✓
+    //   AEDT (UTC+11): Melbourne 23:30–23:55 Oct 4 = Day N ✓
+    // Both representations are on Melbourne Day N regardless of which DST leg is active.
+    const SAFE_AFT_START = new Date(BASE.getTime() + (12 * 60 + 30) * 60 * 1000).toISOString();
+    const SAFE_AFT_END   = new Date(BASE.getTime() + (12 * 60 + 55) * 60 * 1000).toISOString();
+
     const conflictRes = await request(app)
       .get(
         `/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/conflicts` +
           `?staffUserId=${staffId}` +
-          `&start=${encodeURIComponent(h(13))}` +
-          `&end=${encodeURIComponent(h(18))}`,
+          `&start=${encodeURIComponent(SAFE_AFT_START)}` +
+          `&end=${encodeURIComponent(SAFE_AFT_END)}`,
       )
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
@@ -163,8 +178,8 @@ describe("Cross-clinic roster conflict detection", () => {
     expect(data.overlapping).toHaveLength(0);
     expect(data.sameDay.length).toBeGreaterThanOrEqual(1);
 
-    // Actual creation at clinic B (different clinic, non-overlapping) should succeed
-    await mkShiftAt(app, token, SEED_CLINIC_B_ID, staffId, h(13), h(18), 201);
+    // Actual creation at clinic B (different clinic, non-overlapping) should succeed.
+    await mkShiftAt(app, token, SEED_CLINIC_B_ID, staffId, SAFE_AFT_START, SAFE_AFT_END, 201);
   });
 
   // ─── Test 6: edit does not conflict with itself ────────────────────────────

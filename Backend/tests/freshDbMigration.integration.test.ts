@@ -2,7 +2,8 @@
  * freshDbMigration.integration.test.ts
  *
  * Clean-slate and lifecycle integration gate for the multi-clinic rostering
- * package (migrations 047_user_clinic_assignments and 048_rls_own_roster_entries).
+ * package (migrations 047_user_clinic_assignments, 048_rls_own_roster_entries,
+ * and 049_clinic_preferred_name).
  *
  * TWO GATING VARIABLES:
  *
@@ -122,7 +123,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 048_rls_own_roster_entries", async () => {
+  it("last migration recorded is 049_clinic_preferred_name", async () => {
     if (SKIP_FRESH) return;
 
     // Migrations run in a single transaction so applied_at timestamps are
@@ -130,7 +131,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("048_rls_own_roster_entries");
+    expect(rows[0]?.id).toBe("049_clinic_preferred_name");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
