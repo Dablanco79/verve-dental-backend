@@ -378,9 +378,9 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("048_rls_own_roster_entries is the last migration", () => {
+  it("049_clinic_preferred_name is the last migration", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("048_rls_own_roster_entries");
+    expect(ids[ids.length - 1]).toBe("049_clinic_preferred_name");
   });
 
   it("detects stocktake migrations as pending on a pre-stocktake database", async () => {

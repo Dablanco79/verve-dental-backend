@@ -191,13 +191,20 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
 
   it("clinics table has no RLS — preferred_name readable without a clinic context", async () => {
     // Checkout a raw client and deliberately leave all app.* session vars empty.
+    // IMPORTANT: run as the non-superuser verve_app role so the assertion is
+    // meaningful.  Postgres superusers bypass ALL RLS — if we used the superuser
+    // connection the test would trivially pass even if clinics HAD an RLS policy.
+    // verve_app is created by test:db:setup (setupTestDb.ts).
     const client = await getPool().connect();
     try {
-      // Reset session vars to prove no context is active.
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE verve_app");
+      // Reset session vars to prove no context is active (is_local=true keeps
+      // them transaction-scoped so they are reset on ROLLBACK).
       await client.query(
-        `SELECT set_config('app.current_clinic_id', '', false),
-                set_config('app.owner_admin_mode',  'false', false),
-                set_config('app.current_user_id',   '', false)`,
+        `SELECT set_config('app.current_clinic_id', '', true),
+                set_config('app.owner_admin_mode',  'false', true),
+                set_config('app.current_user_id',   '', true)`,
       );
 
       const { rows } = await client.query<{
@@ -205,10 +212,11 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
         preferred_name: string | null;
       }>(`SELECT id, preferred_name FROM clinics WHERE id = $1`, [SEED_CLINIC_B_ID]);
 
-      // If clinics had RLS, rows would be empty.
+      // If clinics had RLS, rows would be empty under verve_app with no context.
       expect(rows.length).toBe(1);
       expect(rows[0]?.preferred_name).toBe(PREFERRED_NAME);
     } finally {
+      await client.query("ROLLBACK"); // releases SET LOCAL ROLE and session vars
       client.release();
     }
   });
@@ -233,11 +241,18 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
     async () => {
       const client = await getPool().connect();
       try {
+        await client.query("BEGIN");
+        // CRITICAL: run as non-superuser verve_app so FORCE RLS is active.
+        // PostgreSQL superusers bypass all RLS — without this role switch the
+        // personal-read branch is never actually tested; the superuser sees every
+        // row unconditionally.
+        await client.query("SET LOCAL ROLE verve_app");
         // Set the personal-roster endpoint execution context.
+        // is_local=true keeps session vars transaction-scoped.
         await client.query(
-          `SELECT set_config('app.current_clinic_id', $1, false),
-                  set_config('app.owner_admin_mode',  'false', false),
-                  set_config('app.current_user_id',   $2, false)`,
+          `SELECT set_config('app.current_clinic_id', $1, true),
+                  set_config('app.owner_admin_mode',  'false', true),
+                  set_config('app.current_user_id',   $2, true)`,
           [SEED_CLINIC_A_ID, SEED_USER_IDS.clinicAStaff],
         );
 
@@ -271,6 +286,7 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
         // The staff member is the correct owner of the visible entry.
         expect(rows[0]?.staff_user_id).toBe(SEED_USER_IDS.clinicAStaff);
       } finally {
+        await client.query("ROLLBACK");
         client.release();
       }
     },
@@ -279,6 +295,7 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
   // ── Test 4: after clearing, preferred_name is null (not an error) ─────────
 
   it("preferred_name is null via LEFT JOIN after clearing", async () => {
+    // Clear preferred_name as superuser (no RLS on clinics, direct update is fine).
     await getPool().query(
       `UPDATE clinics SET preferred_name = NULL WHERE id = $1`,
       [SEED_CLINIC_B_ID],
@@ -286,10 +303,12 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
 
     const client = await getPool().connect();
     try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE verve_app");
       await client.query(
-        `SELECT set_config('app.current_clinic_id', $1, false),
-                set_config('app.owner_admin_mode',  'false', false),
-                set_config('app.current_user_id',   $2, false)`,
+        `SELECT set_config('app.current_clinic_id', $1, true),
+                set_config('app.owner_admin_mode',  'false', true),
+                set_config('app.current_user_id',   $2, true)`,
         [SEED_CLINIC_A_ID, SEED_USER_IDS.clinicAStaff],
       );
 
@@ -305,6 +324,7 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
 
       expect(rows[0]?.rostered_clinic_preferred_name).toBeNull();
     } finally {
+      await client.query("ROLLBACK");
       client.release();
     }
   });
@@ -317,11 +337,23 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
   it("personal-read RLS is narrow: different staff_user_id cannot see the entry", async () => {
     const client = await getPool().connect();
     try {
-      // Use a DIFFERENT user_id (clinicBAdmin) — should NOT see clinicAStaff's entry.
+      await client.query("BEGIN");
+      // CRITICAL: must run as non-superuser verve_app role.
+      // PostgreSQL superusers bypass ALL RLS (even FORCE ROW LEVEL SECURITY).
+      // Without this role switch the pool connection (superuser) ignores all
+      // policies and always sees the row — producing a false negative.
+      // verve_app is created by test:db:setup (setupTestDb.ts).
+      await client.query("SET LOCAL ROLE verve_app");
+      //
+      // Context: User C = clinicBAdmin; current clinic = Clinic A (≠ Clinic B).
+      // None of the three roster_entries RLS branches should grant access:
+      //   1. app_is_owner_admin()                        → false (explicitly set)
+      //   2. rostered_clinic_id = app_current_clinic_id() → false (Clinic B ≠ Clinic A)
+      //   3. personal: clinicBAdmin = clinicAStaff        → false (different users)
       await client.query(
-        `SELECT set_config('app.current_clinic_id', $1, false),
-                set_config('app.owner_admin_mode',  'false', false),
-                set_config('app.current_user_id',   $2, false)`,
+        `SELECT set_config('app.current_clinic_id', $1, true),
+                set_config('app.owner_admin_mode',  'false', true),
+                set_config('app.current_user_id',   $2, true)`,
         [SEED_CLINIC_A_ID, SEED_USER_IDS.clinicBAdmin],
       );
 
@@ -334,6 +366,7 @@ describe("preferred_name RLS integration — Postgres clinics JOIN safety", () =
       // clinicBAdmin cannot see clinicAStaff's entries via the personal path.
       expect(rows.length).toBe(0);
     } finally {
+      await client.query("ROLLBACK"); // resets role and transaction-local session vars
       client.release();
     }
   });
