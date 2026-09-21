@@ -431,9 +431,20 @@ export function createAuthService(
       ? decryptTotpSecret(user.totpSecret, config.MFA_ENCRYPTION_KEY)
       : null;
 
+    // RFC 6238 §5.2 recommends that verifiers accept at least ±1 time step
+    // (±30 seconds) to account for network latency and minor clock skew between
+    // the user's authenticator device and the server.  Without this tolerance,
+    // a code generated in the last ~50–200 ms of a TOTP period is rejected if
+    // network round-trip time carries it into the next period — a legitimate
+    // user error that is entirely outside the user's control.
+    //
+    // epochTolerance: 30 accepts the current period ± 30 s (one step), matching
+    // the behaviour of Google Authenticator, Authy, and every standard TOTP
+    // server implementation.  Future-period codes are also accepted within the
+    // window, which is standard; real tokens cannot be predicted ahead of time.
     const isValidCode =
       !!plaintextSecret &&
-      verifySync({ token: code, secret: plaintextSecret }).valid;
+      verifySync({ token: code, secret: plaintextSecret, epochTolerance: 30 }).valid;
 
     if (!isValidCode) {
       audit.logAuthEvent("auth.mfa.failure", {
