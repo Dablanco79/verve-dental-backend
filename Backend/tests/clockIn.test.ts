@@ -247,7 +247,10 @@ describe("Clock In / Clock Out — server-authoritative timestamps", () => {
     // The schema rejects any clockInAt supplied in the body (strict schema),
     // so only the server can set this value.
     expect(entry.clockInAt).not.toBeNull();
-    const recordedAt = new Date(entry.clockInAt!);
+    if (entry.clockInAt === null) {
+      throw new Error("Expected entry.clockInAt to be set by the server");
+    }
+    const recordedAt = new Date(entry.clockInAt);
     expect(recordedAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
     expect(recordedAt.getTime()).toBeLessThanOrEqual(after.getTime() + 1000);
   });
@@ -311,7 +314,10 @@ describe("Clock In / Clock Out — server-authoritative timestamps", () => {
       const updated = (clockOutRes.body as ApiData<TimesheetEntry>).data;
 
       expect(updated.clockOutAt).not.toBeNull();
-      const recordedAt = new Date(updated.clockOutAt!);
+      if (updated.clockOutAt === null) {
+        throw new Error("Expected updated.clockOutAt to be set by the server");
+      }
+      const recordedAt = new Date(updated.clockOutAt);
       // Server-recorded clockOutAt must equal T1 — the faked system time at the
       // moment the clock-out request was processed, NOT any value from the client.
       expect(recordedAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
