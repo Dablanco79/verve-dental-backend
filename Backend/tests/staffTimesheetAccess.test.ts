@@ -108,13 +108,13 @@ describe("GET /clinics/:clinicId/timesheets/me", () => {
     const app = await createTestApp();
 
     // Seed an entry for the Clinic A staff member.
+    // shiftDate is now derived server-side from shiftStartAt in Melbourne time.
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
     await request(app)
       .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
       .set("Authorization", `Bearer ${staffToken}`)
       .send({
         rosterEntryId: null,
-        shiftDate: "2026-08-01",
         shiftStartAt: "2026-08-01T08:00:00.000Z",
         shiftEndAt: "2026-08-01T17:00:00.000Z",
       });
@@ -156,6 +156,7 @@ describe("GET /clinics/:clinicId/timesheets/me", () => {
     const app = await createTestApp();
 
     // First clock in as staff to create an entry.
+    // shiftDate is now derived server-side from shiftStartAt in Melbourne time.
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
     await request(app)
@@ -163,7 +164,6 @@ describe("GET /clinics/:clinicId/timesheets/me", () => {
       .set("Authorization", `Bearer ${staffToken}`)
       .send({
         rosterEntryId: null,
-        shiftDate: "2026-06-19",
         shiftStartAt: "2026-06-19T08:00:00.000Z",
         shiftEndAt: "2026-06-19T17:00:00.000Z",
       });

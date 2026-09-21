@@ -50,3 +50,30 @@ export function formatMelbourneDateTime(date: Date): string {
 
   return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`;
 }
+
+/**
+ * Returns the Melbourne-local calendar date for a UTC Date value as a
+ * YYYY-MM-DD string.  Used to derive shiftDate server-side so callers never
+ * need to compute or send the date separately.
+ *
+ * Examples (Melbourne local date may differ from the UTC date near midnight):
+ *   formatMelbourneDate(new Date("2026-09-21T14:00:00Z"))  → "2026-09-22"  (AEST UTC+10)
+ *   formatMelbourneDate(new Date("2026-01-15T08:00:00Z"))  → "2026-01-15"  (AEDT UTC+11)
+ *
+ * @param date  Any Date object (UTC internally, as all JS Date values are).
+ */
+export function formatMelbourneDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-AU", {
+    timeZone: OPERATIONAL_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const get = (type: string): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  // formatToParts returns day/month in DD and MM (zero-padded) so we can
+  // assemble an unambiguous ISO date string directly.
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}

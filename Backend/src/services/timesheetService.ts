@@ -12,7 +12,7 @@ import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
-import { formatMelbourneDateTime, OPERATIONAL_TZ } from "../utils/melbourneTime.js";
+import { formatMelbourneDate, formatMelbourneDateTime, OPERATIONAL_TZ } from "../utils/melbourneTime.js";
 import { resolveDisplayName } from "../utils/resolveDisplayName.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,7 +354,6 @@ export function createTimesheetService(
       clinicId: string,
       input: {
         rosterEntryId: string | null;
-        shiftDate: string;
         shiftStartAt: Date;
         shiftEndAt: Date;
       },
@@ -370,7 +369,6 @@ export function createTimesheetService(
       // ── Derive trusted clinic + shift context ──────────────────────────────
       let rosteredClinicId: string;
       let rosteredClinicName: string;
-      let shiftDate = input.shiftDate;
       let shiftStartAt = input.shiftStartAt;
       let shiftEndAt = input.shiftEndAt;
 
@@ -391,12 +389,11 @@ export function createTimesheetService(
         // Any values supplied for these fields in the request body are ignored.
         rosteredClinicId = rosterEntry.rosteredClinicId;
         rosteredClinicName = rosterEntry.rosteredClinicName;
-        shiftDate = rosterEntry.shiftStartAt.toISOString().slice(0, 10);
         shiftStartAt = rosterEntry.shiftStartAt;
         shiftEndAt = rosterEntry.shiftEndAt;
       } else {
         // Ad-hoc clock-in: use the route's verified clinicId as the rostered
-        // clinic, and fetch the canonical name from the DB.
+        // location (physical work site), and fetch the canonical name from the DB.
         rosteredClinicId = clinicId;
         const clinicName = await userRepository.getClinicName(clinicId);
         if (!clinicName) {
@@ -405,13 +402,38 @@ export function createTimesheetService(
         rosteredClinicName = clinicName;
       }
 
+      // Validate the authoritative shift window BEFORE writing anything.
+      // This check runs against the final shiftStartAt/shiftEndAt values so
+      // it catches invalid roster entries as well as invalid ad-hoc inputs.
+      // shiftEndAt === shiftStartAt is also rejected: a zero-duration shift
+      // produces nonsensical hour buckets and no meaningful attendance record.
+      if (shiftEndAt <= shiftStartAt) {
+        throw new AppError(
+          400,
+          "INVALID_SHIFT_WINDOW",
+          "Planned end must be after shift start",
+          [{ field: "shiftEndAt", message: "Planned end must be after shift start" }],
+        );
+      }
+
+      // shiftDate is derived server-side from the authoritative shiftStartAt
+      // (which may have been overridden above from the roster DB record).
+      // Using Melbourne local time ensures the calendar date is correct even
+      // when a shift spans the UTC midnight boundary
+      // (e.g. a Melbourne 8 am AEST shift starts at 22:00Z the day before).
+      const shiftDate = formatMelbourneDate(shiftStartAt);
+
       const now = new Date();
 
       return timesheetRepository.create({
         payrollType: "hourly_auto",
         staffUserId: caller.id,
         staffEmail: caller.email,
-        clinicId,
+        // clinic_id MUST be the staff member's payroll home clinic, not the
+        // physical work location.  This is the invariant that RLS and all
+        // downstream payroll grouping depends on.  rosteredClinicId captures
+        // the physical work location separately.
+        clinicId: caller.homeClinicId,
         rosteredClinicId,
         rosteredClinicName,
         rosterEntryId: input.rosterEntryId,
@@ -452,6 +474,8 @@ export function createTimesheetService(
       const entry = await timesheetRepository.findById(timesheetId);
 
       // Scope check: entry must exist AND belong to the route clinic.
+      // After the clockIn fix, entry.clinicId = homeClinicId, and the route
+      // clinicId for clinical_staff is also homeClinicId — so this check holds.
       if (!entry || entry.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
       }
@@ -484,10 +508,15 @@ export function createTimesheetService(
         throw new AppError(400, "INVALID_BREAK", "breakDurationMinutes cannot be negative");
       }
 
+      // clockOutAt is the authoritative server timestamp — not supplied by the
+      // client.  Browser clocks can be wrong; backdating requires a manager
+      // to use createManualEntry() instead.
+      // clockUpdatePayload throws AppError(400) when workedMinutes ≤ 0
+      // (i.e. now ≤ clockInAt + breakDurationMinutes — extremely unlikely in
+      // normal use but guarded against regardless).
+      // Atomically bundles clock fields with recalculated hour buckets so
+      // accounting columns can never become stale relative to the clock mutation.
       const now = new Date();
-
-      // clockUpdatePayload throws AppError(400) when workedMinutes ≤ 0 and
-      // atomically bundles clock fields with recalculated hour buckets.
       return timesheetRepository.update(timesheetId, {
         clockMutation: clockUpdatePayload(entry.clockInAt, now, breakDurationMinutes),
         timesheetStatus: "submitted",

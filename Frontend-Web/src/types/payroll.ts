@@ -215,19 +215,29 @@ export type LeaveRequest = {
 
 // ── Request body shapes ───────────────────────────────────────────────────────
 
-/** POST /clinics/:clinicId/timesheets/clock-in */
+/**
+ * POST /clinics/:clinicId/timesheets/clock-in
+ *
+ * Fields intentionally absent (derived server-side):
+ *   rosteredClinicId   — backend uses route clinicId or roster DB record
+ *   rosteredClinicName — backend fetches from DB (prevents location spoofing)
+ *   shiftDate          — backend derives from shiftStartAt in Melbourne timezone
+ */
 export type ClockInRequest = {
   rosterEntryId?: string | null;
-  rosteredClinicId: string;
-  rosteredClinicName: string;
   shiftStartAt: string;
   shiftEndAt: string;
-  notes?: string | null;
 };
 
-/** POST /clinics/:clinicId/timesheets/:timesheetId/clock-out */
+/**
+ * POST /clinics/:clinicId/timesheets/:timesheetId/clock-out
+ *
+ * clockOutAt is intentionally absent — the backend records the authoritative
+ * server timestamp at the moment the request is processed.  Browser clocks
+ * can be wrong; backdating requires manager intervention via the manual-entry
+ * flow, not the normal clock-out endpoint.
+ */
 export type ClockOutRequest = {
-  clockOutAt: string;
   breakDurationMinutes: number;
 };
 

@@ -345,6 +345,11 @@ export type LeaveHandlers = ReturnType<typeof createLeaveHandlers>;
 // rosterEntryId is supplied) or from the route clinicId + DB clinic name
 // (ad-hoc clock-ins).  Accepting these fields from the body would allow a
 // staff member to spoof their rostered location.
+//
+// shiftDate is also intentionally absent: it is derived server-side from
+// shiftStartAt in Australia/Melbourne local time.  Accepting it from the
+// body would risk a mismatch between the calendar date and the actual shift
+// time, and forces the client to compute timezone-aware dates correctly.
 const clockInSchema = z
   .object({
     // null = no roster link (ad-hoc clock-in without a matching shift).
@@ -353,12 +358,15 @@ const clockInSchema = z
       .uuid("rosterEntryId must be a valid UUID")
       .nullable()
       .optional(),
-    shiftDate: isoDate(),
     shiftStartAt: isoDatetime(),
     shiftEndAt: isoDatetime(),
   })
   .strict();
 
+// clockOutAt is intentionally absent — the backend uses the authoritative
+// server timestamp at the moment the request is processed.  The client must
+// not supply the punch time because browser clocks can be wrong, and
+// backdating requires manager intervention via createManualEntry().
 const clockOutSchema = z
   .object({
     breakDurationMinutes: z
@@ -511,9 +519,10 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
       const clinicId = requireUuidParam(req, "clinicId");
       const body = parseBody(clockInSchema, req.body);
 
+      // shiftDate and clinic context are derived server-side by the service
+      // from the authoritative shiftStartAt (or roster DB record).
       const entry = await timesheetService.clockIn(caller, clinicId, {
         rosterEntryId: body.rosterEntryId ?? null,
-        shiftDate: body.shiftDate,
         shiftStartAt: new Date(body.shiftStartAt),
         shiftEndAt: new Date(body.shiftEndAt),
       });

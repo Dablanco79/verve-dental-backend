@@ -462,16 +462,12 @@ function CommissionVerification({ entries, onVerify }: CommissionVerificationPro
 
 type ClockWidgetProps = {
   openEntry: TimesheetEntry | undefined;
-  homeClinicId: string;
-  homeClinicName: string;
   onClockIn: (payload: ClockInRequest) => Promise<TimesheetEntry>;
   onClockOut: (timesheetId: string, payload: ClockOutRequest) => Promise<TimesheetEntry>;
 };
 
 function ClockWidget({
   openEntry,
-  homeClinicId,
-  homeClinicName,
   onClockIn,
   onClockOut,
 }: ClockWidgetProps) {
@@ -480,7 +476,6 @@ function ClockWidget({
 
   const [startAt, setStartAt] = useState(() => toDatetimeLocal(nowDate));
   const [endAt, setEndAt] = useState(() => toDatetimeLocal(laterDate));
-  const [clockOutAt, setClockOutAt] = useState(() => toDatetimeLocal(nowDate));
   const [breakMins, setBreakMins] = useState("30");
   const [isBusy, setIsBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -489,9 +484,10 @@ function ClockWidget({
     setIsBusy(true);
     setFormError(null);
     try {
+      // rosteredClinicId, rosteredClinicName, and shiftDate are all derived
+      // server-side — sending them from the client would be rejected by the
+      // backend's strict schema and could allow location spoofing.
       await onClockIn({
-        rosteredClinicId: homeClinicId,
-        rosteredClinicName: homeClinicName,
         shiftStartAt: new Date(startAt).toISOString(),
         shiftEndAt: new Date(endAt).toISOString(),
       });
@@ -512,8 +508,9 @@ function ClockWidget({
     setIsBusy(true);
     setFormError(null);
     try {
+      // clockOutAt is intentionally omitted — the backend records server time
+      // as the authoritative clock-out timestamp.
       await onClockOut(openEntry.id, {
-        clockOutAt: new Date(clockOutAt).toISOString(),
         breakDurationMinutes: breakParsed,
       });
     } catch (err) {
@@ -544,19 +541,9 @@ function ClockWidget({
         </p>
 
         <div className="pr-clock-form pr-clock-form--out ts-clock-form">
-          <div className="pr-clock-form__field">
-            <label className="pr-clock-form__label" htmlFor="clock-out-at">
-              Clock-out time
-            </label>
-            <input
-              id="clock-out-at"
-              type="datetime-local"
-              className="pr-clock-form__control"
-              value={clockOutAt}
-              onChange={(e) => { setClockOutAt(e.target.value); }}
-              disabled={isBusy}
-            />
-          </div>
+          {/* Clock-out time is recorded server-side at the moment of the request
+              — no client timestamp is accepted.  Manager back-fills use
+              createManualEntry() which does accept explicit timestamps. */}
           <div className="pr-clock-form__field">
             <label className="pr-clock-form__label" htmlFor="break-mins">
               Break (minutes)
@@ -1033,8 +1020,6 @@ export function TimesheetsPage() {
               <h2 className="pr-section__title">Today&apos;s Session</h2>
               <ClockWidget
                 openEntry={openEntry}
-                homeClinicId={user.homeClinicId}
-                homeClinicName={user.homeClinicName}
                 onClockIn={clockIn}
                 onClockOut={clockOut}
               />

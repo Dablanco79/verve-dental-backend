@@ -51,16 +51,16 @@ async function seedClockIn(
   app: Awaited<ReturnType<typeof createTestApp>>,
   staffToken: string,
   clinicId: string,
-  shiftDate: string,
   shiftStartAt: string,
   shiftEndAt: string,
 ): Promise<void> {
+  // shiftDate is no longer sent — the backend derives it from shiftStartAt in
+  // Melbourne local time (see payrollController.clockIn and melbourneTime.ts).
   await request(app)
     .post(`/api/v1/clinics/${clinicId}/timesheets/clock-in`)
     .set("Authorization", `Bearer ${staffToken}`)
     .send({
       rosterEntryId: null,
-      shiftDate,
       shiftStartAt,
       shiftEndAt,
     });
@@ -330,11 +330,11 @@ describe("GET /timesheets/export — filters", () => {
     // Seed two entries in different months.
     await seedClockIn(
       app, staffToken, SEED_CLINIC_A_ID,
-      "2026-01-15", "2026-01-15T08:00:00Z", "2026-01-15T17:00:00Z",
+      "2026-01-15T08:00:00Z", "2026-01-15T17:00:00Z",
     );
     await seedClockIn(
       app, staffToken, SEED_CLINIC_A_ID,
-      "2026-06-20", "2026-06-20T09:00:00Z", "2026-06-20T18:00:00Z",
+      "2026-06-20T09:00:00Z", "2026-06-20T18:00:00Z",
     );
 
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
@@ -375,7 +375,7 @@ describe("GET /timesheets/export — filters", () => {
     // Seed at least one entry for this staff member.
     await seedClockIn(
       app, staffToken, SEED_CLINIC_A_ID,
-      "2026-09-01", "2026-09-01T08:00:00Z", "2026-09-01T17:00:00Z",
+      "2026-09-01T08:00:00Z", "2026-09-01T17:00:00Z",
     );
 
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
@@ -419,13 +419,12 @@ describe("GET /timesheets/export — pagination safety", () => {
     const SEED_COUNT = 55;
     for (let i = 1; i <= SEED_COUNT; i++) {
       const day = String(i % 28 === 0 ? 28 : i % 28).padStart(2, "0");
-      const shiftDate = `2026-08-${day}`;
       // Use varied hours to avoid any unique-constraint collisions that might
       // exist on (staff_user_id, shift_date) in a real DB; in-memory has none.
       const h = String(6 + (i % 10)).padStart(2, "0");
+      // shiftDate is now derived server-side; only shiftStartAt/shiftEndAt needed.
       await seedClockIn(
         app, staffToken, SEED_CLINIC_A_ID,
-        shiftDate,
         `2026-08-${day}T${h}:00:00Z`,
         `2026-08-${day}T${String(parseInt(h, 10) + 8).padStart(2, "0")}:00:00Z`,
       );
@@ -509,8 +508,8 @@ describe("GET /timesheets/export — hours calculation consistency", () => {
     const fromStr = `${targetDate}T08:00:00Z`;
     const toStr = `${targetDate}T17:00:00Z`;
 
-    // Clock in
-    await seedClockIn(app, staffToken, SEED_CLINIC_A_ID, targetDate, fromStr, toStr);
+    // Clock in (shiftDate derived server-side from shiftStartAt in Melbourne time).
+    await seedClockIn(app, staffToken, SEED_CLINIC_A_ID, fromStr, toStr);
 
     // List endpoint — count records for this exact date.
     const listRes = await request(app)
