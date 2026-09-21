@@ -347,6 +347,11 @@ export type ListTimesheetOptions = {
   timesheetStatus?: TimesheetStatus;
   /** If true, only return entries where timesheetStatus = 'submitted'. */
   pendingApprovalOnly?: boolean;
+  /**
+   * Filter to a specific staff member by email.
+   * Used by the export endpoint to scope to a single employee.
+   */
+  staffEmail?: string;
 };
 
 export type ListLeaveOptions = {

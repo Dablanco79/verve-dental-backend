@@ -7,6 +7,7 @@ import type {
   ApproveTimesheetRequest,
   ClockInRequest,
   ClockOutRequest,
+  ExportTimesheetParams,
   RejectTimesheetRequest,
   TimesheetEntry,
   TimesheetFilters,
@@ -23,6 +24,13 @@ export type UseTimesheetsResult = {
   error: string | null;
   /** Re-run the last fetch immediately. */
   refetch: () => void;
+  /**
+   * Exports matching timesheet entries as an XLSX file.
+   * Triggers a browser download.  Manager/admin only — the backend enforces
+   * this; the frontend also checks canManagePayroll before calling.
+   * Returns the suggested filename.
+   */
+  exportTimesheets: (params?: ExportTimesheetParams) => Promise<string>;
   /**
    * Clock the current user into a shift.
    * Only available to `clinical_staff` — the backend also enforces this.
@@ -196,6 +204,17 @@ export function useTimesheets(
     [clinicId, role, fetch],
   );
 
+  const exportTimesheets = useCallback(
+    async (params: ExportTimesheetParams = {}): Promise<string> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to export timesheets");
+      }
+      return apiClient.exportTimesheets(clinicId, params);
+    },
+    [clinicId, role],
+  );
+
   return {
     timesheets,
     isLoading,
@@ -206,5 +225,6 @@ export function useTimesheets(
     approveTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
+    exportTimesheets,
   };
 }

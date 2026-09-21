@@ -12,6 +12,10 @@
  *   - owner_admin can use /me (200)
  *   - unauthenticated request is rejected (401)
  *   - /me only returns entries belonging to the caller
+ *   - /me with a non-home :clinicId returns 200, scoped to the caller's own entries
+ *     (not 403 — enforceTenantParam was intentionally removed from the timesheet
+ *      router; listMyTimesheets scopes exclusively by caller.id so the URL
+ *      :clinicId cannot expand or leak another user's data)
  *
  * All tests use the in-memory test app (no DB, no Redis) so they are
  * isolated and deterministic.
@@ -23,6 +27,7 @@ import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 import {
   SEED_CLINIC_A_ID,
+  SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
 
@@ -99,16 +104,52 @@ describe("GET /clinics/:clinicId/timesheets/me", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a staff member accessing a different clinic's /me route", async () => {
+  it("allows a staff member to access their own timesheets through a non-home clinic context without exposing other staff", async () => {
     const app = await createTestApp();
-    // staff@clinic-a.au has homeClinicId = SEED_CLINIC_A_ID.
-    // Accessing CLINIC_B_ID must be blocked by enforceTenantParam.
-    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
-    const res = await getMyTimesheets(app, token, "22222222-2222-4222-8222-222222222222");
+    // Seed an entry for the Clinic A staff member.
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId: null,
+        shiftDate: "2026-08-01",
+        shiftStartAt: "2026-08-01T08:00:00.000Z",
+        shiftEndAt: "2026-08-01T17:00:00.000Z",
+      });
 
-    // enforceTenantParam returns 403 for cross-clinic access by non-owner_admin
-    expect(res.status).toBe(403);
+    // Access /me using the Clinic B URL.
+    // enforceTenantParam was intentionally removed from the timesheet router
+    // because listMyTimesheets scopes exclusively by caller.id — the URL
+    // :clinicId is never passed to the service or repository.
+    const res = await getMyTimesheets(app, staffToken, SEED_CLINIC_B_ID);
+
+    // 200: personal endpoint, not restricted by clinic URL.
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("data");
+    expect(Array.isArray((res.body as ApiData<unknown[]>).data)).toBe(true);
+
+    // Every returned entry must belong to the authenticated caller.
+    // Changing :clinicId in the URL cannot expand or leak another user's entries.
+    type TimesheetEntry = { staffUserId: string };
+    const entries = (res.body as ApiData<TimesheetEntry[]>).data;
+    for (const entry of entries) {
+      expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAStaff);
+    }
+
+    // Regression: the Clinic B admin (a different user) has no entries visible
+    // to the Clinic A staff member via this endpoint.
+    const adminBToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+    const adminBRes = await getMyTimesheets(app, adminBToken, SEED_CLINIC_B_ID);
+    expect(adminBRes.status).toBe(200);
+    const adminBEntries = (adminBRes.body as ApiData<TimesheetEntry[]>).data;
+    // None of the Clinic B admin's /me results should appear in the Clinic A
+    // staff member's response — and vice versa.
+    const adminBIds = new Set(adminBEntries.map((e) => e.staffUserId));
+    expect(adminBIds.has(SEED_USER_IDS.clinicAStaff)).toBe(false);
+    const staffIds = new Set(entries.map((e) => e.staffUserId));
+    expect(staffIds.has(SEED_USER_IDS.clinicBAdmin)).toBe(false);
   });
 
   it("response entries all belong to the authenticated staff member", async () => {

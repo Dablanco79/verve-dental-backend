@@ -35,6 +35,12 @@
  * ✓ clinic_inventory_items   — Clinic A cannot read Clinic B inventory
  * ✓ draft_purchase_orders    — Clinic A cannot read Clinic B purchase orders
  * ✓ timesheet_entries        — Clinic A cannot read Clinic B timesheets
+ * ✓ timesheet_entries        — personal /me scope: cross-clinic entry (rostered_clinic_id=B,
+ *                               clinic_id=A) IS visible under Clinic A context, proving the
+ *                               payroll home-clinic design and that /me reaches all own entries
+ * ✓ timesheet_entries        — personal /me scope: RLS alone does NOT isolate Staff A from
+ *                               Staff B within the same clinic; service-layer WHERE staff_user_id
+ *                               is the required guard (documented intentionally)
  * ✓ invoices                 — Clinic A cannot read Clinic B billing data
  * ✓ leave_requests           — Clinic A cannot read Clinic B leave requests
  * ✓ audit_events             — Clinic A cannot read Clinic B audit events
@@ -93,6 +99,24 @@ const FX = {
   // audit_events
   auditA: "fb111111-fb11-4b11-8b11-fb1111111111",
   auditB: "fb222222-fb22-4b22-8b22-fb2222222222",
+
+  // ── Personal /me scope fixtures (timesheet payroll home-clinic design) ─────
+  //
+  // These prove that a timesheet entry with rostered_clinic_id = Clinic B but
+  // clinic_id = Clinic A (the payroll/home-clinic discriminator) is correctly
+  // visible under the Clinic A RLS context — and that same-clinic cross-user
+  // isolation is provided by the service layer, not by RLS alone.
+  //
+  // Staff A = clinicAStaff  (home: Clinic A)
+  // Staff B = clinicAManager (home: Clinic A, same clinic, different user)
+  //
+  // roster_entries backing the timesheet fixtures (each must be unique so the
+  // composite UNIQUE constraint (roster_entry_id, payroll_type) does not fire):
+  rosterStaffACrossClinic: "fd111111-fd11-4d11-8d11-fd1111111111", // Staff A rostered AT Clinic B
+  rosterStaffBClinicA:     "fd222222-fd22-4d22-8d22-fd2222222222", // Staff B at Clinic A
+  // timesheet_entries for the personal-scope suite:
+  tsStaffACrossClinic: "fd333333-fd33-4d33-8d33-fd3333333333", // clinic_id=A, rostered=B
+  tsStaffBAtClinicA:   "fd444444-fd44-4d44-8d44-fd4444444444", // clinic_id=A, rostered=A
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +233,63 @@ beforeAll(async () => {
     `, [FX.tsA, FX.tsB, SEED_USER_IDS.clinicAAdmin, SEED_USER_IDS.clinicBAdmin,
         SEED_CLINIC_A_ID, SEED_CLINIC_B_ID, FX.rosterA, FX.rosterB]);
 
+    // ── Personal /me scope fixtures ─────────────────────────────────────────
+    //
+    // Prove the payroll home-clinic design:
+    //   timesheet_entries.clinic_id = home_clinic_id  (payroll anchor)
+    //   timesheet_entries.rostered_clinic_id = physical work location
+    //
+    // rosterStaffACrossClinic: Staff A (clinicAStaff, home=A) rostered AT Clinic B.
+    // rosterStaffBClinicA:     Staff B (clinicAManager, home=A) rostered AT Clinic A.
+    await client.query(`
+      INSERT INTO roster_entries (
+        id, rostered_clinic_id, rostered_clinic_name,
+        staff_user_id, staff_email,
+        shift_start_at, shift_end_at, shift_type, status,
+        created_by_user_id
+      ) VALUES
+        ($1, $3, 'Test Clinic B', $5, 'staff@clinic-a.au',
+         '2026-02-10T09:00:00Z', '2026-02-10T17:00:00Z', 'standard', 'completed', $5),
+        ($2, $4, 'Test Clinic A', $6, 'manager@clinic-a.au',
+         '2026-02-10T09:00:00Z', '2026-02-10T17:00:00Z', 'standard', 'completed', $6)
+      ON CONFLICT (id) DO NOTHING
+    `, [
+      FX.rosterStaffACrossClinic, FX.rosterStaffBClinicA,
+      SEED_CLINIC_B_ID, SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff, SEED_USER_IDS.clinicAManager,
+    ]);
+
+    // tsStaffACrossClinic: Staff A's timesheet for work done at Clinic B.
+    //   clinic_id          = CLINIC_A  ← payroll home (invariant under audit)
+    //   rostered_clinic_id = CLINIC_B  ← physical work location
+    //
+    // tsStaffBAtClinicA: Staff B's timesheet for work done at Clinic A (same clinic as Staff A's home).
+    //   clinic_id          = CLINIC_A
+    //   rostered_clinic_id = CLINIC_A
+    await client.query(`
+      INSERT INTO timesheet_entries (
+        id, payroll_type, staff_user_id, staff_email,
+        clinic_id, rostered_clinic_id, rostered_clinic_name,
+        roster_entry_id,
+        shift_date, shift_start_at, shift_end_at,
+        attendance_status, timesheet_status, generated_by
+      ) VALUES
+        ($1, 'hourly_auto', $3, 'staff@clinic-a.au',
+         $5, $6, 'Test Clinic B', $7,
+         '2026-02-10', '2026-02-10T09:00:00Z', '2026-02-10T17:00:00Z',
+         'present', 'submitted', 'system_auto'),
+        ($2, 'hourly_auto', $4, 'manager@clinic-a.au',
+         $5, $5, 'Test Clinic A', $8,
+         '2026-02-10', '2026-02-10T09:00:00Z', '2026-02-10T17:00:00Z',
+         'present', 'submitted', 'system_auto')
+      ON CONFLICT (id) DO NOTHING
+    `, [
+      FX.tsStaffACrossClinic, FX.tsStaffBAtClinicA,
+      SEED_USER_IDS.clinicAStaff, SEED_USER_IDS.clinicAManager,
+      SEED_CLINIC_A_ID, SEED_CLINIC_B_ID,
+      FX.rosterStaffACrossClinic, FX.rosterStaffBClinicA,
+    ]);
+
     // invoices — one per clinic
     await client.query(`
       INSERT INTO invoices (
@@ -250,15 +331,23 @@ beforeAll(async () => {
 afterAll(async () => {
   if (SKIP) return;
 
-  // Clean up all inserted test fixtures using owner_admin bypass
+  // Clean up all inserted test fixtures using owner_admin bypass.
+  // Order matters: child rows (FK references) must be deleted before parents.
   await asOwnerAdmin(async (client) => {
     await client.query(`DELETE FROM audit_events WHERE id IN ($1, $2)`, [FX.auditA, FX.auditB]);
     await client.query(`DELETE FROM leave_requests WHERE id IN ($1, $2)`, [FX.leaveA, FX.leaveB]);
     await client.query(`DELETE FROM supplier_invoices WHERE id = $1`, [FX.supplierInvoiceA]);
     await client.query(`DELETE FROM invoices WHERE id IN ($1, $2)`, [FX.invA, FX.invB]);
-    await client.query(`DELETE FROM timesheet_entries WHERE id IN ($1, $2)`, [FX.tsA, FX.tsB]);
-    // Delete roster_entries after timesheet_entries (FK: timesheet_entries.roster_entry_id)
-    await client.query(`DELETE FROM roster_entries WHERE id IN ($1, $2)`, [FX.rosterA, FX.rosterB]);
+    // Delete all timesheet_entries before roster_entries (FK: timesheet_entries.roster_entry_id).
+    await client.query(
+      `DELETE FROM timesheet_entries WHERE id IN ($1, $2, $3, $4)`,
+      [FX.tsA, FX.tsB, FX.tsStaffACrossClinic, FX.tsStaffBAtClinicA],
+    );
+    // Delete all roster_entries after timesheets.
+    await client.query(
+      `DELETE FROM roster_entries WHERE id IN ($1, $2, $3, $4)`,
+      [FX.rosterA, FX.rosterB, FX.rosterStaffACrossClinic, FX.rosterStaffBClinicA],
+    );
     await client.query(`DELETE FROM draft_purchase_orders WHERE id IN ($1, $2)`, [FX.poA, FX.poB]);
   });
 
@@ -361,6 +450,117 @@ describe("RLS — timesheet_entries", () => {
       c.query("SELECT clinic_id FROM timesheet_entries WHERE id IN ($1, $2)", [FX.tsA, FX.tsB]),
     );
     expect(rows.every((r: { clinic_id: string }) => r.clinic_id === SEED_CLINIC_A_ID)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — TIMESHEET personal /me scope (payroll home-clinic design)
+//
+// Context for these tests
+// ────────────────────────
+// timesheet_entries uses clinic_id = homeClinicId (payroll anchor) as its
+// RLS tenant discriminator — NOT the physical work location (rostered_clinic_id).
+// This means a staff member who works at a non-home clinic has an entry where:
+//   clinic_id          = homeClinicId   ← RLS discriminator
+//   rostered_clinic_id = workClinicId   ← physical location
+//
+// Under the staff member's home-clinic RLS context the entry IS visible.
+// Cross-clinic: the entry is NOT visible under the other clinic's context.
+//
+// Personal isolation within the same clinic:
+//   RLS DOES NOT distinguish between Staff A and Staff B when both belong to
+//   Clinic A.  The service layer (listByStaff → WHERE staff_user_id = caller.id)
+//   is the ONLY guard for same-clinic personal isolation.  This is intentional
+//   and documented here so any future regression is caught immediately.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("RLS — timesheet_entries — personal /me scope (payroll home-clinic design)", () => {
+  it("Staff A cross-clinic entry (clinic_id=A, rostered_clinic_id=B) IS visible under Clinic A RLS context", async () => {
+    if (SKIP) return;
+
+    // This proves the core design invariant: a timesheet filed under the
+    // home clinic (clinic_id = A) is reachable via the home-clinic context
+    // even when the physical work happened at a different clinic (rostered_clinic_id = B).
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
+      c.query(
+        `SELECT id, clinic_id, rostered_clinic_id
+           FROM timesheet_entries
+          WHERE id = $1`,
+        [FX.tsStaffACrossClinic],
+      ),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id:                 FX.tsStaffACrossClinic,
+      clinic_id:          SEED_CLINIC_A_ID,   // payroll home — matches RLS context
+      rostered_clinic_id: SEED_CLINIC_B_ID,   // physical work location — different clinic
+    });
+  });
+
+  it("Staff A cross-clinic entry is NOT visible under Clinic B RLS context (clinic_id=A ≠ Clinic B)", async () => {
+    if (SKIP) return;
+
+    // RLS correctly hides the entry from Clinic B: even though the physical
+    // work occurred at Clinic B, the payroll record belongs to Clinic A.
+    const { rows } = await withRlsCtx(SEED_CLINIC_B_ID, (c) =>
+      c.query(
+        `SELECT id FROM timesheet_entries WHERE id = $1`,
+        [FX.tsStaffACrossClinic],
+      ),
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+
+  it("Service-layer staff_user_id filter returns Staff A entry but NOT Staff B entry within the same clinic", async () => {
+    if (SKIP) return;
+
+    // Simulates what timesheetRepository.listByStaff(staffAId) does at the DB level:
+    // adds WHERE staff_user_id = staffAId to the RLS-scoped query.
+    // Both tsStaffACrossClinic (Staff A) and tsStaffBAtClinicA (Staff B) pass the
+    // Clinic A RLS policy — only the staff_user_id filter provides personal isolation.
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
+      c.query(
+        `SELECT id, staff_user_id
+           FROM timesheet_entries
+          WHERE id IN ($1, $2)
+            AND staff_user_id = $3`,  // mirrors service-layer guard in listByStaff
+        [FX.tsStaffACrossClinic, FX.tsStaffBAtClinicA, SEED_USER_IDS.clinicAStaff],
+      ),
+    );
+
+    // Only Staff A's cross-clinic entry is returned.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id:            FX.tsStaffACrossClinic,
+      staff_user_id: SEED_USER_IDS.clinicAStaff,
+    });
+  });
+
+  it("RLS alone (no staff_user_id filter) exposes BOTH Staff A and Staff B entries within Clinic A — documents service-layer guard requirement", async () => {
+    if (SKIP) return;
+
+    // This test intentionally proves that Postgres RLS does NOT provide
+    // personal isolation within the same clinic.  Both entries pass the
+    // 'clinic_id = app_current_clinic_id()' policy.
+    //
+    // The service-layer WHERE staff_user_id = caller.id in listByStaff()
+    // is therefore the REQUIRED and ONLY guard for personal isolation.
+    // If this test ever starts returning < 2 rows it means an unexpected
+    // RLS policy was added — which should be reviewed against the audit.
+    const { rows } = await withRlsCtx(SEED_CLINIC_A_ID, (c) =>
+      c.query(
+        `SELECT id FROM timesheet_entries WHERE id IN ($1, $2)`,
+        [FX.tsStaffACrossClinic, FX.tsStaffBAtClinicA],
+      ),
+    );
+
+    // Both pass clinic-level RLS — personal isolation requires the service layer.
+    expect(rows).toHaveLength(2);
+    const ids = rows.map((r: { id: string }) => r.id);
+    expect(ids).toContain(FX.tsStaffACrossClinic);
+    expect(ids).toContain(FX.tsStaffBAtClinicA);
   });
 });
 

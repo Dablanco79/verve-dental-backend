@@ -10,7 +10,10 @@ import type {
 import type { RosterEntry } from "../types/roster.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import { formatMelbourneDateTime, OPERATIONAL_TZ } from "../utils/melbourneTime.js";
+import { resolveDisplayName } from "../utils/resolveDisplayName.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hour-bucket calculation (accounting-agnostic)
@@ -105,13 +108,202 @@ function clockUpdatePayload(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Export helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Formats a decimal hours value as a human-readable duration string.
+ * e.g. 7.5 → "7h 30m"
+ */
+function formatDuration(decimalHours: number): string {
+  const totalMinutes = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${String(m)}m`;
+  if (m === 0) return `${String(h)}h`;
+  return `${String(h)}h ${String(m)}m`;
+}
+
+// Column header strings used in the detail sheet.
+// The timezone is embedded in each header so recipients know the offset
+// without opening workbook properties (e.g. "Clock In (Australia/Melbourne)").
+const COL_CLOCK_IN    = `Clock In (${OPERATIONAL_TZ})`;
+const COL_CLOCK_OUT   = `Clock Out (${OPERATIONAL_TZ})`;
+const COL_APPROVED_AT = `Approved At (${OPERATIONAL_TZ})`;
+
+// Using Record<string, …> for the row shape so json_to_sheet preserves
+// insertion order (the columns will appear in the order the keys are added).
+type ExportRow = Record<string, string | number>;
+
+type ApproverMap = Map<string, string>;
+
+/** userId → display name string (empty string when no name data is stored). */
+type StaffNameMap = Map<string, string>;
+
+/**
+ * Builds an XLSX workbook buffer from a list of timesheet entries.
+ *
+ * Sheet 1 ("Timesheets"): one row per entry; columns include Staff Name (from
+ *   users.displayName / firstName+lastName) and timestamps formatted in
+ *   Australia/Melbourne local time to handle AEST/AEDT DST automatically.
+ * Sheet 2 ("Totals"):     total worked hours + per-staff subtotals.
+ *
+ * Hours calculation: uses the stored `totalHoursWorked` value (canonical
+ * result of `calculateHourBuckets()`).  The export does NOT re-calculate —
+ * it shows the same values as the Timesheets UI.
+ *
+ * Dynamic import handles CJS/ESM interop for the xlsx package
+ * (same pattern as catalogueImportService and masterProductImportService).
+ */
+
+async function buildTimesheetXlsx(
+  entries: TimesheetEntry[],
+  approverMap: ApproverMap,
+  staffNameMap: StaffNameMap,
+  fromDate: string | undefined,
+  toDate: string | undefined,
+): Promise<Buffer> {
+  // Dynamic import handles CJS/ESM interop for the xlsx package.
+  const XLSX = await import("xlsx");
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Detail rows ─────────────────────────────────────────────────
+  const rows: ExportRow[] = entries.map((e) => {
+    // Build a canonical display name: prefer displayName, then "First Last", then "".
+    const staffName = staffNameMap.get(e.staffUserId) ?? "";
+    const row: ExportRow = {};
+    row["Staff Name"]          = staffName;
+    row["Staff Email"]         = e.staffEmail;
+    row["Clinic / Location"]   = e.rosteredClinicName;
+    row["Date"]                = e.shiftDate;
+    row[COL_CLOCK_IN]          = e.clockInAt  ? formatMelbourneDateTime(e.clockInAt)  : "";
+    row[COL_CLOCK_OUT]         = e.clockOutAt ? formatMelbourneDateTime(e.clockOutAt) : "";
+    row["Break (min)"]         = e.breakDurationMinutes ?? "";
+    row["Worked Hours"]        = e.totalHoursWorked ?? "";
+    row["Duration"]            = e.totalHoursWorked !== null ? formatDuration(e.totalHoursWorked) : "";
+    row["Payroll Type"]        = e.payrollType;
+    row["Timesheet Status"]    = e.timesheetStatus ?? "";
+    row["Attendance"]          = e.attendanceStatus;
+    row["Approval Notes"]      = e.approvalNotes ?? "";
+    row["Approved By"]         = e.approvedByUserId ? (approverMap.get(e.approvedByUserId) ?? e.approvedByUserId) : "";
+    row[COL_APPROVED_AT]       = e.approvedAt ? formatMelbourneDateTime(e.approvedAt) : "";
+    row["Commission Note"]     = e.commissionNote ?? "";
+    return row;
+  });
+
+  const detailSheet = XLSX.utils.json_to_sheet(rows);
+
+  // Column widths for readability
+  detailSheet["!cols"] = [
+    { wch: 26 }, // Staff Name
+    { wch: 30 }, // Staff Email
+    { wch: 24 }, // Clinic / Location
+    { wch: 12 }, // Date
+    { wch: 32 }, // Clock In (Australia/Melbourne)
+    { wch: 32 }, // Clock Out (Australia/Melbourne)
+    { wch: 12 }, // Break (min)
+    { wch: 14 }, // Worked Hours
+    { wch: 10 }, // Duration
+    { wch: 16 }, // Payroll Type
+    { wch: 18 }, // Timesheet Status
+    { wch: 14 }, // Attendance
+    { wch: 30 }, // Approval Notes
+    { wch: 30 }, // Approved By
+    { wch: 32 }, // Approved At (Australia/Melbourne)
+    { wch: 30 }, // Commission Note
+  ];
+
+  XLSX.utils.book_append_sheet(wb, detailSheet, "Timesheets");
+
+  // ── Sheet 2: Totals ──────────────────────────────────────────────────────
+  const totalHours = entries.reduce((sum, e) => sum + (e.totalHoursWorked ?? 0), 0);
+  const roundedTotal = Math.round(totalHours * 100) / 100;
+
+  // Per-staff subtotals
+  const staffTotals = new Map<string, number>();
+  for (const e of entries) {
+    const current = staffTotals.get(e.staffEmail) ?? 0;
+    staffTotals.set(e.staffEmail, current + (e.totalHoursWorked ?? 0));
+  }
+
+  type TotalRow = {
+    "Staff Email": string;
+    "Total Worked Hours": number;
+    "Duration": string;
+  };
+
+  const totalRows: TotalRow[] = [];
+
+  // Summary row first
+  totalRows.push({
+    "Staff Email": fromDate && toDate
+      ? `ALL STAFF (${fromDate} to ${toDate})`
+      : "ALL STAFF",
+    "Total Worked Hours": roundedTotal,
+    "Duration": formatDuration(roundedTotal),
+  });
+
+  // Per-staff rows, sorted by email
+  for (const [email, hours] of [...staffTotals.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const rounded = Math.round(hours * 100) / 100;
+    totalRows.push({
+      "Staff Email": email,
+      "Total Worked Hours": rounded,
+      "Duration": formatDuration(rounded),
+    });
+  }
+
+  const totalsSheet = XLSX.utils.json_to_sheet(totalRows);
+  totalsSheet["!cols"] = [
+    { wch: 40 }, // Staff Email / label
+    { wch: 20 }, // Total Worked Hours
+    { wch: 12 }, // Duration
+  ];
+
+  XLSX.utils.book_append_sheet(wb, totalsSheet, "Totals");
+
+  // write() returns a Buffer when type is "buffer"
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RBAC helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function assertReviewAccess(caller: AuthenticatedUser, clinicId: string): void {
+/**
+ * Asserts that the caller has manager-level access to the given clinic's
+ * timesheet data.
+ *
+ * Access model (matches the operational access model used by rosterService):
+ *   owner_admin             → any clinic (organisation-wide)
+ *   group_practice_manager  → home clinic  OR  any clinic with can_operate=true
+ *                             in user_clinic_assignments.
+ *                             can_roster=true alone does NOT grant access.
+ *   clinical_staff          → always 403 (personal /me routes only)
+ *
+ * This is intentionally async so it can call hasOperationalAccess for GPMs
+ * accessing a non-home clinic.  All callers must await it.
+ */
+async function assertReviewAccess(
+  caller: AuthenticatedUser,
+  clinicId: string,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
+): Promise<void> {
   if (caller.role === "owner_admin") return;
-  if (caller.role === "group_practice_manager" && caller.homeClinicId === clinicId) return;
-  throw new AppError(403, "FORBIDDEN", "Only managers and admins can approve timesheets");
+
+  if (caller.role === "group_practice_manager") {
+    // Home clinic is always accessible.
+    if (caller.homeClinicId === clinicId) return;
+    // Non-home clinic requires can_operate=true in user_clinic_assignments.
+    const canOperate = await clinicAssignmentsRepository.hasOperationalAccess(
+      caller.id,
+      clinicId,
+    );
+    if (canOperate) return;
+  }
+
+  throw new AppError(403, "FORBIDDEN", "Only managers and admins can review timesheets for this clinic");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,6 +329,7 @@ export function createTimesheetService(
   timesheetRepository: TimesheetRepository,
   userRepository: UserRepository,
   rosterRepository: RosterRepository,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
 ) {
   return {
     // ── Hourly clocking ───────────────────────────────────────────────────────
@@ -347,7 +540,7 @@ export function createTimesheetService(
         breakDurationMinutes: number;
       },
     ): Promise<TimesheetEntry> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       // Identity verification: fetch the target user from the trusted DB record.
       // Never trust staffEmail or clinicId from the request body.
@@ -452,7 +645,7 @@ export function createTimesheetService(
       timesheetId: string,
       approvalNotes: string | null = null,
     ): Promise<TimesheetEntry> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const entry = await timesheetRepository.findById(timesheetId);
 
@@ -508,7 +701,7 @@ export function createTimesheetService(
       timesheetId: string,
       approvalNotes: string,
     ): Promise<TimesheetEntry> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       if (!approvalNotes.trim()) {
         throw new AppError(400, "NOTES_REQUIRED", "A rejection note is required");
@@ -543,7 +736,7 @@ export function createTimesheetService(
       clinicId: string,
       options?: ListTimesheetOptions,
     ): Promise<TimesheetEntry[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return timesheetRepository.listByClinic(clinicId, options);
     },
 
@@ -552,7 +745,7 @@ export function createTimesheetService(
       clinicId: string,
       options?: ListTimesheetPageOptions,
     ): Promise<TimesheetPage> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return timesheetRepository.listByClinicPaginated(clinicId, options);
     },
 
@@ -570,7 +763,7 @@ export function createTimesheetService(
       clinicId: string,
       date: string,
     ): Promise<TimesheetEntry[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return timesheetRepository.getForecastLogs(clinicId, date);
     },
 
@@ -580,9 +773,10 @@ export function createTimesheetService(
      * managers can also use this to see their personal entries separately
      * from the clinic-wide list.
      *
-     * Tenant isolation is enforced at the route layer via enforceTenantParam.
      * Data scoping is enforced here by passing caller.id to listByStaff —
      * the caller can never see another user's entries through this method.
+     * This is the primary defence for /me; it is independent of clinic context
+     * so it is safe even without enforceTenantParam on the router.
      */
     async listMyTimesheets(
       caller: AuthenticatedUser,
@@ -613,7 +807,7 @@ export function createTimesheetService(
       attendanceStatus: "present" | "absent" | "sick" | "cancelled",
       commissionNote: string | null = null,
     ): Promise<TimesheetEntry> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const entry = await timesheetRepository.findById(timesheetId);
 
@@ -635,6 +829,99 @@ export function createTimesheetService(
         approvedByUserId: caller.id,
         approvedAt: new Date(),
       });
+    },
+
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    /**
+     * Exports timesheet entries as an XLSX workbook buffer.
+     *
+     * RBAC: assertReviewAccess enforces owner_admin or GPM-home-clinic access.
+     * Cross-clinic access for GPMs is gated by rlsTenantContextMiddleware
+     * (hasOperationalAccess) at the parent router level, providing an
+     * independent second check before this service method is reached.
+     *
+     * PAGINATION SAFETY: Uses listByClinic (no LIMIT) so the export always
+     * includes ALL matching records — never just the first UI page.
+     *
+     * HOURS CALCULATION: Uses the stored `totalHoursWorked` value (canonical
+     * result of calculateHourBuckets).  Does NOT re-derive hours, ensuring the
+     * export is consistent with what the Timesheets UI displays.
+     *
+     * Returns { buffer, filename, rowCount } so the controller can set
+     * appropriate response headers.
+     */
+    async exportTimesheets(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: {
+        from?: string;
+        to?: string;
+        staffEmail?: string;
+      },
+    ): Promise<{ buffer: Buffer; filename: string; rowCount: number }> {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+
+      // Fetch ALL matching records — unbounded (listByClinic has no LIMIT).
+      const entries = await timesheetRepository.listByClinic(clinicId, {
+        from: options?.from,
+        to: options?.to,
+        staffEmail: options?.staffEmail,
+      });
+
+      // Resolve approver emails for the "Approved By" column.
+      // Collect distinct approvedByUserIds first to minimise DB round-trips.
+      const uniqueApproverIds = [
+        ...new Set(
+          entries
+            .map((e) => e.approvedByUserId)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+
+      const approverMap: ApproverMap = new Map();
+      await Promise.all(
+        uniqueApproverIds.map(async (id) => {
+          const user = await userRepository.findById(id);
+          if (user) {
+            approverMap.set(id, user.email);
+          }
+        }),
+      );
+
+      // Resolve staff display names for the "Staff Name" column.
+      // Uses existing users.displayName / firstName / lastName — no new columns.
+      // resolveDisplayName() safely handles null/blank fields; it never produces
+      // "null null" or "Daniel null".  Falls back to "" for pre-Sprint-1 rows.
+      // StaffEmail remains the reliable identifier regardless of name availability.
+      const uniqueStaffIds = [
+        ...new Set(entries.map((e) => e.staffUserId)),
+      ];
+      const staffNameMap: StaffNameMap = new Map();
+      await Promise.all(
+        uniqueStaffIds.map(async (id) => {
+          const user = await userRepository.findById(id);
+          if (user) {
+            staffNameMap.set(
+              id,
+              resolveDisplayName(user.displayName, user.firstName, user.lastName),
+            );
+          }
+        }),
+      );
+
+      const buffer = await buildTimesheetXlsx(entries, approverMap, staffNameMap, options?.from, options?.to);
+
+      // Filename: timesheets_YYYY-MM-DD_to_YYYY-MM-DD.xlsx
+      // Falls back to just timesheets_export.xlsx when no date range given.
+      const fromStr = options?.from ?? "";
+      const toStr = options?.to ?? "";
+      const filename =
+        fromStr && toStr
+          ? `timesheets_${fromStr}_to_${toStr}.xlsx`
+          : "timesheets_export.xlsx";
+
+      return { buffer, filename, rowCount: entries.length };
     },
 
     // ── Roster-completion hook ─────────────────────────────────────────────────

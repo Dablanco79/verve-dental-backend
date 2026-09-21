@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Download, Info } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
@@ -10,6 +10,7 @@ import type {
   AttendanceStatus,
   ClockInRequest,
   ClockOutRequest,
+  ExportTimesheetParams,
   PayrollType,
   TimesheetEntry,
   TimesheetFilters,
@@ -711,6 +712,150 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
   );
 }
 
+// ── Export panel (manager only) ───────────────────────────────────────────────
+
+type ExportPanelProps = {
+  /** Unique staff emails from the currently loaded timesheets. */
+  availableStaff: string[];
+  onExport: (params: ExportTimesheetParams) => Promise<string>;
+};
+
+function ExportPanel({ availableStaff, onExport }: ExportPanelProps) {
+  // Default to current month
+  const today = new Date();
+  const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+    .toISOString()
+    .slice(0, 10);
+  const todayStr = today.toISOString().slice(0, 10);
+
+  const [from, setFrom] = useState(firstOfMonth);
+  const [to, setTo] = useState(todayStr);
+  const [staffEmail, setStaffEmail] = useState<string>("");
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [lastFilename, setLastFilename] = useState<string | null>(null);
+
+  const isDateRangeValid = !from || !to || from <= to;
+
+  async function handleExport(): Promise<void> {
+    if (!isDateRangeValid) return;
+    setIsExporting(true);
+    setExportError(null);
+    setLastFilename(null);
+
+    const params: ExportTimesheetParams = {};
+    if (from) params.from = from;
+    if (to) params.to = to;
+    if (staffEmail) params.staffEmail = staffEmail;
+
+    try {
+      const filename = await onExport(params);
+      setLastFilename(filename);
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : "Export failed. Please try again.",
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  return (
+    <div className="pr-section ts-export-panel">
+      <h2 className="pr-section__title">
+        Export Hours
+      </h2>
+      <p className="pr-section__hint">
+        Download actual worked hours for payroll and admin purposes. The export
+        includes all records matching the selected filters.
+      </p>
+
+      <div className="ts-export-form">
+        {/* Date range */}
+        <div className="ts-export-form__row">
+          <div className="pr-clock-form__field">
+            <label className="pr-clock-form__label" htmlFor="export-from">
+              From
+            </label>
+            <input
+              id="export-from"
+              type="date"
+              className="pr-clock-form__control"
+              value={from}
+              onChange={(e) => { setFrom(e.target.value); }}
+              disabled={isExporting}
+            />
+          </div>
+          <div className="pr-clock-form__field">
+            <label className="pr-clock-form__label" htmlFor="export-to">
+              To
+            </label>
+            <input
+              id="export-to"
+              type="date"
+              className="pr-clock-form__control"
+              value={to}
+              onChange={(e) => { setTo(e.target.value); }}
+              disabled={isExporting}
+            />
+          </div>
+          {/* Staff filter */}
+          <div className="pr-clock-form__field">
+            <label className="pr-clock-form__label" htmlFor="export-staff">
+              Staff (optional)
+            </label>
+            <select
+              id="export-staff"
+              className="pr-clock-form__control"
+              value={staffEmail}
+              onChange={(e) => { setStaffEmail(e.target.value); }}
+              disabled={isExporting}
+            >
+              <option value="">All staff</option>
+              {availableStaff.map((email) => (
+                <option key={email} value={email}>
+                  {email}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {!isDateRangeValid ? (
+          <p className="pr-inline-form__error" role="alert">
+            &ldquo;From&rdquo; date must be on or before &ldquo;To&rdquo; date.
+          </p>
+        ) : null}
+
+        <div className="ts-export-form__actions">
+          <button
+            type="button"
+            className="vds-btn vds-btn--primary ts-export-btn"
+            onClick={() => { void handleExport(); }}
+            disabled={isExporting || !isDateRangeValid}
+            aria-busy={isExporting}
+          >
+            <Download size={15} aria-hidden="true" />
+            {isExporting ? "Exporting…" : "Export Hours"}
+          </button>
+        </div>
+
+        {exportError ? (
+          <p className="pr-inline-form__error" role="alert">
+            {exportError}
+          </p>
+        ) : null}
+
+        {lastFilename && !exportError ? (
+          <p className="ts-export-success" role="status">
+            Downloaded: {lastFilename}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function TimesheetsPage() {
@@ -734,6 +879,7 @@ export function TimesheetsPage() {
     approveTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
+    exportTimesheets,
   } = useTimesheets(clinicId, user?.role, filters);
 
   if (!user) return null;
@@ -761,6 +907,9 @@ export function TimesheetsPage() {
       t.payrollType === "commission_log" &&
       t.attendanceStatus === "pending_verification",
   );
+
+  // Unique staff emails from loaded timesheets — drives the export staff picker.
+  const availableStaff = [...new Set(timesheets.map((t) => t.staffEmail))].sort();
 
   // Staff: the open (clocked-in, not yet clocked-out) entry for today.
   const openEntry = isManager
@@ -823,6 +972,12 @@ export function TimesheetsPage() {
                 Open My Shifts
               </Link>
             </div>
+
+            {/* ── Manager: Export Hours ── */}
+            <ExportPanel
+              availableStaff={availableStaff}
+              onExport={exportTimesheets}
+            />
 
             {/* ── Manager: Hourly approval queue ── */}
             <div className="pr-section">

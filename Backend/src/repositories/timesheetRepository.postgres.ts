@@ -334,6 +334,11 @@ export function createPostgresTimesheetRepository(
         }
       }
 
+      if (options?.staffEmail) {
+        params.push(options.staffEmail);
+        conditions.push(`staff_email = $${String(params.length)}`);
+      }
+
       // pendingApprovalOnly overrides any timesheetStatus filter — this is
       // the primary fast path for the manager approval queue.
       if (options?.pendingApprovalOnly) {
@@ -387,6 +392,11 @@ export function createPostgresTimesheetRepository(
           params.push(options.to);
           conditions.push(`shift_date <= $${String(params.length)}::date`);
         }
+      }
+
+      if (options?.staffEmail) {
+        params.push(options.staffEmail);
+        conditions.push(`staff_email = $${String(params.length)}`);
       }
 
       if (options?.pendingApprovalOnly) {

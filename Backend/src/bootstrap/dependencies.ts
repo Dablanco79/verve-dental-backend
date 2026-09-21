@@ -515,6 +515,7 @@ export async function createAppDependencies(
     timesheetRepository,
     userRepository,
     rosterRepository,
+    clinicAssignmentsRepository,
   );
   const leaveService = createLeaveService(leaveRepository, rosterRepository, analyticsRepository);
   const billingService = createBillingService(billingRepository, analyticsRepository);

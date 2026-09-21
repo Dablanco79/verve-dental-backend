@@ -116,6 +116,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
             if (options?.shiftDate && e.shiftDate !== options.shiftDate) return false;
             if (options?.from && e.shiftDate < options.from) return false;
             if (options?.to && e.shiftDate > options.to) return false;
+            if (options?.staffEmail && e.staffEmail !== options.staffEmail) return false;
             // pendingApprovalOnly overrides any timesheetStatus filter.
             if (options?.pendingApprovalOnly) return e.timesheetStatus === "submitted";
             if (options?.timesheetStatus && e.timesheetStatus !== options.timesheetStatus) return false;
@@ -140,6 +141,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
           if (options?.shiftDate && e.shiftDate !== options.shiftDate) return false;
           if (options?.from && e.shiftDate < options.from) return false;
           if (options?.to && e.shiftDate > options.to) return false;
+          if (options?.staffEmail && e.staffEmail !== options.staffEmail) return false;
           if (options?.pendingApprovalOnly) return e.timesheetStatus === "submitted";
           if (options?.timesheetStatus && e.timesheetStatus !== options.timesheetStatus) return false;
           return true;

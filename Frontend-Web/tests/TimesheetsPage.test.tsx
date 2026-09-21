@@ -12,6 +12,7 @@
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,9 +25,10 @@ import type { AuthUser } from "../src/types/index.js";
 // vi.mock is hoisted before variable declarations — use vi.hoisted to declare
 // the mocks inside the hoisted block so they are available in the factory.
 
-const { mockListMyTimesheets, mockListTimesheets } = vi.hoisted(() => ({
+const { mockListMyTimesheets, mockListTimesheets, mockExportTimesheets } = vi.hoisted(() => ({
   mockListMyTimesheets: vi.fn(),
   mockListTimesheets: vi.fn(),
+  mockExportTimesheets: vi.fn(),
 }));
 
 vi.mock("../src/api/client.js", () => ({
@@ -38,6 +40,7 @@ vi.mock("../src/api/client.js", () => ({
     approveTimesheet: vi.fn(),
     rejectTimesheet: vi.fn(),
     verifyCommissionAttendance: vi.fn(),
+    exportTimesheets: mockExportTimesheets,
     refresh: vi.fn().mockRejectedValue(new Error("no cookie")),
     getMe: vi.fn(),
   }),
@@ -224,6 +227,117 @@ describe("TimesheetsPage — RBAC enforcement", () => {
     await waitFor(() => {
       expect(screen.queryByText(/start shift/i)).not.toBeInTheDocument();
       expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export Hours panel — visibility and behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("TimesheetsPage — Export Hours panel", () => {
+  it("renders the Export Hours section for owner_admin", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /export hours/i })).toBeInTheDocument();
+    });
+  });
+
+  it("renders the Export Hours section for group_practice_manager", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /export hours/i })).toBeInTheDocument();
+    });
+  });
+
+  it("does NOT render Export Hours panel for clinical_staff", async () => {
+    mockListMyTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/export hours/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it("calls exportTimesheets when the Export Hours button is clicked", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+    mockExportTimesheets.mockResolvedValue("timesheets_2026-09-01_to_2026-09-30.xlsx");
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /export hours/i })).toBeInTheDocument();
+    });
+
+    const exportButton = screen.getByRole("button", { name: /export hours/i });
+    await userEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(mockExportTimesheets).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("shows the downloaded filename after a successful export", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+    mockExportTimesheets.mockResolvedValue("timesheets_2026-09-01_to_2026-09-30.xlsx");
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /export hours/i })).toBeInTheDocument();
+    });
+
+    const exportButton = screen.getByRole("button", { name: /export hours/i });
+    await userEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/timesheets_2026-09-01_to_2026-09-30\.xlsx/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("shows an error message when the export fails", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+    mockExportTimesheets.mockRejectedValue(new Error("Export failed. Please try again."));
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /export hours/i })).toBeInTheDocument();
+    });
+
+    const exportButton = screen.getByRole("button", { name: /export hours/i });
+    await userEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+  });
+
+  it("disables the export button while an export is in progress", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+    // Never resolves — export stays in progress.
+    mockExportTimesheets.mockImplementation(() => new Promise(() => undefined));
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /export hours/i })).toBeInTheDocument();
+    });
+
+    const exportButton = screen.getByRole("button", { name: /export hours/i });
+    await userEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /exporting…/i })).toBeDisabled();
     });
   });
 });

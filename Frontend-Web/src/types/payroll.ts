@@ -294,6 +294,15 @@ export type TimesheetFilters = {
   attendanceStatus?: AttendanceStatus;
   timesheetStatus?: TimesheetStatus;
   pendingApprovalOnly?: boolean;
+  /** Filter to a specific staff member by email (used by export). */
+  staffEmail?: string;
+};
+
+/** Parameters accepted by GET /clinics/:clinicId/timesheets/export */
+export type ExportTimesheetParams = {
+  from?: string;
+  to?: string;
+  staffEmail?: string;
 };
 
 /** Query parameters accepted by GET /clinics/:clinicId/leave */

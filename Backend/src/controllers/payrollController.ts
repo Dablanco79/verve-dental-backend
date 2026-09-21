@@ -476,6 +476,26 @@ const forecastQuerySchema = z.object({
   date: isoDate(),
 });
 
+// Export query parameters.
+// staffEmail is optional — omit to export all staff in the date range.
+// from/to are both optional but strongly recommended; an export with no date
+// filter will include all records for the clinic (may be large).
+const exportTimesheetsQuerySchema = z
+  .object({
+    from: isoDate().optional(),
+    to: isoDate().optional(),
+    staffEmail: z.string().email("staffEmail must be a valid email address").optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.from && data.to && data.from > data.to) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "'from' must be on or before 'to'",
+        path: ["from"],
+      });
+    }
+  });
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export function createTimesheetHandlers(timesheetService: TimesheetService) {
@@ -717,6 +737,60 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
       );
 
       res.status(200).json({ data: entries.map(serializeTimesheet) });
+    },
+
+    /**
+     * GET /clinics/:clinicId/timesheets/export
+     *
+     * Exports all matching timesheet entries as an XLSX workbook.
+     *
+     * AUTHORISATION (server-enforced, two layers):
+     *   1. requireRoles middleware: clinical_staff is blocked at the route layer.
+     *   2. timesheetService.exportTimesheets: assertReviewAccess re-checks
+     *      owner_admin / GPM-home-clinic access at the service layer.
+     *
+     * PAGINATION: the service uses listByClinic (no LIMIT) so the export
+     * always includes ALL matching records — never just the first page.
+     *
+     * If no records match the filters, the response is a 0-row workbook
+     * with headers only (the frontend shows an appropriate empty-state).
+     *
+     * Query parameters:
+     *   from        YYYY-MM-DD  inclusive start date  (optional)
+     *   to          YYYY-MM-DD  inclusive end date    (optional)
+     *   staffEmail  email       filter to one staff   (optional)
+     */
+    async exportTimesheets(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+
+      const parsed = exportTimesheetsQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+
+      const { buffer, filename, rowCount } = await timesheetService.exportTimesheets(
+        caller,
+        clinicId,
+        {
+          from: parsed.data.from,
+          to: parsed.data.to,
+          staffEmail: parsed.data.staffEmail,
+        },
+      );
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      // Row count header allows the frontend to detect an empty export without
+      // parsing the workbook.
+      res.setHeader("X-Export-Row-Count", String(rowCount));
+      res.send(buffer);
     },
   };
 }

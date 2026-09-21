@@ -5,10 +5,12 @@
 //   createLeaveRouter(deps)      — mounts at /clinics/:clinicId/leave
 //   createTimesheetRouter(deps)  — mounts at /clinics/:clinicId/timesheets
 //
-// Both routers apply authenticate + enforceTenantParam("clinicId") at the
-// router level so every handler in this module is guaranteed a valid, tenant-
-// scoped req.user.  Per-route requireRoles() guards then differentiate between
-// staff-accessible endpoints and manager-only actions.
+// Leave router applies authenticate + enforceTenantParam("clinicId") so every
+// leave handler has a valid, home-clinic-scoped req.user.
+// Timesheet router applies authenticate only — GPM multi-clinic access is
+// handled by rlsTenantContextMiddleware (parent) and timesheetService.assertReviewAccess.
+// Per-route requireRoles() guards then differentiate between staff-accessible
+// endpoints and manager-only actions.
 //
 // ROLE CONSTANTS
 //   PAYROLL_MANAGER_ROLES — owner_admin, group_practice_manager
@@ -125,8 +127,22 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
   );
   const handlers = createTimesheetHandlers(deps.timesheetService);
 
-  // Every timesheet route requires a valid JWT and must belong to the correct tenant.
-  router.use(authenticate, enforceTenantParam("clinicId"));
+  // NOTE: enforceTenantParam is intentionally NOT used here.
+  //
+  // Timesheet manager access follows the same multi-clinic model as the Roster:
+  //   owner_admin              → any clinic (org-wide)
+  //   group_practice_manager   → home clinic + any clinic with can_operate=true
+  //   clinical_staff           → /me and clock-in/out only (personal access)
+  //
+  // The rlsTenantContextMiddleware mounted at /clinics/:clinicId in index.ts
+  // already validates GPM cross-clinic access via hasOperationalAccess before
+  // the request reaches this router.  timesheetService.assertReviewAccess
+  // provides a second independent check inside every manager-gated method.
+  //
+  // For clinical_staff, rlsTenantContextMiddleware always scopes the RLS
+  // context to homeClinicId regardless of the URL parameter (defence-in-depth),
+  // and requireRoles guards below block staff from manager-only endpoints.
+  router.use(authenticate);
 
   // ── Static sub-paths — declared BEFORE /:timesheetId to prevent shadowing ──
 
@@ -142,6 +158,22 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
     "/forecast",
     requireRoles(...PAYROLL_MANAGER_ROLES),
     asyncHandler((req, res) => handlers.getForecastLogs(req, res)),
+  );
+
+  // ── Hours export (manager/admin only) ──────────────────────────────────────
+  //
+  // SECURITY: Three independent access checks:
+  //   1. rlsTenantContextMiddleware (parent router): validates GPM cross-clinic
+  //      access via can_operate=true; rejects with TENANT_ACCESS_DENIED early.
+  //   2. requireRoles: clinical_staff is blocked at the route middleware layer.
+  //   3. timesheetService.assertReviewAccess: owner_admin or GPM with
+  //      can_operate=true; second independent check inside the service.
+  //
+  // Declared BEFORE /:timesheetId to prevent Express route shadowing.
+  router.get(
+    "/export",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.exportTimesheets(req, res)),
   );
 
   // Staff (and managers) list their own timesheet entries.

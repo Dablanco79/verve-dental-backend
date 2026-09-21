@@ -84,6 +84,7 @@ import type {
   ClockOutRequest,
   CreateLeaveRequest,
   CreateManualTimesheetRequest,
+  ExportTimesheetParams,
   LeaveFilters,
   LeaveRequest,
   RejectLeaveRequest,
@@ -1463,6 +1464,76 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * Downloads the timesheet export as an XLSX file and triggers a browser
+   * save-file dialog.
+   *
+   * Returns the filename suggested by the server (derived from the date range)
+   * so the caller can surface it in loading/error messages if needed.
+   *
+   * Throws if the server returns a non-2xx status.
+   */
+  async function exportTimesheets(
+    clinicId: string,
+    params: ExportTimesheetParams = {},
+  ): Promise<string> {
+    const query = new URLSearchParams();
+    if (params.from) query.set("from", params.from);
+    if (params.to) query.set("to", params.to);
+    if (params.staffEmail) query.set("staffEmail", params.staffEmail);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const url = `${baseUrl}/api/v1/clinics/${clinicId}/timesheets/export${qs}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => { controller.abort(); }, 60_000); // 60s for large exports
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${requireAccessToken()}`,
+        },
+        credentials: "include",
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      clearTimeout(timeoutId);
+      if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
+        throw new Error("Export timed out. Try a smaller date range.");
+      }
+      throw fetchErr;
+    }
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      const message =
+        errorBody?.error?.message ?? `Export failed (${String(response.status)})`;
+      throw new Error(message);
+    }
+
+    // Extract the suggested filename from Content-Disposition.
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filenameMatch = /filename="([^"]+)"/.exec(disposition);
+    const filename = filenameMatch?.[1] ?? "timesheets_export.xlsx";
+
+    const blob = await response.blob();
+
+    // Trigger browser download.
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(objectUrl);
+
+    return filename;
+  }
+
   // ── Leave ───────────────────────────────────────────────────────────────────
 
   async function listLeave(
@@ -2619,6 +2690,7 @@ export function createApiClient(config: AppConfig) {
     approveTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
+    exportTimesheets,
     listLeave,
     listMyLeave,
     createLeaveRequest,
