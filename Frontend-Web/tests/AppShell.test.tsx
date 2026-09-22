@@ -162,13 +162,16 @@ describe("AppShell navigation and clinic scope", () => {
 
     renderShell();
 
-    // GPM fetches operational clinics; when only one is returned the selector is not shown.
-    await waitFor(() => {
-      expect(mockGetMyOperationalClinics).toHaveBeenCalled();
-    });
+    // Use findAllByText — the clinic label only appears after getMyOperationalClinics
+    // resolves AND React commits the selectedClinic state update.  A plain
+    // waitFor(() => expect(called)) only guarantees the API was invoked; it does
+    // NOT guarantee the async Promise resolution and React re-render have
+    // completed.  findAllByText properly waits for the DOM to contain the text.
+    const clinicLabels = await screen.findAllByText(TEST_CLINIC_NAME);
+    expect(clinicLabels.length).toBeGreaterThan(0);
 
+    // No clinic-scope combobox — single operational clinic means no switching.
     expect(screen.queryByRole("combobox", { name: "Clinic scope" })).not.toBeInTheDocument();
-    expect(screen.getAllByText(TEST_CLINIC_NAME).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Purchase Orders" })).toBeInTheDocument();
     // Suppliers nav label includes invoice discoverability
