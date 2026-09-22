@@ -11,7 +11,7 @@
  *   - clock widget is rendered for clinical_staff
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -338,6 +338,191 @@ describe("TimesheetsPage — Export Hours panel", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /exporting…/i })).toBeDisabled();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timesheet view filter bar
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("TimesheetsPage — Timesheet view filter bar", () => {
+  it("renders Pending / Approved / Rejected / All filter buttons for managers", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^pending/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^approved/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^rejected/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^all/i })).toBeInTheDocument();
+    });
+  });
+
+  it("defaults to Pending view — shows Hourly Approval Queue heading", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+
+  it("switching to Approved view shows Approved Timesheets heading", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^approved/i })).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /^approved/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/approved timesheets/i)).toBeInTheDocument();
+      expect(screen.queryByText(/hourly approval queue/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it("switching to All view shows All Timesheets heading", async () => {
+    mockListTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /^all/i })).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /^all/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/all timesheets/i)).toBeInTheDocument();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Approval notes inline form
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal submitted timesheet entry fixture. */
+function makeSubmittedEntry(id = "entry-1") {
+  return {
+    id,
+    payrollType: "hourly_auto",
+    staffUserId: "staff-1",
+    staffEmail: "nurse@clinic-a.au",
+    clinicId: "11111111-1111-4111-8111-111111111111",
+    rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+    rosteredClinicName: "Verve Dental Clinic A",
+    rosterEntryId: null,
+    shiftDate: "2026-09-21",
+    shiftStartAt: "2026-09-21T07:00:00.000Z",
+    shiftEndAt: "2026-09-21T15:00:00.000Z",
+    attendanceStatus: "present",
+    clockInAt: "2026-09-21T07:02:00.000Z",
+    clockOutAt: "2026-09-21T15:05:00.000Z",
+    breakDurationMinutes: 30,
+    totalHoursWorked: 7.55,
+    ordinaryHours: 7.55,
+    overtime15xHours: 0,
+    overtime2xHours: 0,
+    overtimeCustomHours: 0,
+    timesheetStatus: "submitted",
+    approvedByUserId: null,
+    approvedAt: null,
+    approvalNotes: null,
+    commissionNote: null,
+    generatedBy: "system_auto",
+    createdAt: "2026-09-21T07:02:00.000Z",
+    updatedAt: "2026-09-21T15:05:00.000Z",
+  };
+}
+
+describe("TimesheetsPage — Approval notes inline form", () => {
+  it("clicking Approve opens inline approval form with optional notes textarea", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    // Use role="cell" to find the staff email cell — avoids matching the <option>
+    // element of the same text rendered inside the Export staff selector.
+    const emailCell = await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+    const entryRow = emailCell.closest("tr");
+    if (!entryRow) throw new Error("Expected timesheet entry row");
+
+    // Click the Approve button scoped to this row.
+    await userEvent.click(within(entryRow).getByRole("button", { name: /^approve$/i }));
+
+    // The inline approval form should appear (unique elements on the page).
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/approval note \(optional\)/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /confirm approval/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("confirms a silent approval (no notes) — form closes on Confirm Approval", async () => {
+    // The module-level approveTimesheet mock (vi.fn()) returns undefined which
+    // resolves successfully when awaited — sufficient to test the close behaviour.
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    // Scope via role="cell" to avoid matching the <option> in the export selector.
+    const emailCell2 = await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+    const entryRow2 = emailCell2.closest("tr");
+    if (!entryRow2) throw new Error("Expected timesheet entry row");
+
+    await userEvent.click(within(entryRow2).getByRole("button", { name: /^approve$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /confirm approval/i })).toBeInTheDocument();
+    });
+
+    // Click Confirm Approval without entering any note.
+    await userEvent.click(screen.getByRole("button", { name: /confirm approval/i }));
+
+    // The inline form should close (notes textarea disappears).
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText(/approval note \(optional\)/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("Cancel button closes the inline approval form without submitting", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    // Scope via role="cell" to avoid matching the <option> in the export selector.
+    const emailCell3 = await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+    const entryRow3 = emailCell3.closest("tr");
+    if (!entryRow3) throw new Error("Expected timesheet entry row");
+
+    await userEvent.click(within(entryRow3).getByRole("button", { name: /^approve$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /confirm approval/i })).toBeInTheDocument();
+    });
+
+    // Cancel closes the inline form — scope to the expanded row to avoid
+    // matching any other Cancel button that might exist on the page.
+    const expandedRow = entryRow3.nextElementSibling;
+    if (!expandedRow) throw new Error("Expected expanded inline form row");
+    await userEvent.click(within(expandedRow as HTMLElement).getByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByPlaceholderText(/approval note \(optional\)/i),
+      ).not.toBeInTheDocument();
     });
   });
 });

@@ -146,21 +146,28 @@ function PayrollTypeBadge({ type }: { type: PayrollType }) {
 
 type ApprovalQueueProps = {
   entries: TimesheetEntry[];
-  onApprove: (id: string) => Promise<void>;
+  /** Notes are optional — pass null for a silent approval. */
+  onApprove: (id: string, notes: string | null) => Promise<void>;
   onReject: (id: string, notes: string) => Promise<void>;
 };
 
 function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
+  // Approval inline-form state (notes are optional).
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveNotes, setApproveNotes] = useState("");
+  // Rejection inline-form state (notes are required).
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  async function handleApprove(id: string): Promise<void> {
+  async function handleApprove(id: string, notes: string | null): Promise<void> {
     setIsBusy(true);
     setActionError(null);
     try {
-      await onApprove(id);
+      await onApprove(id, notes);
+      setApprovingId(null);
+      setApproveNotes("");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Approval failed.");
     } finally {
@@ -238,7 +245,13 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                     <button
                       type="button"
                       className="pr-action-btn pr-action-btn--approve"
-                      onClick={() => { void handleApprove(entry.id); }}
+                      onClick={() => {
+                        // Toggle approval inline form; close rejection form.
+                        setApprovingId(entry.id === approvingId ? null : entry.id);
+                        setApproveNotes("");
+                        setRejectingId(null);
+                        setActionError(null);
+                      }}
                       disabled={isBusy}
                     >
                       Approve
@@ -247,8 +260,11 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                       type="button"
                       className="pr-action-btn pr-action-btn--reject"
                       onClick={() => {
+                        // Toggle rejection inline form; close approval form.
                         setRejectingId(entry.id === rejectingId ? null : entry.id);
                         setRejectNotes("");
+                        setApprovingId(null);
+                        setApproveNotes("");
                         setActionError(null);
                       }}
                       disabled={isBusy}
@@ -258,6 +274,53 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                   </div>
                 </td>
               </tr>
+              {/* ── Inline approval form (optional notes) ──────────────── */}
+              {approvingId === entry.id ? (
+                <tr className="pr-table__row pr-table__row--expanded">
+                  <td colSpan={8} className="pr-table__td">
+                    <div className="pr-inline-form pr-inline-form--approval">
+                      {/* Notes are optional — manager may approve silently */}
+                      <textarea
+                        className="pr-inline-form__textarea"
+                        placeholder="Approval note (optional) — appears in the export and staff record…"
+                        value={approveNotes}
+                        onChange={(e) => { setApproveNotes(e.target.value); }}
+                        disabled={isBusy}
+                        rows={2}
+                      />
+                      <div className="pr-inline-form__row-actions">
+                        <button
+                          type="button"
+                          className="pr-action-btn pr-action-btn--approve"
+                          onClick={() => {
+                            void handleApprove(entry.id, approveNotes.trim() || null);
+                          }}
+                          disabled={isBusy}
+                        >
+                          {isBusy ? "Saving…" : "Confirm Approval"}
+                        </button>
+                        <button
+                          type="button"
+                          className="pr-inline-form__cancel"
+                          onClick={() => {
+                            setApprovingId(null);
+                            setActionError(null);
+                          }}
+                          disabled={isBusy}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                    {actionError ? (
+                      <p className="pr-inline-form__error" role="alert">
+                        {actionError}
+                      </p>
+                    ) : null}
+                  </td>
+                </tr>
+              ) : null}
+              {/* ── Inline rejection form (required notes) ─────────────── */}
               {rejectingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
                   <td colSpan={8} className="pr-table__td">
@@ -699,6 +762,116 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
   );
 }
 
+// ── Manager: Timesheet view filter ───────────────────────────────────────────
+
+/**
+ * Controls which status tier the manager is currently viewing.
+ * Default is "pending" — preserving existing behaviour.
+ */
+type TimesheetViewFilter = "pending" | "approved" | "rejected" | "all";
+
+const VIEW_FILTER_LABELS: Record<TimesheetViewFilter, string> = {
+  pending:  "Pending",
+  approved: "Approved",
+  rejected: "Rejected",
+  all:      "All",
+};
+
+type TimesheetViewFilterBarProps = {
+  value: TimesheetViewFilter;
+  onChange: (v: TimesheetViewFilter) => void;
+  /** Badge counts shown on each tab (0 hides the badge). */
+  counts: Partial<Record<TimesheetViewFilter, number>>;
+};
+
+function TimesheetViewFilterBar({
+  value,
+  onChange,
+  counts,
+}: TimesheetViewFilterBarProps) {
+  const options: TimesheetViewFilter[] = ["pending", "approved", "rejected", "all"];
+  return (
+    <div className="ts-view-filter" role="group" aria-label="Timesheet status filter">
+      {options.map((opt) => {
+        const count = counts[opt] ?? 0;
+        return (
+          <button
+            key={opt}
+            type="button"
+            className={`ts-view-filter__btn${value === opt ? " ts-view-filter__btn--active" : ""}`}
+            onClick={() => { onChange(opt); }}
+            aria-pressed={value === opt}
+          >
+            {VIEW_FILTER_LABELS[opt]}
+            {count > 0 ? (
+              <span
+                className={`pr-section__count${opt === "pending" ? " pr-section__count--warn" : ""}`}
+              >
+                {count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Manager: Reviewed timesheets table (approved / rejected / all) ────────────
+
+function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
+  if (entries.length === 0) {
+    return (
+      <p className="pr-table__empty">
+        No timesheets found for the selected filter.
+      </p>
+    );
+  }
+
+  return (
+    <div className="pr-table-wrap">
+      <table className="pr-table">
+        <thead>
+          <tr>
+            <th className="pr-table__th">Staff</th>
+            <th className="pr-table__th">Date</th>
+            <th className="pr-table__th">Type</th>
+            <th className="pr-table__th">Clock In</th>
+            <th className="pr-table__th">Clock Out</th>
+            <th className="pr-table__th">Hours</th>
+            <th className="pr-table__th">Status</th>
+            <th className="pr-table__th">Approval Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.id} className="pr-table__row">
+              <td className="pr-table__td">{entry.staffEmail}</td>
+              <td className="pr-table__td pr-table__td--mono">{entry.shiftDate}</td>
+              <td className="pr-table__td">
+                <PayrollTypeBadge type={entry.payrollType} />
+              </td>
+              <td className="pr-table__td pr-table__td--clocked">
+                <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
+              </td>
+              <td className="pr-table__td pr-table__td--clocked">
+                <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
+              </td>
+              <td className="pr-table__td pr-table__td--mono">
+                {formatHours(entry.totalHoursWorked)}
+              </td>
+              <td className="pr-table__td">
+                <TimesheetStatusBadge status={entry.timesheetStatus} />
+              </td>
+              <td className="pr-table__td">{entry.approvalNotes ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Export panel (manager only) ───────────────────────────────────────────────
 
 type ExportPanelProps = {
@@ -854,6 +1027,10 @@ export function TimesheetsPage() {
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
   }));
 
+  // ── Manager view filter state — MUST be declared before any early returns ──
+  // Default "pending" preserves existing behaviour.
+  const [viewFilter, setViewFilter] = useState<TimesheetViewFilter>("pending");
+
   const isManager = user ? canManagePayroll(user.role) : false;
 
   const {
@@ -885,7 +1062,7 @@ export function TimesheetsPage() {
     );
   }
 
-  // Client-side splits for the two manager queues.
+  // Client-side splits for the two manager queues (pending view).
   const pendingApproval = timesheets.filter(
     (t) => t.timesheetStatus === "submitted" && t.payrollType !== "commission_log",
   );
@@ -894,6 +1071,40 @@ export function TimesheetsPage() {
       t.payrollType === "commission_log" &&
       t.attendanceStatus === "pending_verification",
   );
+
+  // Entries for the non-pending views (hourly tracks only).
+  const hourlyTimesheets = timesheets.filter(
+    (t) => t.payrollType !== "commission_log",
+  );
+  const reviewedEntries: TimesheetEntry[] = (() => {
+    if (viewFilter === "approved") {
+      return hourlyTimesheets.filter((t) => t.timesheetStatus === "approved");
+    }
+    if (viewFilter === "rejected") {
+      // Includes "requires_amendment" — also needs attention.
+      return hourlyTimesheets.filter(
+        (t) =>
+          t.timesheetStatus === "rejected" ||
+          t.timesheetStatus === "requires_amendment",
+      );
+    }
+    if (viewFilter === "all") {
+      return timesheets; // all entries, all statuses
+    }
+    return []; // "pending" uses the queue components
+  })();
+
+  // Badge counts for the filter bar.
+  const filterCounts: Partial<Record<TimesheetViewFilter, number>> = {
+    pending:  pendingApproval.length,
+    approved: hourlyTimesheets.filter((t) => t.timesheetStatus === "approved").length,
+    rejected: hourlyTimesheets.filter(
+      (t) =>
+        t.timesheetStatus === "rejected" ||
+        t.timesheetStatus === "requires_amendment",
+    ).length,
+    all: timesheets.length,
+  };
 
   // Unique staff emails from loaded timesheets — drives the export staff picker.
   const availableStaff = [...new Set(timesheets.map((t) => t.staffEmail))].sort();
@@ -966,52 +1177,74 @@ export function TimesheetsPage() {
               onExport={exportTimesheets}
             />
 
-            {/* ── Manager: Hourly approval queue ── */}
-            <div className="pr-section">
-              <h2 className="pr-section__title">
-                Hourly Approval Queue
-                {pendingApproval.length > 0 ? (
-                  <span className="pr-section__count pr-section__count--warn">
-                    {pendingApproval.length}
-                  </span>
-                ) : null}
-              </h2>
-              <ApprovalQueue
-                entries={pendingApproval}
-                onApprove={async (id) => {
-                  await approveTimesheet(id, {});
-                }}
-                onReject={async (id, notes) => {
-                  await rejectTimesheet(id, { approvalNotes: notes });
-                }}
-              />
-            </div>
+            {/* ── Manager: Timesheet status filter ── */}
+            <TimesheetViewFilterBar
+              value={viewFilter}
+              onChange={setViewFilter}
+              counts={filterCounts}
+            />
 
-            {/* ── Manager: Commission attendance verification ── */}
-            <div className="pr-section">
-              <h2 className="pr-section__title">
-                Commission Attendance Verification
-                {pendingCommission.length > 0 ? (
-                  <span className="pr-section__count pr-section__count--warn">
-                    {pendingCommission.length}
-                  </span>
-                ) : null}
-              </h2>
-              <p className="pr-section__hint">
-                Attendance status directly controls materials forecast accuracy. Only mark{" "}
-                <strong>Present</strong> if the provider was physically at the clinic and treated
-                patients.
-              </p>
-              <CommissionVerification
-                entries={pendingCommission}
-                onVerify={async (id, status, note) => {
-                  await verifyCommissionAttendance(id, {
-                    attendanceStatus: status,
-                    commissionNote: note || null,
-                  });
-                }}
-              />
-            </div>
+            {viewFilter === "pending" ? (
+              <>
+                {/* ── Manager: Hourly approval queue ── */}
+                <div className="pr-section">
+                  <h2 className="pr-section__title">
+                    Hourly Approval Queue
+                    {pendingApproval.length > 0 ? (
+                      <span className="pr-section__count pr-section__count--warn">
+                        {pendingApproval.length}
+                      </span>
+                    ) : null}
+                  </h2>
+                  <ApprovalQueue
+                    entries={pendingApproval}
+                    onApprove={async (id, notes) => {
+                      await approveTimesheet(id, { approvalNotes: notes });
+                    }}
+                    onReject={async (id, notes) => {
+                      await rejectTimesheet(id, { approvalNotes: notes });
+                    }}
+                  />
+                </div>
+
+                {/* ── Manager: Commission attendance verification ── */}
+                <div className="pr-section">
+                  <h2 className="pr-section__title">
+                    Commission Attendance Verification
+                    {pendingCommission.length > 0 ? (
+                      <span className="pr-section__count pr-section__count--warn">
+                        {pendingCommission.length}
+                      </span>
+                    ) : null}
+                  </h2>
+                  <p className="pr-section__hint">
+                    Attendance status directly controls materials forecast accuracy. Only mark{" "}
+                    <strong>Present</strong> if the provider was physically at the clinic and treated
+                    patients.
+                  </p>
+                  <CommissionVerification
+                    entries={pendingCommission}
+                    onVerify={async (id, status, note) => {
+                      await verifyCommissionAttendance(id, {
+                        attendanceStatus: status,
+                        commissionNote: note || null,
+                      });
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              /* ── Manager: Reviewed / all timesheets ── */
+              <div className="pr-section">
+                <h2 className="pr-section__title">
+                  {VIEW_FILTER_LABELS[viewFilter]} Timesheets
+                  {reviewedEntries.length > 0 ? (
+                    <span className="pr-section__count">{reviewedEntries.length}</span>
+                  ) : null}
+                </h2>
+                <ReviewedTimesheets entries={reviewedEntries} />
+              </div>
+            )}
           </>
         ) : (
           <>

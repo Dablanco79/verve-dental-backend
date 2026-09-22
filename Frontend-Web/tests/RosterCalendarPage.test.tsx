@@ -447,10 +447,22 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
 
     renderPage();
 
-    // Wait for initial accessible-clinics load and scope selector to render
+    // Wait for the scope selector button to appear.
     const clinicABtn = await screen.findByRole("button", { name: TEST_CLINIC_NAME });
 
-    // Clear call history to only track calls after scope change
+    // findByRole resolves as soon as the button is in the DOM — which is the
+    // same React commit that makes the accessible-clinics list available.
+    // The "all clinics" useEffect fires in that *same* commit cycle, so
+    // listRoster(A) and listRoster(B) may not have been recorded yet.
+    // Wait explicitly for both initial fetches to fire before clearing,
+    // so that mockClear() is guaranteed to be past all pre-scope-change calls.
+    await waitFor(() => {
+      const initialCalls = mockListRoster.mock.calls.map((c) => c[0] as string);
+      expect(initialCalls).toContain(TEST_CLINIC_ID);
+      expect(initialCalls).toContain(CLINIC_B_ID);
+    });
+
+    // Now safe to clear — all pre-scope-change calls are recorded and flushed.
     mockListRoster.mockClear();
     mockListRoster.mockImplementation((clinicId: string) => {
       if (clinicId === TEST_CLINIC_ID) return Promise.resolve([entryA]);

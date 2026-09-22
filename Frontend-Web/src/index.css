@@ -10821,6 +10821,61 @@ select.vds-control {
 
 /* ── Rejection form — VDS textarea treatment ─────────────────────────────── */
 
+/* ── Timesheet view filter bar ───────────────────────────────────────────── */
+
+.ts-view-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vds-space-2);
+  margin-bottom: var(--vds-space-4);
+}
+
+.ts-view-filter__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.9rem;
+  border: 1.5px solid var(--vds-colour-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vds-colour-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  line-height: 1.4;
+}
+
+.ts-view-filter__btn:hover:not(.ts-view-filter__btn--active) {
+  background: var(--vds-colour-surface-hover, #f0f4f8);
+}
+
+.ts-view-filter__btn--active {
+  background: var(--vds-colour-primary, #102a43);
+  border-color: var(--vds-colour-primary, #102a43);
+  color: #fff;
+}
+
+.ts-view-filter__btn--active .pr-section__count,
+.ts-view-filter__btn--active .pr-section__count--warn {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+/* ── Inline approval form (notes are optional) ────────────────────────── */
+
+.pr-inline-form--approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vds-space-2);
+  padding: var(--vds-space-3);
+  background: #d1fae5; /* light green, mirrors approve button palette */
+  border-radius: 8px;
+  border: 1px solid #6ee7b7;
+}
+
+/* ── Inline rejection form ────────────────────────────────────────────── */
+
 .pr-inline-form--rejection {
   display: flex;
   flex-direction: column;
