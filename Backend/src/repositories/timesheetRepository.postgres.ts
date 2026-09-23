@@ -594,5 +594,48 @@ export function createPostgresTimesheetRepository(
 
       return toTimesheetEntry(row);
     },
+
+    // ── activateClockIn ────────────────────────────────────────────────────
+
+    /**
+     * Activates a system-auto pre-filled timesheet entry with the actual
+     * server-authoritative clock-in time.  Called exclusively by
+     * timesheetService.clockIn() when a staff member clocks in against a
+     * shift that generateFromCompletedRoster() already created a draft for.
+     *
+     * Overwrites clock_in_at with the real arrival timestamp, clears the
+     * scheduled clock_out_at and all five hour-bucket columns (not yet
+     * clocked out), and stamps generated_by with the staff member's email
+     * so subsequent clock-in attempts are correctly blocked.
+     */
+    async activateClockIn(
+      id: string,
+      clockInAt: Date,
+      generatedBy: string,
+    ): Promise<TimesheetEntry> {
+      const { rows } = await pool.query<TimesheetEntryRow>(
+        `UPDATE timesheet_entries
+         SET clock_in_at             = $1,
+             clock_out_at            = NULL,
+             break_duration_minutes  = NULL,
+             total_hours_worked      = NULL,
+             ordinary_hours          = NULL,
+             overtime_1_5x_hours     = NULL,
+             overtime_2x_hours       = NULL,
+             overtime_custom_hours   = NULL,
+             generated_by            = $2,
+             updated_at              = now()
+         WHERE id = $3
+         RETURNING *`,
+        [clockInAt, generatedBy, id],
+      );
+
+      const row = rows[0];
+      if (!row) {
+        throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
+      }
+
+      return toTimesheetEntry(row);
+    },
   };
 }

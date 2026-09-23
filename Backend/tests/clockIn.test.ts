@@ -518,3 +518,125 @@ describe("POST /clock-out — clock-out behaviour", () => {
     expect(res.status).toBe(403);
   });
 });
+
+// ── ROSTER PRE-FILL ACTIVATION (PRODUCTION BLOCKER FIX) ──────────────────────
+//
+// generateFromCompletedRoster() creates an hourly_auto 'draft' entry when a
+// roster shift transitions to 'completed'.  Before this fix, a subsequent
+// clockIn() call against the same roster entry unconditionally tried to INSERT
+// a new row, violating the unique constraint timesheet_entries_roster_unique
+// and returning HTTP 500.
+//
+// Regression coverage:
+//   1. Clock-in against a roster shift with a pre-filled entry activates the
+//      existing row (201) — server time stamps clockInAt, clockOutAt is null
+//   2. Second clock-in against the same activated entry returns 409
+//      ALREADY_CLOCKED_IN — never HTTP 500
+
+describe("POST /clock-in — roster pre-fill activation (production blocker fix)", () => {
+  type RosterEntryResponse = {
+    id: string;
+    status: string;
+    shiftStartAt: string;
+    shiftEndAt: string;
+  };
+
+  // A roster shift well in the future so it cannot conflict with any other test.
+  const ROSTER_SHIFT_START = "2026-10-01T22:00:00.000Z";
+  const ROSTER_SHIFT_END   = "2026-10-02T06:00:00.000Z"; // +8 h
+
+  /**
+   * Creates a roster entry for the seed staff member and then marks it
+   * 'completed', which fires generateFromCompletedRoster() and creates
+   * an hourly_auto 'draft' pre-fill row.  Returns the roster entry id.
+   */
+  async function seedCompletedRosterEntry(
+    app: Awaited<ReturnType<typeof createTestApp>>,
+    managerToken: string,
+  ): Promise<string> {
+    // Step 1 — create the roster entry.
+    const createRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        staffUserId: SEED_USER_IDS.clinicAStaff,
+        shiftStartAt: ROSTER_SHIFT_START,
+        shiftEndAt: ROSTER_SHIFT_END,
+        shiftType: "standard",
+      });
+    expect(createRes.status).toBe(201);
+    const entry = (createRes.body as ApiData<RosterEntryResponse>).data;
+
+    // Step 2 — mark completed → triggers generateFromCompletedRoster() hook.
+    const completeRes = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${entry.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ status: "completed" });
+    expect(completeRes.status).toBe(200);
+
+    return entry.id;
+  }
+
+  it("201: clock-in against a pre-filled roster entry activates the existing row, not a duplicate", async () => {
+    const app          = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const staffToken   = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const rosterEntryId = await seedCompletedRosterEntry(app, managerToken);
+
+    const before = new Date();
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId,
+        // shiftStartAt / shiftEndAt are required by schema but are ignored for
+        // roster-linked entries — the service derives them from the DB record.
+        shiftStartAt: ROSTER_SHIFT_START,
+        shiftEndAt: ROSTER_SHIFT_END,
+      });
+    const after = new Date();
+
+    // Must succeed — no HTTP 500 from the unique constraint.
+    expect(res.status).toBe(201);
+    const entry = (res.body as ApiData<TimesheetEntry>).data;
+
+    expect(entry.timesheetStatus).toBe("draft");
+    expect(entry.payrollType).toBe("hourly_auto");
+
+    // clockInAt must be the actual server activation time, NOT the scheduled
+    // shiftStartAt from the pre-fill ("2026-10-01T22:00:00.000Z").
+    expect(entry.clockInAt).not.toBeNull();
+    if (entry.clockInAt === null) throw new Error("Expected clockInAt to be set after activation");
+    const clockedInAt = new Date(entry.clockInAt).getTime();
+    expect(clockedInAt).toBeGreaterThanOrEqual(before.getTime() - 1000);
+    expect(clockedInAt).toBeLessThanOrEqual(after.getTime() + 1000);
+
+    // clockOutAt must be null — the staff member has not yet clocked out.
+    expect(entry.clockOutAt).toBeNull();
+  });
+
+  it("409 ALREADY_CLOCKED_IN: second clock-in against the same activated entry is rejected, not HTTP 500", async () => {
+    const app          = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const staffToken   = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const rosterEntryId = await seedCompletedRosterEntry(app, managerToken);
+
+    // First clock-in: activates the pre-fill row (201).
+    const firstRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId, shiftStartAt: ROSTER_SHIFT_START, shiftEndAt: ROSTER_SHIFT_END });
+    expect(firstRes.status).toBe(201);
+
+    // Second clock-in: must return 409, never 500.
+    const secondRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId, shiftStartAt: ROSTER_SHIFT_START, shiftEndAt: ROSTER_SHIFT_END });
+
+    expect(secondRes.status).toBe(409);
+    expect((secondRes.body as ApiError).error.code).toBe("ALREADY_CLOCKED_IN");
+  });
+});

@@ -43,6 +43,25 @@ export interface TimesheetRepository {
    */
   getForecastLogs(rosteredClinicId: string, date: string): Promise<TimesheetEntry[]>;
   update(id: string, input: UpdateTimesheetEntryInput): Promise<TimesheetEntry>;
+  /**
+   * Activates a system-auto pre-filled timesheet entry with the actual
+   * server-authoritative clock-in time.
+   *
+   * Called exclusively by timesheetService.clockIn() when a roster shift had
+   * its timesheet pre-created by generateFromCompletedRoster()
+   * (generatedBy = "system_auto", timesheetStatus = "draft").
+   *
+   * Writes:
+   *   clock_in_at            = clockInAt   (actual arrival, replaces scheduled pre-fill)
+   *   clock_out_at           = NULL        (not yet clocked out)
+   *   break_duration_minutes = NULL
+   *   <all five hour-bucket columns> = NULL
+   *   generated_by           = generatedBy (stamps staff member's identity)
+   *
+   * Intentionally does NOT touch: timesheet_status, shift_start_at, shift_end_at,
+   * attendance_status, clinic_id, rostered_clinic_id, roster_entry_id.
+   */
+  activateClockIn(id: string, clockInAt: Date, generatedBy: string): Promise<TimesheetEntry>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,6 +253,38 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
 
       entries[index] = updated;
       return Promise.resolve({ ...updated });
+    },
+
+    activateClockIn(
+      id: string,
+      clockInAt: Date,
+      generatedBy: string,
+    ): Promise<TimesheetEntry> {
+      const index = entries.findIndex((e) => e.id === id);
+      const existing = entries[index];
+
+      if (index === -1 || !existing) {
+        return Promise.reject(new Error(`Timesheet entry not found: ${id}`));
+      }
+
+      const activated: TimesheetEntry = {
+        ...existing,
+        clockInAt,
+        // Clear the scheduled pre-fill — staff has not yet clocked out.
+        clockOutAt: null,
+        breakDurationMinutes: null,
+        totalHoursWorked: null,
+        ordinaryHours: null,
+        overtime15xHours: null,
+        overtime2xHours: null,
+        overtimeCustomHours: null,
+        // Stamp actual identity so subsequent clock-in attempts are blocked.
+        generatedBy,
+        updatedAt: new Date(),
+      };
+
+      entries[index] = activated;
+      return Promise.resolve({ ...activated });
     },
   };
 }

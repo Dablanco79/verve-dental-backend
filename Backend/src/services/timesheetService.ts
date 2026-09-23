@@ -425,33 +425,109 @@ export function createTimesheetService(
 
       const now = new Date();
 
-      return timesheetRepository.create({
-        payrollType: "hourly_auto",
-        staffUserId: caller.id,
-        staffEmail: caller.email,
-        // clinic_id MUST be the staff member's payroll home clinic, not the
-        // physical work location.  This is the invariant that RLS and all
-        // downstream payroll grouping depends on.  rosteredClinicId captures
-        // the physical work location separately.
-        clinicId: caller.homeClinicId,
-        rosteredClinicId,
-        rosteredClinicName,
-        rosterEntryId: input.rosterEntryId,
-        shiftDate,
-        shiftStartAt,
-        shiftEndAt,
-        attendanceStatus: "present",
-        clockInAt: now,
-        clockOutAt: null,
-        breakDurationMinutes: null,
-        totalHoursWorked: null,
-        ordinaryHours: null,
-        overtime15xHours: null,
-        overtime2xHours: null,
-        overtimeCustomHours: null,
-        commissionNote: null,
-        generatedBy: caller.email,
-      });
+      // ── Roster pre-fill upsert ─────────────────────────────────────────
+      // generateFromCompletedRoster() may have already created a 'draft' row
+      // when this roster shift transitioned to 'completed'.  If so, ACTIVATE
+      // that row instead of creating a duplicate, which would violate the
+      // unique constraint timesheet_entries_roster_unique (HTTP 500 blocker).
+      if (input.rosterEntryId) {
+        const existing = await timesheetRepository.findByRosterEntry(
+          input.rosterEntryId,
+        );
+
+        if (existing) {
+          // Always verify ownership before inspecting or mutating the entry.
+          if (existing.staffUserId !== caller.id) {
+            throw new AppError(
+              403,
+              "FORBIDDEN",
+              "This roster timesheet does not belong to you",
+            );
+          }
+
+          // Hard block if the entry has already been approved or processed.
+          if (
+            existing.timesheetStatus === "approved" ||
+            existing.timesheetStatus === "processed"
+          ) {
+            throw new AppError(
+              409,
+              "ENTRY_ALREADY_PROCESSED",
+              "This timesheet entry has already been approved or processed",
+            );
+          }
+
+          // System-auto pre-fill (generatedBy = "system_auto"): first real
+          // clock-in.  Activate with actual server time, clear pre-filled
+          // clock-out and hour buckets, stamp the staff member's identity.
+          if (existing.generatedBy === "system_auto") {
+            return timesheetRepository.activateClockIn(
+              existing.id,
+              now,
+              caller.email,
+            );
+          }
+
+          // Real clock-in already on record — reject duplicates.
+          if (existing.clockOutAt === null) {
+            throw new AppError(
+              409,
+              "ALREADY_CLOCKED_IN",
+              "You are already clocked in for this shift",
+            );
+          }
+
+          // Clocked in and out but not yet approved — cannot clock in again.
+          throw new AppError(
+            409,
+            "SHIFT_ALREADY_RECORDED",
+            "A timesheet entry for this shift has already been recorded",
+          );
+        }
+        // No existing entry: fall through to create() below.
+      }
+
+      try {
+        return await timesheetRepository.create({
+          payrollType: "hourly_auto",
+          staffUserId: caller.id,
+          staffEmail: caller.email,
+          // clinic_id MUST be the staff member's payroll home clinic, not the
+          // physical work location.  This is the invariant that RLS and all
+          // downstream payroll grouping depends on.  rosteredClinicId captures
+          // the physical work location separately.
+          clinicId: caller.homeClinicId,
+          rosteredClinicId,
+          rosteredClinicName,
+          rosterEntryId: input.rosterEntryId,
+          shiftDate,
+          shiftStartAt,
+          shiftEndAt,
+          attendanceStatus: "present",
+          clockInAt: now,
+          clockOutAt: null,
+          breakDurationMinutes: null,
+          totalHoursWorked: null,
+          ordinaryHours: null,
+          overtime15xHours: null,
+          overtime2xHours: null,
+          overtimeCustomHours: null,
+          commissionNote: null,
+          generatedBy: caller.email,
+        });
+      } catch (err) {
+        // Defensive backstop: if a concurrent pre-fill was created between the
+        // findByRosterEntry check above and the create() call, surface it as a
+        // 409 domain error rather than an unhandled DB exception.
+        if (isUniqueViolation(err)) {
+          throw new AppError(
+            409,
+            "SHIFT_ALREADY_RECORDED",
+            "A timesheet entry for this shift already exists — please refresh and try again",
+          );
+        }
+        throw err;
+      }
     },
 
     /**
