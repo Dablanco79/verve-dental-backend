@@ -1,10 +1,12 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, Download, Info } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
+import { loadConfig } from "../config/index.js";
 import { useTimesheets } from "../hooks/useTimesheets.js";
 import type {
   AttendanceStatus,
@@ -21,7 +23,11 @@ import {
   PAYROLL_TYPE_LABELS,
   TIMESHEET_STATUS_LABELS,
 } from "../types/payroll.js";
+import type { RosterEntry } from "../types/roster.js";
 import { canManagePayroll } from "../utils/roles.js";
+
+// Module-level API client (same pattern as useTimesheets / MyShiftsPage).
+const apiClient = createApiClient(loadConfig());
 
 // ── Utility helpers ─────────────────────────────────────────────────────────
 
@@ -39,6 +45,17 @@ function formatDateTime(iso: string | null): string {
 function formatHours(h: number | null): string {
   if (h === null) return "—";
   return `${h.toFixed(2)} h`;
+}
+
+/** Formats a rostered shift window as "HH:MM – HH:MM" (24-hour, Melbourne locale). */
+function formatShiftTime(isoStart: string, isoEnd: string): string {
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleTimeString("en-AU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  return `${fmt(isoStart)} – ${fmt(isoEnd)}`;
 }
 
 function toDatetimeLocal(date: Date): string {
@@ -525,12 +542,23 @@ function CommissionVerification({ entries, onVerify }: CommissionVerificationPro
 
 type ClockWidgetProps = {
   openEntry: TimesheetEntry | undefined;
+  /**
+   * Roster shifts for today (non-cancelled) fetched from /roster/me.
+   * Passed down from TimesheetsPage so the widget can include the exact
+   * roster entry ID in the clock-in request.
+   *
+   * - length === 0 → ad-hoc mode (no rosterEntryId sent)
+   * - length === 1 → auto-selected; shift times shown as read-only
+   * - length  >  1 → user selects from a dropdown before clocking in
+   */
+  todayShifts: RosterEntry[];
   onClockIn: (payload: ClockInRequest) => Promise<TimesheetEntry>;
   onClockOut: (timesheetId: string, payload: ClockOutRequest) => Promise<TimesheetEntry>;
 };
 
 function ClockWidget({
   openEntry,
+  todayShifts,
   onClockIn,
   onClockOut,
 }: ClockWidgetProps) {
@@ -543,6 +571,21 @@ function ClockWidget({
   const [isBusy, setIsBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Tracks which roster shift the staff member is clocking into.
+  // null = ad-hoc (no roster link).
+  const [selectedShift, setSelectedShift] = useState<RosterEntry | null>(null);
+
+  // Auto-select when exactly one non-cancelled shift is known for today.
+  // If multiple, the user must choose from the dropdown.
+  useEffect(() => {
+    if (todayShifts.length === 1) {
+      setSelectedShift(todayShifts[0] ?? null);
+    } else if (todayShifts.length === 0) {
+      setSelectedShift(null);
+    }
+    // Multiple shifts: leave selection to the user; don't auto-reset.
+  }, [todayShifts]);
+
   async function handleClockIn(): Promise<void> {
     setIsBusy(true);
     setFormError(null);
@@ -550,9 +593,20 @@ function ClockWidget({
       // rosteredClinicId, rosteredClinicName, and shiftDate are all derived
       // server-side — sending them from the client would be rejected by the
       // backend's strict schema and could allow location spoofing.
+      //
+      // When a roster entry is selected, pass its exact ID so the service can
+      // activate the system_auto pre-fill (or create a roster-linked entry if
+      // no pre-fill exists).  shiftStartAt/shiftEndAt fall back to the roster
+      // entry's scheduled times — the backend ignores them for pre-fill
+      // activation but uses them as the planned window for a new entry.
       await onClockIn({
-        shiftStartAt: new Date(startAt).toISOString(),
-        shiftEndAt: new Date(endAt).toISOString(),
+        rosterEntryId: selectedShift?.id ?? null,
+        shiftStartAt: selectedShift
+          ? selectedShift.shiftStartAt
+          : new Date(startAt).toISOString(),
+        shiftEndAt: selectedShift
+          ? selectedShift.shiftEndAt
+          : new Date(endAt).toISOString(),
       });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-in failed. Try again.");
@@ -656,32 +710,73 @@ function ClockWidget({
 
       {/* Clock In form — dominant action, shown directly */}
       <div className="pr-clock-form ts-clock-form">
-        <div className="pr-clock-form__field">
-          <label className="pr-clock-form__label" htmlFor="shift-start">
-            Shift start
-          </label>
-          <input
-            id="shift-start"
-            type="datetime-local"
-            className="pr-clock-form__control"
-            value={startAt}
-            onChange={(e) => { setStartAt(e.target.value); }}
-            disabled={isBusy}
-          />
-        </div>
-        <div className="pr-clock-form__field">
-          <label className="pr-clock-form__label" htmlFor="shift-end">
-            Planned end
-          </label>
-          <input
-            id="shift-end"
-            type="datetime-local"
-            className="pr-clock-form__control"
-            value={endAt}
-            onChange={(e) => { setEndAt(e.target.value); }}
-            disabled={isBusy}
-          />
-        </div>
+
+        {/* ── Roster shift picker (multiple shifts today) ── */}
+        {todayShifts.length > 1 ? (
+          <div className="pr-clock-form__field">
+            <label className="pr-clock-form__label" htmlFor="roster-shift-select">
+              Select shift
+            </label>
+            <select
+              id="roster-shift-select"
+              className="pr-clock-form__control"
+              value={selectedShift?.id ?? ""}
+              onChange={(e) => {
+                const shift = todayShifts.find((s) => s.id === e.target.value) ?? null;
+                setSelectedShift(shift);
+              }}
+              disabled={isBusy}
+            >
+              <option value="">Ad-hoc (no roster shift)</option>
+              {todayShifts.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {formatShiftTime(s.shiftStartAt, s.shiftEndAt)}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        {/* ── Roster shift info (single auto-selected shift) ── */}
+        {selectedShift ? (
+          <p className="pr-clock-card__shift-info ts-clock-shift-info">
+            Rostered shift:{" "}
+            <strong className="ts-clock-time">
+              {formatShiftTime(selectedShift.shiftStartAt, selectedShift.shiftEndAt)}
+            </strong>
+          </p>
+        ) : (
+          /* ── Ad-hoc mode: editable time inputs ── */
+          <>
+            <div className="pr-clock-form__field">
+              <label className="pr-clock-form__label" htmlFor="shift-start">
+                Shift start
+              </label>
+              <input
+                id="shift-start"
+                type="datetime-local"
+                className="pr-clock-form__control"
+                value={startAt}
+                onChange={(e) => { setStartAt(e.target.value); }}
+                disabled={isBusy}
+              />
+            </div>
+            <div className="pr-clock-form__field">
+              <label className="pr-clock-form__label" htmlFor="shift-end">
+                Planned end
+              </label>
+              <input
+                id="shift-end"
+                type="datetime-local"
+                className="pr-clock-form__control"
+                value={endAt}
+                onChange={(e) => { setEndAt(e.target.value); }}
+                disabled={isBusy}
+              />
+            </div>
+          </>
+        )}
+
         <div className="pr-clock-form__actions ts-clock-actions">
           <button
             type="button"
@@ -1033,6 +1128,32 @@ export function TimesheetsPage() {
 
   const isManager = user ? canManagePayroll(user.role) : false;
 
+  // ── Today's roster shifts (staff only) ───────────────────────────────────
+  // Fetched once per page mount so ClockWidget can include the exact
+  // rosterEntryId in the clock-in request.  Errors are silently ignored —
+  // the widget falls back to ad-hoc mode (no rosterEntryId) which remains
+  // safe and functional.
+  const [todayShifts, setTodayShifts] = useState<RosterEntry[]>([]);
+
+  useEffect(() => {
+    if (!clinicId || isManager) return;
+
+    // ±12-hour window captures any shift whose scheduled start falls within
+    // a generous "today" regardless of the Melbourne / UTC offset.
+    const now = new Date();
+    const from = new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString();
+    const to   = new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString();
+
+    void apiClient
+      .getMyShifts(clinicId, { from, to })
+      .then((shifts) => {
+        setTodayShifts(shifts.filter((s) => s.status !== "cancelled"));
+      })
+      .catch(() => {
+        // Silently ignore — ClockWidget falls back to ad-hoc mode.
+      });
+  }, [clinicId, isManager]);
+
   const {
     timesheets,
     isLoading,
@@ -1253,6 +1374,7 @@ export function TimesheetsPage() {
               <h2 className="pr-section__title">Today&apos;s Session</h2>
               <ClockWidget
                 openEntry={openEntry}
+                todayShifts={todayShifts}
                 onClockIn={clockIn}
                 onClockOut={clockOut}
               />

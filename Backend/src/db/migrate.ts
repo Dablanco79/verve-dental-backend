@@ -3059,6 +3059,46 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ADD COLUMN IF NOT EXISTS preferred_name text;
     `,
   },
+  {
+    /**
+     * Replaces the UNIQUE NULLS NOT DISTINCT (roster_entry_id, payroll_type)
+     * table constraint with a partial unique index scoped to roster-linked rows.
+     *
+     * Problem: NULLS NOT DISTINCT makes every NULL roster_entry_id equivalent
+     * to every other NULL — so the entire table can hold at most one ad-hoc
+     * (roster_entry_id IS NULL) entry per payroll_type.  The very first
+     * approved ad-hoc entry permanently blocks all subsequent ad-hoc clock-ins
+     * for every staff member across every clinic.
+     *
+     * Fix: drop the constraint and replace it with a partial index that enforces
+     * uniqueness only when roster_entry_id is non-null.  Ad-hoc rows are
+     * explicitly excluded, which is the intended design:
+     *   • roster-linked rows  → at most one canonical timesheet per
+     *                           (roster_entry_id, payroll_type) pair (unchanged)
+     *   • ad-hoc rows         → unlimited, each genuinely independent
+     *
+     * The service-level guard in timesheetService.clockIn() already prevents
+     * double clock-in for the same roster entry via findByRosterEntry(); the
+     * partial index provides a DB-level backstop in case the service logic is
+     * bypassed.
+     *
+     * Idempotent: both the DROP and the CREATE use IF EXISTS / IF NOT EXISTS.
+     */
+    id: "050_fix_timesheet_roster_unique",
+    sql: `
+      -- Remove the NULLS NOT DISTINCT constraint that makes all NULL
+      -- roster_entry_id values globally identical.
+      ALTER TABLE timesheet_entries
+        DROP CONSTRAINT IF EXISTS timesheet_entries_roster_unique;
+
+      -- Partial unique index: one canonical timesheet per
+      -- (roster_entry_id, payroll_type) pair, but ONLY for roster-linked rows.
+      -- Ad-hoc entries (roster_entry_id IS NULL) are intentionally not covered.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timesheet_roster_unique
+        ON timesheet_entries (roster_entry_id, payroll_type)
+        WHERE roster_entry_id IS NOT NULL;
+    `,
+  },
 ];
 
 /**

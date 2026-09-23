@@ -25,17 +25,27 @@ import type { AuthUser } from "../src/types/index.js";
 // vi.mock is hoisted before variable declarations — use vi.hoisted to declare
 // the mocks inside the hoisted block so they are available in the factory.
 
-const { mockListMyTimesheets, mockListTimesheets, mockExportTimesheets } = vi.hoisted(() => ({
+const {
+  mockListMyTimesheets,
+  mockListTimesheets,
+  mockExportTimesheets,
+  mockGetMyShifts,
+  mockClockIn,
+} = vi.hoisted(() => ({
   mockListMyTimesheets: vi.fn(),
   mockListTimesheets: vi.fn(),
   mockExportTimesheets: vi.fn(),
+  // Roster fetch for today's shifts — default empty (ad-hoc mode)
+  mockGetMyShifts: vi.fn().mockResolvedValue([]),
+  // Clock-in — captured to assert the request payload
+  mockClockIn: vi.fn(),
 }));
 
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listMyTimesheets: mockListMyTimesheets,
     listTimesheets: mockListTimesheets,
-    clockIn: vi.fn(),
+    clockIn: mockClockIn,
     clockOut: vi.fn(),
     approveTimesheet: vi.fn(),
     rejectTimesheet: vi.fn(),
@@ -43,6 +53,7 @@ vi.mock("../src/api/client.js", () => ({
     exportTimesheets: mockExportTimesheets,
     refresh: vi.fn().mockRejectedValue(new Error("no cookie")),
     getMe: vi.fn(),
+    getMyShifts: mockGetMyShifts,
   }),
 }));
 
@@ -524,5 +535,107 @@ describe("TimesheetsPage — Approval notes inline form", () => {
         screen.queryByPlaceholderText(/approval note \(optional\)/i),
       ).not.toBeInTheDocument();
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix A regression — roster-linked clock-in sends exact rosterEntryId
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Before Fix A, ClockWidget never sent rosterEntryId in the clock-in request,
+// so the backend's findByRosterEntry() / activateClockIn() path was bypassed
+// on every roster-linked clock-in.
+//
+// Fix A wires today's roster entries from /roster/me into ClockWidget.
+// When a single shift exists the widget auto-selects it and sends:
+//   { rosterEntryId: <id>, shiftStartAt, shiftEndAt }
+// so the backend can activate the pre-fill instead of creating a duplicate row.
+
+describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () => {
+  const CLINIC_ID  = "11111111-1111-4111-8111-111111111111";
+  const ROSTER_ID  = "rrrrrrr1-r1r1-4r1r-8r1r-r1r1r1r1r1r1";
+  const SHIFT_START = "2026-09-23T22:00:00.000Z";
+  const SHIFT_END   = "2026-09-24T06:00:00.000Z";
+
+  function makeRosterEntry() {
+    return {
+      id:                       ROSTER_ID,
+      staffUserId:              "user-1",
+      staffEmail:               "user@clinic-a.au",
+      rosteredClinicId:         CLINIC_ID,
+      rosteredClinicName:       "Verve Dental Clinic A",
+      rosteredClinicPreferredName: null,
+      shiftStartAt:             SHIFT_START,
+      shiftEndAt:               SHIFT_END,
+      shiftType:                "standard",
+      status:                   "confirmed",
+      notes:                    null,
+      createdByUserId:          "manager-1",
+      createdAt:                "2026-09-20T00:00:00.000Z",
+      updatedAt:                "2026-09-20T00:00:00.000Z",
+    };
+  }
+
+  beforeEach(() => {
+    // Reset per-suite mocks before each test so captured calls and mock
+    // implementations don't bleed from one test into the next.
+    // The top-level beforeEach already calls vi.clearAllMocks(); these
+    // re-establish the default return values that clearAllMocks() stripped.
+    mockGetMyShifts.mockResolvedValue([]);
+    mockClockIn.mockResolvedValue({
+      id:              "ts-new",
+      clinicId:         CLINIC_ID,
+      rosteredClinicId: CLINIC_ID,
+      shiftDate:        "2026-09-24",
+      shiftStartAt:     SHIFT_START,
+      shiftEndAt:       SHIFT_END,
+      clockInAt:        new Date().toISOString(),
+      clockOutAt:       null,
+      staffUserId:      "user-1",
+      payrollType:      "hourly_auto",
+      timesheetStatus:  "draft",
+      totalHoursWorked: null,
+    });
+  });
+
+  it("1 — single rostered shift: clock-in request includes the exact rosterEntryId", async () => {
+    // One shift today → widget auto-selects it.
+    mockGetMyShifts.mockResolvedValue([makeRosterEntry()]);
+    mockListMyTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // Wait for the widget to render and the shift to be fetched.
+    const clockInBtn = await screen.findByRole("button", { name: /clock in/i });
+
+    await userEvent.click(clockInBtn);
+
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledOnce();
+    });
+
+    // The payload must include the exact roster entry ID.
+    const [, payload] = mockClockIn.mock.calls[0] as [string, { rosterEntryId?: string | null }];
+    expect(payload.rosterEntryId).toBe(ROSTER_ID);
+  });
+
+  it("2 — no roster shifts (ad-hoc): rosterEntryId is null in clock-in request", async () => {
+    // Explicitly return empty — vi.clearAllMocks() in the top-level beforeEach
+    // strips the initial mockResolvedValue([]) set during vi.hoisted.
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    const clockInBtn = await screen.findByRole("button", { name: /clock in/i });
+    await userEvent.click(clockInBtn);
+
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledOnce();
+    });
+
+    const [, payload] = mockClockIn.mock.calls[0] as [string, { rosterEntryId?: string | null }];
+    // Ad-hoc: null or omitted
+    expect(payload.rosterEntryId ?? null).toBeNull();
   });
 });

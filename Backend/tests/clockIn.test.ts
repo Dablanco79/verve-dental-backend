@@ -10,6 +10,17 @@
  *   - sending shiftDate in the body is rejected (strict schema)
  *   - sending rosteredClinicId in the body is rejected (strict schema / location spoofing)
  *
+ *   Roster pre-fill activation (Fix A + Fix B — production blocker)
+ *   ─────────────────────────────────────────────────────────────────
+ *   See "ROSTER PRE-FILL ACTIVATION" describe block for detailed coverage.
+ *
+ *   Constraint fix regression (Fix B — partial unique index)
+ *   ─────────────────────────────────────────────────────────
+ *   7. Multiple ad-hoc hourly_auto timesheets (roster_entry_id = null) can coexist
+ *   8. Two timesheets for the same non-null (roster_entry_id, payroll_type) remain prohibited
+ *   9. Cross-clinic roster identity: one canonical timesheet per roster entry even when the
+ *      same staff member is rostered at two different clinics on the same day
+ *
  *   Shift-window validation
  *   ───────────────────────
  *   - shiftEndAt AFTER shiftStartAt succeeds (201)
@@ -56,6 +67,7 @@ import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 import {
   SEED_CLINIC_A_ID,
+  SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
 
@@ -638,5 +650,210 @@ describe("POST /clock-in — roster pre-fill activation (production blocker fix)
 
     expect(secondRes.status).toBe(409);
     expect((secondRes.body as ApiError).error.code).toBe("ALREADY_CLOCKED_IN");
+  });
+});
+
+// ── FIX B REGRESSION — PARTIAL UNIQUE INDEX ───────────────────────────────────
+//
+// Before Fix B the constraint was:
+//   UNIQUE NULLS NOT DISTINCT (roster_entry_id, payroll_type)
+//
+// That makes (NULL, 'hourly_auto') equal to every other (NULL, 'hourly_auto')
+// row in the entire table, so the very first ad-hoc clock-in permanently
+// blocks every subsequent ad-hoc clock-in, across all staff and all clinics.
+//
+// Fix B replaces the constraint with:
+//   CREATE UNIQUE INDEX ... ON timesheet_entries (roster_entry_id, payroll_type)
+//   WHERE roster_entry_id IS NOT NULL;
+//
+// Regression coverage:
+//   7. Two ad-hoc clock-ins (roster_entry_id = null) can coexist — no constraint
+//      violation, each creates an independent row.
+//   8. Two clock-ins against the same non-null roster entry are still prohibited —
+//      the partial index (and service-level guard) still fires.
+//   9. Cross-clinic roster identity: one canonical timesheet per roster entry even
+//      when the same staff member has a roster entry at each of two different clinics.
+
+describe("POST /clock-in — Fix B regression (partial unique index)", () => {
+  // Use distinct far-future dates so these tests never conflict with the
+  // pre-fill activation suite or each other, regardless of test ordering.
+  const ADHOC_START_1 = "2026-11-01T22:00:00.000Z";
+  const ADHOC_END_1   = "2026-11-02T06:00:00.000Z";
+  const ADHOC_START_2 = "2026-11-02T22:00:00.000Z";
+  const ADHOC_END_2   = "2026-11-03T06:00:00.000Z";
+
+  const CROSS_CLINIC_SHIFT_A_START = "2026-11-10T22:00:00.000Z";
+  const CROSS_CLINIC_SHIFT_A_END   = "2026-11-11T06:00:00.000Z";
+  const CROSS_CLINIC_SHIFT_B_START = "2026-11-11T22:00:00.000Z";
+  const CROSS_CLINIC_SHIFT_B_END   = "2026-11-12T06:00:00.000Z";
+
+  // ── Test 7 ──────────────────────────────────────────────────────────────
+  it("7 — two ad-hoc clock-ins (rosterEntryId = null) can coexist", async () => {
+    const app       = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // First ad-hoc clock-in.
+    const res1 = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId: null, shiftStartAt: ADHOC_START_1, shiftEndAt: ADHOC_END_1 });
+
+    expect(res1.status).toBe(201);
+    const entry1 = (res1.body as ApiData<TimesheetEntry>).data;
+    expect(entry1.payrollType).toBe("hourly_auto");
+
+    // Second ad-hoc clock-in on a different shift window.
+    // Before Fix B this would return 409 due to NULLS NOT DISTINCT.
+    const res2 = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId: null, shiftStartAt: ADHOC_START_2, shiftEndAt: ADHOC_END_2 });
+
+    expect(res2.status).toBe(201);
+    const entry2 = (res2.body as ApiData<TimesheetEntry>).data;
+    expect(entry2.payrollType).toBe("hourly_auto");
+
+    // The two entries must be distinct rows.
+    expect(entry1.id).not.toBe(entry2.id);
+  });
+
+  // ── Test 8 ──────────────────────────────────────────────────────────────
+  it("8 — two clock-ins for the same non-null roster entry remain prohibited (409)", async () => {
+    // This verifies that Fix B does NOT weaken the protection for
+    // roster-linked rows — the partial index and the service guard still
+    // prevent a second clock-in for the exact same roster entry.
+
+    const app          = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const staffToken   = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // Re-use the seedCompletedRosterEntry helper from the parent scope.
+    // We need a unique shift so we inline a similar helper here with a
+    // different date to avoid conflicts.
+    const ROSTER_START = "2026-11-05T22:00:00.000Z";
+    const ROSTER_END   = "2026-11-06T06:00:00.000Z";
+
+    // Create and complete a roster entry.
+    const createRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        staffUserId:  SEED_USER_IDS.clinicAStaff,
+        shiftStartAt: ROSTER_START,
+        shiftEndAt:   ROSTER_END,
+        shiftType:    "standard",
+      });
+    expect(createRes.status).toBe(201);
+    const rosterEntry = (createRes.body as ApiData<{ id: string }>).data;
+
+    const completeRes = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${rosterEntry.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ status: "completed" });
+    expect(completeRes.status).toBe(200);
+
+    // First clock-in activates the pre-fill (201).
+    const firstRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId: rosterEntry.id, shiftStartAt: ROSTER_START, shiftEndAt: ROSTER_END });
+    expect(firstRes.status).toBe(201);
+
+    // Second clock-in against the same roster entry must still return 409.
+    const secondRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ rosterEntryId: rosterEntry.id, shiftStartAt: ROSTER_START, shiftEndAt: ROSTER_END });
+    expect(secondRes.status).toBe(409);
+    expect((secondRes.body as ApiError).error.code).toBe("ALREADY_CLOCKED_IN");
+  });
+
+  // ── Test 9 ──────────────────────────────────────────────────────────────
+  it("9 — cross-clinic roster identity: each roster entry yields its own canonical timesheet", async () => {
+    // A staff member (clinicAStaff, home clinic = Clinic A) has two separate
+    // roster entries on different days — one at Clinic A and one at Clinic B.
+    // Fix B must not conflate them.  Each clock-in should create an independent
+    // timesheet row, and each timesheet's rosteredClinicId must reflect the
+    // clinic in the route (the actual work location).
+
+    const app            = await createTestApp();
+    const managerAToken  = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const adminBToken    = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+    const staffToken     = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // Roster entry at Clinic A.
+    const createA = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerAToken}`)
+      .send({
+        staffUserId:  SEED_USER_IDS.clinicAStaff,
+        shiftStartAt: CROSS_CLINIC_SHIFT_A_START,
+        shiftEndAt:   CROSS_CLINIC_SHIFT_A_END,
+        shiftType:    "standard",
+      });
+    expect(createA.status).toBe(201);
+    const rosterA = (createA.body as ApiData<{ id: string }>).data;
+
+    const completeA = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${rosterA.id}`)
+      .set("Authorization", `Bearer ${managerAToken}`)
+      .send({ status: "completed" });
+    expect(completeA.status).toBe(200);
+
+    // Roster entry at Clinic B for the same staff member.
+    const createB = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
+      .set("Authorization", `Bearer ${adminBToken}`)
+      .send({
+        staffUserId:  SEED_USER_IDS.clinicAStaff,
+        shiftStartAt: CROSS_CLINIC_SHIFT_B_START,
+        shiftEndAt:   CROSS_CLINIC_SHIFT_B_END,
+        shiftType:    "standard",
+      });
+    expect(createB.status).toBe(201);
+    const rosterB = (createB.body as ApiData<{ id: string }>).data;
+
+    const completeB = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster/${rosterB.id}`)
+      .set("Authorization", `Bearer ${adminBToken}`)
+      .send({ status: "completed" });
+    expect(completeB.status).toBe(200);
+
+    // Staff clocks in at Clinic A using roster entry A.
+    const clockInA = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId: rosterA.id,
+        shiftStartAt:  CROSS_CLINIC_SHIFT_A_START,
+        shiftEndAt:    CROSS_CLINIC_SHIFT_A_END,
+      });
+    expect(clockInA.status).toBe(201);
+    const tsA = (clockInA.body as ApiData<TimesheetEntry>).data;
+    expect(tsA.rosteredClinicId).toBe(SEED_CLINIC_A_ID);
+
+    // Staff clocks in at Clinic B using roster entry B.
+    // This must succeed — no constraint violation — and produce a separate row.
+    const clockInB = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId: rosterB.id,
+        shiftStartAt:  CROSS_CLINIC_SHIFT_B_START,
+        shiftEndAt:    CROSS_CLINIC_SHIFT_B_END,
+      });
+    expect(clockInB.status).toBe(201);
+    const tsB = (clockInB.body as ApiData<TimesheetEntry>).data;
+    expect(tsB.rosteredClinicId).toBe(SEED_CLINIC_B_ID);
+
+    // Two distinct timesheet rows — one per roster entry.
+    expect(tsA.id).not.toBe(tsB.id);
+
+    // The payroll home-clinic anchor (clinicId) is the staff member's
+    // homeClinicId regardless of where they worked.
+    expect(tsA.clinicId).toBe(SEED_CLINIC_A_ID);
+    // tsB.clinicId is also the home clinic (SEED_CLINIC_A_ID) because
+    // the service uses caller.homeClinicId as the payroll anchor.
+    expect(tsB.clinicId).toBe(SEED_CLINIC_A_ID);
   });
 });
