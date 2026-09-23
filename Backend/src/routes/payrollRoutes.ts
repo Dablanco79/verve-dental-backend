@@ -146,7 +146,8 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
 
   // ── Static sub-paths — declared BEFORE /:timesheetId to prevent shadowing ──
 
-  // Staff clocks in; the service rejects manager/admin callers with FORBIDDEN.
+  // All authenticated roles can clock themselves in.
+  // The service enforces self-only ownership — no role prohibition applied.
   router.post(
     "/clock-in",
     requireRoles(...PAYROLL_ALL_ROLES),

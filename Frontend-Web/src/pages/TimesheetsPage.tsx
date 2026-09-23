@@ -1,7 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, Download, Info } from "lucide-react";
-import { Link } from "react-router-dom";
-
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
@@ -1128,15 +1126,15 @@ export function TimesheetsPage() {
 
   const isManager = user ? canManagePayroll(user.role) : false;
 
-  // ── Today's roster shifts (staff only) ───────────────────────────────────
+  // ── Today's roster shifts (all roles) ────────────────────────────────────
   // Fetched once per page mount so ClockWidget can include the exact
-  // rosterEntryId in the clock-in request.  Errors are silently ignored —
-  // the widget falls back to ad-hoc mode (no rosterEntryId) which remains
-  // safe and functional.
+  // rosterEntryId in the clock-in request.  Available to all authenticated
+  // roles — managers and admins are also entitled to their own personal Clock
+  // In/Out.  Errors are silently ignored; widget falls back to ad-hoc mode.
   const [todayShifts, setTodayShifts] = useState<RosterEntry[]>([]);
 
   useEffect(() => {
-    if (!clinicId || isManager) return;
+    if (!clinicId) return;
 
     // ±12-hour window captures any shift whose scheduled start falls within
     // a generous "today" regardless of the Melbourne / UTC offset.
@@ -1230,15 +1228,17 @@ export function TimesheetsPage() {
   // Unique staff emails from loaded timesheets — drives the export staff picker.
   const availableStaff = [...new Set(timesheets.map((t) => t.staffEmail))].sort();
 
-  // Staff: the open (clocked-in, not yet clocked-out) entry for today.
-  const openEntry = isManager
-    ? undefined
-    : timesheets.find(
-        (t) =>
-          t.payrollType !== "commission_log" &&
-          t.clockInAt !== null &&
-          t.clockOutAt === null,
-      );
+  // The caller's own open (clocked-in, not yet clocked-out) entry.
+  // Scoped to user.id because managers see the full clinic list via
+  // listTimesheets — without the identity check, a staff member's open entry
+  // would appear as the manager's active session.
+  const openEntry = timesheets.find(
+    (t) =>
+      t.staffUserId === user.id &&
+      t.payrollType !== "commission_log" &&
+      t.clockInAt !== null &&
+      t.clockOutAt === null,
+  );
 
   const subtitleText = isManager
     ? `${String(pendingApproval.length)} pending hourly approval · ${String(pendingCommission.length)} pending commission verification`
@@ -1281,15 +1281,15 @@ export function TimesheetsPage() {
           <p className="loading-message">Loading timesheets…</p>
         ) : isManager ? (
           <>
-            <div className="inventory-receiving-callout pr-self-service-callout" role="note">
-              <h3>Personal shifts and clock in / out</h3>
-              <p>
-                Owner/Admin timesheets open in approval mode. Personal roster visibility remains
-                under My Shifts; clock in/out is shown here for users with staff timekeeping access.
-              </p>
-              <Link to="/my-shifts" className="link-button">
-                Open My Shifts
-              </Link>
+            {/* ── Personal: Clock In / Clock Out (all roles) ── */}
+            <div className="pr-section ts-hub__clock-section">
+              <h2 className="pr-section__title">Today&apos;s Session</h2>
+              <ClockWidget
+                openEntry={openEntry}
+                todayShifts={todayShifts}
+                onClockIn={clockIn}
+                onClockOut={clockOut}
+              />
             </div>
 
             {/* ── Manager: Export Hours ── */}

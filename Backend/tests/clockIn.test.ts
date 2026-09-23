@@ -36,9 +36,9 @@
  *
  *   RBAC
  *   ────
- *   - group_practice_manager cannot use clock-in (403)
- *   - owner_admin cannot use clock-in (403)
  *   - unauthenticated request is rejected (401)
+ *   - all three active roles (clinical_staff, GPM, owner_admin) can clock in (201)
+ *   - manager/admin personal Clock In always records their own staffUserId
  *
  *   Payroll home-clinic invariant
  *   ──────────────────────────────
@@ -378,22 +378,22 @@ describe("POST /clock-in — RBAC", () => {
     expect(res.status).toBe(401);
   });
 
-  it("403: group_practice_manager cannot clock in (use createManualEntry instead)", async () => {
+  it("201: group_practice_manager can clock in their own shift", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
     const res = await clockInAsStaff(app, token);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
   });
 
-  it("403: owner_admin cannot clock in (use createManualEntry instead)", async () => {
+  it("201: owner_admin can clock in their own shift", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const res = await clockInAsStaff(app, token);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(201);
   });
 });
 
@@ -855,5 +855,244 @@ describe("POST /clock-in — Fix B regression (partial unique index)", () => {
     // tsB.clinicId is also the home clinic (SEED_CLINIC_A_ID) because
     // the service uses caller.homeClinicId as the payroll anchor.
     expect(tsB.clinicId).toBe(SEED_CLINIC_A_ID);
+  });
+});
+
+// ── ALL-ROLES PERSONAL TIMEKEEPING ────────────────────────────────────────────
+//
+// Every active user role must be able to record their own attendance.
+// Role determines management permissions — it must not remove personal
+// timekeeping rights.
+//
+// Security invariants verified here:
+//   • staffUserId is ALWAYS the authenticated caller's id
+//   • clinicId   is ALWAYS the caller's homeClinicId (payroll anchor)
+//   • managers cannot use this endpoint to clock in another user
+//   • roster-linked clock-in passes exact rosterEntryId (same as staff)
+//   • ad-hoc clock-in works for all roles
+
+describe("POST /clock-in — all roles personal timekeeping", () => {
+  // Distinct dates to avoid collisions with other test suites.
+  const MGR_AD_HOC_START  = "2026-12-01T22:00:00.000Z";
+  const MGR_AD_HOC_END    = "2026-12-02T06:00:00.000Z";
+  const ADM_AD_HOC_START  = "2026-12-03T22:00:00.000Z";
+  const ADM_AD_HOC_END    = "2026-12-04T06:00:00.000Z";
+  const MGR_ROSTER_START  = "2026-12-05T22:00:00.000Z";
+  const MGR_ROSTER_END    = "2026-12-06T06:00:00.000Z";
+
+  it("201 + correct staffUserId: GPM can clock in their own shift (ad-hoc)", async () => {
+    const app   = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ rosterEntryId: null, shiftStartAt: MGR_AD_HOC_START, shiftEndAt: MGR_AD_HOC_END });
+
+    expect(res.status).toBe(201);
+    const entry = (res.body as ApiData<TimesheetEntry>).data;
+
+    // Personal timekeeping must always record the caller's own identity.
+    expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAManager);
+    // Payroll anchor = manager's home clinic.
+    expect(entry.clinicId).toBe(SEED_CLINIC_A_ID);
+  });
+
+  it("201 + correct staffUserId: owner_admin can clock in their own shift (ad-hoc)", async () => {
+    const app   = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ rosterEntryId: null, shiftStartAt: ADM_AD_HOC_START, shiftEndAt: ADM_AD_HOC_END });
+
+    expect(res.status).toBe(201);
+    const entry = (res.body as ApiData<TimesheetEntry>).data;
+
+    expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAAdmin);
+    expect(entry.clinicId).toBe(SEED_CLINIC_A_ID);
+  });
+
+  it("GPM full cycle: clock in then clock out (own entry)", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-12-07T04:00:00.000Z"));
+
+    try {
+      const app   = await createTestApp();
+      const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+      const clockInRes = await request(app)
+        .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          rosterEntryId: null,
+          shiftStartAt: "2026-12-07T04:00:00.000Z",
+          shiftEndAt:   "2026-12-07T12:00:00.000Z",
+        });
+      expect(clockInRes.status).toBe(201);
+      const entry = (clockInRes.body as ApiData<TimesheetEntry>).data;
+      expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAManager);
+
+      jest.setSystemTime(new Date("2026-12-07T04:05:00.000Z"));
+
+      const clockOutRes = await request(app)
+        .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/clock-out`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ breakDurationMinutes: 0 });
+
+      expect(clockOutRes.status).toBe(200);
+      const updated = (clockOutRes.body as ApiData<TimesheetEntry>).data;
+      expect(updated.clockOutAt).not.toBeNull();
+      expect(updated.timesheetStatus).toBe("submitted");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("owner_admin full cycle: clock in then clock out (own entry)", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-12-08T04:00:00.000Z"));
+
+    try {
+      const app   = await createTestApp();
+      const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+      const clockInRes = await request(app)
+        .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          rosterEntryId: null,
+          shiftStartAt: "2026-12-08T04:00:00.000Z",
+          shiftEndAt:   "2026-12-08T12:00:00.000Z",
+        });
+      expect(clockInRes.status).toBe(201);
+      const entry = (clockInRes.body as ApiData<TimesheetEntry>).data;
+      expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAAdmin);
+
+      jest.setSystemTime(new Date("2026-12-08T04:05:00.000Z"));
+
+      const clockOutRes = await request(app)
+        .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/clock-out`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ breakDurationMinutes: 0 });
+
+      expect(clockOutRes.status).toBe(200);
+      const updated = (clockOutRes.body as ApiData<TimesheetEntry>).data;
+      expect(updated.clockOutAt).not.toBeNull();
+      expect(updated.timesheetStatus).toBe("submitted");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("manager cannot clock in another user via rosterEntryId belonging to a different user (404)", async () => {
+    // Create a roster entry for the staff member (clinicAStaff).
+    // When the manager tries to clock in using that rosterEntryId the service
+    // checks rosterEntry.staffUserId !== caller.id and throws 404
+    // ROSTER_NOT_FOUND — the 404 is intentional (avoids leaking the existence
+    // of another user's shifts) rather than a more explicit 403.
+    const app          = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    // Manager creates a roster entry for the staff member.
+    const createRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        staffUserId:  SEED_USER_IDS.clinicAStaff,
+        shiftStartAt: "2026-12-09T22:00:00.000Z",
+        shiftEndAt:   "2026-12-10T06:00:00.000Z",
+        shiftType:    "standard",
+      });
+    expect(createRes.status).toBe(201);
+    const staffRosterEntry = (createRes.body as ApiData<{ id: string }>).data;
+
+    // Manager tries to clock in using the staff member's roster entry.
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        rosterEntryId: staffRosterEntry.id,
+        shiftStartAt:  "2026-12-09T22:00:00.000Z",
+        shiftEndAt:    "2026-12-10T06:00:00.000Z",
+      });
+
+    // Service returns 404 (not 403) — avoids leaking the existence of another
+    // user's roster entry to the caller.  The manager cannot clock in as staff.
+    expect(res.status).toBe(404);
+    expect((res.body as ApiError).error.code).toBe("ROSTER_NOT_FOUND");
+  });
+
+  it("roster-linked manager Clock In passes exact rosterEntryId and activates pre-fill", async () => {
+    const app          = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    // Create a roster entry for the manager themselves.
+    const createRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        staffUserId:  SEED_USER_IDS.clinicAManager,
+        shiftStartAt: MGR_ROSTER_START,
+        shiftEndAt:   MGR_ROSTER_END,
+        shiftType:    "standard",
+      });
+    expect(createRes.status).toBe(201);
+    const rosterEntry = (createRes.body as ApiData<{ id: string }>).data;
+
+    // Complete the roster entry to trigger generateFromCompletedRoster().
+    const completeRes = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${rosterEntry.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ status: "completed" });
+    expect(completeRes.status).toBe(200);
+
+    // Manager clocks in with their own rosterEntryId.
+    const before = new Date();
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        rosterEntryId: rosterEntry.id,
+        shiftStartAt:  MGR_ROSTER_START,
+        shiftEndAt:    MGR_ROSTER_END,
+      });
+    const after = new Date();
+
+    expect(res.status).toBe(201);
+    const entry = (res.body as ApiData<TimesheetEntry>).data;
+
+    // Must be the manager's own entry.
+    expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAManager);
+
+    // Server clock-in time replaces the scheduled pre-fill time.
+    expect(entry.clockInAt).not.toBeNull();
+    if (entry.clockInAt === null) throw new Error("Expected clockInAt");
+    const clockedInAt = new Date(entry.clockInAt).getTime();
+    expect(clockedInAt).toBeGreaterThanOrEqual(before.getTime() - 1000);
+    expect(clockedInAt).toBeLessThanOrEqual(after.getTime() + 1000);
+
+    // Pre-fill activation clears clockOutAt.
+    expect(entry.clockOutAt).toBeNull();
+  });
+
+  it("clinical_staff behaviour is unchanged — still records own staffUserId", async () => {
+    const app   = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: "2026-12-15T22:00:00.000Z",
+        shiftEndAt:   "2026-12-16T06:00:00.000Z",
+      });
+
+    expect(res.status).toBe(201);
+    const entry = (res.body as ApiData<TimesheetEntry>).data;
+    expect(entry.staffUserId).toBe(SEED_USER_IDS.clinicAStaff);
+    expect(entry.clinicId).toBe(SEED_CLINIC_A_ID);
   });
 });

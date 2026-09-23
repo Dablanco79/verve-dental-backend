@@ -358,13 +358,13 @@ export function createTimesheetService(
         shiftEndAt: Date;
       },
     ): Promise<TimesheetEntry> {
-      if (caller.role === "owner_admin" || caller.role === "group_practice_manager") {
-        throw new AppError(
-          403,
-          "FORBIDDEN",
-          "Managers and admins cannot clock in. Use createManualEntry() instead.",
-        );
-      }
+      // All authenticated roles may clock in using their own identity.
+      // Role determines management permissions, not personal timekeeping rights.
+      // The security invariants below enforce self-only ownership:
+      //   • roster entry is verified to belong to caller.id
+      //   • existing timesheet is verified to belong to caller.id
+      //   • staffUserId in the created/activated row is always caller.id
+      //   • clinicId (payroll anchor) is always caller.homeClinicId
 
       // ── Derive trusted clinic + shift context ──────────────────────────────
       let rosteredClinicId: string;

@@ -639,3 +639,106 @@ describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () =>
     expect(payload.rosterEntryId ?? null).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// All-roles personal timekeeping — ClockWidget visibility
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Every active role must see the Clock In / Out widget on the Timesheets page.
+// Managers and admins retain their existing approval/export capabilities AND
+// gain a personal Clock In / Clock Out section at the top of the page.
+
+describe("TimesheetsPage — all-roles personal timekeeping", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+  });
+
+  it("clinical_staff sees the Today's Session clock widget", async () => {
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/today.s session/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /clock in/i })).toBeInTheDocument();
+  });
+
+  it("group_practice_manager sees the Today's Session clock widget", async () => {
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/today.s session/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /clock in/i })).toBeInTheDocument();
+  });
+
+  it("owner_admin sees the Today's Session clock widget", async () => {
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/today.s session/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /clock in/i })).toBeInTheDocument();
+  });
+
+  it("group_practice_manager still sees the approval queue (manager capability preserved)", async () => {
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+
+  it("owner_admin still sees the approval queue (manager capability preserved)", async () => {
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+
+  it("group_practice_manager sees both personal clock widget AND approval queue on same page", async () => {
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/today.s session/i)).toBeInTheDocument();
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+
+  it("owner_admin sees both personal clock widget AND approval queue on same page", async () => {
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/today.s session/i)).toBeInTheDocument();
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+  });
+
+  it("group_practice_manager clock-in sends a request (widget is functional)", async () => {
+    mockClockIn.mockResolvedValue({
+      id:              "ts-mgr",
+      clinicId:         "11111111-1111-4111-8111-111111111111",
+      rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+      shiftDate:        "2026-09-23",
+      shiftStartAt:     "2026-09-23T22:00:00.000Z",
+      shiftEndAt:       "2026-09-24T06:00:00.000Z",
+      clockInAt:        new Date().toISOString(),
+      clockOutAt:       null,
+      staffUserId:      "user-mgr",
+      payrollType:      "hourly_auto",
+      timesheetStatus:  "draft",
+      totalHoursWorked: null,
+    });
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    const clockInBtn = await screen.findByRole("button", { name: /clock in/i });
+    await userEvent.click(clockInBtn);
+
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledOnce();
+    });
+  });
+});
