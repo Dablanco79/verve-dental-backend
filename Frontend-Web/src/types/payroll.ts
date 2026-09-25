@@ -10,6 +10,60 @@
  * drift between the type layer and the UI.
  */
 
+// ── Geofence ──────────────────────────────────────────────────────────────────
+
+/**
+ * Location snapshot recorded at the moment of a clock-in or clock-out event.
+ * Mirrors Backend/src/types/payroll.ts GeofenceLocation exactly.
+ *
+ * locationState semantics:
+ *   within      — device ≤ 100 m from the target clinic
+ *   outside     — device > 100 m (staff can still clock — soft gate)
+ *   denied      — browser permission denied; no coordinates captured
+ *   unavailable — location service unavailable (timeout / hardware off)
+ */
+export type GeofenceLocation = {
+  /** WGS84 latitude of the device. null when denied/unavailable (no GPS fix). */
+  lat: number | null;
+  /** WGS84 longitude of the device. null when denied/unavailable (no GPS fix). */
+  lng: number | null;
+  /** Browser-reported GPS accuracy in metres, or null if not provided. */
+  accuracyMetres: number | null;
+  /** UUID of the clinic used as the geofence centre for this event. */
+  targetClinicId: string;
+  /** Haversine distance in metres; null when no GPS fix or clinic has no coords. */
+  distanceMetres: number | null;
+  /** true if distanceMetres ≤ 100; false if outside; null if no GPS. */
+  withinRange: boolean | null;
+  locationState: "within" | "outside" | "denied" | "unavailable";
+};
+
+/**
+ * Raw device data sent to the API at clock-in / clock-out.
+ * The backend authoritatively computes distanceMetres, withinRange, and
+ * locationState ("within"/"outside") — these fields are NOT sent to the API.
+ * Only "denied"/"unavailable" may be sent (when lat/lng are null).
+ *
+ * Use toClockLocationInput() from utils/geofence.ts to convert a
+ * GeofenceLocation to this type before making an API call.
+ */
+export type ClockLocationInput = {
+  /** null for denied / unavailable — no GPS fix. */
+  lat: number | null;
+  /** null for denied / unavailable — no GPS fix. */
+  lng: number | null;
+  /** Browser-reported accuracy in metres; null if not available. */
+  accuracyMetres: number | null;
+  /** UUID of the clinic used as the geofence centre for this event. */
+  targetClinicId: string;
+  /**
+   * Only sent when lat/lng are null — tells the backend which error state
+   * occurred.  Omit when coordinates are present (backend computes "within"
+   * or "outside" from the Haversine distance).
+   */
+  locationState?: "denied" | "unavailable";
+};
+
 // ── ENUMs ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -174,6 +228,12 @@ export type TimesheetEntry = {
   approvedAt: string | null;
   approvalNotes: string | null;
 
+  // ── Geofence location logs (null for historical / permission-denied entries) ─
+  /** Location snapshot at clock-in time. Null for legacy entries. */
+  clockInLocation: GeofenceLocation | null;
+  /** Location snapshot at clock-out time. Null if not yet clocked out or legacy. */
+  clockOutLocation: GeofenceLocation | null;
+
   // ── Commission annotation (null for hourly tracks) ───────────────────────
   /** Manager-entered note when verifying provider attendance. */
   commissionNote: string | null;
@@ -227,6 +287,13 @@ export type ClockInRequest = {
   rosterEntryId?: string | null;
   shiftStartAt: string;
   shiftEndAt: string;
+  /**
+   * Ad-hoc only: the physical clinic explicitly selected by the user.
+   * Ignored when rosterEntryId is present (derived from roster entry).
+   */
+  physicalClinicId?: string | null;
+  /** Raw device location data. Omit for legacy behaviour (server records null). */
+  clockInLocation?: ClockLocationInput | null;
 };
 
 /**
@@ -239,6 +306,8 @@ export type ClockInRequest = {
  */
 export type ClockOutRequest = {
   breakDurationMinutes: number;
+  /** Raw device location data. Omit for legacy behaviour (server records null). */
+  clockOutLocation?: ClockLocationInput | null;
 };
 
 /** POST /clinics/:clinicId/timesheets (manager manual entry) */

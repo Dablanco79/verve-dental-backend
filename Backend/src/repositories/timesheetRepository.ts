@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   CreateTimesheetEntryInput,
+  GeofenceLocation,
   ListTimesheetOptions,
   ListTimesheetPageOptions,
   TimesheetEntry,
@@ -61,7 +62,12 @@ export interface TimesheetRepository {
    * Intentionally does NOT touch: timesheet_status, shift_start_at, shift_end_at,
    * attendance_status, clinic_id, rostered_clinic_id, roster_entry_id.
    */
-  activateClockIn(id: string, clockInAt: Date, generatedBy: string): Promise<TimesheetEntry>;
+  activateClockIn(
+    id: string,
+    clockInAt: Date,
+    generatedBy: string,
+    clockInLocation?: GeofenceLocation | null,
+  ): Promise<TimesheetEntry>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +89,9 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         approvedByUserId: null,
         approvedAt: null,
         approvalNotes: null,
+        // Location fields default to null if not supplied by the caller.
+        clockInLocation: input.clockInLocation ?? null,
+        clockOutLocation: input.clockOutLocation ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -248,6 +257,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
         ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
         ...(input.approvalNotes !== undefined && { approvalNotes: input.approvalNotes }),
+        ...(input.clockOutLocation !== undefined && { clockOutLocation: input.clockOutLocation }),
         updatedAt: new Date(),
       };
 
@@ -259,6 +269,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
       id: string,
       clockInAt: Date,
       generatedBy: string,
+      clockInLocation?: GeofenceLocation | null,
     ): Promise<TimesheetEntry> {
       const index = entries.findIndex((e) => e.id === id);
       const existing = entries[index];
@@ -280,6 +291,8 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         overtimeCustomHours: null,
         // Stamp actual identity so subsequent clock-in attempts are blocked.
         generatedBy,
+        // Record geofence snapshot if supplied.
+        clockInLocation: clockInLocation !== undefined ? clockInLocation : (existing.clockInLocation ?? null),
         updatedAt: new Date(),
       };
 

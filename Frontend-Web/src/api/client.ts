@@ -1136,6 +1136,29 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * GET /clinics/:clinicId/geofence
+   * Returns the WGS84 coordinates of the clinic for client-side proximity
+   * checks at Clock In / Clock Out time.
+   *
+   * Bypasses tenant isolation server-side — any authenticated user may fetch
+   * any clinic's coordinates (cross-clinic rostered staff need the physical
+   * clinic's position for the geofence check, regardless of homeClinicId).
+   *
+   * latitude / longitude are null until an admin sets them via clinic settings.
+   * When null, the frontend treats the geofence result as "unavailable".
+   */
+  async function getClinicCoordinates(
+    clinicId: string,
+  ): Promise<{ clinicId: string; latitude: number | null; longitude: number | null }> {
+    return request<{ clinicId: string; latitude: number | null; longitude: number | null }>(
+      config,
+      `/api/v1/clinics/${clinicId}/geofence`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function updateClinicSettings(
     clinicId: string,
     data: UpdateClinicData,
@@ -2671,6 +2694,7 @@ export function createApiClient(config: AppConfig) {
     listClinics,
     createClinic,
     getClinic,
+    getClinicCoordinates,
     updateClinicSettings,
     listInvoices,
     getInvoice,

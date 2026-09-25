@@ -19,6 +19,10 @@ export type ClinicSubscriptionTier = "standard" | "premium" | "enterprise";
 export type Clinic = {
   id: string;
   name: string;
+  /** WGS84 decimal degrees — NULL until set by admin. Used as geofence centre. */
+  latitude: number | null;
+  /** WGS84 decimal degrees — NULL until set by admin. Used as geofence centre. */
+  longitude: number | null;
   /** Australian Business Number — 9-digit string without spaces. Nullable until set by admin. */
   abn: string | null;
   addressLine1: string | null;

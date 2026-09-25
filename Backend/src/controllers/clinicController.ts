@@ -172,6 +172,29 @@ export function createClinicHandlers(clinicService: ClinicService) {
     },
 
     /**
+     * GET /clinics/:clinicId/geofence
+     * Returns only the WGS84 coordinates needed for client-side geofence
+     * proximity checks.  Bypasses tenant isolation — geographic coordinates
+     * are not sensitive business data and cross-clinic rostered staff need
+     * access to the physical clinic's position.
+     */
+    async getClinicGeofence(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+      const { clinicId } = req.params as { clinicId: string };
+
+      const clinic = await clinicService.getClinicById(clinicId);
+      if (!clinic) throw new AppError(404, "NOT_FOUND", "Clinic not found");
+
+      res.status(200).json({
+        data: {
+          clinicId: clinic.id,
+          latitude: clinic.latitude,
+          longitude: clinic.longitude,
+        },
+      });
+    },
+
+    /**
      * PATCH /clinics/:clinicId
      * Partial update — only supplied fields are written.
      * Restricted to owner_admin at the route and service layers.

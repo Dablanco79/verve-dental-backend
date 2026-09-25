@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock, Download, Info } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock, Download, Info, MapPin } from "lucide-react";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
@@ -9,8 +9,10 @@ import { useTimesheets } from "../hooks/useTimesheets.js";
 import type {
   AttendanceStatus,
   ClockInRequest,
+  ClockLocationInput,
   ClockOutRequest,
   ExportTimesheetParams,
+  GeofenceLocation,
   PayrollType,
   TimesheetEntry,
   TimesheetFilters,
@@ -22,6 +24,13 @@ import {
   TIMESHEET_STATUS_LABELS,
 } from "../types/payroll.js";
 import type { RosterEntry } from "../types/roster.js";
+import {
+  buildGeofenceLocation,
+  formatDistance,
+  requestGeolocation,
+  requiresGeofenceWarning,
+  toClockLocationInput,
+} from "../utils/geofence.js";
 import { canManagePayroll } from "../utils/roles.js";
 
 // Module-level API client (same pattern as useTimesheets / MyShiftsPage).
@@ -552,13 +561,98 @@ type ClockWidgetProps = {
   todayShifts: RosterEntry[];
   onClockIn: (payload: ClockInRequest) => Promise<TimesheetEntry>;
   onClockOut: (timesheetId: string, payload: ClockOutRequest) => Promise<TimesheetEntry>;
+  /** Home clinic ID — used as the geofence target for ad-hoc shifts. */
+  clinicId: string;
+  /** Fetches clinic coordinates for geofence proximity check. */
+  getClinicCoordinates: (
+    clinicId: string,
+  ) => Promise<{ clinicId: string; latitude: number | null; longitude: number | null }>;
+  /**
+   * Clinics available as "physical location" for ad-hoc clock-ins.
+   * Home clinic + distinct clinics from today's roster shifts.
+   * Shown in the Physical Location dropdown when no roster shift is selected.
+   */
+  availableClinics: Array<{ id: string; name: string }>;
 };
+
+// ── Geofence warning panel ───────────────────────────────────────────────────
+
+type GeofenceWarningProps = {
+  location: GeofenceLocation;
+  clinicName?: string;
+  actionLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isBusy: boolean;
+};
+
+function GeofenceWarningPanel({
+  location,
+  clinicName,
+  actionLabel,
+  onConfirm,
+  onCancel,
+  isBusy,
+}: GeofenceWarningProps) {
+  let message: string;
+  let detail: string;
+
+  if (location.locationState === "outside") {
+    const distStr =
+      location.distanceMetres !== null
+        ? ` (${formatDistance(location.distanceMetres)} away)`
+        : "";
+    message = `You appear to be outside${clinicName ? ` ${clinicName}` : " the clinic location"}${distStr}.`;
+    detail = `You can still ${actionLabel.toLowerCase()}, but this will be recorded for attendance review.`;
+  } else if (location.locationState === "denied") {
+    message = "Location permission was not granted.";
+    detail = `Your location could not be verified. You can still ${actionLabel.toLowerCase()}, but no location data will be recorded.`;
+  } else {
+    // "unavailable"
+    message = "Your location is currently unavailable.";
+    detail = `Location services could not be reached. You can still ${actionLabel.toLowerCase()}, but no location data will be recorded.`;
+  }
+
+  return (
+    <div className="ts-geofence-warning" role="alert">
+      <div className="ts-geofence-warning__header">
+        <AlertTriangle size={16} aria-hidden="true" className="ts-geofence-warning__icon" />
+        <strong className="ts-geofence-warning__title">Location check</strong>
+      </div>
+      <p className="ts-geofence-warning__message">{message}</p>
+      <p className="ts-geofence-warning__detail">{detail}</p>
+      <div className="ts-geofence-warning__actions">
+        <button
+          type="button"
+          className="vds-btn vds-btn--primary ts-geofence-warning__confirm"
+          onClick={onConfirm}
+          disabled={isBusy}
+        >
+          {isBusy ? "Saving…" : `Confirm ${actionLabel}`}
+        </button>
+        <button
+          type="button"
+          className="vds-btn vds-btn--secondary ts-geofence-warning__cancel"
+          onClick={onCancel}
+          disabled={isBusy}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Clock widget ──────────────────────────────────────────────────────────────
 
 function ClockWidget({
   openEntry,
   todayShifts,
   onClockIn,
   onClockOut,
+  clinicId,
+  getClinicCoordinates,
+  availableClinics,
 }: ClockWidgetProps) {
   const nowDate = new Date();
   const laterDate = new Date(nowDate.getTime() + 8 * 60 * 60 * 1000);
@@ -569,9 +663,22 @@ function ClockWidget({
   const [isBusy, setIsBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // ── Geofence state ─────────────────────────────────────────────────────────
+  // pendingLocation: the GeofenceLocation built while the user is looking at
+  // the warning.  Confirmed to the API when they click "Confirm".
+  // pendingAction: which action is pending confirmation ("in" or "out").
+  const [pendingLocation, setPendingLocation] = useState<GeofenceLocation | null>(null);
+  const [pendingAction, setPendingAction] = useState<"in" | "out" | null>(null);
+  // Live location badge for the current open entry (shown while clocked in).
+  const [liveClockInState, setLiveClockInState] = useState<TsLocationState>(null);
+
   // Tracks which roster shift the staff member is clocking into.
   // null = ad-hoc (no roster link).
   const [selectedShift, setSelectedShift] = useState<RosterEntry | null>(null);
+
+  // Ad-hoc only: the physical clinic explicitly selected by the user.
+  // null until the user chooses — Clock In is blocked until a selection is made.
+  const [selectedPhysicalClinicId, setSelectedPhysicalClinicId] = useState<string | null>(null);
 
   // Auto-select when exactly one non-cancelled shift is known for today.
   // If multiple, the user must choose from the dropdown.
@@ -584,9 +691,79 @@ function ClockWidget({
     // Multiple shifts: leave selection to the user; don't auto-reset.
   }, [todayShifts]);
 
-  async function handleClockIn(): Promise<void> {
+  // ── Geofence helpers ───────────────────────────────────────────────────────
+
+  /** Resolves the physical target clinic for geofencing. */
+  function geofenceTargetClinicId(): string {
+    // Roster-linked: use the physical rostered clinic, not the home clinic.
+    // Ad-hoc: use the explicitly selected physical clinic (or fall back to home clinic
+    // if not yet selected — the validation gate in initiateClockIn prevents this path).
+    return selectedShift?.rosteredClinicId ?? selectedPhysicalClinicId ?? clinicId;
+  }
+
+  /** Fetches location and builds a GeofenceLocation, always resolving (never throws). */
+  async function resolveGeofenceLocation(targetClinicId: string): Promise<GeofenceLocation> {
+    const [geoResult, coordsResult] = await Promise.allSettled([
+      requestGeolocation(),
+      getClinicCoordinates(targetClinicId),
+    ]);
+
+    const geo = geoResult.status === "fulfilled" ? geoResult.value : { state: "unavailable" as const };
+    const coords = coordsResult.status === "fulfilled" ? coordsResult.value : null;
+
+    return buildGeofenceLocation(
+      geo,
+      targetClinicId,
+      coords?.latitude ?? null,
+      coords?.longitude ?? null,
+    );
+  }
+
+  /** Maps a GeofenceLocation to the TsLocationState used by TsLocationBadge. */
+  function toTsLocationState(loc: GeofenceLocation | null): TsLocationState {
+    if (!loc) return null;
+    switch (loc.locationState) {
+      case "within":      return "verified";
+      case "outside":     return "outside_range";
+      case "denied":      return "denied";
+      case "unavailable": return "unavailable";
+    }
+  }
+
+  // ── Clock In flow ──────────────────────────────────────────────────────────
+
+  async function initiateClockIn(): Promise<void> {
+    // Ad-hoc validation: require an explicit physical clinic selection before proceeding.
+    if (!selectedShift && !selectedPhysicalClinicId) {
+      setFormError("Select your physical location to continue");
+      return;
+    }
     setIsBusy(true);
     setFormError(null);
+    try {
+      const targetId = geofenceTargetClinicId();
+      const location = await resolveGeofenceLocation(targetId);
+
+      if (requiresGeofenceWarning(location)) {
+        // Show warning — user must confirm before API call proceeds.
+        setPendingLocation(location);
+        setPendingAction("in");
+        setIsBusy(false);
+        return;
+      }
+
+      // Within range — proceed immediately.
+      await submitClockIn(location);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Clock-in failed. Try again.");
+      setIsBusy(false);
+    }
+  }
+
+  async function submitClockIn(location: GeofenceLocation | null): Promise<void> {
+    setIsBusy(true);
+    setPendingLocation(null);
+    setPendingAction(null);
     try {
       // rosteredClinicId, rosteredClinicName, and shiftDate are all derived
       // server-side — sending them from the client would be rejected by the
@@ -597,6 +774,13 @@ function ClockWidget({
       // no pre-fill exists).  shiftStartAt/shiftEndAt fall back to the roster
       // entry's scheduled times — the backend ignores them for pre-fill
       // activation but uses them as the planned window for a new entry.
+      //
+      // Convert GeofenceLocation → ClockLocationInput: strips backend-computed
+      // fields (distanceMetres, withinRange, locationState "within"/"outside")
+      // so the backend can authoritatively recompute them from the coordinates.
+      const clockInLocation: ClockLocationInput | null =
+        location ? toClockLocationInput(location) : null;
+
       await onClockIn({
         rosterEntryId: selectedShift?.id ?? null,
         shiftStartAt: selectedShift
@@ -605,7 +789,12 @@ function ClockWidget({
         shiftEndAt: selectedShift
           ? selectedShift.shiftEndAt
           : new Date(endAt).toISOString(),
+        // Ad-hoc: send the explicitly selected physical clinic.
+        // Roster-linked: null (backend uses the roster entry's rosteredClinicId).
+        physicalClinicId: selectedShift ? null : selectedPhysicalClinicId,
+        clockInLocation,
       });
+      setLiveClockInState(toTsLocationState(location));
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-in failed. Try again.");
     } finally {
@@ -613,7 +802,9 @@ function ClockWidget({
     }
   }
 
-  async function handleClockOut(): Promise<void> {
+  // ── Clock Out flow ─────────────────────────────────────────────────────────
+
+  async function initiateClockOut(): Promise<void> {
     if (!openEntry) return;
     const breakParsed = parseInt(breakMins, 10);
     if (Number.isNaN(breakParsed) || breakParsed < 0) {
@@ -623,10 +814,45 @@ function ClockWidget({
     setIsBusy(true);
     setFormError(null);
     try {
+      // For clock-out, use the rostered clinic ID from the open entry
+      // (it was already set correctly at clock-in time).
+      const targetId = openEntry.rosteredClinicId;
+      const location = await resolveGeofenceLocation(targetId);
+
+      if (requiresGeofenceWarning(location)) {
+        setPendingLocation(location);
+        setPendingAction("out");
+        setIsBusy(false);
+        return;
+      }
+
+      await submitClockOut(openEntry.id, breakParsed, location);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Clock-out failed. Try again.");
+      setIsBusy(false);
+    }
+  }
+
+  async function submitClockOut(
+    timesheetId: string,
+    breakParsed: number,
+    location: GeofenceLocation | null,
+  ): Promise<void> {
+    setIsBusy(true);
+    setPendingLocation(null);
+    setPendingAction(null);
+    try {
       // clockOutAt is intentionally omitted — the backend records server time
       // as the authoritative clock-out timestamp.
-      await onClockOut(openEntry.id, {
+      //
+      // Convert GeofenceLocation → ClockLocationInput: strips backend-computed
+      // fields so the backend can authoritatively recompute them.
+      const clockOutLocation: ClockLocationInput | null =
+        location ? toClockLocationInput(location) : null;
+
+      await onClockOut(timesheetId, {
         breakDurationMinutes: breakParsed,
+        clockOutLocation,
       });
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-out failed. Try again.");
@@ -635,15 +861,52 @@ function ClockWidget({
     }
   }
 
+  // ── Warning confirmation handlers ──────────────────────────────────────────
+
+  function handleGeofenceConfirm(): void {
+    if (!pendingAction || !pendingLocation) return;
+    if (pendingAction === "in") {
+      void submitClockIn(pendingLocation);
+    } else {
+      if (!openEntry) return;
+      const breakParsed = parseInt(breakMins, 10);
+      void submitClockOut(openEntry.id, Number.isNaN(breakParsed) ? 0 : breakParsed, pendingLocation);
+    }
+  }
+
+  function handleGeofenceCancel(): void {
+    setPendingLocation(null);
+    setPendingAction(null);
+    setIsBusy(false);
+  }
+
   // ── Active shift: Clock Out ──────────────────────────────────────────────
   if (openEntry) {
+    // Show the geofence warning panel when a pending confirmation is waiting.
+    if (pendingLocation && pendingAction === "out") {
+      return (
+        <div className="pr-clock-card pr-clock-card--active ts-clock-card">
+          <div className="ts-clock-status-row">
+            <span className="vds-badge vds-badge--success ts-clock-badge">Active shift</span>
+          </div>
+          <GeofenceWarningPanel
+            location={pendingLocation}
+            actionLabel="Clock Out"
+            onConfirm={handleGeofenceConfirm}
+            onCancel={handleGeofenceCancel}
+            isBusy={isBusy}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className="pr-clock-card pr-clock-card--active ts-clock-card">
-        {/* Status row — badge + location signal (Stage 5: status=null, renders nothing) */}
+        {/* Status row — badge + live clock-in location signal */}
         <div className="ts-clock-status-row">
           <span className="vds-badge vds-badge--success ts-clock-badge">Active shift</span>
-          {/* Clock-in location: Stage 5 visual slot — not live */}
-          <TsLocationBadge status={null} />
+          {/* Live geofence state from the clock-in event */}
+          <TsLocationBadge status={liveClockInState ?? toTsLocationState(openEntry.clockInLocation)} />
         </div>
 
         <p className="pr-clock-card__shift-info">
@@ -675,15 +938,13 @@ function ClockWidget({
             />
           </div>
           <div className="pr-clock-form__actions ts-clock-actions">
-            {/* Clock-out location: Stage 5 visual slot — not live */}
-            <TsLocationBadge status={null} />
             <button
               type="button"
               className="pr-action-btn pr-action-btn--clock-out"
-              onClick={() => { void handleClockOut(); }}
+              onClick={() => { void initiateClockOut(); }}
               disabled={isBusy}
             >
-              {isBusy ? "Saving…" : "Clock Out"}
+              {isBusy ? "Checking location…" : "Clock Out"}
             </button>
           </div>
           {formError ? (
@@ -697,13 +958,29 @@ function ClockWidget({
   }
 
   // ── No active shift: Clock In ────────────────────────────────────────────
+  if (pendingLocation && pendingAction === "in") {
+    return (
+      <div className="pr-clock-card ts-clock-card ts-clock-card--idle">
+        <div className="ts-clock-status-row">
+          <span className="vds-badge vds-badge--neutral ts-clock-badge">No active shift</span>
+        </div>
+        <GeofenceWarningPanel
+          location={pendingLocation}
+          actionLabel="Clock In"
+          onConfirm={handleGeofenceConfirm}
+          onCancel={handleGeofenceCancel}
+          isBusy={isBusy}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="pr-clock-card ts-clock-card ts-clock-card--idle">
-      {/* Status row — badge + location signal (Stage 5: status=null, renders nothing) */}
+      {/* Status row — badge (location badge shown after clock-in, not before) */}
       <div className="ts-clock-status-row">
         <span className="vds-badge vds-badge--neutral ts-clock-badge">No active shift</span>
-        {/* Clock-in location: Stage 5 visual slot — not live */}
-        <TsLocationBadge status={null} />
+        <MapPin size={14} aria-hidden="true" className="ts-clock-location-hint" />
       </div>
 
       {/* Clock In form — dominant action, shown directly */}
@@ -744,8 +1021,33 @@ function ClockWidget({
             </strong>
           </p>
         ) : (
-          /* ── Ad-hoc mode: editable time inputs ── */
+          /* ── Ad-hoc mode: physical location selector + editable time inputs ── */
           <>
+            {/* Physical Location selector — required for ad-hoc clock-ins.
+                Staff must explicitly confirm which clinic they are working at. */}
+            <div className="pr-clock-form__field">
+              <label className="pr-clock-form__label" htmlFor="physical-clinic-select">
+                Physical location
+              </label>
+              <select
+                id="physical-clinic-select"
+                className="pr-clock-form__control"
+                value={selectedPhysicalClinicId ?? ""}
+                onChange={(e) => {
+                  setSelectedPhysicalClinicId(e.target.value || null);
+                  setFormError(null); // clear the "select location" error on change
+                }}
+                disabled={isBusy}
+                aria-required="true"
+              >
+                <option value="">Select physical location…</option>
+                {availableClinics.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="pr-clock-form__field">
               <label className="pr-clock-form__label" htmlFor="shift-start">
                 Shift start
@@ -779,10 +1081,10 @@ function ClockWidget({
           <button
             type="button"
             className="vds-btn vds-btn--primary ts-clock-btn-primary"
-            onClick={() => { void handleClockIn(); }}
+            onClick={() => { void initiateClockIn(); }}
             disabled={isBusy}
           >
-            {isBusy ? "Clocking in…" : "Clock In"}
+            {isBusy ? "Checking location…" : "Clock In"}
           </button>
         </div>
         {formError ? (
@@ -1133,6 +1435,22 @@ export function TimesheetsPage() {
   // In/Out.  Errors are silently ignored; widget falls back to ad-hoc mode.
   const [todayShifts, setTodayShifts] = useState<RosterEntry[]>([]);
 
+  // Available clinics for ad-hoc physical location selection:
+  // home clinic + distinct clinics from today's rostered shifts.
+  // MUST be computed before early returns (it is a hook call via useMemo).
+  // MUST be declared after todayShifts useState (used in dependency array).
+  const availableClinics = useMemo(() => {
+    const map = new Map<string, string>();
+    if (clinicId) {
+      // Use clinicName from useOperationalClinic; fall back to user's homeClinicName.
+      map.set(clinicId, clinicName ?? user?.homeClinicName ?? "Home Clinic");
+    }
+    for (const s of todayShifts) {
+      map.set(s.rosteredClinicId, s.rosteredClinicName);
+    }
+    return Array.from(map, ([id, name]) => ({ id, name }));
+  }, [clinicId, clinicName, todayShifts, user]);
+
   useEffect(() => {
     if (!clinicId) return;
 
@@ -1166,6 +1484,9 @@ export function TimesheetsPage() {
   } = useTimesheets(clinicId, user?.role, filters);
 
   if (!user) return null;
+  // clinicId from useOperationalClinic() is `string | undefined`; early-return
+  // here narrows it to `string` for all JSX below (passed to ClockWidget props).
+  if (!clinicId) return null;
 
   if (isAllClinicsScope && isManager) {
     return (
@@ -1289,6 +1610,9 @@ export function TimesheetsPage() {
                 todayShifts={todayShifts}
                 onClockIn={clockIn}
                 onClockOut={clockOut}
+                clinicId={clinicId}
+                getClinicCoordinates={apiClient.getClinicCoordinates}
+                availableClinics={availableClinics}
               />
             </div>
 
@@ -1377,6 +1701,9 @@ export function TimesheetsPage() {
                 todayShifts={todayShifts}
                 onClockIn={clockIn}
                 onClockOut={clockOut}
+                clinicId={clinicId}
+                getClinicCoordinates={apiClient.getClinicCoordinates}
+                availableClinics={availableClinics}
               />
             </div>
 

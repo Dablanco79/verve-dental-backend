@@ -31,6 +31,7 @@ const {
   mockExportTimesheets,
   mockGetMyShifts,
   mockClockIn,
+  mockGetClinicCoordinates,
 } = vi.hoisted(() => ({
   mockListMyTimesheets: vi.fn(),
   mockListTimesheets: vi.fn(),
@@ -39,6 +40,14 @@ const {
   mockGetMyShifts: vi.fn().mockResolvedValue([]),
   // Clock-in — captured to assert the request payload
   mockClockIn: vi.fn(),
+  // Geofence: return clinic coords at the same location as the mocked device
+  // so distanceMetres ≈ 0 < 100 m → locationState "within" → no warning shown
+  // → mockClockIn is called on the first button click (existing tests unchanged).
+  mockGetClinicCoordinates: vi.fn().mockResolvedValue({
+    clinicId: "11111111-1111-4111-8111-111111111111",
+    latitude: -37.8136,
+    longitude: 144.9631,
+  }),
 }));
 
 vi.mock("../src/api/client.js", () => ({
@@ -54,6 +63,7 @@ vi.mock("../src/api/client.js", () => ({
     refresh: vi.fn().mockRejectedValue(new Error("no cookie")),
     getMe: vi.fn(),
     getMyShifts: mockGetMyShifts,
+    getClinicCoordinates: mockGetClinicCoordinates,
   }),
 }));
 
@@ -101,9 +111,41 @@ function renderTimesheetsPage(user: AuthUser) {
   );
 }
 
+// Stub navigator.geolocation globally so the ClockWidget's geofence check
+// resolves immediately with coordinates at the same position as the mocked
+// clinic (distance ≈ 0 m < 100 m → locationState "within" → no warning panel
+// → existing clock-in tests remain single-click without code changes).
+Object.defineProperty(navigator, "geolocation", {
+  configurable: true,
+  value: {
+    getCurrentPosition: vi.fn((success: PositionCallback) => {
+      success({
+        coords: {
+          latitude:         -37.8136,
+          longitude:        144.9631,
+          accuracy:         10,
+          altitude:         null,
+          altitudeAccuracy: null,
+          heading:          null,
+          speed:            null,
+        },
+        timestamp: Date.now(),
+      } as GeolocationPosition);
+    }),
+  },
+});
+
 // Reset mock call counts between tests so assertions don't bleed across them.
 beforeEach(() => {
   vi.clearAllMocks();
+  // Re-apply default resolved values stripped by clearAllMocks().
+  mockGetClinicCoordinates.mockResolvedValue({
+    clinicId: "11111111-1111-4111-8111-111111111111",
+    latitude: -37.8136,
+    longitude: 144.9631,
+  });
+  // Re-apply default shift result (empty = ad-hoc mode).
+  mockGetMyShifts.mockResolvedValue([]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -583,7 +625,7 @@ describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () =>
     // re-establish the default return values that clearAllMocks() stripped.
     mockGetMyShifts.mockResolvedValue([]);
     mockClockIn.mockResolvedValue({
-      id:              "ts-new",
+      id:               "ts-new",
       clinicId:         CLINIC_ID,
       rosteredClinicId: CLINIC_ID,
       shiftDate:        "2026-09-24",
@@ -595,6 +637,8 @@ describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () =>
       payrollType:      "hourly_auto",
       timesheetStatus:  "draft",
       totalHoursWorked: null,
+      clockInLocation:  null,
+      clockOutLocation: null,
     });
   });
 
@@ -619,13 +663,19 @@ describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () =>
     expect(payload.rosterEntryId).toBe(ROSTER_ID);
   });
 
-  it("2 — no roster shifts (ad-hoc): rosterEntryId is null in clock-in request", async () => {
+  it("2 — no roster shifts (ad-hoc): rosterEntryId is null, physicalClinicId is sent", async () => {
     // Explicitly return empty — vi.clearAllMocks() in the top-level beforeEach
     // strips the initial mockResolvedValue([]) set during vi.hoisted.
     mockGetMyShifts.mockResolvedValue([]);
     mockListMyTimesheets.mockResolvedValue([]);
 
     renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // In ad-hoc mode, a "Physical location" dropdown must be selected first
+    // before Clock In is available. Wait for the dropdown to appear.
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    // Select the home clinic (the only available clinic in ad-hoc mode).
+    await userEvent.selectOptions(physicalSelect, "11111111-1111-4111-8111-111111111111");
 
     const clockInBtn = await screen.findByRole("button", { name: /clock in/i });
     await userEvent.click(clockInBtn);
@@ -634,9 +684,10 @@ describe("ClockWidget — Fix A regression (rosterEntryId wired through)", () =>
       expect(mockClockIn).toHaveBeenCalledOnce();
     });
 
-    const [, payload] = mockClockIn.mock.calls[0] as [string, { rosterEntryId?: string | null }];
-    // Ad-hoc: null or omitted
+    const [, payload] = mockClockIn.mock.calls[0] as [string, { rosterEntryId?: string | null; physicalClinicId?: string | null }];
+    // Ad-hoc: rosterEntryId null, physicalClinicId = selected clinic
     expect(payload.rosterEntryId ?? null).toBeNull();
+    expect(payload.physicalClinicId).toBe("11111111-1111-4111-8111-111111111111");
   });
 });
 
@@ -718,7 +769,7 @@ describe("TimesheetsPage — all-roles personal timekeeping", () => {
 
   it("group_practice_manager clock-in sends a request (widget is functional)", async () => {
     mockClockIn.mockResolvedValue({
-      id:              "ts-mgr",
+      id:               "ts-mgr",
       clinicId:         "11111111-1111-4111-8111-111111111111",
       rosteredClinicId: "11111111-1111-4111-8111-111111111111",
       shiftDate:        "2026-09-23",
@@ -730,9 +781,15 @@ describe("TimesheetsPage — all-roles personal timekeeping", () => {
       payrollType:      "hourly_auto",
       timesheetStatus:  "draft",
       totalHoursWorked: null,
+      clockInLocation:  null,
+      clockOutLocation: null,
     });
 
     renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    // Ad-hoc mode requires selecting a physical location first.
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, "11111111-1111-4111-8111-111111111111");
 
     const clockInBtn = await screen.findByRole("button", { name: /clock in/i });
     await userEvent.click(clockInBtn);
@@ -740,5 +797,109 @@ describe("TimesheetsPage — all-roles personal timekeeping", () => {
     await waitFor(() => {
       expect(mockClockIn).toHaveBeenCalledOnce();
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ad-hoc Physical Location selector — Item 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ClockWidget — ad-hoc physical location selector", () => {
+  const CLINIC_ID = "11111111-1111-4111-8111-111111111111";
+
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockClockIn.mockResolvedValue({
+      id:               "ts-adhoc",
+      clinicId:         CLINIC_ID,
+      rosteredClinicId: CLINIC_ID,
+      shiftDate:        "2026-09-26",
+      shiftStartAt:     "2026-09-26T22:00:00.000Z",
+      shiftEndAt:       "2026-09-27T06:00:00.000Z",
+      clockInAt:        new Date().toISOString(),
+      clockOutAt:       null,
+      staffUserId:      "user-1",
+      payrollType:      "hourly_auto",
+      timesheetStatus:  "draft",
+      totalHoursWorked: null,
+      clockInLocation:  null,
+      clockOutLocation: null,
+    });
+  });
+
+  it("shows the Physical location dropdown in ad-hoc mode (no roster shifts)", async () => {
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: /physical location/i })).toBeInTheDocument();
+    });
+  });
+
+  it("Clock In is blocked when no physical location is selected — shows inline error", async () => {
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // The dropdown is present but nothing is selected yet.
+    await screen.findByRole("combobox", { name: /physical location/i });
+
+    // Click Clock In without selecting a location.
+    const clockInBtn = screen.getByRole("button", { name: /clock in/i });
+    await userEvent.click(clockInBtn);
+
+    // Error message should appear; mockClockIn must NOT have been called.
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByRole("alert").textContent).toMatch(/select your physical location/i);
+    });
+    expect(mockClockIn).not.toHaveBeenCalled();
+  });
+
+  it("Clock In proceeds after selecting a physical location", async () => {
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, CLINIC_ID);
+
+    const clockInBtn = screen.getByRole("button", { name: /clock in/i });
+    await userEvent.click(clockInBtn);
+
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledOnce();
+    });
+
+    // physicalClinicId should be passed in the payload
+    const [, payload] = mockClockIn.mock.calls[0] as [string, { physicalClinicId?: string | null }];
+    expect(payload.physicalClinicId).toBe(CLINIC_ID);
+  });
+
+  it("Physical location dropdown NOT shown when a roster shift is auto-selected", async () => {
+    const rosterEntry = {
+      id:                       "rrrrr-shift-1",
+      staffUserId:              "user-1",
+      staffEmail:               "user@clinic-a.au",
+      rosteredClinicId:         CLINIC_ID,
+      rosteredClinicName:       "Verve Dental Clinic A",
+      rosteredClinicPreferredName: null,
+      shiftStartAt:             "2026-09-26T22:00:00.000Z",
+      shiftEndAt:               "2026-09-27T06:00:00.000Z",
+      shiftType:                "standard",
+      status:                   "confirmed",
+      notes:                    null,
+      createdByUserId:          "manager-1",
+      createdAt:                "2026-09-26T00:00:00.000Z",
+      updatedAt:                "2026-09-26T00:00:00.000Z",
+    };
+    mockGetMyShifts.mockResolvedValue([rosterEntry]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // Wait for the widget to auto-select the single shift — the "Rostered shift:"
+    // info paragraph only renders once selectedShift state is set (via useEffect).
+    // This is the authoritative signal that the effect has fired and the ad-hoc
+    // branch (which renders the physical location dropdown) is no longer active.
+    await screen.findByText(/rostered shift:/i);
+
+    // When a shift is auto-selected, the Physical location dropdown must NOT appear.
+    expect(screen.queryByRole("combobox", { name: /physical location/i })).not.toBeInTheDocument();
   });
 });

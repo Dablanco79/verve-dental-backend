@@ -57,6 +57,18 @@ export function createClinicService(
     },
 
     /**
+     * Fetches a clinic by ID without caller-scope restriction.
+     * Used exclusively by the geofence-coordinates endpoint — coordinates
+     * are geographic metadata, not sensitive business data, so any authenticated
+     * user may look up the position of any clinic (e.g. cross-clinic roster staff
+     * need the physical clinic's lat/lng for the geofence proximity check).
+     * Returns null when the clinic does not exist.
+     */
+    async getClinicById(clinicId: string): Promise<Clinic | null> {
+      return clinicRepository.findById(clinicId);
+    },
+
+    /**
      * Lists clinics visible to the caller.
      *
      *   • owner_admin  — all active clinics, ordered by name.

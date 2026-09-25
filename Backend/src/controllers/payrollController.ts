@@ -59,6 +59,24 @@ function requireUser(req: Request) {
   return req.user;
 }
 
+// ── Clock location input schema ───────────────────────────────────────────────
+// Raw device data sent by the client at clock-in / clock-out.
+// The backend AUTHORITATIVELY computes distanceMetres, withinRange, and
+// locationState ("within"/"outside") — these are NOT accepted from the client.
+// Only "denied"/"unavailable" may be sent (when lat/lng are null).
+// This is a SOFT geofence — the backend records the location but never
+// blocks a clock-in/out based on it.  The decision already happened on the frontend.
+const clockLocationInputSchema = z
+  .object({
+    lat: z.number().min(-90).max(90).nullable(),
+    lng: z.number().min(-180).max(180).nullable(),
+    accuracyMetres: z.number().nullable().optional(),
+    targetClinicId: z.string().uuid("targetClinicId must be a valid UUID"),
+    // Only sent when lat/lng are null. Backend ignores this when coordinates are present.
+    locationState: z.enum(["denied", "unavailable"]).optional(),
+  })
+  .strict();
+
 // Calendar dates (YYYY-MM-DD) — leave and timesheet shift dates are date-only.
 // A strict regex is used instead of z.coerce.date() to prevent any implicit
 // timezone conversion at the parsing layer; the service works in UTC.
@@ -122,6 +140,9 @@ function serializeTimesheet(e: TimesheetEntry) {
     approvalNotes: e.approvalNotes,
     commissionNote: e.commissionNote,
     generatedBy: e.generatedBy,
+    // Geofence location snapshots — null for historical entries.
+    clockInLocation: e.clockInLocation ?? null,
+    clockOutLocation: e.clockOutLocation ?? null,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
   };
@@ -360,6 +381,18 @@ const clockInSchema = z
       .optional(),
     shiftStartAt: isoDatetime(),
     shiftEndAt: isoDatetime(),
+    // Ad-hoc only: the physical clinic the user has explicitly selected.
+    // Ignored when rosterEntryId is present (physical clinic is derived
+    // from the trusted roster DB record instead).
+    physicalClinicId: z
+      .string()
+      .uuid("physicalClinicId must be a valid UUID")
+      .nullable()
+      .optional(),
+    // Optional geofence snapshot — raw device data only; backend computes
+    // distanceMetres, withinRange, and locationState authoritatively.
+    // The backend never blocks based on this; it is soft-enforcement only.
+    clockInLocation: clockLocationInputSchema.nullable().optional(),
   })
   .strict();
 
@@ -373,6 +406,9 @@ const clockOutSchema = z
       .number()
       .int("breakDurationMinutes must be a whole number of minutes")
       .min(0, "breakDurationMinutes cannot be negative"),
+    // Optional geofence snapshot — raw device data only; backend computes
+    // distanceMetres, withinRange, and locationState authoritatively.
+    clockOutLocation: clockLocationInputSchema.nullable().optional(),
   })
   .strict();
 
@@ -525,6 +561,8 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         rosterEntryId: body.rosterEntryId ?? null,
         shiftStartAt: new Date(body.shiftStartAt),
         shiftEndAt: new Date(body.shiftEndAt),
+        physicalClinicId: body.physicalClinicId ?? null,
+        clockInLocation: body.clockInLocation ?? null,
       });
 
       res.status(201).json({ data: serializeTimesheet(entry) });
@@ -549,6 +587,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         clinicId,
         timesheetId,
         body.breakDurationMinutes,
+        body.clockOutLocation ?? null,
       );
 
       res.status(200).json({ data: serializeTimesheet(entry) });

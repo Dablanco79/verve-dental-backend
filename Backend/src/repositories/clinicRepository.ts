@@ -77,6 +77,10 @@ export function createInMemoryClinicRepository(): ClinicRepository {
       isActive: true,
       preferredName: null,
       organisationId: null,
+      // Seed coordinates: Melbourne CBD approximate (−37.8136, 144.9631).
+      // Tests use these to verify Haversine within-range / outside-range logic.
+      latitude: -37.8136,
+      longitude: 144.9631,
       createdAt: SEED_CREATED_AT,
       updatedAt: SEED_CREATED_AT,
     },
@@ -93,6 +97,9 @@ export function createInMemoryClinicRepository(): ClinicRepository {
       isActive: true,
       preferredName: null,
       organisationId: null,
+      // Seed coordinates: ~500 m east of Clinic A for cross-clinic tests.
+      latitude: -37.8136,
+      longitude: 144.9694,
       createdAt: SEED_CREATED_AT,
       updatedAt: SEED_CREATED_AT,
     },
@@ -136,6 +143,8 @@ export function createInMemoryClinicRepository(): ClinicRepository {
         isActive: true,
         preferredName: null,
         organisationId: null,
+        latitude: null,
+        longitude: null,
         createdAt: now,
         updatedAt: now,
       };

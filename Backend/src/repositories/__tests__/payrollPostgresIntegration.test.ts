@@ -724,14 +724,16 @@ describe("PostgresTimesheetRepository — create: initialTimesheetStatus routing
     expect(params[6]).toBeNull(); // index 6 = roster_entry_id ($7)
   });
 
-  it("INSERT has exactly 22 params matching the 22-column INSERT statement", async () => {
+  it("INSERT has exactly 24 params matching the 24-column INSERT statement", async () => {
+    // 22 original columns + clock_in_location ($23) + clock_out_location ($24)
+    // added by migration 051_geofence_columns.
     const { pool, query } = makeMockPool([COMMISSION_ROW]);
     const repo = createPostgresTimesheetRepository(pool);
 
     await repo.create(makeInput("commission_log"));
 
     const [, params] = lastCall(query);
-    expect(params).toHaveLength(22);
+    expect(params).toHaveLength(24);
   });
 });
 

@@ -55,6 +55,25 @@ export function createClinicRouter(deps: AppDependencies): Router {
   );
 
   /**
+   * GET /clinics/:clinicId/geofence
+   *
+   * Returns the WGS84 coordinates of the clinic for client-side geofence
+   * proximity checks at Clock In / Clock Out time.
+   *
+   * Intentionally does NOT enforce enforceTenantParam — clinic coordinates
+   * are geographic metadata, not sensitive business data, and staff rostered
+   * to a physical clinic other than their home clinic need access to that
+   * clinic's location for the geofence calculation.  Any authenticated user
+   * may fetch any clinic's coordinates.
+   */
+  router.get(
+    "/geofence",
+    authenticate,
+    validateParams(clinicIdParamsSchema),
+    asyncHandler((req, res) => handlers.getClinicGeofence(req, res)),
+  );
+
+  /**
    * PATCH /clinics/:clinicId
    *
    * Restricted to owner_admin at both the route (requireRoles) and service

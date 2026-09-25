@@ -23,6 +23,9 @@ type ClinicRow = {
   is_active: boolean;
   preferred_name: string | null;
   organisation_id: string | null;
+  // Migration 051: geofence coordinates (NULL until set by admin).
+  latitude: number | null;
+  longitude: number | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -30,6 +33,7 @@ type ClinicRow = {
 const SELECT_COLUMNS = `
   id, name, abn, address_line1, suburb, state, postcode,
   timezone, subscription_tier, is_active, preferred_name, organisation_id,
+  latitude, longitude,
   created_at, updated_at
 `;
 
@@ -47,6 +51,8 @@ function toClinic(row: ClinicRow): Clinic {
     isActive: row.is_active,
     preferredName: row.preferred_name ?? null,
     organisationId: row.organisation_id ?? null,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

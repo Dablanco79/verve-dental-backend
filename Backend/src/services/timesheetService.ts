@@ -1,19 +1,23 @@
 import type { AuthenticatedUser, UserRecord } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import type {
+  ClockLocationInput,
   CreateTimesheetEntryInput,
+  GeofenceLocation,
   ListTimesheetOptions,
   ListTimesheetPageOptions,
   TimesheetEntry,
   TimesheetPage,
 } from "../types/payroll.js";
 import type { RosterEntry } from "../types/roster.js";
+import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 import { formatMelbourneDate, formatMelbourneDateTime, OPERATIONAL_TZ } from "../utils/melbourneTime.js";
 import { resolveDisplayName } from "../utils/resolveDisplayName.js";
+import { haversineDistance, GEOFENCE_RADIUS_METRES } from "../utils/haversine.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hour-bucket calculation (accounting-agnostic)
@@ -320,6 +324,72 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Geofence audit resolver — backend-authoritative distance / withinRange
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Converts a raw `ClockLocationInput` (client-supplied device data) into a
+ * fully-computed `GeofenceLocation` that is safe to persist.
+ *
+ * Security guarantees:
+ *   • `distanceMetres`, `withinRange`, and `locationState` ("within"/"outside")
+ *     are ALWAYS computed server-side from the clinic's DB coordinates.
+ *   • Clients cannot forge these values — they are stripped from the input type.
+ *   • `lat: null` / `lng: null` are stored verbatim (denied / unavailable).
+ *     We never store 0,0 as a fallback for no-GPS events.
+ */
+async function resolveGeofenceAudit(
+  input: ClockLocationInput | null,
+  clinicRepository: ClinicRepository,
+): Promise<GeofenceLocation | null> {
+  if (!input) return null;
+
+  if (input.lat !== null && input.lng !== null) {
+    // Device coordinates present — look up clinic and compute authoritative distance.
+    const clinic = await clinicRepository.findById(input.targetClinicId);
+    const clinicLat = clinic?.latitude ?? null;
+    const clinicLng = clinic?.longitude ?? null;
+
+    if (clinicLat !== null && clinicLng !== null) {
+      const rawDist = haversineDistance(input.lat, input.lng, clinicLat, clinicLng);
+      const distanceMetres = Math.round(rawDist);
+      const withinRange = rawDist <= GEOFENCE_RADIUS_METRES;
+      return {
+        lat: input.lat,
+        lng: input.lng,
+        accuracyMetres: input.accuracyMetres ?? null,
+        targetClinicId: input.targetClinicId,
+        distanceMetres,
+        withinRange,
+        locationState: withinRange ? "within" : "outside",
+      };
+    } else {
+      // Clinic has no coordinates yet — cannot determine distance.
+      return {
+        lat: input.lat,
+        lng: input.lng,
+        accuracyMetres: input.accuracyMetres ?? null,
+        targetClinicId: input.targetClinicId,
+        distanceMetres: null,
+        withinRange: null,
+        locationState: "unavailable",
+      };
+    }
+  } else {
+    // No device coordinates (denied or unavailable) — store null lat/lng, never 0,0.
+    return {
+      lat: null,
+      lng: null,
+      accuracyMetres: null,
+      targetClinicId: input.targetClinicId,
+      distanceMetres: null,
+      withinRange: null,
+      locationState: input.locationState ?? "unavailable",
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Service factory
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -330,6 +400,7 @@ export function createTimesheetService(
   userRepository: UserRepository,
   rosterRepository: RosterRepository,
   clinicAssignmentsRepository: UserClinicAssignmentsRepository,
+  clinicRepository: ClinicRepository,
 ) {
   return {
     // ── Hourly clocking ───────────────────────────────────────────────────────
@@ -356,6 +427,9 @@ export function createTimesheetService(
         rosterEntryId: string | null;
         shiftStartAt: Date;
         shiftEndAt: Date;
+        clockInLocation?: ClockLocationInput | null;
+        /** Ad-hoc only: the physical clinic explicitly selected by the user. */
+        physicalClinicId?: string | null;
       },
     ): Promise<TimesheetEntry> {
       // All authenticated roles may clock in using their own identity.
@@ -392,14 +466,16 @@ export function createTimesheetService(
         shiftStartAt = rosterEntry.shiftStartAt;
         shiftEndAt = rosterEntry.shiftEndAt;
       } else {
-        // Ad-hoc clock-in: use the route's verified clinicId as the rostered
-        // location (physical work site), and fetch the canonical name from the DB.
-        rosteredClinicId = clinicId;
-        const clinicName = await userRepository.getClinicName(clinicId);
-        if (!clinicName) {
+        // Ad-hoc clock-in: use the explicitly selected physical clinic if provided,
+        // otherwise fall back to the route's verified clinicId.
+        // The user MUST explicitly choose their physical location via the frontend
+        // selector; this fallback exists only as a safety net, not as a default.
+        rosteredClinicId = input.physicalClinicId ?? clinicId;
+        const physicalClinic = await clinicRepository.findById(rosteredClinicId);
+        if (!physicalClinic) {
           throw new AppError(404, "CLINIC_NOT_FOUND", "Clinic not found");
         }
-        rosteredClinicName = clinicName;
+        rosteredClinicName = physicalClinic.name;
       }
 
       // Validate the authoritative shift window BEFORE writing anything.
@@ -461,10 +537,15 @@ export function createTimesheetService(
           // clock-in.  Activate with actual server time, clear pre-filled
           // clock-out and hour buckets, stamp the staff member's identity.
           if (existing.generatedBy === "system_auto") {
+            const resolvedClockInLocation = await resolveGeofenceAudit(
+              input.clockInLocation ?? null,
+              clinicRepository,
+            );
             return timesheetRepository.activateClockIn(
               existing.id,
               now,
               caller.email,
+              resolvedClockInLocation,
             );
           }
 
@@ -486,6 +567,11 @@ export function createTimesheetService(
         }
         // No existing entry: fall through to create() below.
       }
+
+      const resolvedClockInLocation = await resolveGeofenceAudit(
+        input.clockInLocation ?? null,
+        clinicRepository,
+      );
 
       try {
         return await timesheetRepository.create({
@@ -514,6 +600,8 @@ export function createTimesheetService(
           overtimeCustomHours: null,
           commissionNote: null,
           generatedBy: caller.email,
+          clockInLocation: resolvedClockInLocation,
+          clockOutLocation: null,
         });
       } catch (err) {
         // Defensive backstop: if a concurrent pre-fill was created between the
@@ -546,6 +634,7 @@ export function createTimesheetService(
       clinicId: string,
       timesheetId: string,
       breakDurationMinutes: number,
+      clockOutLocation?: ClockLocationInput | null,
     ): Promise<TimesheetEntry> {
       const entry = await timesheetRepository.findById(timesheetId);
 
@@ -593,9 +682,14 @@ export function createTimesheetService(
       // Atomically bundles clock fields with recalculated hour buckets so
       // accounting columns can never become stale relative to the clock mutation.
       const now = new Date();
+      const resolvedClockOutLocation = await resolveGeofenceAudit(
+        clockOutLocation ?? null,
+        clinicRepository,
+      );
       return timesheetRepository.update(timesheetId, {
         clockMutation: clockUpdatePayload(entry.clockInAt, now, breakDurationMinutes),
         timesheetStatus: "submitted",
+        clockOutLocation: resolvedClockOutLocation,
       });
     },
 
@@ -1098,6 +1192,9 @@ export function createTimesheetService(
         shiftStartAt: rosterEntry.shiftStartAt,
         shiftEndAt: rosterEntry.shiftEndAt,
         generatedBy: "system_auto",
+        // System-generated entries have no GPS data — location fields are null.
+        clockInLocation: null,
+        clockOutLocation: null,
       };
 
       if (staffUser.payrollTrack === "commission") {

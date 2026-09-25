@@ -3099,6 +3099,33 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WHERE roster_entry_id IS NOT NULL;
     `,
   },
+
+  // ── Migration 051 ─────────────────────────────────────────────────────────
+  /**
+   * Soft Geofence — Clinic Coordinates + Timesheet Location Logs.
+   *
+   * clinics.latitude / longitude — WGS84 decimal degrees; NULL until set.
+   * timesheet_entries.clock_in_location  — JSONB { lat, lng, accuracyMetres,
+   * timesheet_entries.clock_out_location   targetClinicId, distanceMetres,
+   *                                         withinRange, locationState }
+   *
+   * All columns are nullable — purely additive, no default, no data migration.
+   * Historical rows remain NULL (displayed as "Location not recorded").
+   *
+   * See Backend/migrations/051_geofence_columns.up.sql for full DDL notes.
+   */
+  {
+    id: "051_geofence_columns",
+    sql: `
+      ALTER TABLE clinics
+        ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+
+      ALTER TABLE timesheet_entries
+        ADD COLUMN IF NOT EXISTS clock_in_location  JSONB,
+        ADD COLUMN IF NOT EXISTS clock_out_location JSONB;
+    `,
+  },
 ];
 
 /**
