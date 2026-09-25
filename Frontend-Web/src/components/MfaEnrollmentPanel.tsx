@@ -9,8 +9,14 @@ type Props = {
    * Should throw on error so the panel can surface the message to the user.
    */
   onConfirm: (code: string) => Promise<void>;
-  /** Optional cancel handler — shows a Cancel button when provided. */
+  /** Optional cancel handler — shows a cancel button when provided. */
   onCancel?: () => void;
+  /**
+   * Label for the cancel button when `onCancel` is provided.
+   * Defaults to "Cancel".  Pass "Skip for now" on optional-enrollment flows
+   * so the affordance matches the policy context.
+   */
+  cancelLabel?: string;
   /** When true the submit button shows a loading state and inputs are disabled. */
   isBusy: boolean;
 };
@@ -29,7 +35,7 @@ type Props = {
  *     to reveal it, reducing shoulder-surfing risk.
  *   - This component does not persist the secret in any storage medium.
  */
-export function MfaEnrollmentPanel({ setupData, onConfirm, onCancel, isBusy }: Props) {
+export function MfaEnrollmentPanel({ setupData, onConfirm, onCancel, cancelLabel = "Cancel", isBusy }: Props) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrError, setQrError] = useState(false);
   const [code, setCode] = useState("");
@@ -112,8 +118,9 @@ export function MfaEnrollmentPanel({ setupData, onConfirm, onCancel, isBusy }: P
           </button>
         </div>
         <p className="mfa-panel__secret-hint">
-          If you cannot scan the QR code, enter this key manually in Google
-          Authenticator, Authy, or another TOTP app. Keep it private.
+          If you cannot scan the QR code, enter this key manually in your
+          Authenticator App (Google Authenticator, Authy, Microsoft
+          Authenticator, or any TOTP-compatible app). Keep it private.
         </p>
       </div>
 
@@ -155,7 +162,7 @@ export function MfaEnrollmentPanel({ setupData, onConfirm, onCancel, isBusy }: P
               onClick={onCancel}
               disabled={isBusy}
             >
-              Cancel
+              {cancelLabel}
             </button>
           ) : null}
         </div>

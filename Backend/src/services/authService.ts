@@ -24,6 +24,11 @@ import type {
 import { DEFAULT_PERMISSIONS } from "../types/permissions.js";
 import { AppError } from "../types/errors.js";
 
+/**
+ * Roles for which MFA is unconditionally mandatory.
+ * Changing this list has immediate effect at login and refresh — no migration
+ * or feature flag is needed.
+ */
 const MFA_REQUIRED_ROLES: UserRole[] = ["owner_admin", "group_practice_manager"];
 
 type RefreshTokenRecord = {
@@ -350,6 +355,8 @@ export function createAuthService(
 
     const publicUser = toPublicUser(user);
 
+    // ── MFA_REQUIRED_ROLES: owner_admin / group_practice_manager ─────────────
+    // These roles unconditionally require MFA.
     if (MFA_REQUIRED_ROLES.includes(user.role)) {
       if (user.mfaEnabled) {
         audit.logAuthEvent("auth.login.mfa_required", {
@@ -380,6 +387,48 @@ export function createAuthService(
         enrollmentToken: signMfaEnrollmentToken(user),
         user: publicUser,
       };
+    }
+
+    // ── clinical_staff: policy-aware MFA handling ────────────────────────────
+    if (user.role === "clinical_staff") {
+      if (user.mfaEnabled) {
+        // Enrolled clinical_staff must always complete the MFA challenge,
+        // regardless of policy.  "If they have already enrolled MFA, do not
+        // allow normal login to silently bypass it." — Workforce Security spec.
+        audit.logAuthEvent("auth.login.mfa_required", {
+          userId: user.id,
+          email: user.email,
+          clinicId: user.homeClinicId,
+          ...auditContext,
+        });
+
+        return {
+          kind: "mfa_required",
+          mfaToken: signMfaChallenge(user),
+          user: publicUser,
+        };
+      }
+
+      if (config.CLINICAL_STAFF_MFA_POLICY === "required") {
+        // Policy mandates enrollment — do not issue tokens until staff has
+        // completed MFA setup.  Same path as privileged roles above.
+        audit.logAuthEvent("auth.login.mfa_enrollment_required", {
+          userId: user.id,
+          email: user.email,
+          clinicId: user.homeClinicId,
+          role: user.role,
+          ...auditContext,
+        });
+
+        return {
+          kind: "mfa_enrollment_required",
+          enrollmentToken: signMfaEnrollmentToken(user),
+          user: publicUser,
+        };
+      }
+
+      // policy === "optional" and !mfaEnabled: authenticate directly.
+      // The user may voluntarily enroll via Settings > Security at any time.
     }
 
     const tokens = await issueTokens(user);
@@ -512,10 +561,19 @@ export function createAuthService(
         throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
       }
 
-      // Enforce MFA enrollment on refresh: a privileged user who somehow holds
-      // a refresh token (e.g. token pre-dates enforcement) cannot silently
-      // bypass the requirement by skipping the login gate.
-      if (!user.mfaEnabled && MFA_REQUIRED_ROLES.includes(user.role)) {
+      // Enforce MFA enrollment on refresh: a user who somehow holds a refresh
+      // token without having completed MFA (e.g. token pre-dates enforcement)
+      // cannot silently bypass the requirement by skipping the login gate.
+      //
+      // Applies to:
+      //   • MFA_REQUIRED_ROLES (owner_admin / group_practice_manager) always.
+      //   • clinical_staff when CLINICAL_STAFF_MFA_POLICY === "required".
+      const refreshMfaEnforcementActive =
+        MFA_REQUIRED_ROLES.includes(user.role) ||
+        (user.role === "clinical_staff" &&
+          config.CLINICAL_STAFF_MFA_POLICY === "required");
+
+      if (!user.mfaEnabled && refreshMfaEnforcementActive) {
         await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
         audit.logAuthEvent("auth.refresh.mfa_enrollment_required", {
           userId: user.id,

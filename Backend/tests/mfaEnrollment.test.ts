@@ -258,28 +258,58 @@ describe("MFA enrollment + login flow", () => {
     expect((mfaRes.body as ApiData<{ accessToken: string }>).data.accessToken).toEqual(expect.any(String));
   });
 
-  it("non-privileged roles do not require MFA even after enrollment (current policy)", async () => {
+  it("enrolled clinical_staff are challenged for MFA at login", async () => {
     const app = await createTestApp();
     const accessToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
     // Enroll staff member with MFA
     const setupRes = await doSetup(app, accessToken);
     const { secret } = (setupRes.body as ApiData<{ secret: string }>).data;
-    const code = generateSync({ secret });
-    await doConfirm(app, accessToken, code);
+    const enrollCode = generateSync({ secret });
+    await doConfirm(app, accessToken, enrollCode);
 
-    // staff@clinic-a.au has role clinical_staff — not in MFA_REQUIRED_ROLES
-    // Login should succeed without MFA challenge
+    // staff@clinic-a.au has role clinical_staff — once enrolled, login must
+    // return an MFA challenge rather than silently issuing tokens.
     const loginRes = await request(app).post("/api/v1/auth/login").send({
       email: "staff@clinic-a.au",
       password: "password123",
     });
 
     expect(loginRes.status).toBe(200);
-    const loginDataFinal = (
-      loginRes.body as ApiData<{ requiresMfa: boolean; accessToken: string }>
+    const loginData = (
+      loginRes.body as ApiData<{ requiresMfa: boolean; mfaToken: string }>
     ).data;
-    expect(loginDataFinal.requiresMfa).toBe(false);
-    expect(loginDataFinal.accessToken).toEqual(expect.any(String));
+    expect(loginData.requiresMfa).toBe(true);
+    expect(typeof loginData.mfaToken).toBe("string");
+  });
+
+  it("enrolled clinical_staff cannot bypass MFA — completing the challenge issues tokens", async () => {
+    const app = await createTestApp();
+    const accessToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    // Enroll
+    const setupRes = await doSetup(app, accessToken);
+    const { secret } = (setupRes.body as ApiData<{ secret: string }>).data;
+    const enrollCode = generateSync({ secret });
+    await doConfirm(app, accessToken, enrollCode);
+
+    // Login → MFA challenge
+    const loginRes = await request(app).post("/api/v1/auth/login").send({
+      email: "staff@clinic-a.au",
+      password: "password123",
+    });
+    const { mfaToken } = (loginRes.body as ApiData<{ mfaToken: string }>).data;
+
+    // Complete MFA → tokens issued
+    const verifyCode = generateSync({ secret });
+    const verifyRes = await request(app).post("/api/v1/auth/mfa/verify").send({
+      mfaToken,
+      code: verifyCode,
+    });
+
+    expect(verifyRes.status).toBe(200);
+    expect(
+      (verifyRes.body as ApiData<{ accessToken: string }>).data.accessToken,
+    ).toEqual(expect.any(String));
   });
 });

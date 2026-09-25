@@ -95,12 +95,12 @@ export function SecurityPage() {
         ) : state.phase === "idle" ? (
           <div>
             <p>
-              Protect your account with an authenticator app. Once enabled, you
+              Protect your account with an Authenticator App. Once enabled, you
               will need a 6-digit code from the app each time you sign in.
             </p>
             <p className="inventory-page__subtitle">
-              Compatible apps: Google Authenticator, Authy, Microsoft
-              Authenticator, or any TOTP-compatible app.
+              Compatible apps include Google Authenticator, Authy, Microsoft
+              Authenticator, and any other TOTP-compatible app.
             </p>
             <div className="product-form__actions" style={{ marginTop: "1rem" }}>
               <button
@@ -116,8 +116,8 @@ export function SecurityPage() {
         ) : (
           <>
             <p className="mfa-panel__instructions">
-              1. Open your authenticator app and scan the QR code below, or
-              enter the key manually.
+              1. Open your Authenticator App and scan the QR code below, or
+              enter the setup key manually.
               <br />
               2. Enter the 6-digit code shown in the app to confirm setup.
             </p>
@@ -125,6 +125,7 @@ export function SecurityPage() {
               setupData={state.setupData}
               onConfirm={async (code) => { await handleConfirm(code); }}
               onCancel={() => { setState({ phase: "idle" }); }}
+              cancelLabel="Skip for now"
               isBusy={state.phase === "confirming"}
             />
           </>

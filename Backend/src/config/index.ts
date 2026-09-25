@@ -105,6 +105,29 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((v) => v === "true"),
+
+  /**
+   * MFA policy for the clinical_staff role.
+   *
+   * 'optional'  (default) — clinical_staff may voluntarily enroll an
+   *             Authenticator App via Settings > Security.  Once enrolled,
+   *             MFA is always challenged at login.  Staff who have not
+   *             enrolled log in normally without being prompted to enrol.
+   *
+   * 'required'  — clinical_staff must complete MFA enrollment before
+   *             receiving auth tokens.  Login returns mfa_enrollment_required
+   *             for any clinical_staff user whose mfa_enabled = false, and
+   *             the token-refresh path enforces the same rule.  There is no
+   *             skip path once this policy is active.
+   *
+   * Note: owner_admin and group_practice_manager are always required
+   * regardless of this setting — see MFA_REQUIRED_ROLES in authService.ts.
+   *
+   * Set via environment variable:   CLINICAL_STAFF_MFA_POLICY=optional|required
+   */
+  CLINICAL_STAFF_MFA_POLICY: z
+    .enum(["optional", "required"])
+    .default("optional"),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

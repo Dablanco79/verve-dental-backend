@@ -45,6 +45,7 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     OCR_CLAUDE_MODEL: "claude-opus-4-5",
     OCR_MAX_FILE_SIZE_BYTES: 20_971_520,
     PILOT_RESET_ENABLED: false,
+    CLINICAL_STAFF_MFA_POLICY: "optional",
     ...overrides,
   };
 }
