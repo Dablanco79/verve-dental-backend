@@ -42,21 +42,6 @@ import {
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
 // ─────────────────────────────────────────────────────────────────────────────
-// Binary body parser for XLSX responses
-// ─────────────────────────────────────────────────────────────────────────────
-// Supertest/superagent doesn't know how to parse XLSX content-type, so res.body
-// defaults to {} for binary responses. This custom parser returns the raw bytes
-// as a Buffer, enabling XLSX.read() to process the workbook correctly.
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function binaryBodyParser(res: any, callback: (err: Error | null, body: Buffer) => void): void {
-  const chunks: Uint8Array[] = [];
-  res.on("data", (chunk: Uint8Array) => { chunks.push(chunk); });
-  res.on("end", () => { callback(null, Buffer.concat(chunks)); });
-  res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -598,12 +583,18 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     expect(inRes.status).toBe(201);
 
     // Export without date filter to include all entries.
-    // Uses custom binaryBodyParser so the XLSX body is a parseable Buffer.
+    // Inline binary parser: TypeScript infers res's type from .parse() context,
+    // avoiding any-typed member-access while collecting the raw XLSX bytes.
     const exportRes = await request(app)
       .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
       .set("Authorization", `Bearer ${adminToken}`)
       .buffer(true)
-      .parse(binaryBodyParser);
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+        res.on("end", () => { callback(null, Buffer.concat(chunks)); });
+        res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
+      });
     expect(exportRes.status).toBe(200);
 
     // Verify the row count from the header before parsing
@@ -615,9 +606,12 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     const wb = XLSX.read(exportRes.body as Buffer, { type: "buffer" });
     const ws = wb.Sheets["Timesheets"];
     expect(ws).toBeDefined();
+    // Explicit guard so TypeScript narrows WorkSheet | undefined → WorkSheet.
+    // The expect() above guarantees the throw is never reached at runtime.
+    if (!ws) throw new Error("Timesheets worksheet missing from exported workbook");
 
     // Use header:1 to get raw row arrays including the header row
-    const allRows = XLSX.utils.sheet_to_json<unknown[]>(ws!, { header: 1 });
+    const allRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 });
     expect(allRows.length).toBeGreaterThanOrEqual(2); // header + at least 1 data row
     const headers = allRows[0] as string[];
     expect(headers).toContain("Clock In Location");
@@ -626,7 +620,7 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     expect(headers).toContain("Clock Out Distance (m)");
 
     // The data row for our entry: Clock Out is null so it should show "Not recorded"
-    const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws!);
+    const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
     expect(dataRows.length).toBeGreaterThanOrEqual(1);
     const ourRow = dataRows[0] as Record<string, unknown>;
     expect(typeof ourRow["Clock In Location"]).toBe("string");
@@ -656,7 +650,12 @@ describe("GET /timesheets/export — geofence audit columns", () => {
       .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
       .set("Authorization", `Bearer ${adminToken}`)
       .buffer(true)
-      .parse(binaryBodyParser);
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+        res.on("end", () => { callback(null, Buffer.concat(chunks)); });
+        res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
+      });
     expect(exportRes.status).toBe(200);
 
     const rowCount = parseInt(exportRes.headers["x-export-row-count"] as string, 10);
@@ -666,8 +665,9 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     const wb = XLSX.read(exportRes.body as Buffer, { type: "buffer" });
     const ws = wb.Sheets["Timesheets"];
     expect(ws).toBeDefined();
+    if (!ws) throw new Error("Timesheets worksheet missing from exported workbook");
 
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws!);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const row = rows[0] as Record<string, unknown>;
 
