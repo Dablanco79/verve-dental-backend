@@ -216,11 +216,15 @@ function GeofenceSummaryCell({
     switch (loc.locationState) {
       case "within":
         return `${label}: Within${
-          loc.distanceMetres !== null ? ` — ${String(loc.distanceMetres)} m` : ""
+          loc.distanceMetres !== null
+            ? ` — ${String(Math.round(loc.distanceMetres))} m`
+            : ""
         }`;
       case "outside":
         return `${label}: Outside${
-          loc.distanceMetres !== null ? ` — ${String(loc.distanceMetres)} m` : ""
+          loc.distanceMetres !== null
+            ? ` — ${String(Math.round(loc.distanceMetres))} m`
+            : ""
         }`;
       case "denied":      return `${label}: Permission denied`;
       case "unavailable": return `${label}: Unavailable`;
@@ -230,13 +234,13 @@ function GeofenceSummaryCell({
   return (
     <div className="ts-geofence-summary">
       {hasException && (
-        <span className="ts-geofence-exception" role="status">
+        <div className="ts-geofence-exception" role="status">
           <AlertTriangle size={12} aria-hidden="true" />
           {" Location exception"}
-        </span>
+        </div>
       )}
-      <span className="ts-geofence-detail">{locLine(clockInLoc, "In")}</span>
-      <span className="ts-geofence-detail">{locLine(clockOutLoc, "Out")}</span>
+      <div className="ts-geofence-detail">{locLine(clockInLoc, "In")}</div>
+      <div className="ts-geofence-detail">{locLine(clockOutLoc, "Out")}</div>
     </div>
   );
 }
