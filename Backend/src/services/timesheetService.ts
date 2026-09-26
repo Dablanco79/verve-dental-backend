@@ -135,6 +135,17 @@ const COL_CLOCK_IN    = `Clock In (${OPERATIONAL_TZ})`;
 const COL_CLOCK_OUT   = `Clock Out (${OPERATIONAL_TZ})`;
 const COL_APPROVED_AT = `Approved At (${OPERATIONAL_TZ})`;
 
+// Helper: human-readable geofence status for the XLSX export.
+function geofenceStatusLabel(loc: GeofenceLocation | null): string {
+  if (!loc) return "Not recorded";
+  switch (loc.locationState) {
+    case "within":      return "Within range";
+    case "outside":     return "Outside range";
+    case "denied":      return "Permission denied";
+    case "unavailable": return "Unavailable";
+  }
+}
+
 // Using Record<string, …> for the row shape so json_to_sheet preserves
 // insertion order (the columns will appear in the order the keys are added).
 type ExportRow = Record<string, string | number>;
@@ -193,6 +204,10 @@ async function buildTimesheetXlsx(
     row["Approved By"]         = e.approvedByUserId ? (approverMap.get(e.approvedByUserId) ?? e.approvedByUserId) : "";
     row[COL_APPROVED_AT]       = e.approvedAt ? formatMelbourneDateTime(e.approvedAt) : "";
     row["Commission Note"]     = e.commissionNote ?? "";
+    row["Clock In Location"]      = geofenceStatusLabel(e.clockInLocation);
+    row["Clock In Distance (m)"]  = e.clockInLocation?.distanceMetres ?? "";
+    row["Clock Out Location"]     = geofenceStatusLabel(e.clockOutLocation);
+    row["Clock Out Distance (m)"] = e.clockOutLocation?.distanceMetres ?? "";
     return row;
   });
 
@@ -216,6 +231,10 @@ async function buildTimesheetXlsx(
     { wch: 30 }, // Approved By
     { wch: 32 }, // Approved At (Australia/Melbourne)
     { wch: 30 }, // Commission Note
+    { wch: 22 }, // Clock In Location
+    { wch: 20 }, // Clock In Distance (m)
+    { wch: 22 }, // Clock Out Location
+    { wch: 20 }, // Clock Out Distance (m)
   ];
 
   XLSX.utils.book_append_sheet(wb, detailSheet, "Timesheets");

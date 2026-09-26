@@ -20,6 +20,7 @@ import { AuthContext } from "../src/auth/AuthContext.js";
 import type { AuthContextValue } from "../src/auth/AuthContext.js";
 import { TimesheetsPage } from "../src/pages/TimesheetsPage.js";
 import type { AuthUser } from "../src/types/index.js";
+import type { GeofenceLocation, TimesheetEntry } from "../src/types/payroll.js";
 
 // ── Mock api/client.ts ────────────────────────────────────────────────────────
 // vi.mock is hoisted before variable declarations — use vi.hoisted to declare
@@ -490,6 +491,8 @@ function makeSubmittedEntry(id = "entry-1") {
     approvalNotes: null,
     commissionNote: null,
     generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
     createdAt: "2026-09-21T07:02:00.000Z",
     updatedAt: "2026-09-21T15:05:00.000Z",
   };
@@ -901,5 +904,215 @@ describe("ClockWidget — ad-hoc physical location selector", () => {
 
     // When a shift is auto-selected, the Physical location dropdown must NOT appear.
     expect(screen.queryByRole("combobox", { name: /physical location/i })).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ApprovalQueue — geofence location states
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeGeofenceEntry(overrides: Partial<{
+  clockInLocation: GeofenceLocation | null;
+  clockOutLocation: GeofenceLocation | null;
+  timesheetStatus: TimesheetEntry["timesheetStatus"];
+}>): TimesheetEntry {
+  return {
+    id: "geo-entry-" + Math.random().toString(36).slice(2),
+    payrollType: "hourly_auto",
+    staffUserId: "user-geo-1",
+    staffEmail: "geo.staff@clinic-a.au",
+    clinicId: "11111111-1111-4111-8111-111111111111",
+    rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+    rosteredClinicName: "Verve Dental Clinic A",
+    rosterEntryId: null,
+    shiftDate: "2026-09-23",
+    shiftStartAt: "2026-09-23T22:00:00.000Z",
+    shiftEndAt: "2026-09-24T06:00:00.000Z",
+    attendanceStatus: "present",
+    clockInAt: "2026-09-23T22:05:00.000Z",
+    clockOutAt: "2026-09-24T06:02:00.000Z",
+    breakDurationMinutes: 30,
+    totalHoursWorked: 7.95,
+    ordinaryHours: 7.95,
+    overtime15xHours: 0,
+    overtime2xHours: 0,
+    overtimeCustomHours: 0,
+    timesheetStatus: "submitted",
+    approvedByUserId: null,
+    approvedAt: null,
+    approvalNotes: null,
+    commissionNote: null,
+    generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
+    createdAt: "2026-09-23T22:05:00.000Z",
+    updatedAt: "2026-09-24T06:02:00.000Z",
+    ...overrides,
+  };
+}
+
+const withinRangeLoc = (): GeofenceLocation => ({
+  lat: -37.8136,
+  lng: 144.9631,
+  accuracyMetres: 12,
+  targetClinicId: "11111111-1111-4111-8111-111111111111",
+  distanceMetres: 38,
+  withinRange: true,
+  locationState: "within",
+});
+
+const outsideRangeLoc = (): GeofenceLocation => ({
+  lat: -37.8136,
+  lng: 144.9694,
+  accuracyMetres: 20,
+  targetClinicId: "11111111-1111-4111-8111-111111111111",
+  distanceMetres: 436,
+  withinRange: false,
+  locationState: "outside",
+});
+
+const deniedLoc = (): GeofenceLocation => ({
+  lat: null,
+  lng: null,
+  accuracyMetres: null,
+  targetClinicId: "11111111-1111-4111-8111-111111111111",
+  distanceMetres: null,
+  withinRange: null,
+  locationState: "denied",
+});
+
+const unavailableLoc = (): GeofenceLocation => ({
+  lat: null,
+  lng: null,
+  accuracyMetres: null,
+  targetClinicId: "11111111-1111-4111-8111-111111111111",
+  distanceMetres: null,
+  withinRange: null,
+  locationState: "unavailable",
+});
+
+describe("ApprovalQueue — geofence location states", () => {
+  it("within-range clock-in and clock-out shows Location verified badges (no exception badge)", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: withinRangeLoc(),
+      clockOutLocation: withinRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    // "Location verified" badge should appear (from TsLocationBadge for within-range)
+    expect(screen.getAllByText(/location verified/i).length).toBeGreaterThanOrEqual(1);
+    // No exception badge
+    expect(screen.queryByText(/location exception/i)).toBeNull();
+  });
+
+  it("outside-range clock-in shows Location exception badge", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: outsideRangeLoc(),
+      clockOutLocation: withinRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getAllByText(/location exception/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("outside-range clock-out shows Location exception badge", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: withinRangeLoc(),
+      clockOutLocation: outsideRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getAllByText(/location exception/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("denied location is visible to approver", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: deniedLoc(),
+      clockOutLocation: withinRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    // The denied badge text appears somewhere in the rendered output
+    expect(screen.getAllByText(/permission not granted/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("unavailable location is visible to approver", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: unavailableLoc(),
+      clockOutLocation: null,
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getAllByText(/location unavailable/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("historical null location shows 'Not recorded' rather than an error", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: null,
+      clockOutLocation: null,
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    // GeofenceSummaryCell renders "Not recorded" when both locations are null
+    expect(screen.getAllByText(/not recorded/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/location exception/i)).toBeNull();
+  });
+
+  it("location exception does not prevent approval — Approve button still present", async () => {
+    const entry = makeGeofenceEntry({
+      clockInLocation: outsideRangeLoc(),
+      clockOutLocation: outsideRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    const emailCell = await screen.findByRole("cell", { name: entry.staffEmail });
+    const entryRow = emailCell.closest("tr");
+    if (!entryRow) throw new Error("Expected timesheet entry row");
+
+    expect(screen.getAllByText(/location exception/i).length).toBeGreaterThanOrEqual(1);
+    // Approve button still rendered and enabled — scoped to the entry row
+    const approveBtn = within(entryRow).getByRole("button", { name: /^approve$/i });
+    expect(approveBtn).toBeInTheDocument();
+    expect(approveBtn).not.toBeDisabled();
+  });
+
+  it("location information remains visible after approval (reviewed tab shows geofence state)", async () => {
+    // Approved entry — timesheetStatus = "approved"
+    const entry = makeGeofenceEntry({
+      timesheetStatus: "approved" as const,
+      clockInLocation: outsideRangeLoc(),
+      clockOutLocation: withinRangeLoc(),
+    });
+    mockListTimesheets.mockResolvedValue([entry]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    // Click "Approved" tab to see reviewed timesheets
+    const approvedTab = await screen.findByRole("button", { name: /^approved/i });
+    await userEvent.click(approvedTab);
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    // Location exception still visible on the approved tab
+    expect(screen.getAllByText(/location exception/i).length).toBeGreaterThanOrEqual(1);
   });
 });

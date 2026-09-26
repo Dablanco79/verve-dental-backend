@@ -41,6 +41,20 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
+// ─────────────────────────────────────────────────────────────────────────────
+// Binary body parser for XLSX responses
+// ─────────────────────────────────────────────────────────────────────────────
+// Supertest/superagent doesn't know how to parse XLSX content-type, so res.body
+// defaults to {} for binary responses. This custom parser returns the raw bytes
+// as a Buffer, enabling XLSX.read() to process the workbook correctly.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function binaryBodyParser(res: any, callback: (err: Error | null, body: Buffer) => void): void {
+  const chunks: Uint8Array[] = [];
+  res.on("data", (chunk: Uint8Array) => { chunks.push(chunk); });
+  res.on("end", () => { callback(null, Buffer.concat(chunks)); });
+  res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -553,3 +567,113 @@ describe("GET /timesheets/export — hours calculation consistency", () => {
 //
 //   3. Large dataset: seed >100 rows and verify the export does not time out
 //      and returns all rows (no accidental LIMIT 100 in the export query).
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geofence audit columns in the XLSX export
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GET /timesheets/export — geofence audit columns", () => {
+  it("exported XLSX includes geofence status and distance columns", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    // Clock in with a location payload — creates an entry with clockInLocation.
+    // We don't clock out so we don't need to advance time.
+    const inRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: "2026-09-20T22:00:00.000Z",
+        shiftEndAt: "2026-09-21T06:00:00.000Z",
+        physicalClinicId: SEED_CLINIC_A_ID,
+        clockInLocation: {
+          lat: -37.8136,
+          lng: 144.9631,
+          accuracyMetres: 12,
+          targetClinicId: SEED_CLINIC_A_ID,
+        },
+      });
+    expect(inRes.status).toBe(201);
+
+    // Export without date filter to include all entries.
+    // Uses custom binaryBodyParser so the XLSX body is a parseable Buffer.
+    const exportRes = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .buffer(true)
+      .parse(binaryBodyParser);
+    expect(exportRes.status).toBe(200);
+
+    // Verify the row count from the header before parsing
+    const rowCount = parseInt(exportRes.headers["x-export-row-count"] as string, 10);
+    expect(rowCount).toBeGreaterThanOrEqual(1);
+
+    // Parse the XLSX buffer to verify column headers
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(exportRes.body as Buffer, { type: "buffer" });
+    const ws = wb.Sheets["Timesheets"];
+    expect(ws).toBeDefined();
+
+    // Use header:1 to get raw row arrays including the header row
+    const allRows = XLSX.utils.sheet_to_json<unknown[]>(ws!, { header: 1 });
+    expect(allRows.length).toBeGreaterThanOrEqual(2); // header + at least 1 data row
+    const headers = allRows[0] as string[];
+    expect(headers).toContain("Clock In Location");
+    expect(headers).toContain("Clock In Distance (m)");
+    expect(headers).toContain("Clock Out Location");
+    expect(headers).toContain("Clock Out Distance (m)");
+
+    // The data row for our entry: Clock Out is null so it should show "Not recorded"
+    const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws!);
+    expect(dataRows.length).toBeGreaterThanOrEqual(1);
+    const ourRow = dataRows[0] as Record<string, unknown>;
+    expect(typeof ourRow["Clock In Location"]).toBe("string");
+    expect((ourRow["Clock In Location"] as string).length).toBeGreaterThan(0);
+    expect(ourRow["Clock Out Location"]).toBe("Not recorded");
+  });
+
+  it("historical entry (no location data) exports 'Not recorded' for both location columns", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    // Clock in without location — simulates a historical / no-GPS entry
+    const inRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: "2026-09-21T22:00:00.000Z",
+        shiftEndAt: "2026-09-22T06:00:00.000Z",
+        physicalClinicId: SEED_CLINIC_A_ID,
+        // Intentionally omitted: no clockInLocation
+      });
+    expect(inRes.status).toBe(201);
+
+    const exportRes = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .buffer(true)
+      .parse(binaryBodyParser);
+    expect(exportRes.status).toBe(200);
+
+    const rowCount = parseInt(exportRes.headers["x-export-row-count"] as string, 10);
+    expect(rowCount).toBeGreaterThanOrEqual(1);
+
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(exportRes.body as Buffer, { type: "buffer" });
+    const ws = wb.Sheets["Timesheets"];
+    expect(ws).toBeDefined();
+
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws!);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    const row = rows[0] as Record<string, unknown>;
+
+    expect(row["Clock In Location"]).toBe("Not recorded");
+    expect(row["Clock Out Location"]).toBe("Not recorded");
+    expect(row["Clock In Distance (m)"]).toBe("");
+    expect(row["Clock Out Distance (m)"]).toBe("");
+  });
+});

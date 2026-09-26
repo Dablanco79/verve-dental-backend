@@ -125,9 +125,23 @@ const TS_LOCATION_CONFIG = {
 } as const;
 
 /** Inline location-state badge. Renders nothing when status is null. */
-function TsLocationBadge({ status }: { status: TsLocationState }) {
+function TsLocationBadge({
+  status,
+  distanceMetres,
+}: {
+  status: TsLocationState;
+  distanceMetres?: number | null;
+}) {
   if (status === null) return null;
-  const { Icon, label, hint, className } = TS_LOCATION_CONFIG[status];
+  const { Icon, className } = TS_LOCATION_CONFIG[status];
+  const label =
+    status === "outside_range" && distanceMetres != null
+      ? `Outside — ${String(distanceMetres)} m`
+      : TS_LOCATION_CONFIG[status].label;
+  const hint =
+    status === "outside_range" && distanceMetres != null
+      ? `Outside normal clock area — ${String(distanceMetres)} m away`
+      : TS_LOCATION_CONFIG[status].hint;
   return (
     <span
       className={`ts-loc-badge ${className}`}
@@ -137,6 +151,17 @@ function TsLocationBadge({ status }: { status: TsLocationState }) {
       <span className="ts-loc-badge__text">{label}</span>
     </span>
   );
+}
+
+/** Converts a stored GeofenceLocation to the TsLocationState used by TsLocationBadge. */
+function geofenceToLocationState(loc: GeofenceLocation | null): TsLocationState {
+  if (!loc) return "not_recorded";
+  switch (loc.locationState) {
+    case "within":      return "verified";
+    case "outside":     return "outside_range";
+    case "denied":      return "denied";
+    case "unavailable": return "unavailable";
+  }
 }
 
 // ── Badge components ─────────────────────────────────────────────────────────
@@ -163,6 +188,56 @@ function PayrollTypeBadge({ type }: { type: PayrollType }) {
     <span className={`pr-badge pr-badge--${type}`}>
       {PAYROLL_TYPE_LABELS[type]}
     </span>
+  );
+}
+
+/**
+ * Compact geofence summary shown in manager approval/review tables.
+ * Shows an exception badge when either event was outside range, and a
+ * two-line detail (clock-in / clock-out) for the location audit trail.
+ */
+function GeofenceSummaryCell({
+  clockInLoc,
+  clockOutLoc,
+}: {
+  clockInLoc: GeofenceLocation | null;
+  clockOutLoc: GeofenceLocation | null;
+}) {
+  if (!clockInLoc && !clockOutLoc) {
+    return <span className="ts-loc-historical">Not recorded</span>;
+  }
+
+  const hasException =
+    clockInLoc?.locationState === "outside" ||
+    clockOutLoc?.locationState === "outside";
+
+  function locLine(loc: GeofenceLocation | null, label: string): string {
+    if (!loc) return `${label}: —`;
+    switch (loc.locationState) {
+      case "within":
+        return `${label}: Within${
+          loc.distanceMetres !== null ? ` — ${String(loc.distanceMetres)} m` : ""
+        }`;
+      case "outside":
+        return `${label}: Outside${
+          loc.distanceMetres !== null ? ` — ${String(loc.distanceMetres)} m` : ""
+        }`;
+      case "denied":      return `${label}: Permission denied`;
+      case "unavailable": return `${label}: Unavailable`;
+    }
+  }
+
+  return (
+    <div className="ts-geofence-summary">
+      {hasException && (
+        <span className="ts-geofence-exception" role="status">
+          <AlertTriangle size={12} aria-hidden="true" />
+          {" Location exception"}
+        </span>
+      )}
+      <span className="ts-geofence-detail">{locLine(clockInLoc, "In")}</span>
+      <span className="ts-geofence-detail">{locLine(clockOutLoc, "Out")}</span>
+    </div>
   );
 }
 
@@ -236,6 +311,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
             <th className="pr-table__th">Clock In</th>
             <th className="pr-table__th">Clock Out</th>
             <th className="pr-table__th">Hours</th>
+            <th className="pr-table__th">Location</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th" />
           </tr>
@@ -252,14 +328,26 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                 {/* Stage 5: TsLocationBadge status=null — visual treatment wired, not live */}
                 <td className="pr-table__td pr-table__td--clocked">
                   <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
-                  <TsLocationBadge status={null} />
+                  <TsLocationBadge
+                    status={geofenceToLocationState(entry.clockInLocation)}
+                    distanceMetres={entry.clockInLocation?.distanceMetres}
+                  />
                 </td>
                 <td className="pr-table__td pr-table__td--clocked">
                   <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
-                  <TsLocationBadge status={null} />
+                  <TsLocationBadge
+                    status={geofenceToLocationState(entry.clockOutLocation)}
+                    distanceMetres={entry.clockOutLocation?.distanceMetres}
+                  />
                 </td>
                 <td className="pr-table__td pr-table__td--mono">
                   {formatHours(entry.totalHoursWorked)}
+                </td>
+                <td className="pr-table__td ts-geofence-cell">
+                  <GeofenceSummaryCell
+                    clockInLoc={entry.clockInLocation}
+                    clockOutLoc={entry.clockOutLocation}
+                  />
                 </td>
                 <td className="pr-table__td">
                   <TimesheetStatusBadge status={entry.timesheetStatus} />
@@ -301,7 +389,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {/* ── Inline approval form (optional notes) ──────────────── */}
               {approvingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={8} className="pr-table__td">
+                  <td colSpan={9} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--approval">
                       {/* Notes are optional — manager may approve silently */}
                       <textarea
@@ -347,7 +435,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {/* ── Inline rejection form (required notes) ─────────────── */}
               {rejectingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={8} className="pr-table__td">
+                  <td colSpan={9} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--rejection">
                       <div className="pr-inline-form__rejection-header">
                         <AlertTriangle size={14} aria-hidden="true" className="pr-inline-form__rejection-icon" />
@@ -1131,14 +1219,20 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
                 <PayrollTypeBadge type={entry.payrollType} />
               </td>
               <td className="pr-table__td">{entry.rosteredClinicName}</td>
-              {/* Stage 5: TsLocationBadge status=null — visual treatment wired, not live */}
+              {/* Stage 5: TsLocationBadge wired to live geofence data */}
               <td className="pr-table__td pr-table__td--clocked">
                 <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
-                <TsLocationBadge status={null} />
+                <TsLocationBadge
+                  status={geofenceToLocationState(entry.clockInLocation)}
+                  distanceMetres={entry.clockInLocation?.distanceMetres}
+                />
               </td>
               <td className="pr-table__td pr-table__td--clocked">
                 <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
-                <TsLocationBadge status={null} />
+                <TsLocationBadge
+                  status={geofenceToLocationState(entry.clockOutLocation)}
+                  distanceMetres={entry.clockOutLocation?.distanceMetres}
+                />
               </td>
               <td className="pr-table__td pr-table__td--mono">
                 {formatHours(entry.totalHoursWorked)}
@@ -1234,6 +1328,7 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
             <th className="pr-table__th">Clock In</th>
             <th className="pr-table__th">Clock Out</th>
             <th className="pr-table__th">Hours</th>
+            <th className="pr-table__th">Location</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Approval Notes</th>
           </tr>
@@ -1248,12 +1343,26 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
               </td>
               <td className="pr-table__td pr-table__td--clocked">
                 <span className="pr-table__td-time">{formatDateTime(entry.clockInAt)}</span>
+                <TsLocationBadge
+                  status={geofenceToLocationState(entry.clockInLocation)}
+                  distanceMetres={entry.clockInLocation?.distanceMetres}
+                />
               </td>
               <td className="pr-table__td pr-table__td--clocked">
                 <span className="pr-table__td-time">{formatDateTime(entry.clockOutAt)}</span>
+                <TsLocationBadge
+                  status={geofenceToLocationState(entry.clockOutLocation)}
+                  distanceMetres={entry.clockOutLocation?.distanceMetres}
+                />
               </td>
               <td className="pr-table__td pr-table__td--mono">
                 {formatHours(entry.totalHoursWorked)}
+              </td>
+              <td className="pr-table__td ts-geofence-cell">
+                <GeofenceSummaryCell
+                  clockInLoc={entry.clockInLocation}
+                  clockOutLoc={entry.clockOutLocation}
+                />
               </td>
               <td className="pr-table__td">
                 <TimesheetStatusBadge status={entry.timesheetStatus} />
