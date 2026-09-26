@@ -557,12 +557,24 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
 
       // shiftDate and clinic context are derived server-side by the service
       // from the authoritative shiftStartAt (or roster DB record).
+      // Normalize accuracyMetres from Zod's z.number().optional() (which yields
+      // number|null|undefined) to number|null as required by ClockLocationInput.
+      const clockInLocation = body.clockInLocation
+        ? {
+            lat: body.clockInLocation.lat,
+            lng: body.clockInLocation.lng,
+            accuracyMetres: body.clockInLocation.accuracyMetres ?? null,
+            targetClinicId: body.clockInLocation.targetClinicId,
+            locationState: body.clockInLocation.locationState,
+          }
+        : null;
+
       const entry = await timesheetService.clockIn(caller, clinicId, {
         rosterEntryId: body.rosterEntryId ?? null,
         shiftStartAt: new Date(body.shiftStartAt),
         shiftEndAt: new Date(body.shiftEndAt),
         physicalClinicId: body.physicalClinicId ?? null,
-        clockInLocation: body.clockInLocation ?? null,
+        clockInLocation,
       });
 
       res.status(201).json({ data: serializeTimesheet(entry) });
@@ -582,12 +594,24 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
       const timesheetId = requireUuidParam(req, "timesheetId");
       const body = parseBody(clockOutSchema, req.body);
 
+      // Normalize accuracyMetres from Zod's optional() (number|null|undefined)
+      // to number|null as required by ClockLocationInput.
+      const clockOutLocation = body.clockOutLocation
+        ? {
+            lat: body.clockOutLocation.lat,
+            lng: body.clockOutLocation.lng,
+            accuracyMetres: body.clockOutLocation.accuracyMetres ?? null,
+            targetClinicId: body.clockOutLocation.targetClinicId,
+            locationState: body.clockOutLocation.locationState,
+          }
+        : null;
+
       const entry = await timesheetService.clockOut(
         caller,
         clinicId,
         timesheetId,
         body.breakDurationMinutes,
-        body.clockOutLocation ?? null,
+        clockOutLocation,
       );
 
       res.status(200).json({ data: serializeTimesheet(entry) });

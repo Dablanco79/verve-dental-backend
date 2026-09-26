@@ -328,6 +328,8 @@ describe("InMemoryTimesheetRepository.listByClinicPaginated", () => {
     totalHoursWorked: null, ordinaryHours: null,
     overtime15xHours: null, overtime2xHours: null, overtimeCustomHours: null,
     commissionNote: null, generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
   };
 
   it("returns default pagination values", async () => {

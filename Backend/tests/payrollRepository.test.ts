@@ -56,6 +56,8 @@ function makeCommissionInput(
     overtimeCustomHours: null,
     commissionNote: null,
     generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
     ...overrides,
   };
 }
@@ -86,6 +88,8 @@ function makeHourlyInput(
     overtimeCustomHours: 0,
     commissionNote: null,
     generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
     ...overrides,
   };
 }

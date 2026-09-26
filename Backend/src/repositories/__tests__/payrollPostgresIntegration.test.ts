@@ -650,6 +650,8 @@ describe("PostgresTimesheetRepository — create: initialTimesheetStatus routing
       overtime2xHours: null,
       overtimeCustomHours: null,
       commissionNote: null,
+      clockInLocation: null,
+      clockOutLocation: null,
     };
 
     if (payrollType === "commission_log") {

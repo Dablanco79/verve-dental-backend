@@ -215,6 +215,8 @@ async function seedVerifiedShift(
     overtimeCustomHours: null,
     commissionNote: null,
     generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
     ...overrides,
     // shiftDate and clinicId are set above — re-apply to ensure consistency.
     shiftDate,
@@ -608,6 +610,8 @@ describe("ForecastService — getMaterialForecast", () => {
         overtimeCustomHours: null,
         commissionNote: null,
         generatedBy: "system_auto",
+        clockInLocation: null,
+        clockOutLocation: null,
       });
 
       const svc = createForecastService(inventoryRepo, catalogRepo, rosterRepo, timesheetRepo);
@@ -643,6 +647,8 @@ describe("ForecastService — getMaterialForecast", () => {
         overtimeCustomHours: null,
         commissionNote: null,
         generatedBy: "system_auto",
+        clockInLocation: null,
+        clockOutLocation: null,
       });
       await timesheetRepo.update(entry.id, { attendanceStatus: "cancelled" });
 
@@ -679,6 +685,8 @@ describe("ForecastService — getMaterialForecast", () => {
         overtimeCustomHours: 0,
         commissionNote: null,
         generatedBy: "system_auto",
+        clockInLocation: null,
+        clockOutLocation: null,
       });
 
       const svc = createForecastService(inventoryRepo, catalogRepo, rosterRepo, timesheetRepo);

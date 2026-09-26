@@ -220,10 +220,10 @@ export function createPostgresTimesheetRepository(
           initialTimesheetStatus,
           input.commissionNote ?? null,
           input.generatedBy,
-          input.clockInLocation !== undefined && input.clockInLocation !== null
+          input.clockInLocation !== null
             ? JSON.stringify(input.clockInLocation)
             : null,
-          input.clockOutLocation !== undefined && input.clockOutLocation !== null
+          input.clockOutLocation !== null
             ? JSON.stringify(input.clockOutLocation)
             : null,
         ],

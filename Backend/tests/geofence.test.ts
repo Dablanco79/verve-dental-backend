@@ -465,7 +465,8 @@ describe("Geofence — Test 9: metadata recorded accurately in response", () => 
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
-    const recorded = entry.clockInLocation!;
+    expect(entry.clockInLocation).not.toBeNull();
+    const recorded = entry.clockInLocation as NonNullable<TimesheetEntry["clockInLocation"]>;
 
     // Coordinates round-trip from client
     expect(recorded.lat).toBe(loc.lat);
@@ -498,7 +499,8 @@ describe("Geofence — Test 9: metadata recorded accurately in response", () => 
 
       expect(outRes.status).toBe(200);
       const entry = (outRes.body as ApiData<TimesheetEntry>).data;
-      const recorded = entry.clockOutLocation!;
+      expect(entry.clockOutLocation).not.toBeNull();
+      const recorded = entry.clockOutLocation as NonNullable<TimesheetEntry["clockOutLocation"]>;
 
       expect(recorded.lat).toBe(outLoc.lat);
       expect(recorded.lng).toBe(outLoc.lng);
@@ -643,7 +645,8 @@ describe("Geofence — denied/unavailable store null coordinates (not 0,0)", () 
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
-    const loc = entry.clockInLocation!;
+    expect(entry.clockInLocation).not.toBeNull();
+    const loc = entry.clockInLocation as NonNullable<TimesheetEntry["clockInLocation"]>;
     expect(loc.locationState).toBe("denied");
     expect(loc.lat).toBeNull();
     expect(loc.lng).toBeNull();
@@ -659,7 +662,8 @@ describe("Geofence — denied/unavailable store null coordinates (not 0,0)", () 
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
-    const loc = entry.clockInLocation!;
+    expect(entry.clockInLocation).not.toBeNull();
+    const loc = entry.clockInLocation as NonNullable<TimesheetEntry["clockInLocation"]>;
     expect(loc.locationState).toBe("unavailable");
     expect(loc.lat).toBeNull();
     expect(loc.lng).toBeNull();

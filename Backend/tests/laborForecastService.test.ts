@@ -205,6 +205,8 @@ async function seedApprovedTimesheet(
     overtimeCustomHours: null,
     commissionNote: null,
     generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
   };
 
   const entry = await timesheetRepo.create(input);

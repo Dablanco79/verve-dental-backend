@@ -823,6 +823,9 @@ export function createTimesheetService(
         ...clockFields,
         commissionNote: null,
         generatedBy: caller.email,
+        // Manual back-fill entries have no geofence data — clocking was done offline.
+        clockInLocation: null,
+        clockOutLocation: null,
       });
 
       // Manual entries bypass the draft → submitted step and go straight to
