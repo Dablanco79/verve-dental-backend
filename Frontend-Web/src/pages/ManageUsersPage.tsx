@@ -334,9 +334,12 @@ export function ManageUsersPage() {
     setClinicAccess(null);
     setShowForm(false);
     try {
+      // data is PermissionGrantRow[] — the API envelope { data: [...] } is
+      // unwrapped by request().  Do NOT access data.grants — there is no such
+      // property; doing so returns undefined and crashes .filter().
       const data = await apiClient.listUserPermissions(u.homeClinicId, u.id);
       const active = new Set(
-        data.grants
+        data
           .filter((g) => g.revokedAt === null && g.permission.startsWith("module:"))
           .map((g) => g.permission),
       );

@@ -165,6 +165,21 @@ import type {
 
 type ApiEnvelope<T> = { data: T };
 
+// ─── Permission grant type ────────────────────────────────────────────────────
+/**
+ * Shape of a single row returned by GET /clinics/:clinicId/users/:userId/permissions.
+ * The backend sends { data: PermissionGrantRow[] } — request() unwraps to the array.
+ */
+export type PermissionGrantRow = {
+  id: string;
+  clinicId: string;
+  userId: string;
+  permission: string;
+  grantedBy: string;
+  grantedAt: string;
+  revokedAt: string | null;
+};
+
 // ─── Pilot Reset types ────────────────────────────────────────────────────────
 
 export type PilotResetMode = "operational" | "full_pilot";
@@ -1057,13 +1072,17 @@ export function createApiClient(config: AppConfig) {
   async function listUserPermissions(
     clinicId: string,
     userId: string,
-  ): Promise<{ grants: Array<{ id: string; permission: string; grantedBy: string; grantedAt: string; revokedAt: string | null }> }> {
-    return request<{ grants: Array<{ id: string; permission: string; grantedBy: string; grantedAt: string; revokedAt: string | null }> }>(
+  ): Promise<PermissionGrantRow[]> {
+    // Backend returns { data: PermissionGrantRow[] }; request() unwraps to the
+    // array.  We add an Array.isArray guard so the UI never crashes on an
+    // unexpected payload shape (e.g. during a mid-deployment mismatch).
+    const raw = await request<PermissionGrantRow[]>(
       config,
       `/api/v1/clinics/${clinicId}/users/${userId}/permissions`,
       {},
       requireAccessToken(),
     );
+    return Array.isArray(raw) ? raw : [];
   }
 
   /**

@@ -1,5 +1,5 @@
 /**
- * ManageUsersPage.test.tsx — Sprint 1: User Identity
+ * ManageUsersPage.test.tsx — Sprint 1: User Identity + Module Access panel
  *
  * Coverage:
  *   - Shows "Loading accounts…" while the request is in flight
@@ -12,6 +12,13 @@
  *   - Practice manager does NOT see a clinic selector in the create form
  *   - Practice manager role selector only shows Clinical Staff option
  *   - Owner admin role selector shows all three role options
+ *
+ *   Module Access panel (owner_admin only):
+ *   - Clinical Staff with 3 seeded grants renders correct checkboxes
+ *   - User with zero grants renders all modules unchecked (no crash)
+ *   - Granting a module calls grantUserPermission and checks the box
+ *   - Revoking a module calls revokeUserPermission and unchecks the box
+ *   - Failed listUserPermissions shows a controlled error state (no crash)
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -39,17 +46,36 @@ import {
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
-const { authTestState, mockListUsers, mockListClinics, mockCreateUser } = vi.hoisted(
-  () => {
-    const authTestState: AuthTestState = { user: null, isLoading: false };
-    return {
-      authTestState,
-      mockListUsers: vi.fn(),
-      mockListClinics: vi.fn(),
-      mockCreateUser: vi.fn(),
-    };
-  },
-);
+const {
+  authTestState,
+  mockListUsers,
+  mockListClinics,
+  mockCreateUser,
+  mockListUserPermissions,
+  mockGrantUserPermission,
+  mockRevokeUserPermission,
+} = vi.hoisted(() => {
+  const authTestState: AuthTestState = { user: null, isLoading: false };
+  return {
+    authTestState,
+    mockListUsers: vi.fn(),
+    mockListClinics: vi.fn(),
+    mockCreateUser: vi.fn(),
+    // Permission mocks — default to returning a flat empty array (correct shape).
+    // Individual tests override as needed.
+    mockListUserPermissions: vi.fn().mockResolvedValue([]),
+    mockGrantUserPermission: vi.fn().mockResolvedValue({
+      id: "g1",
+      clinicId: "c1",
+      userId: "u1",
+      permission: "module:timesheets",
+      grantedBy: "admin",
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+    }),
+    mockRevokeUserPermission: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock("../src/auth/useAuth.js", () => ({
   useAuth: () => ({
@@ -67,9 +93,9 @@ vi.mock("../src/api/client.js", () => ({
     createUser: mockCreateUser,
     resetUserPassword: vi.fn(),
     listClinics: mockListClinics,
-    listUserPermissions: vi.fn().mockResolvedValue({ grants: [] }),
-    grantUserPermission: vi.fn().mockResolvedValue({ id: "g1", permission: "module:timesheets", grantedAt: new Date().toISOString() }),
-    revokeUserPermission: vi.fn().mockResolvedValue(undefined),
+    listUserPermissions: mockListUserPermissions,
+    grantUserPermission: mockGrantUserPermission,
+    revokeUserPermission: mockRevokeUserPermission,
   }),
 }));
 
@@ -351,5 +377,159 @@ describe("ManageUsersPage — create user form (group_practice_manager)", () => 
 
     expect(options).toHaveLength(1);
     expect((options[0] as HTMLOptionElement).value).toBe("clinical_staff");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module Access panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Helper: render page as admin, wait for the table, return the "Module access"
+ * button for the given user's row.
+ */
+async function openModuleAccessPanel(targetEmail: string) {
+  renderPage();
+  await waitFor(() => expect(screen.getByText(targetEmail)).toBeInTheDocument());
+  const row = screen.getByText(targetEmail).closest("tr") as HTMLElement;
+  const btn = within(row).getByRole("button", { name: /module access/i });
+  await userEvent.click(btn);
+  return btn;
+}
+
+describe("ManageUsersPage — Module Access panel", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+    // Reset permission mocks to clean defaults before each test
+    mockListUserPermissions.mockResolvedValue([]);
+    mockGrantUserPermission.mockResolvedValue({
+      id: "g1",
+      clinicId: TEST_CLINIC_ID,
+      userId: namedUser.id,
+      permission: "module:timesheets",
+      grantedBy: adminUser.id,
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+    });
+    mockRevokeUserPermission.mockResolvedValue(undefined);
+  });
+
+  it("renders all module checkboxes unchecked when the user has zero grants (no crash)", async () => {
+    // API returns [] — correct shape, no grants
+    mockListUserPermissions.mockResolvedValue([]);
+
+    await openModuleAccessPanel(namedUser.email);
+
+    // Wait for the panel to finish loading (loading spinner disappears) by
+    // looking for the checkboxes themselves.  Using findByRole avoids a
+    // getByText multi-match on "Module access" because Bob's row still shows
+    // a "Module access" button alongside Alice's now-visible panel heading.
+    const timesheetsBox = await screen.findByRole("checkbox", { name: /timesheets access/i });
+    expect(timesheetsBox).not.toBeChecked();
+
+    const inventoryBox = screen.getByRole("checkbox", { name: /inventory access/i });
+    expect(inventoryBox).not.toBeChecked();
+
+    // Panel aria-label confirms it rendered correctly
+    expect(screen.getByLabelText(`Module access for ${namedUser.email}`)).toBeInTheDocument();
+  });
+
+  it("renders 3 seeded grants checked for a clinical_staff user", async () => {
+    // Simulate the backend returning timesheets, roster, leave as active grants
+    // (the 3 production initial grants for clinical_staff)
+    mockListUserPermissions.mockResolvedValue([
+      { id: "g1", clinicId: TEST_CLINIC_ID, userId: namedUser.id, permission: "module:timesheets", grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+      { id: "g2", clinicId: TEST_CLINIC_ID, userId: namedUser.id, permission: "module:roster",     grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+      { id: "g3", clinicId: TEST_CLINIC_ID, userId: namedUser.id, permission: "module:leave",      grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+    ]);
+
+    await openModuleAccessPanel(namedUser.email);
+
+    const timesheetsBox = await screen.findByRole("checkbox", { name: /timesheets access/i });
+    expect(timesheetsBox).toBeChecked();
+
+    const rosterBox = screen.getByRole("checkbox", { name: /roster access/i });
+    expect(rosterBox).toBeChecked();
+
+    const leaveBox = screen.getByRole("checkbox", { name: /leave access/i });
+    expect(leaveBox).toBeChecked();
+
+    // Modules not granted should be unchecked
+    const inventoryBox = screen.getByRole("checkbox", { name: /inventory access/i });
+    expect(inventoryBox).not.toBeChecked();
+    const procurementBox = screen.getByRole("checkbox", { name: /procurement access/i });
+    expect(procurementBox).not.toBeChecked();
+  });
+
+  it("granting a module calls grantUserPermission and checks the box", async () => {
+    // Start with no grants
+    mockListUserPermissions.mockResolvedValue([]);
+    mockGrantUserPermission.mockResolvedValue({
+      id: "g-new",
+      clinicId: TEST_CLINIC_ID,
+      userId: namedUser.id,
+      permission: "module:inventory",
+      grantedBy: adminUser.id,
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+    });
+
+    await openModuleAccessPanel(namedUser.email);
+
+    const inventoryBox = await screen.findByRole("checkbox", { name: /inventory access/i });
+    expect(inventoryBox).not.toBeChecked();
+
+    await userEvent.click(inventoryBox);
+
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        namedUser.homeClinicId,
+        namedUser.id,
+        "module:inventory",
+      );
+    });
+
+    // Checkbox should now be checked (optimistic UI update)
+    await waitFor(() => expect(inventoryBox).toBeChecked());
+  });
+
+  it("revoking a module calls revokeUserPermission and unchecks the box", async () => {
+    // Start with inventory granted
+    mockListUserPermissions.mockResolvedValue([
+      { id: "g1", clinicId: TEST_CLINIC_ID, userId: namedUser.id, permission: "module:inventory", grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+    ]);
+
+    await openModuleAccessPanel(namedUser.email);
+
+    const inventoryBox = await screen.findByRole("checkbox", { name: /inventory access/i });
+    expect(inventoryBox).toBeChecked();
+
+    await userEvent.click(inventoryBox);
+
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        namedUser.homeClinicId,
+        namedUser.id,
+        "module:inventory",
+      );
+    });
+
+    await waitFor(() => expect(inventoryBox).not.toBeChecked());
+  });
+
+  it("shows a controlled error state when listUserPermissions rejects (no crash)", async () => {
+    mockListUserPermissions.mockRejectedValue(new Error("Permission load failed"));
+
+    await openModuleAccessPanel(namedUser.email);
+
+    // Should show an error message, not crash the whole page
+    await waitFor(() =>
+      expect(screen.getByText(/permission load failed/i)).toBeInTheDocument(),
+    );
+
+    // The rest of the table should still be visible
+    expect(screen.getByText(namedUser.email)).toBeInTheDocument();
   });
 });
