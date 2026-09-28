@@ -4,6 +4,7 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
+import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { loadConfig } from "../config/index.js";
 import { useTimesheets } from "../hooks/useTimesheets.js";
 import type {
@@ -1529,6 +1530,11 @@ function ExportPanel({ availableStaff, onExport }: ExportPanelProps) {
 export function TimesheetsPage() {
   const { user } = useAuth();
   const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
+  // Read the full operational clinic list from ClinicContext (already fetched by
+  // ClinicProvider on mount).  For GPM this contains all can_operate=true clinics;
+  // for owner_admin all org clinics; for clinical_staff only the home clinic.
+  // Used to populate the Physical Location dropdown — see availableClinics below.
+  const { availableClinics: contextClinics } = useSelectedClinic();
 
   // Stable 30-day window initialised once at mount — avoids refetch on re-render.
   const [filters] = useState<TimesheetFilters>(() => ({
@@ -1548,21 +1554,37 @@ export function TimesheetsPage() {
   // In/Out.  Errors are silently ignored; widget falls back to ad-hoc mode.
   const [todayShifts, setTodayShifts] = useState<RosterEntry[]>([]);
 
-  // Available clinics for ad-hoc physical location selection:
-  // home clinic + distinct clinics from today's rostered shifts.
-  // MUST be computed before early returns (it is a hook call via useMemo).
+  // Available clinics for ad-hoc physical location selection.
+  // Primary source: contextClinics from ClinicContext (already fetched by
+  // ClinicProvider — no extra API call):
+  //   owner_admin  → all org clinics
+  //   GPM          → home + can_operate=true non-home clinics only
+  //   staff        → home clinic only
+  // Secondary: currently selected clinic (covers edge cases where clinicId
+  // differs from anything in contextClinics, e.g. loading race).
+  // Tertiary: roster-derived physical clinics from today's personal shifts.
+  // All three sources are deduplicated by clinic ID.
+  // MUST be computed before early returns (useMemo is a hook call).
   // MUST be declared after todayShifts useState (used in dependency array).
   const availableClinics = useMemo(() => {
     const map = new Map<string, string>();
+    // 1. Operational clinics from ClinicContext (the authoritative list).
+    for (const c of contextClinics) {
+      map.set(c.id, c.name);
+    }
+    // 2. Currently selected scope clinic (ensures correct display name if
+    //    already in contextClinics; harmlessly adds it when not yet present).
     if (clinicId) {
-      // Use clinicName from useOperationalClinic; fall back to user's homeClinicName.
       map.set(clinicId, clinicName ?? user?.homeClinicName ?? "Home Clinic");
     }
+    // 3. Roster-derived physical clinics from today's personal shifts.
+    //    These appear when the user is rostered at a clinic that is not yet
+    //    in the operational list (e.g. staff at a non-home physical location).
     for (const s of todayShifts) {
       map.set(s.rosteredClinicId, s.rosteredClinicName);
     }
     return Array.from(map, ([id, name]) => ({ id, name }));
-  }, [clinicId, clinicName, todayShifts, user]);
+  }, [contextClinics, clinicId, clinicName, todayShifts, user]);
 
   useEffect(() => {
     if (!clinicId) return;
@@ -1597,23 +1619,29 @@ export function TimesheetsPage() {
   } = useTimesheets(clinicId, user?.role, filters);
 
   if (!user) return null;
-  // clinicId from useOperationalClinic() is `string | undefined`; early-return
-  // here narrows it to `string` for all JSX below (passed to ClockWidget props).
-  if (!clinicId) return null;
 
+  // When All Clinics is selected, clinicId is undefined.  Show a controlled
+  // "select a clinic" message BEFORE the clinicId null-guard fires — otherwise
+  // the null-guard returns blank and this branch is never reached.
   if (isAllClinicsScope && isManager) {
     return (
       <AppShell>
         <section className="status-card inventory-receiving-callout" role="status">
-          <h2>Select a clinic to view timesheets</h2>
+          <h2>Select a clinic to use Timesheets</h2>
           <p>
-            Timesheets are clinic-specific. Choose a clinic from the clinic selector to review
-            and approve staff timesheets.
+            Timesheets and Clock In/Out are managed at clinic level. Choose a clinic from the
+            clinic selector to continue.
           </p>
         </section>
       </AppShell>
     );
   }
+
+  // clinicId from useOperationalClinic() is `string | undefined`; early-return
+  // here narrows it to `string` for all JSX below (passed to ClockWidget props).
+  // The isAllClinicsScope branch above already handles the only legitimate case
+  // where clinicId is undefined, so this guard catches unexpected missing context.
+  if (!clinicId) return null;
 
   // Client-side splits for the two manager queues (pending view).
   const pendingApproval = timesheets.filter(

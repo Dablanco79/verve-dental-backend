@@ -18,6 +18,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthContext } from "../src/auth/AuthContext.js";
 import type { AuthContextValue } from "../src/auth/AuthContext.js";
+import { ClinicContext } from "../src/clinic/clinicContext.js";
+import type { ClinicContextValue } from "../src/clinic/clinicContext.js";
 import { TimesheetsPage } from "../src/pages/TimesheetsPage.js";
 import type { AuthUser } from "../src/types/index.js";
 import type { GeofenceLocation, TimesheetEntry } from "../src/types/payroll.js";
@@ -1115,5 +1117,218 @@ describe("ApprovalQueue — geofence location states", () => {
     await screen.findByRole("cell", { name: entry.staffEmail });
     // Location exception still visible on the approved tab
     expect(screen.getAllByText(/location exception/i).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 1 — All Clinics scope controlled state
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HOME_CLINIC    = { id: "11111111-1111-4111-8111-111111111111", name: "Verve Dental Clinic A" };
+const CLINIC_B       = { id: "22222222-2222-4222-8222-222222222222", name: "Verve Dental Clinic B" };
+const ROSTER_CLINIC  = { id: "33333333-3333-4333-8333-333333333333", name: "Verve Dental Clinic C (roster-only)" };
+
+function makeClinicContext(overrides: Partial<ClinicContextValue> = {}): ClinicContextValue {
+  return {
+    selectedClinic: HOME_CLINIC,
+    selectedDashboardScope: { type: "clinic", clinic: HOME_CLINIC },
+    availableClinics: [HOME_CLINIC],
+    canSwitchClinics: false,
+    canSelectAllClinics: false,
+    isLoadingClinics: false,
+    clinicError: null,
+    hasClinicProvider: true,
+    setSelectedClinicId: vi.fn(),
+    setDashboardScope: vi.fn(),
+    ...overrides,
+  };
+}
+
+function renderTimesheetsPageWithClinicContext(user: AuthUser, clinicCtx: ClinicContextValue) {
+  return render(
+    <AuthContext.Provider value={makeAuthContext(user)}>
+      <ClinicContext.Provider value={clinicCtx}>
+        <MemoryRouter>
+          <TimesheetsPage />
+        </MemoryRouter>
+      </ClinicContext.Provider>
+    </AuthContext.Provider>,
+  );
+}
+
+describe("TimesheetsPage — All Clinics scope (Fix 1)", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("owner_admin with All Clinics selected sees controlled 'Select a clinic' state (not blank)", async () => {
+    const allClinicsCtx = makeClinicContext({
+      selectedClinic: null,
+      selectedDashboardScope: { type: "all_clinics" },
+      canSwitchClinics: true,
+      canSelectAllClinics: true,
+    });
+
+    renderTimesheetsPageWithClinicContext(makeUser("owner_admin"), allClinicsCtx);
+
+    expect(
+      await screen.findByRole("heading", { name: /select a clinic to use timesheets/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/timesheets and clock in\/out are managed at clinic level/i),
+    ).toBeInTheDocument();
+    // Page is not blank — AppShell wraps the message
+    expect(screen.queryByText(/hourly approval queue/i)).not.toBeInTheDocument();
+  });
+
+  it("owner_admin with a specific clinic selected renders the normal Timesheets page (not the 'select' guard)", async () => {
+    const specificClinicCtx = makeClinicContext({
+      canSwitchClinics: true,
+      canSelectAllClinics: true,
+    });
+
+    renderTimesheetsPageWithClinicContext(makeUser("owner_admin"), specificClinicCtx);
+
+    await waitFor(() => {
+      expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("heading", { name: /select a clinic to use timesheets/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 2 — Physical Location dropdown sources (multi-clinic context)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic context)", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockGetClinicCoordinates.mockResolvedValue({
+      clinicId: HOME_CLINIC.id,
+      latitude: -37.8136,
+      longitude: 144.9631,
+    });
+  });
+
+  it("GPM sees their home clinic in the Physical Location dropdown", async () => {
+    const gpmCtx = makeClinicContext({ canSwitchClinics: true });
+
+    renderTimesheetsPageWithClinicContext(makeUser("group_practice_manager"), gpmCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    expect(
+      within(physicalSelect).getByRole("option", { name: HOME_CLINIC.name }),
+    ).toBeInTheDocument();
+  });
+
+  it("GPM sees non-home can_operate=true clinics in the Physical Location dropdown", async () => {
+    // Both home and Clinic B are in availableClinics — simulating getMyOperationalClinics()
+    // returning [homeClinic, clinicB] (both have can_operate=true).
+    const gpmCtx = makeClinicContext({
+      availableClinics: [HOME_CLINIC, CLINIC_B],
+      canSwitchClinics: true,
+    });
+
+    renderTimesheetsPageWithClinicContext(makeUser("group_practice_manager"), gpmCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    expect(
+      within(physicalSelect).getByRole("option", { name: HOME_CLINIC.name }),
+    ).toBeInTheDocument();
+    expect(
+      within(physicalSelect).getByRole("option", { name: CLINIC_B.name }),
+    ).toBeInTheDocument();
+  });
+
+  it("GPM does NOT gain a clinic in the dropdown solely from can_roster=true (no can_operate)", async () => {
+    // ROSTER_CLINIC is absent from availableClinics because getMyOperationalClinics()
+    // only returns can_operate=true assignments — can_roster alone is excluded.
+    // getMyShifts returns no shifts today, so roster-derived path is also empty.
+    const gpmCtx = makeClinicContext({
+      availableClinics: [HOME_CLINIC], // ROSTER_CLINIC intentionally absent
+      canSwitchClinics: true,
+    });
+
+    renderTimesheetsPageWithClinicContext(makeUser("group_practice_manager"), gpmCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    expect(
+      within(physicalSelect).queryByRole("option", { name: /roster-only/i }),
+    ).not.toBeInTheDocument();
+    // Specifically: ROSTER_CLINIC is absent
+    expect(
+      within(physicalSelect).queryByRole("option", { name: ROSTER_CLINIC.name }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clinical_staff unchanged — sees home clinic only when no roster shifts", async () => {
+    const staffCtx = makeClinicContext(); // single home clinic
+
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    expect(
+      within(physicalSelect).getByRole("option", { name: HOME_CLINIC.name }),
+    ).toBeInTheDocument();
+    // No extra clinics
+    const valueOptions = within(physicalSelect)
+      .getAllByRole("option")
+      .filter((o) => (o as HTMLOptionElement).value !== "");
+    expect(valueOptions).toHaveLength(1);
+  });
+
+  it("roster-linked shift still uses the exact rostered clinic — physical dropdown not shown", async () => {
+    // When a roster shift is auto-selected, ClockWidget hides the Physical Location dropdown
+    // and sends the shift's rosteredClinicId directly — the dropdown has no bearing on it.
+    const rosterEntry = {
+      id:                       "rrrrr-shift-fix2",
+      staffUserId:              "user-1",
+      staffEmail:               "user@clinic-a.au",
+      rosteredClinicId:         HOME_CLINIC.id,
+      rosteredClinicName:       HOME_CLINIC.name,
+      rosteredClinicPreferredName: null,
+      shiftStartAt:             "2026-09-28T22:00:00.000Z",
+      shiftEndAt:               "2026-09-29T06:00:00.000Z",
+      shiftType:                "standard",
+      status:                   "confirmed",
+      notes:                    null,
+      createdByUserId:          "manager-1",
+      createdAt:                "2026-09-28T00:00:00.000Z",
+      updatedAt:                "2026-09-28T00:00:00.000Z",
+    };
+    mockGetMyShifts.mockResolvedValue([rosterEntry]);
+
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    // Roster shift auto-selected — dropdown must not be present.
+    await screen.findByText(/rostered shift:/i);
+    expect(
+      screen.queryByRole("combobox", { name: /physical location/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ad-hoc Clock In still requires an explicit Physical Location selection", async () => {
+    // No roster shifts → ad-hoc mode → physical location dropdown shown.
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    // Nothing selected yet — clicking Clock In must be blocked.
+    expect((physicalSelect as HTMLSelectElement).value).toBe("");
+
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByRole("alert").textContent).toMatch(/select your physical location/i);
+    });
+    expect(mockClockIn).not.toHaveBeenCalled();
   });
 });
