@@ -117,7 +117,12 @@ export function AppShell({ children }: AppShellProps) {
             ...(canManageProducts(user.role)
               ? [{ to: "/inventory/products", label: "Products", icon: Boxes }]
               : []),
-            { to: "/inventory/master-products", label: "Master Products", icon: Database },
+            // Master Products is catalogue ADMINISTRATION — manager/admin only.
+            // Clinical Staff with module:inventory use the operational Inventory
+            // screen, not the master catalogue editor.
+            ...(canManageProducts(user.role)
+              ? [{ to: "/inventory/master-products", label: "Master Products", icon: Database }]
+              : []),
             ...(canManageProducts(user.role)
               ? [{ to: "/inventory/catalogue-import", label: "Catalogue Import", icon: FileDown }]
               : []),

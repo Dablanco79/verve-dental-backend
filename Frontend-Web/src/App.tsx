@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthProvider.js";
 import { PermissionRoute } from "./auth/PermissionRoute.js";
 import { ProtectedRoute } from "./auth/ProtectedRoute.js";
+import { RoleRoute } from "./auth/RoleRoute.js";
 import { ClinicProvider } from "./clinic/ClinicProvider.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { HomePage } from "./pages/HomePage.js";
@@ -87,19 +88,28 @@ export function App() {
                 <Route path="/my-shifts" element={<MyShiftsPage />} />
               </Route>
 
-              {/* Inventory — includes adjustments, products, receiving, catalogue import */}
+              {/* Inventory (operational) — module gate only.
+                  Clinical Staff with module:inventory can reach these pages. */}
               <Route element={<PermissionRoute permission="module:inventory" />}>
                 <Route path="/inventory" element={<InventoryPage />} />
-                <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
-                <Route path="/inventory/catalogue-import/:importId/review" element={<CatalogueImportReviewPage />} />
+                <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
+                <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
+              </Route>
+
+              {/* Master product catalogue administration — role gate (manager/admin only).
+                  Intentionally SEPARATE from the module:inventory PermissionRoute so
+                  that clinical_staff with module:inventory cannot reach these pages via
+                  direct URL navigation.  The nav links are also hidden by canManageProducts
+                  in AppShell, providing defence-in-depth. */}
+              <Route element={<RoleRoute allowedRoles={["owner_admin", "group_practice_manager"]} />}>
                 <Route path="/inventory/products" element={<ProductManagementPage />} />
-                <Route path="/inventory/master-product-library-import" element={<MasterProductLibraryImportPage />} />
-                <Route path="/inventory/master-products" element={<MasterProductsPage />} />
                 <Route path="/inventory/products/new" element={<AddProductPage />} />
                 <Route path="/inventory/products/:productId/edit" element={<ClinicProductEditPage />} />
                 <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
-                <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
-                <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
+                <Route path="/inventory/master-products" element={<MasterProductsPage />} />
+                <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
+                <Route path="/inventory/catalogue-import/:importId/review" element={<CatalogueImportReviewPage />} />
+                <Route path="/inventory/master-product-library-import" element={<MasterProductLibraryImportPage />} />
               </Route>
 
               {/* Receiving */}

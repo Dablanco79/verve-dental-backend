@@ -197,5 +197,189 @@ describe("AppShell navigation and clinic scope", () => {
     expect(screen.queryByRole("link", { name: "Purchase Orders" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Analytics" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Clinic scope" })).not.toBeInTheDocument();
+    // Master Products is catalogue ADMINISTRATION — must NEVER appear for clinical_staff,
+    // even when module:inventory is granted.
+    expect(screen.queryByRole("link", { name: "Master Products" })).not.toBeInTheDocument();
+  });
+});
+
+// ─── Module-permission-based navigation tests ────────────────────────────────
+//
+// These tests verify that the sidebar respects both role-based guards and the
+// explicit module:* grants baked into the user's token at login time.
+//
+// Test users are created with the `permissions` field reflecting what the JWT
+// would contain after issueTokens() (DEFAULT_PERMISSIONS[role] ∪ explicit grants).
+// AuthProvider.persistSession now decodes the JWT to set these correctly; the
+// tests below exercise the AppShell rendering against those user states.
+
+describe("AppShell — module-permission-based navigation", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    // owner_admin path: ClinicProvider calls listClinics()
+    mockListClinics.mockReset().mockResolvedValue([
+      clinic({ id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME }),
+    ]);
+    // GPM/clinical_staff path: ClinicProvider calls getMyOperationalClinics()
+    mockGetMyOperationalClinics.mockReset().mockResolvedValue([
+      {
+        id: TEST_CLINIC_ID,
+        name: TEST_CLINIC_NAME,
+        timezone: "Australia/Sydney",
+        subscriptionTier: "standard",
+        isActive: true,
+      },
+    ]);
+  });
+
+  // ── Clinical Staff + module:inventory ──────────────────────────────────────
+
+  it("clinical_staff with module:inventory sees Inventory nav link", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({ permissions: ["inventory:read", "module:inventory"] }),
+    );
+    renderShell();
+    expect(screen.getByRole("link", { name: "Inventory" })).toBeInTheDocument();
+    // No manager-only items
+    expect(screen.queryByRole("link", { name: "Products" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Master Products" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Catalogue Import" })).not.toBeInTheDocument();
+  });
+
+  it("clinical_staff WITHOUT module:inventory does not see Inventory nav link", () => {
+    setAuthenticatedUser(
+      authTestState,
+      // Only role-default perms — no module grants
+      createStaffUser({ permissions: ["inventory:read", "roster:read", "timesheets:read"] }),
+    );
+    renderShell();
+    expect(screen.queryByRole("link", { name: "Inventory" })).not.toBeInTheDocument();
+  });
+
+  // ── Clinical Staff + module:timesheets ─────────────────────────────────────
+
+  it("clinical_staff with module:timesheets sees Timesheets nav link", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({ permissions: ["timesheets:read", "module:timesheets"] }),
+    );
+    renderShell();
+    expect(screen.getByRole("link", { name: "Timesheets" })).toBeInTheDocument();
+  });
+
+  it("clinical_staff WITHOUT module:timesheets does not see Timesheets nav link", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({ permissions: ["timesheets:read"] }),
+    );
+    renderShell();
+    expect(screen.queryByRole("link", { name: "Timesheets" })).not.toBeInTheDocument();
+  });
+
+  // ── Clinical Staff + module:roster ─────────────────────────────────────────
+
+  it("clinical_staff with module:roster sees Roster and My Shifts nav links", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({ permissions: ["roster:read", "module:roster"] }),
+    );
+    renderShell();
+    expect(screen.getByRole("link", { name: "Roster" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "My Shifts" })).toBeInTheDocument();
+  });
+
+  it("clinical_staff WITHOUT module:roster does not see Roster or My Shifts", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({ permissions: ["roster:read"] }),
+    );
+    renderShell();
+    expect(screen.queryByRole("link", { name: "Roster" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "My Shifts" })).not.toBeInTheDocument();
+  });
+
+  // ── Clinical Staff with multiple grants — no manager-only items ────────────
+
+  it("clinical_staff with module:inventory + module:timesheets + module:roster does not see manager-only nav items", () => {
+    setAuthenticatedUser(
+      authTestState,
+      createStaffUser({
+        permissions: [
+          "inventory:read", "roster:read", "timesheets:read",
+          "module:inventory", "module:timesheets", "module:roster",
+        ],
+      }),
+    );
+    renderShell();
+    // Granted operational modules are visible
+    expect(screen.getByRole("link", { name: "Inventory" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Timesheets" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Roster" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "My Shifts" })).toBeInTheDocument();
+    // Manager-only catalogue/admin items must NOT appear
+    expect(screen.queryByRole("link", { name: "Master Products" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Products" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Catalogue Import" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Master Product Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Suppliers & Invoices" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Purchase Orders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Analytics" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Users" })).not.toBeInTheDocument();
+  });
+
+  // ── Master Products — admin/manager gate ───────────────────────────────────
+
+  it("Master Products link is visible to owner_admin", () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    renderShell();
+    expect(screen.getByRole("link", { name: "Master Products" })).toBeInTheDocument();
+  });
+
+  it("Master Products link is visible to group_practice_manager", () => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    renderShell();
+    expect(screen.getByRole("link", { name: "Master Products" })).toBeInTheDocument();
+  });
+
+  it("Master Products link is hidden from clinical_staff even with module:inventory", () => {
+    setAuthenticatedUser(
+      authTestState,
+      // Full module:inventory grant — Master Products must still be hidden
+      createStaffUser({ permissions: ["inventory:read", "module:inventory"] }),
+    );
+    renderShell();
+    expect(screen.queryByRole("link", { name: "Master Products" })).not.toBeInTheDocument();
+    // Operational Inventory IS visible
+    expect(screen.getByRole("link", { name: "Inventory" })).toBeInTheDocument();
+  });
+
+  // ── Owner/Admin full navigation ────────────────────────────────────────────
+
+  it("owner_admin sees full navigation including admin-only sections", () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    renderShell();
+    expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Inventory" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Products" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Master Products" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Purchase Orders" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Timesheets" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Roster" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "My Shifts" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Analytics" })).toBeInTheDocument();
+  });
+
+  // ── GPM navigation ─────────────────────────────────────────────────────────
+
+  it("group_practice_manager sees operational and admin nav items from their grants", () => {
+    setAuthenticatedUser(authTestState, createManagerUser());
+    renderShell();
+    expect(screen.getByRole("link", { name: "Daily Hub" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Purchase Orders" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Suppliers & Invoices" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Master Products" })).toBeInTheDocument();
+    // No clinic-scope selector for single-operational-clinic GPM
+    expect(screen.queryByRole("combobox", { name: "Clinic scope" })).not.toBeInTheDocument();
   });
 });

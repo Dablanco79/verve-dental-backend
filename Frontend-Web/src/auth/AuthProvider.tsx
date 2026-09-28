@@ -11,6 +11,7 @@ import { createApiClient } from "../api/client.js";
 import { loadConfig } from "../config/index.js";
 import type { AuthUser, MfaSetupData } from "../types/index.js";
 import * as tokenStorage from "./tokenStorage.js";
+import { decodeTokenPermissions } from "./tokenUtils.js";
 import { AuthContext } from "./AuthContext.js";
 import type { AuthContextValue } from "./AuthContext.js";
 
@@ -31,13 +32,22 @@ const IDLE_TIMEOUT_MS = (() => {
 
 const IDLE_ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"] as const;
 
+
 function persistSession(
   accessToken: string,
   user: AuthUser,
   setUser: (user: AuthUser) => void,
 ): void {
   tokenStorage.setAccessToken(accessToken);
-  setUser(user);
+  // Merge token-level permissions (full union of defaults + explicit grants)
+  // into the user object before committing to React state.  The response body
+  // `user` carries only DEFAULT_PERMISSIONS[role]; explicit module grants are
+  // baked into the token by issueTokens() and must be read from the JWT.
+  const tokenPermissions = decodeTokenPermissions(accessToken);
+  setUser({
+    ...user,
+    permissions: tokenPermissions.length > 0 ? tokenPermissions : user.permissions,
+  });
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
