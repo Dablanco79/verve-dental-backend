@@ -34,8 +34,10 @@ import {
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 // Roles that can review, approve/reject, and access clinic-wide payroll data.
@@ -67,6 +69,7 @@ export function createLeaveRouter(deps: AppDependencies): Router {
 
   // Every leave route requires a valid JWT and must belong to the correct tenant.
   router.use(authenticate, enforceTenantParam("clinicId"));
+  router.use(requirePermission(PERMISSIONS.MODULE_LEAVE));
 
   // ── /me — must come before /:leaveId to avoid route shadowing ──────────────
   router.get(
@@ -143,6 +146,7 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
   // context to homeClinicId regardless of the URL parameter (defence-in-depth),
   // and requireRoles guards below block staff from manager-only endpoints.
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_TIMESHEETS));
 
   // ── Static sub-paths — declared BEFORE /:timesheetId to prevent shadowing ──
 

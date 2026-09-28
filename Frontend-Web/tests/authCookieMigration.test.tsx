@@ -72,6 +72,7 @@ const ADMIN_USER: AuthUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  permissions: [],
 };
 
 const SESSION: AuthSession = {

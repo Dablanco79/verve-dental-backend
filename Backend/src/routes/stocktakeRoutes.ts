@@ -6,8 +6,10 @@ import { createStocktakeHandlers } from "../controllers/stocktakeController.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import {
   validateParams,
   clinicIdParamsSchema,
@@ -57,6 +59,7 @@ export function createStocktakeRouter(deps: AppDependencies): Router {
   );
 
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_STOCKTAKES));
   router.use(enforceTenantParam("clinicId"));
   router.use(validateParams(clinicIdParamsSchema));
 

@@ -5,8 +5,10 @@ import { createPurchaseOrderHandlers } from "../controllers/purchaseOrderControl
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createPurchaseOrderRouter(deps: AppDependencies): Router {
@@ -16,7 +18,7 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
-  router.use(requireRoles("owner_admin", "group_practice_manager"));
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
 
   // List all PO lines for the clinic (draft + submitted + received + cancelled), enriched with catalog metadata.
   router.get(
@@ -26,8 +28,10 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
 
   // Export all PO lines as a downloadable CSV file.
   // Mounted BEFORE /:poId so /export.csv is matched as a literal path segment.
+  // Manager/admin only — financial report.
   router.get(
     "/export.csv",
+    requireRoles("owner_admin", "group_practice_manager"),
     asyncHandler((req, res) => handlers.exportPurchaseOrdersCsv(req, res)),
   );
 
@@ -69,8 +73,10 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
   );
 
   // Cancel an eligible purchase order (draft or submitted → cancelled).
+  // Manager/admin only — financial risk action.
   router.post(
     "/:poId/cancel",
+    requireRoles("owner_admin", "group_practice_manager"),
     asyncHandler((req, res) => handlers.cancelPurchaseOrder(req, res)),
   );
 
@@ -99,8 +105,10 @@ export function createPurchaseOrderRouter(deps: AppDependencies): Router {
   );
 
   // Receive items against a submitted or partially-received PO.
+  // Requires MODULE_RECEIVING in addition to MODULE_PROCUREMENT (already checked at router level).
   router.post(
     "/:poId/receive",
+    requirePermission(PERMISSIONS.MODULE_RECEIVING),
     asyncHandler((req, res) => handlers.receivePurchaseOrder(req, res)),
   );
 
@@ -120,6 +128,10 @@ export function createPurchasingDraftRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  // Purchasing Drafts require BOTH the module permission AND manager/admin role.
+  // This is stricter than regular POs — multi-supplier planning is manager-only
+  // even for users who have module:procurement.
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
   router.use(requireRoles("owner_admin", "group_practice_manager"));
 
   // List all Purchasing Drafts for the clinic.

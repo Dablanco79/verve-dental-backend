@@ -10,11 +10,13 @@
 import bcrypt from "bcryptjs";
 
 import type { UpdateUserFields, UserRepository } from "../repositories/userRepository.js";
+import type { PermissionRepository } from "../repositories/permissionRepository.js";
 import type { AuditService } from "./auditService.js";
 import type { AuthService } from "./authService.js";
 import type { AuthenticatedUser, PublicUser, UserRecord, UserRole } from "../types/auth.js";
 import type { StaffPayrollTrack } from "../types/payroll.js";
 import { AppError } from "../types/errors.js";
+import { INITIAL_MODULE_GRANTS } from "../types/permissions.js";
 
 const BCRYPT_ROUNDS = 12;
 
@@ -69,6 +71,7 @@ export function createUserService(
   userRepository: UserRepository,
   audit: AuditService,
   authService: AuthService,
+  permissionRepository?: PermissionRepository,
 ) {
   function assertCanManageClinic(caller: AuthenticatedUser, targetClinicId: string): void {
     if (caller.role === "owner_admin") return;
@@ -132,6 +135,27 @@ export function createUserService(
       clinicId: params.homeClinicId,
       resourceId: user.id,
     });
+
+    // Grant initial module permissions for non-admin roles.
+    // These are revocable rows in user_permission_grants (NOT DEFAULT_PERMISSIONS)
+    // so an owner_admin can subsequently adjust per-user access.
+    const modulesToGrant = INITIAL_MODULE_GRANTS[user.role];
+    if (permissionRepository && modulesToGrant && modulesToGrant.length > 0) {
+      for (const permission of modulesToGrant) {
+        try {
+          await permissionRepository.grant(
+            user.homeClinicId,
+            user.id,
+            permission,
+            caller.id,
+          );
+        } catch {
+          // Silently skip — do not fail user creation.
+          // The Module Access UI allows owner_admin to manually add missing
+          // grants if seeding fails (e.g. during a transient DB error).
+        }
+      }
+    }
 
     return toPublicUser(user);
   }

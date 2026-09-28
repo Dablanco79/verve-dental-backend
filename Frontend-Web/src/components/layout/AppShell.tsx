@@ -35,9 +35,9 @@ import { ALL_CLINICS_DASHBOARD_SCOPE } from "../../clinic/clinicContext.js";
 import { useSelectedClinic } from "../../clinic/useSelectedClinic.js";
 import { loadConfig } from "../../config/index.js";
 import {
+  canAccessModule,
   canManageBilling,
   canManageClinics,
-  canManageProcurement,
   canManageUsers,
   canViewAnalytics,
   canViewClinicSettings,
@@ -45,7 +45,6 @@ import {
   canViewMaterialsForecast,
   canManageSuppliers,
   canManageProducts,
-  canPerformStocktake,
 } from "../../utils/roles.js";
 
 
@@ -109,8 +108,10 @@ export function AppShell({ children }: AppShellProps) {
         {
           label: "Operations",
           items: [
-            { to: "/inventory", label: "Inventory", icon: Package },
-            ...(canPerformStocktake()
+            ...(canAccessModule(user, "module:inventory")
+              ? [{ to: "/inventory", label: "Inventory", icon: Package }]
+              : []),
+            ...(canAccessModule(user, "module:stocktakes")
               ? [{ to: "/inventory/stocktakes", label: "Stocktake", icon: ClipboardList }]
               : []),
             ...(canManageProducts(user.role)
@@ -144,7 +145,7 @@ export function AppShell({ children }: AppShellProps) {
             ...(canManageSuppliers(user.role)
               ? [{ to: "/supplier-intelligence", label: "Supplier Intelligence", icon: LineChart }]
               : []),
-            ...(canManageProcurement(user.role)
+            ...(canAccessModule(user, "module:procurement")
               ? [{ to: "/purchase-orders", label: "Purchase Orders", icon: ShoppingCart }]
               : []),
           ],
@@ -152,20 +153,20 @@ export function AppShell({ children }: AppShellProps) {
         {
           label: "People",
           items: [
-            { to: "/roster", label: "Roster", icon: CalendarDays },
-            { to: "/my-shifts", label: "My Shifts", icon: Clock },
-            { to: "/timesheets", label: "Timesheets", icon: Timer },
-            { to: "/leave", label: "Leave", icon: CalendarOff },
+            ...(canAccessModule(user, "module:roster") ? [{ to: "/roster", label: "Roster", icon: CalendarDays }] : []),
+            ...(canAccessModule(user, "module:roster") ? [{ to: "/my-shifts", label: "My Shifts", icon: Clock }] : []),
+            ...(canAccessModule(user, "module:timesheets") ? [{ to: "/timesheets", label: "Timesheets", icon: Timer }] : []),
+            ...(canAccessModule(user, "module:leave") ? [{ to: "/leave", label: "Leave", icon: CalendarOff }] : []),
           ],
         },
         {
           label: "Reporting",
           items: [
-            ...(canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics", icon: BarChart3 }] : []),
-            ...(canViewAnalytics(user.role)
+            ...(canAccessModule(user, "module:reports") && canViewAnalytics(user.role) ? [{ to: "/analytics", label: "Analytics", icon: BarChart3 }] : []),
+            ...(canAccessModule(user, "module:reports") && canViewAnalytics(user.role)
               ? [{ to: "/analytics/audit", label: "Audit Events", icon: Shield }]
               : []),
-            ...(canManageBilling(user.role) ? [{ to: "/billing", label: "Billing", icon: Receipt }] : []),
+            ...(canAccessModule(user, "module:reports") && canManageBilling(user.role) ? [{ to: "/billing", label: "Billing", icon: Receipt }] : []),
           ],
         },
         {

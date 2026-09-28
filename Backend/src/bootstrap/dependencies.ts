@@ -43,6 +43,7 @@ import {
 import { createPostgresLeaveRepository } from "../repositories/leaveRepository.postgres.js";
 import {
   createInMemoryUserRepository,
+  seedInMemoryModuleGrants,
 } from "../repositories/userRepository.js";
 import { createPostgresUserRepository } from "../repositories/userRepository.postgres.js";
 import {
@@ -396,6 +397,10 @@ export async function createAppDependencies(
       createInMemorySupplierContractPriceRepository();
     stocktakeRepository = createInMemoryStocktakeRepository();
 
+    // Seed module grants for in-memory dev/test users.
+    // This preserves backward compatibility for existing tests.
+    await seedInMemoryModuleGrants(permissionRepository);
+
     if (!databasePool) {
       logger.warn(
         "DATABASE_URL not set — using in-memory repositories (state lost on restart)",
@@ -431,7 +436,7 @@ export async function createAppDependencies(
   const healthService = createHealthService(connectedPool, connectedRedis);
   const auditService = createAuditService(logger, analyticsRepository);
   const authService = createAuthService(config, userRepository, auditService, connectedRedis, permissionRepository);
-  const userService = createUserService(userRepository, auditService, authService);
+  const userService = createUserService(userRepository, auditService, authService, permissionRepository);
   const purchaseOrderService = createPurchaseOrderService(
     inventoryRepository,
     catalogRepository,

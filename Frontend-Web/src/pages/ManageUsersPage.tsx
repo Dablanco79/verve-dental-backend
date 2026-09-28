@@ -12,10 +12,22 @@ import type {
   StaffUser,
   UserRole,
 } from "../types/index.js";
+
 import { PAYROLL_TRACK_LABELS, STAFF_PAYROLL_TRACKS } from "../types/index.js";
 import { canManageUsers, ROLE_LABELS } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
+
+const MODULE_ITEMS: Array<{ permission: string; label: string; roles: UserRole[] }> = [
+  { permission: "module:timesheets", label: "Timesheets", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:roster", label: "Roster", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:leave", label: "Leave", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:inventory", label: "Inventory", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:stocktakes", label: "Stocktakes", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:procurement", label: "Procurement", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:receiving", label: "Receiving", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
+  { permission: "module:reports", label: "Reports & Analytics", roles: ["owner_admin", "group_practice_manager"] },
+];
 
 // Roles an owner_admin may assign.
 const ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
@@ -54,6 +66,15 @@ type ClinicAccessState = {
   error: string | null;
   availableClinics: { id: string; name: string }[];
   assignments: { clinicId: string; canRoster: boolean; canOperate: boolean }[];
+};
+
+type ModuleAccessState = {
+  userId: string;
+  userRole: UserRole;
+  isLoading: boolean;
+  isSaving: string | null; // permission currently being toggled
+  error: string | null;
+  activePermissions: Set<string>;
 };
 
 type EditState = {
@@ -104,6 +125,9 @@ export function ManageUsersPage() {
 
   // ── Clinic access (owner_admin only) ───────────────────────────────────────
   const [clinicAccess, setClinicAccess] = useState<ClinicAccessState | null>(null);
+
+  // ── Module access (owner_admin only) ───────────────────────────────────────
+  const [moduleAccess, setModuleAccess] = useState<ModuleAccessState | null>(null);
 
   // ── Init form when user is known ───────────────────────────────────────────
   function buildInitialForm(targetClinicId: string, targetClinicName: string): FormState {
@@ -203,6 +227,7 @@ export function ManageUsersPage() {
     });
     setResetState(null);
     setShowForm(false);
+    setModuleAccess(null);
   }
 
   function closeEdit(): void {
@@ -223,6 +248,7 @@ export function ManageUsersPage() {
     });
     setEditState(null);
     setResetState(null);
+    setModuleAccess(null);
     setShowForm(false);
     try {
       const data = await apiClient.getUserClinicAccess(u.homeClinicId, u.id);
@@ -291,6 +317,57 @@ export function ManageUsersPage() {
         ),
       };
     });
+  }
+
+  async function openModuleAccess(u: StaffUser): Promise<void> {
+    if (!user || user.role !== "owner_admin") return;
+    setModuleAccess({
+      userId: u.id,
+      userRole: u.role,
+      isLoading: true,
+      isSaving: null,
+      error: null,
+      activePermissions: new Set(),
+    });
+    setEditState(null);
+    setResetState(null);
+    setClinicAccess(null);
+    setShowForm(false);
+    try {
+      const data = await apiClient.listUserPermissions(u.homeClinicId, u.id);
+      const active = new Set(
+        data.grants
+          .filter((g) => g.revokedAt === null && g.permission.startsWith("module:"))
+          .map((g) => g.permission),
+      );
+      setModuleAccess((s) => s ? { ...s, isLoading: false, activePermissions: active } : s);
+    } catch (err: unknown) {
+      setModuleAccess((s) =>
+        s ? { ...s, isLoading: false, error: err instanceof Error ? err.message : "Failed to load permissions" } : s,
+      );
+    }
+  }
+
+  async function toggleModulePermission(u: StaffUser, permission: string, grant: boolean): Promise<void> {
+    if (!moduleAccess || !user) return;
+    setModuleAccess((s) => s ? { ...s, isSaving: permission, error: null } : s);
+    try {
+      if (grant) {
+        await apiClient.grantUserPermission(u.homeClinicId, u.id, permission);
+      } else {
+        await apiClient.revokeUserPermission(u.homeClinicId, u.id, permission);
+      }
+      setModuleAccess((s) => {
+        if (!s) return s;
+        const next = new Set(s.activePermissions);
+        if (grant) next.add(permission); else next.delete(permission);
+        return { ...s, isSaving: null, activePermissions: next };
+      });
+    } catch (err: unknown) {
+      setModuleAccess((s) =>
+        s ? { ...s, isSaving: null, error: err instanceof Error ? err.message : "Failed to update permission" } : s,
+      );
+    }
   }
 
   async function handleSaveEdit(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
@@ -640,6 +717,23 @@ export function ManageUsersPage() {
                               </button>
                             ) : null}
 
+                            {/* Module access — owner_admin only */}
+                            {isAdmin ? (
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => {
+                                  if (moduleAccess?.userId === u.id) {
+                                    setModuleAccess(null);
+                                  } else {
+                                    void openModuleAccess(u);
+                                  }
+                                }}
+                              >
+                                {moduleAccess?.userId === u.id ? "Close modules" : "Module access"}
+                              </button>
+                            ) : null}
+
                             {/* Reset password action */}
                             {!isEditingThis ? (
                               isResettingThis && resetState.success ? (
@@ -841,6 +935,76 @@ export function ManageUsersPage() {
                                 {resetState.isSubmitting ? "Resetting…" : "Set new password"}
                               </button>
                             </form>
+                          </td>
+                        </tr>
+                      ) : null}
+
+                      {/* Module access panel — owner_admin only */}
+                      {isAdmin && moduleAccess?.userId === u.id ? (
+                        <tr key={`${u.id}-module-access`}>
+                          <td colSpan={5}>
+                            <div className="product-form" aria-label={`Module access for ${u.email}`}>
+                              <h3 style={{ marginBottom: "0.75rem" }}>Module access — {nameLabel(u)}</h3>
+                              {u.role === "owner_admin" ? (
+                                <p className="inventory-page__subtitle">
+                                  Owner / Admins have full access to all modules by role.
+                                </p>
+                              ) : moduleAccess.isLoading ? (
+                                <p className="loading-message">Loading module permissions…</p>
+                              ) : moduleAccess.error ? (
+                                <p className="status-card__error">{moduleAccess.error}</p>
+                              ) : (
+                                <>
+                                  <p className="inventory-page__subtitle" style={{ marginBottom: "1rem" }}>
+                                    Toggle which operational modules this user can access. Changes take effect on their next login.
+                                  </p>
+                                  <div className="inventory-table-wrapper">
+                                    <table className="inventory-table">
+                                      <thead>
+                                        <tr>
+                                          <th>Module</th>
+                                          <th>Access</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {MODULE_ITEMS
+                                          .filter((m) => m.roles.includes(u.role))
+                                          .map((m) => {
+                                            const active = moduleAccess.activePermissions.has(m.permission);
+                                            const isSaving = moduleAccess.isSaving === m.permission;
+                                            return (
+                                              <tr key={m.permission}>
+                                                <td>{m.label}</td>
+                                                <td>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={active}
+                                                    disabled={isSaving}
+                                                    aria-label={`${m.label} access`}
+                                                    onChange={(e) => {
+                                                      void toggleModulePermission(u, m.permission, e.target.checked);
+                                                    }}
+                                                  />
+                                                  {isSaving ? <span style={{ marginLeft: "0.5rem" }}>…</span> : null}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="product-form__actions">
+                                    <button
+                                      type="button"
+                                      className="link-button"
+                                      onClick={() => { setModuleAccess(null); }}
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ) : null}

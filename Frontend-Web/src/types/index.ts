@@ -26,6 +26,12 @@ export type AuthUser = {
    * Nullable for users created before Sprint 1.
    */
   displayName: string | null;
+  /**
+   * Effective module permissions baked into the JWT at issuance.
+   * Derived from: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
+   * Use user.permissions.includes("module:X") to gate UI elements.
+   */
+  permissions: string[];
 };
 
 export type AuthSession = {

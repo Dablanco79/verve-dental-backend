@@ -16,6 +16,7 @@ export function createStaffUser(overrides: Partial<AuthUser> = {}): AuthUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: ["module:timesheets", "module:roster", "module:leave", "module:inventory", "module:stocktakes"],
     ...overrides,
   };
 }
@@ -30,6 +31,7 @@ export function createManagerUser(overrides: Partial<AuthUser> = {}): AuthUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: ["module:timesheets", "module:roster", "module:leave", "module:inventory", "module:stocktakes", "module:procurement", "module:receiving", "module:reports"],
     ...overrides,
   };
 }
@@ -44,6 +46,14 @@ export function createAdminUser(overrides: Partial<AuthUser> = {}): AuthUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: [
+      "inventory:read", "inventory:write", "users:read", "users:write",
+      "clinic:read", "clinic:write", "roster:read", "roster:write",
+      "timesheets:read", "timesheets:write", "billing:read", "analytics:read",
+      "permissions:manage",
+      "module:timesheets", "module:roster", "module:leave", "module:inventory",
+      "module:stocktakes", "module:procurement", "module:receiving", "module:reports",
+    ],
     ...overrides,
   };
 }

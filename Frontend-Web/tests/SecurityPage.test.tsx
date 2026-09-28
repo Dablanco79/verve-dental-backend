@@ -43,6 +43,7 @@ const MOCK_USER: AuthUser = {
   firstName: null,
   lastName: null,
   displayName: null,
+  permissions: [],
 };
 
 const MOCK_SETUP_DATA: MfaSetupData = {

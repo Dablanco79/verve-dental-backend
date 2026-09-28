@@ -5,8 +5,10 @@ import { createInventoryHandlers } from "../controllers/inventoryController.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import {
   validateParams,
   clinicIdParamsSchema,
@@ -35,30 +37,39 @@ export function createInventoryRouter(deps: AppDependencies): Router {
 
   router.get(
     "/",
+    requirePermission(PERMISSIONS.MODULE_INVENTORY),
     requireRoles(...INVENTORY_READ_ROLES),
     asyncHandler((req, res) => handlers.listInventory(req, res)),
   );
 
   router.get(
     "/adjustments",
+    requirePermission(PERMISSIONS.MODULE_INVENTORY),
     requireRoles(...INVENTORY_MANAGE_ROLES),
     asyncHandler((req, res) => handlers.listAdjustments(req, res)),
   );
 
   router.post(
     "/adjust",
+    requirePermission(PERMISSIONS.MODULE_INVENTORY),
     requireRoles(...INVENTORY_MANAGE_ROLES),
     asyncHandler((req, res) => handlers.adjustInventory(req, res)),
   );
 
   router.post(
     "/receive",
-    requireRoles(...INVENTORY_MANAGE_ROLES),
+    // module:receiving is the sole authorization gate — admin must explicitly
+    // grant this permission.  clinical_staff with the grant can receive.
+    // The manager-role guard has been deliberately removed here: module:receiving
+    // replaces it, consistent with how other module permissions work (e.g.
+    // module:procurement replaced requireRoles on PO creation).
+    requirePermission(PERMISSIONS.MODULE_RECEIVING),
     asyncHandler((req, res) => handlers.receiveInventory(req, res)),
   );
 
   router.get(
     "/:itemId",
+    requirePermission(PERMISSIONS.MODULE_INVENTORY),
     requireRoles(...INVENTORY_READ_ROLES),
     validateParams(clinicInventoryItemParamsSchema),
     asyncHandler((req, res) => handlers.getInventoryItem(req, res)),

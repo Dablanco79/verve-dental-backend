@@ -5,8 +5,10 @@ import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { createAnalyticsHandlers } from "../controllers/analyticsController.js";
 import {
   validateParams,
@@ -50,6 +52,7 @@ export function createGlobalAnalyticsRouter(deps: AppDependencies): Router {
   router.get(
     "/dashboard/all",
     authenticate,
+    requirePermission(PERMISSIONS.MODULE_REPORTS),
     ownerOnly,
     asyncHandler((req, res) => h.getAllClinicsDashboard(req, res)),
   );
@@ -68,8 +71,8 @@ export function createAnalyticsRouter(deps: AppDependencies): Router {
 
   const h = createAnalyticsHandlers(deps.analyticsService);
 
-  // All analytics routes require manager/admin + tenant enforcement.
-  const guards = [authenticate, tenantGuard, managerOrAdmin];
+  // All analytics routes require manager/admin + tenant enforcement + module:reports.
+  const guards = [authenticate, requirePermission(PERMISSIONS.MODULE_REPORTS), tenantGuard, managerOrAdmin];
 
   // ── KPI dashboard ─────────────────────────────────────────────────────────
   router.get(

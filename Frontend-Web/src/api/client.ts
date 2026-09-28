@@ -1051,6 +1051,56 @@ export function createApiClient(config: AppConfig) {
   }
 
   /**
+   * GET /api/v1/clinics/:clinicId/users/:userId/permissions
+   * Returns all grants (active and revoked) for a user in a clinic. owner_admin only.
+   */
+  async function listUserPermissions(
+    clinicId: string,
+    userId: string,
+  ): Promise<{ grants: Array<{ id: string; permission: string; grantedBy: string; grantedAt: string; revokedAt: string | null }> }> {
+    return request<{ grants: Array<{ id: string; permission: string; grantedBy: string; grantedAt: string; revokedAt: string | null }> }>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/permissions`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * POST /api/v1/clinics/:clinicId/users/:userId/permissions
+   * Grants a permission to a user. owner_admin only.
+   */
+  async function grantUserPermission(
+    clinicId: string,
+    userId: string,
+    permission: string,
+  ): Promise<{ id: string; permission: string; grantedAt: string }> {
+    return request<{ id: string; permission: string; grantedAt: string }>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/permissions`,
+      { method: "POST", body: JSON.stringify({ permission }) },
+      requireAccessToken(),
+    );
+  }
+
+  /**
+   * DELETE /api/v1/clinics/:clinicId/users/:userId/permissions/:permission
+   * Revokes a permission from a user. owner_admin only.
+   */
+  async function revokeUserPermission(
+    clinicId: string,
+    userId: string,
+    permission: string,
+  ): Promise<void> {
+    await request<unknown>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/permissions/${encodeURIComponent(permission)}`,
+      { method: "DELETE" },
+      requireAccessToken(),
+    );
+  }
+
+  /**
    * GET /api/v1/users/me/operational-clinics
    * Returns clinics where the caller has can_operate=true.
    * Used by GPM multi-clinic selector.
@@ -2684,6 +2734,9 @@ export function createApiClient(config: AppConfig) {
     checkShiftConflicts,
     getUserClinicAccess,
     putUserClinicAccess,
+    listUserPermissions,
+    grantUserPermission,
+    revokeUserPermission,
     getMyOperationalClinics,
     createShift,
     updateShift,

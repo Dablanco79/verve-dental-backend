@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider } from "./auth/AuthProvider.js";
+import { PermissionRoute } from "./auth/PermissionRoute.js";
 import { ProtectedRoute } from "./auth/ProtectedRoute.js";
 import { ClinicProvider } from "./clinic/ClinicProvider.js";
 import { AccountPage } from "./pages/AccountPage.js";
@@ -52,31 +53,10 @@ export function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route element={<ProtectedRoute />}>
+              {/* Ungated — have their own page-level role guards */}
               <Route path="/" element={<HomePage />} />
               <Route path="/pilot-setup" element={<PilotSetupPage />} />
-              <Route path="/inventory" element={<InventoryPage />} />
-              <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
-              <Route path="/inventory/catalogue-import/:importId/review" element={<CatalogueImportReviewPage />} />
-              <Route path="/inventory/products" element={<ProductManagementPage />} />
-              <Route
-                path="/inventory/master-product-library-import"
-                element={<MasterProductLibraryImportPage />}
-              />
-              <Route path="/inventory/master-products" element={<MasterProductsPage />} />
-              <Route path="/inventory/products/new" element={<AddProductPage />} />
-              <Route path="/inventory/products/:productId/edit" element={<ClinicProductEditPage />} />
-              <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
-              <Route path="/inventory/receiving" element={<InventoryReceivingPage />} />
-              <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
-              <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
-              <Route path="/inventory/stocktakes" element={<StocktakeListPage />} />
-              <Route path="/inventory/stocktakes/:sessionId" element={<StocktakeSessionPage />} />
               <Route path="/users" element={<ManageUsersPage />} />
-              <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
-              <Route path="/purchase-orders/:poId" element={<PurchaseOrderDetailPage />} />
-              <Route path="/purchasing-drafts/:pdId" element={<PurchasingDraftPage />} />
-              <Route path="/roster" element={<RosterCalendarPage />} />
-              <Route path="/my-shifts" element={<MyShiftsPage />} />
               <Route path="/account" element={<AccountPage />} />
               <Route path="/forecast/labor" element={<LaborForecastPage />} />
               <Route path="/forecast/materials" element={<MaterialsForecastPage />} />
@@ -85,16 +65,67 @@ export function App() {
               <Route path="/settings/clinics/new" element={<CreateClinicPage />} />
               <Route path="/settings/clinics/:clinicId/edit" element={<ClinicSettingsPage />} />
               <Route path="/settings/security" element={<SecurityPage />} />
-              <Route path="/timesheets" element={<TimesheetsPage />} />
-              <Route path="/leave" element={<LeavePage />} />
-              <Route path="/billing" element={<BillingLedgerPage />} />
-              <Route path="/analytics" element={<AnalyticsDashboardPage />} />
-              <Route path="/analytics/audit" element={<AuditTrailPage />} />
               <Route path="/suppliers" element={<SuppliersPage />} />
               <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
               <Route path="/invoice-review/:invoiceId" element={<SupplierInvoiceReviewPage />} />
               <Route path="/supplier-intelligence" element={<SupplierIntelligencePage />} />
               <Route path="/admin/pilot-reset" element={<PilotResetPage />} />
+
+              {/* Timesheets */}
+              <Route element={<PermissionRoute permission="module:timesheets" />}>
+                <Route path="/timesheets" element={<TimesheetsPage />} />
+              </Route>
+
+              {/* Leave */}
+              <Route element={<PermissionRoute permission="module:leave" />}>
+                <Route path="/leave" element={<LeavePage />} />
+              </Route>
+
+              {/* Roster — includes My Shifts */}
+              <Route element={<PermissionRoute permission="module:roster" />}>
+                <Route path="/roster" element={<RosterCalendarPage />} />
+                <Route path="/my-shifts" element={<MyShiftsPage />} />
+              </Route>
+
+              {/* Inventory — includes adjustments, products, receiving, catalogue import */}
+              <Route element={<PermissionRoute permission="module:inventory" />}>
+                <Route path="/inventory" element={<InventoryPage />} />
+                <Route path="/inventory/catalogue-import" element={<CatalogueImportPage />} />
+                <Route path="/inventory/catalogue-import/:importId/review" element={<CatalogueImportReviewPage />} />
+                <Route path="/inventory/products" element={<ProductManagementPage />} />
+                <Route path="/inventory/master-product-library-import" element={<MasterProductLibraryImportPage />} />
+                <Route path="/inventory/master-products" element={<MasterProductsPage />} />
+                <Route path="/inventory/products/new" element={<AddProductPage />} />
+                <Route path="/inventory/products/:productId/edit" element={<ClinicProductEditPage />} />
+                <Route path="/inventory/products/:productId" element={<ProductDetailPage />} />
+                <Route path="/inventory/adjust" element={<InventoryAdjustPage />} />
+                <Route path="/inventory/adjustments" element={<AdjustmentHistoryPage />} />
+              </Route>
+
+              {/* Receiving */}
+              <Route element={<PermissionRoute permission="module:receiving" />}>
+                <Route path="/inventory/receiving" element={<InventoryReceivingPage />} />
+              </Route>
+
+              {/* Stocktakes */}
+              <Route element={<PermissionRoute permission="module:stocktakes" />}>
+                <Route path="/inventory/stocktakes" element={<StocktakeListPage />} />
+                <Route path="/inventory/stocktakes/:sessionId" element={<StocktakeSessionPage />} />
+              </Route>
+
+              {/* Procurement */}
+              <Route element={<PermissionRoute permission="module:procurement" />}>
+                <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
+                <Route path="/purchase-orders/:poId" element={<PurchaseOrderDetailPage />} />
+                <Route path="/purchasing-drafts/:pdId" element={<PurchasingDraftPage />} />
+              </Route>
+
+              {/* Reports/Analytics — still role-gated at page level; PermissionRoute adds module gate */}
+              <Route element={<PermissionRoute permission="module:reports" />}>
+                <Route path="/analytics" element={<AnalyticsDashboardPage />} />
+                <Route path="/analytics/audit" element={<AuditTrailPage />} />
+                <Route path="/billing" element={<BillingLedgerPage />} />
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

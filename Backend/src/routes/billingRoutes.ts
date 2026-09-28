@@ -31,9 +31,9 @@ const lineItemParamsSchema = z.object({
  * Billing routes — mounted at /clinics/:clinicId/billing
  *
  * RBAC summary:
- *   GET  (read)  → all authenticated roles (tenant-scoped via enforceTenantParam)
- *   POST / PATCH (write) → owner_admin, group_practice_manager only
- *   DELETE       → owner_admin, group_practice_manager only
+ *   ALL routes → owner_admin, group_practice_manager only (security fix: GET routes
+ *   previously lacked the role guard; now all routes require managerOrAdmin).
+ *   Billing remains admin+GPM only for the pilot — no module:billing gate needed.
  *
  * Service-layer `assertTenantAccess` provides defence-in-depth beyond middleware.
  *
@@ -60,29 +60,28 @@ export function createBillingRouter(deps: AppDependencies): Router {
 
   const h = createBillingHandlers(deps.billingService);
 
+  // ALL billing routes require: authentication + tenant scope + manager/admin role.
+  // Previously, the GET routes lacked the role guard — this is the security fix.
+  router.use(authenticate);
+  router.use(tenantGuard);
+  router.use(managerOrAdmin);
+
   // ── Invoice CRUD ──────────────────────────────────────────────────────────
 
   router.get(
     "/invoices",
-    authenticate,
-    tenantGuard,
     validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.listInvoices(req, res)),
   );
 
   router.post(
     "/invoices",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(clinicIdParamsSchema),
     asyncHandler((req, res) => h.createInvoice(req, res)),
   );
 
   router.get(
     "/invoices/:invoiceId",
-    authenticate,
-    tenantGuard,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.getInvoice(req, res)),
   );
@@ -91,18 +90,12 @@ export function createBillingRouter(deps: AppDependencies): Router {
 
   router.patch(
     "/invoices/:invoiceId/issue",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.issueInvoice(req, res)),
   );
 
   router.patch(
     "/invoices/:invoiceId/void",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.voidInvoice(req, res)),
   );
@@ -111,26 +104,18 @@ export function createBillingRouter(deps: AppDependencies): Router {
 
   router.get(
     "/invoices/:invoiceId/line-items",
-    authenticate,
-    tenantGuard,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.listLineItems(req, res)),
   );
 
   router.post(
     "/invoices/:invoiceId/line-items",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.addLineItem(req, res)),
   );
 
   router.delete(
     "/invoices/:invoiceId/line-items/:lineItemId",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(lineItemParamsSchema),
     asyncHandler((req, res) => h.removeLineItem(req, res)),
   );
@@ -139,17 +124,12 @@ export function createBillingRouter(deps: AppDependencies): Router {
 
   router.get(
     "/invoices/:invoiceId/payments",
-    authenticate,
-    tenantGuard,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.listPayments(req, res)),
   );
 
   router.post(
     "/invoices/:invoiceId/payments",
-    authenticate,
-    tenantGuard,
-    managerOrAdmin,
     validateParams(invoiceParamsSchema),
     asyncHandler((req, res) => h.recordPayment(req, res)),
   );

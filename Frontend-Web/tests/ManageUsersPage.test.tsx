@@ -67,6 +67,9 @@ vi.mock("../src/api/client.js", () => ({
     createUser: mockCreateUser,
     resetUserPassword: vi.fn(),
     listClinics: mockListClinics,
+    listUserPermissions: vi.fn().mockResolvedValue({ grants: [] }),
+    grantUserPermission: vi.fn().mockResolvedValue({ id: "g1", permission: "module:timesheets", grantedAt: new Date().toISOString() }),
+    revokeUserPermission: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 

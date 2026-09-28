@@ -4,8 +4,10 @@ import type { AppDependencies } from "../bootstrap/dependencies.js";
 import { createRosterHandlers } from "../controllers/rosterController.js";
 import {
   createAuthenticateMiddleware,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
 import { createRosterService } from "../services/rosterService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -41,6 +43,7 @@ export function createRosterRouter(deps: AppDependencies): Router {
   // RosterService performs its own RBAC + tenant check including the async
   // cross-clinic roster-membership lookup for rostered staff.
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_ROSTER));
 
   router.get(
     "/",
@@ -114,6 +117,7 @@ export function createPersonalRosterRouter(deps: AppDependencies): Router {
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
 
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_ROSTER));
   // Establishes per-request RLS context (clinicId = homeClinicId, userId = caller.id).
   // This populates app.current_user_id so the narrow roster_entries RLS policy
   // (staff_user_id = app_current_user_id()) can authorise cross-clinic own-row reads

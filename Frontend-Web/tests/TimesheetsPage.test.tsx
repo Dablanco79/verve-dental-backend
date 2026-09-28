@@ -86,6 +86,7 @@ function makeUser(role: AuthUser["role"]): AuthUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    permissions: [],
   };
 }
 

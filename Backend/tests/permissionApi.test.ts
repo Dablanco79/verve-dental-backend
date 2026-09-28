@@ -169,7 +169,10 @@ describe("POST /api/v1/clinics/:clinicId/users/:userId/permissions", () => {
 // ─── GET /permissions — list ──────────────────────────────────────────────────
 
 describe("GET /api/v1/clinics/:clinicId/users/:userId/permissions", () => {
-  it("returns empty array when user has no explicit grants", async () => {
+  it("returns only module:* grants for a seed staff user (no action-level explicit grants)", async () => {
+    // In dev/test mode, seedInMemoryModuleGrants pre-populates 5 module:*
+    // grants for the clinical_staff seed user. This test verifies only those
+    // module grants exist — no action-level (inventory:read, etc.) grants.
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
@@ -178,7 +181,9 @@ describe("GET /api/v1/clinics/:clinicId/users/:userId/permissions", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect((res.body as ApiData<GrantData[]>).data).toEqual([]);
+    const grants = (res.body as ApiData<GrantData[]>).data;
+    const nonModuleGrants = grants.filter((g) => !g.permission.startsWith("module:"));
+    expect(nonModuleGrants).toHaveLength(0);
   });
 
   it("returns active grants after granting permissions", async () => {
@@ -196,9 +201,10 @@ describe("GET /api/v1/clinics/:clinicId/users/:userId/permissions", () => {
 
     expect(res.status).toBe(200);
     const grants = (res.body as ApiData<GrantData[]>).data;
-    expect(grants.length).toBe(1);
-    expect(grants[0]?.permission).toBe(PERMISSIONS.USERS_READ);
-    expect(grants[0]?.revokedAt).toBeNull();
+    // Verify the explicitly granted permission is present (active)
+    const usersReadGrant = grants.find((g) => g.permission === PERMISSIONS.USERS_READ);
+    expect(usersReadGrant).toBeDefined();
+    expect(usersReadGrant?.revokedAt).toBeNull();
   });
 
   it("includes revoked grants in the list (full history)", async () => {
@@ -221,8 +227,10 @@ describe("GET /api/v1/clinics/:clinicId/users/:userId/permissions", () => {
 
     expect(res.status).toBe(200);
     const grants = (res.body as ApiData<GrantData[]>).data;
-    expect(grants.length).toBe(1);
-    expect(grants[0]?.revokedAt).not.toBeNull();
+    // Verify the revoked grant appears in the full history
+    const rosterWriteGrant = grants.find((g) => g.permission === PERMISSIONS.ROSTER_WRITE);
+    expect(rosterWriteGrant).toBeDefined();
+    expect(rosterWriteGrant?.revokedAt).not.toBeNull();
   });
 
   it("returns 403 when group_practice_manager tries to list permissions", async () => {

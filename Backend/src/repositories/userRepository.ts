@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { UserRecord, UserRole } from "../types/auth.js";
 import type { StaffPayrollTrack } from "../types/payroll.js";
 import { AppError } from "../types/errors.js";
+import { PERMISSIONS } from "../types/permissions.js";
+import type { PermissionRepository } from "./permissionRepository.js";
 import { encryptTotpSecret } from "../utils/mfaCrypto.js";
 
 export type CreateUserInput = {
@@ -256,4 +258,57 @@ export async function createInMemoryUserRepository(
       return Promise.resolve();
     },
   };
+}
+
+/**
+ * Seeds module permission grants for all in-memory seed users.
+ * Called by createAppDependencies when running without a real database.
+ *
+ * GPM users receive all 8 module grants (broad access for dev convenience).
+ * clinical_staff receives 5 module grants (timesheets, roster, leave, inventory, stocktakes)
+ * to preserve backward compatibility with existing tests that test staff inventory access.
+ *
+ * NOTE: In production, migration 052 seeds clinical_staff with only 3 modules.
+ * The in-memory mode grants broader access to avoid breaking existing tests.
+ */
+export async function seedInMemoryModuleGrants(
+  permissionRepository: PermissionRepository,
+): Promise<void> {
+  const gpmModules = [
+    PERMISSIONS.MODULE_TIMESHEETS,
+    PERMISSIONS.MODULE_ROSTER,
+    PERMISSIONS.MODULE_LEAVE,
+    PERMISSIONS.MODULE_INVENTORY,
+    PERMISSIONS.MODULE_STOCKTAKES,
+    PERMISSIONS.MODULE_PROCUREMENT,
+    PERMISSIONS.MODULE_RECEIVING,
+    PERMISSIONS.MODULE_REPORTS,
+  ];
+  const staffModules = [
+    PERMISSIONS.MODULE_TIMESHEETS,
+    PERMISSIONS.MODULE_ROSTER,
+    PERMISSIONS.MODULE_LEAVE,
+    PERMISSIONS.MODULE_INVENTORY,
+    PERMISSIONS.MODULE_STOCKTAKES,
+  ];
+
+  const adminId = SEED_USER_IDS.clinicAAdmin;
+  const gpmUserIds = [SEED_USER_IDS.clinicAManager, SEED_USER_IDS.clinicAManagerNoMfa];
+  const staffUserIds = [SEED_USER_IDS.clinicAStaff];
+
+  // Use Promise.all to fire all grants concurrently — avoids 21 sequential
+  // micro-task yields per createTestApp() call that caused 5-second test
+  // timeouts under full-suite concurrency when all 95+ suites start together.
+  await Promise.all([
+    ...gpmUserIds.flatMap((userId) =>
+      gpmModules.map((perm) =>
+        permissionRepository.grant(SEED_CLINIC_A_ID, userId, perm, adminId),
+      ),
+    ),
+    ...staffUserIds.flatMap((userId) =>
+      staffModules.map((perm) =>
+        permissionRepository.grant(SEED_CLINIC_A_ID, userId, perm, adminId),
+      ),
+    ),
+  ]);
 }

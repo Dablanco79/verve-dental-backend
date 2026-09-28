@@ -1,4 +1,4 @@
-import type { UserRole } from "../types/index.js";
+import type { AuthUser, UserRole } from "../types/index.js";
 
 export function canManageProducts(role: UserRole): boolean {
   return role === "owner_admin" || role === "group_practice_manager";
@@ -128,3 +128,12 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   group_practice_manager: "Practice Manager",
   clinical_staff: "Clinical Staff",
 };
+
+/**
+ * Returns true if the user has the specified module:* permission in their token.
+ * Used by AppShell to show/hide navigation items based on module access.
+ * Safe to call with a null/undefined user — returns false.
+ */
+export function canAccessModule(user: AuthUser | null | undefined, permission: string): boolean {
+  return (user?.permissions ?? []).includes(permission);
+}
