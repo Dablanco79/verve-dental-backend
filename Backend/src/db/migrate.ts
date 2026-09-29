@@ -3197,6 +3197,25 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
     END $$;
   `,
   },
+  /**
+   * Migration 053 — Staff timesheet notes.
+   *
+   * Adds clock_in_note and clock_out_note to timesheet_entries.
+   * Both are nullable text columns with no default — purely additive.
+   * Staff notes are distinct from approval_notes (manager) and commission_note (manager).
+   * The service layer enforces that a note is required when the resolved
+   * geofence state is an exception (outside / denied / unavailable).
+   *
+   * See Backend/migrations/053_timesheet_staff_notes.up.sql for full DDL notes.
+   */
+  {
+    id: "053_timesheet_staff_notes",
+    sql: `
+      ALTER TABLE timesheet_entries
+        ADD COLUMN IF NOT EXISTS clock_in_note  text,
+        ADD COLUMN IF NOT EXISTS clock_out_note text;
+    `,
+  },
 ];
 
 /**

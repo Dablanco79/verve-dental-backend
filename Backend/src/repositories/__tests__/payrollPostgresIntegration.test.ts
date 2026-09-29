@@ -163,6 +163,12 @@ const COMMISSION_ROW = {
   approval_notes: null,
   commission_note: null,
   generated_by: "system_auto",
+  // Migration 051: JSONB location snapshots.
+  clock_in_location: null,
+  clock_out_location: null,
+  // Migration 053: Staff-authored notes.
+  clock_in_note: null,
+  clock_out_note: null,
   created_at: CREATED_AT,
   updated_at: UPDATED_AT,
 };
@@ -726,16 +732,17 @@ describe("PostgresTimesheetRepository — create: initialTimesheetStatus routing
     expect(params[6]).toBeNull(); // index 6 = roster_entry_id ($7)
   });
 
-  it("INSERT has exactly 24 params matching the 24-column INSERT statement", async () => {
-    // 22 original columns + clock_in_location ($23) + clock_out_location ($24)
-    // added by migration 051_geofence_columns.
+  it("INSERT has exactly 26 params matching the 26-column INSERT statement", async () => {
+    // 22 original columns
+    // + clock_in_location  ($23) + clock_out_location ($24)  [migration 051]
+    // + clock_in_note      ($25) + clock_out_note     ($26)  [migration 053]
     const { pool, query } = makeMockPool([COMMISSION_ROW]);
     const repo = createPostgresTimesheetRepository(pool);
 
     await repo.create(makeInput("commission_log"));
 
     const [, params] = lastCall(query);
-    expect(params).toHaveLength(24);
+    expect(params).toHaveLength(26);
   });
 });
 

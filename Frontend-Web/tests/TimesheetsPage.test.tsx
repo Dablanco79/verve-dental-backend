@@ -493,6 +493,8 @@ function makeSubmittedEntry(id = "entry-1") {
     approvedAt: null,
     approvalNotes: null,
     commissionNote: null,
+    clockInNote: null,
+    clockOutNote: null,
     generatedBy: "system_auto",
     clockInLocation: null,
     clockOutLocation: null,
@@ -945,6 +947,8 @@ function makeGeofenceEntry(overrides: Partial<{
     approvedAt: null,
     approvalNotes: null,
     commissionNote: null,
+    clockInNote: null,
+    clockOutNote: null,
     generatedBy: "system_auto",
     clockInLocation: null,
     clockOutLocation: null,
@@ -1330,5 +1334,327 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
       expect(screen.getByRole("alert").textContent).toMatch(/select your physical location/i);
     });
     expect(mockClockIn).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff Timesheet Notes — clock-in form
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Staff Timesheet Notes — Clock In form note field", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+    // Clinic coordinates at same position as geolocation → within range → no warning panel
+    mockGetClinicCoordinates.mockResolvedValue({
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      latitude: -37.8136,
+      longitude: 144.9631,
+    });
+  });
+
+  it("Clock In Note textarea is visible in the clock-in form with optional label", async () => {
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // The note label must be present and clearly optional
+    const noteLabel = await screen.findByLabelText(/clock in note/i);
+    expect(noteLabel).toBeInTheDocument();
+    expect(noteLabel.tagName).toBe("TEXTAREA");
+    // Label text contains "(optional)"
+    expect(screen.getByText(/clock in note/i).textContent).toMatch(/optional/i);
+  });
+
+  it("Clock In Note is passed in the clockIn payload when provided", async () => {
+    mockClockIn.mockResolvedValue({
+      id: "clocked-in-id",
+      payrollType: "hourly_auto",
+      timesheetStatus: "draft",
+      staffUserId: "user-1",
+      staffEmail: "user@clinic-a.au",
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicName: "Verve Dental Clinic A",
+      rosterEntryId: null,
+      shiftDate: "2026-09-22",
+      shiftStartAt: "2026-09-22T22:00:00.000Z",
+      shiftEndAt: "2026-09-23T06:00:00.000Z",
+      attendanceStatus: "present",
+      clockInAt: "2026-09-22T22:01:00.000Z",
+      clockOutAt: null,
+      breakDurationMinutes: null,
+      totalHoursWorked: null,
+      ordinaryHours: null,
+      overtime15xHours: 0,
+      overtime2xHours: 0,
+      overtimeCustomHours: 0,
+      approvedByUserId: null,
+      approvedAt: null,
+      approvalNotes: null,
+      commissionNote: null,
+      clockInNote: "Covering at Heathmont today",
+      clockOutNote: null,
+      generatedBy: "user@clinic-a.au",
+      clockInLocation: null,
+      clockOutLocation: null,
+      createdAt: "2026-09-22T22:01:00.000Z",
+      updatedAt: "2026-09-22T22:01:00.000Z",
+    } satisfies TimesheetEntry);
+
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    // Select the physical clinic (ad-hoc mode)
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, HOME_CLINIC.id);
+
+    // Type a clock-in note
+    const noteArea = screen.getByLabelText(/clock in note/i);
+    await userEvent.type(noteArea, "Covering at Heathmont today");
+
+    // Click Clock In
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    // Wait for mockClockIn to be called with the note.
+    // mockClockIn is called as clockIn(clinicId, payload) — two args.
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          clockInNote: "Covering at Heathmont today",
+        }),
+      );
+    });
+  });
+
+  it("Clock In Note is null in the payload when no note is provided", async () => {
+    mockClockIn.mockResolvedValue({
+      id: "clocked-in-id-2",
+      payrollType: "hourly_auto",
+      timesheetStatus: "draft",
+      staffUserId: "user-1",
+      staffEmail: "user@clinic-a.au",
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicName: "Verve Dental Clinic A",
+      rosterEntryId: null,
+      shiftDate: "2026-09-22",
+      shiftStartAt: "2026-09-22T22:00:00.000Z",
+      shiftEndAt: "2026-09-23T06:00:00.000Z",
+      attendanceStatus: "present",
+      clockInAt: "2026-09-22T22:01:00.000Z",
+      clockOutAt: null,
+      breakDurationMinutes: null,
+      totalHoursWorked: null,
+      ordinaryHours: null,
+      overtime15xHours: 0,
+      overtime2xHours: 0,
+      overtimeCustomHours: 0,
+      approvedByUserId: null,
+      approvedAt: null,
+      approvalNotes: null,
+      commissionNote: null,
+      clockInNote: null,
+      clockOutNote: null,
+      generatedBy: "user@clinic-a.au",
+      clockInLocation: null,
+      clockOutLocation: null,
+      createdAt: "2026-09-22T22:01:00.000Z",
+      updatedAt: "2026-09-22T22:01:00.000Z",
+    } satisfies TimesheetEntry);
+
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    // Select physical clinic but leave note empty
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, HOME_CLINIC.id);
+
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    // mockClockIn is called as clockIn(clinicId, payload) — two args.
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ clockInNote: null }),
+      );
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff Timesheet Notes — GeofenceWarningPanel with note (exception state)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Staff Timesheet Notes — GeofenceWarningPanel note required for exception", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+    // Clinic at Clinic B location (~500 m from device) → outside range → warning panel shown
+    mockGetClinicCoordinates.mockResolvedValue({
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      latitude: -37.8136,
+      longitude: 144.9694, // ~500 m east of device
+    });
+  });
+
+  it("GeofenceWarningPanel shows a note textarea when a location exception occurs", async () => {
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, HOME_CLINIC.id);
+
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    // GeofenceWarningPanel is shown (location check alert appears)
+    await screen.findByRole("alert");
+    expect(screen.getByText(/location check/i)).toBeInTheDocument();
+
+    // The note textarea is present inside the warning panel
+    const noteArea = screen.getByRole("textbox", { name: /reason/i });
+    expect(noteArea).toBeInTheDocument();
+  });
+
+  it("GeofenceWarningPanel Confirm button is disabled until note is non-empty", async () => {
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, HOME_CLINIC.id);
+
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    // Warning panel shown
+    await screen.findByRole("alert");
+
+    // Confirm is disabled initially (no note provided)
+    const confirmBtn = screen.getByRole("button", { name: /confirm clock in/i });
+    expect(confirmBtn).toBeDisabled();
+
+    // Type a note — Confirm should become enabled
+    const noteArea = screen.getByRole("textbox", { name: /reason/i });
+    await userEvent.type(noteArea, "Covering at Heathmont today");
+
+    await waitFor(() => {
+      expect(confirmBtn).not.toBeDisabled();
+    });
+  });
+
+  it("GeofenceWarningPanel passes note in clockIn payload on confirm", async () => {
+    mockClockIn.mockResolvedValue({
+      id: "clocked-with-note",
+      payrollType: "hourly_auto",
+      timesheetStatus: "draft",
+      staffUserId: "user-1",
+      staffEmail: "user@clinic-a.au",
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicId: "11111111-1111-4111-8111-111111111111",
+      rosteredClinicName: "Verve Dental Clinic A",
+      rosterEntryId: null,
+      shiftDate: "2026-09-22",
+      shiftStartAt: "2026-09-22T22:00:00.000Z",
+      shiftEndAt: "2026-09-23T06:00:00.000Z",
+      attendanceStatus: "present",
+      clockInAt: "2026-09-22T22:01:00.000Z",
+      clockOutAt: null,
+      breakDurationMinutes: null,
+      totalHoursWorked: null,
+      ordinaryHours: null,
+      overtime15xHours: 0,
+      overtime2xHours: 0,
+      overtimeCustomHours: 0,
+      approvedByUserId: null,
+      approvedAt: null,
+      approvalNotes: null,
+      commissionNote: null,
+      clockInNote: "Covering at Heathmont today",
+      clockOutNote: null,
+      generatedBy: "user@clinic-a.au",
+      clockInLocation: null,
+      clockOutLocation: null,
+      createdAt: "2026-09-22T22:01:00.000Z",
+      updatedAt: "2026-09-22T22:01:00.000Z",
+    } satisfies TimesheetEntry);
+
+    const staffCtx = makeClinicContext();
+    renderTimesheetsPageWithClinicContext(makeUser("clinical_staff"), staffCtx);
+
+    const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
+    await userEvent.selectOptions(physicalSelect, HOME_CLINIC.id);
+
+    await userEvent.click(screen.getByRole("button", { name: /clock in/i }));
+
+    // Warning panel shown — type note and confirm
+    await screen.findByRole("alert");
+    const noteArea = screen.getByRole("textbox", { name: /reason/i });
+    await userEvent.type(noteArea, "Covering at Heathmont today");
+
+    const confirmBtn = screen.getByRole("button", { name: /confirm clock in/i });
+    await waitFor(() => { expect(confirmBtn).not.toBeDisabled(); });
+    await userEvent.click(confirmBtn);
+
+    // mockClockIn is called as clockIn(clinicId, payload) — two args.
+    await waitFor(() => {
+      expect(mockClockIn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ clockInNote: "Covering at Heathmont today" }),
+      );
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff Timesheet Notes — Manager table columns
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Staff Timesheet Notes — Manager table Staff Note column", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+    mockGetClinicCoordinates.mockResolvedValue({
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      latitude: -37.8136,
+      longitude: 144.9631,
+    });
+  });
+
+  it("ApprovalQueue shows a 'Staff Note' column header", async () => {
+    const entry = makeGeofenceEntry({ timesheetStatus: "submitted" });
+    mockListTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getByRole("columnheader", { name: /staff note/i })).toBeInTheDocument();
+  });
+
+  it("ApprovalQueue shows the clockInNote in the Staff Note cell", async () => {
+    const entry: TimesheetEntry = {
+      ...makeGeofenceEntry({ timesheetStatus: "submitted" }),
+      clockInNote: "Covering at Heathmont today",
+      clockOutNote: null,
+    };
+    mockListTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getByText("Covering at Heathmont today")).toBeInTheDocument();
+  });
+
+  it("ReviewedTimesheets shows a 'Staff Note' column header in the Approved tab", async () => {
+    const entry = makeGeofenceEntry({ timesheetStatus: "approved" });
+    mockListTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    // Switch to Approved tab
+    const approvedTab = await screen.findByRole("button", { name: /^approved/i });
+    await userEvent.click(approvedTab);
+
+    await screen.findByRole("cell", { name: entry.staffEmail });
+    expect(screen.getByRole("columnheader", { name: /staff note/i })).toBeInTheDocument();
   });
 });

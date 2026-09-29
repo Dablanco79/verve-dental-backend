@@ -203,7 +203,8 @@ describe("Geofence — Test 2: outside-range Clock In warns but succeeds (soft g
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
     const loc = outsideRangeLocation();
-    const res = await clockIn(app, token, { clockInLocation: loc });
+    // Note is required for outside-range (backend enforcement); soft gate still allows the action.
+    const res = await clockIn(app, token, { clockInLocation: loc, clockInNote: "Covering at Heathmont" });
 
     // NEVER hard-blocked — status 201 always
     expect(res.status).toBe(201);
@@ -228,7 +229,8 @@ describe("Geofence — Test 3: denied-location Clock In still succeeds", () => {
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
     const loc = deniedLocation();
-    const res = await clockIn(app, token, { clockInLocation: loc });
+    // Note is required for denied-location (backend enforcement); action is still allowed.
+    const res = await clockIn(app, token, { clockInLocation: loc, clockInNote: "Location permission denied" });
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
@@ -308,7 +310,11 @@ describe("Geofence — Test 5: outside-range Clock Out warns but succeeds (soft 
       jest.setSystemTime(new Date("2026-09-25T05:05:00.000Z")); // T1 — clock-out (+5 min)
 
       const outLoc = outsideRangeLocation();
-      const outRes = await clockOut(app, token, timesheetId, { clockOutLocation: outLoc });
+      // Note is required for outside-range clock-out (backend enforcement); action is still allowed.
+      const outRes = await clockOut(app, token, timesheetId, {
+        clockOutLocation: outLoc,
+        clockOutNote: "Left via different exit",
+      });
 
       // Never hard-blocked
       expect(outRes.status).toBe(200);
@@ -495,7 +501,11 @@ describe("Geofence — Test 9: metadata recorded accurately in response", () => 
       jest.setSystemTime(new Date("2026-09-25T06:05:00.000Z")); // T1 — clock-out (+5 min)
 
       const outLoc = outsideRangeLocation();
-      const outRes = await clockOut(app, token, timesheetId, { clockOutLocation: outLoc });
+      // Note required for outside-range clock-out.
+      const outRes = await clockOut(app, token, timesheetId, {
+        clockOutLocation: outLoc,
+        clockOutNote: "Outside range on departure",
+      });
 
       expect(outRes.status).toBe(200);
       const entry = (outRes.body as ApiData<TimesheetEntry>).data;
@@ -527,8 +537,11 @@ describe("Geofence — Test 9: metadata recorded accurately in response", () => 
 
       jest.setSystemTime(new Date("2026-09-25T07:05:00.000Z")); // T1 — clock-out (+5 min)
 
-      // Clock out outside range
-      const outRes = await clockOut(app, token, timesheetId, { clockOutLocation: outsideRangeLocation() });
+      // Clock out outside range — note required for exception location
+      const outRes = await clockOut(app, token, timesheetId, {
+        clockOutLocation: outsideRangeLocation(),
+        clockOutNote: "Clocking out from different site",
+      });
       expect(outRes.status).toBe(200);
 
       const entry = (outRes.body as ApiData<TimesheetEntry>).data;
@@ -622,7 +635,11 @@ describe("Geofence — Test 10: existing timesheet workflows are unaffected", ()
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
-    const res = await clockIn(app, token, { clockInLocation: unavailableLocation() });
+    // Note required for unavailable location (backend enforcement); soft gate still allows the action.
+    const res = await clockIn(app, token, {
+      clockInLocation: unavailableLocation(),
+      clockInNote: "Location service was off",
+    });
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
@@ -641,7 +658,11 @@ describe("Geofence — denied/unavailable store null coordinates (not 0,0)", () 
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
-    const res = await clockIn(app, token, { clockInLocation: deniedLocation() });
+    // Note required for denied location (backend enforcement).
+    const res = await clockIn(app, token, {
+      clockInLocation: deniedLocation(),
+      clockInNote: "Location permission denied",
+    });
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
@@ -658,7 +679,11 @@ describe("Geofence — denied/unavailable store null coordinates (not 0,0)", () 
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
-    const res = await clockIn(app, token, { clockInLocation: unavailableLocation() });
+    // Note required for unavailable location (backend enforcement).
+    const res = await clockIn(app, token, {
+      clockInLocation: unavailableLocation(),
+      clockInNote: "Device location unavailable",
+    });
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
@@ -736,9 +761,13 @@ describe("Geofence — backend authoritatively recomputes distance and withinRan
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
-    // Send outside-range coords — backend computes "outside", not "within"
+    // Send outside-range coords — backend computes "outside", not "within".
+    // Note is required for outside-range (backend enforcement); soft gate still allows the action.
     const outsideLoc = outsideRangeLocation();
-    const res = await clockIn(app, token, { clockInLocation: outsideLoc });
+    const res = await clockIn(app, token, {
+      clockInLocation: outsideLoc,
+      clockInNote: "Backend computes location state authoritatively",
+    });
 
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;

@@ -317,6 +317,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
             <th className="pr-table__th">Clock Out</th>
             <th className="pr-table__th">Hours</th>
             <th className="pr-table__th">Location</th>
+            <th className="pr-table__th">Staff Note</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th" />
           </tr>
@@ -353,6 +354,16 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                     clockInLoc={entry.clockInLocation}
                     clockOutLoc={entry.clockOutLocation}
                   />
+                </td>
+                <td className="pr-table__td ts-staff-note-cell">
+                  {(entry.clockInNote ?? entry.clockOutNote) ? (
+                    <span
+                      className="ts-staff-note"
+                      title={[entry.clockInNote, entry.clockOutNote].filter(Boolean).join(" / ")}
+                    >
+                      {entry.clockInNote ?? entry.clockOutNote}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="pr-table__td">
                   <TimesheetStatusBadge status={entry.timesheetStatus} />
@@ -394,7 +405,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {/* ── Inline approval form (optional notes) ──────────────── */}
               {approvingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={9} className="pr-table__td">
+                  <td colSpan={10} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--approval">
                       {/* Notes are optional — manager may approve silently */}
                       <textarea
@@ -440,7 +451,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {/* ── Inline rejection form (required notes) ─────────────── */}
               {rejectingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={9} className="pr-table__td">
+                  <td colSpan={10} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--rejection">
                       <div className="pr-inline-form__rejection-header">
                         <AlertTriangle size={14} aria-hidden="true" className="pr-inline-form__rejection-icon" />
@@ -677,6 +688,13 @@ type GeofenceWarningProps = {
   onConfirm: () => void;
   onCancel: () => void;
   isBusy: boolean;
+  /**
+   * Staff-authored note text for this clock event.
+   * When the geofence state is an exception (outside / denied / unavailable),
+   * the Confirm button is disabled until note.trim() is non-empty.
+   */
+  note: string;
+  onNoteChange: (value: string) => void;
 };
 
 function GeofenceWarningPanel({
@@ -686,6 +704,8 @@ function GeofenceWarningPanel({
   onConfirm,
   onCancel,
   isBusy,
+  note,
+  onNoteChange,
 }: GeofenceWarningProps) {
   let message: string;
   let detail: string;
@@ -706,6 +726,9 @@ function GeofenceWarningPanel({
     detail = `Location services could not be reached. You can still ${actionLabel.toLowerCase()}, but no location data will be recorded.`;
   }
 
+  // Confirm is disabled until the staff member provides a non-blank explanation.
+  const confirmDisabled = isBusy || note.trim() === "";
+
   return (
     <div className="ts-geofence-warning" role="alert">
       <div className="ts-geofence-warning__header">
@@ -714,12 +737,36 @@ function GeofenceWarningPanel({
       </div>
       <p className="ts-geofence-warning__message">{message}</p>
       <p className="ts-geofence-warning__detail">{detail}</p>
+      <div className="ts-geofence-warning__note-field">
+        <label
+          htmlFor="ts-geofence-note"
+          className="ts-geofence-warning__note-label"
+        >
+          Reason <span aria-hidden="true">*</span>
+        </label>
+        <textarea
+          id="ts-geofence-note"
+          className="ts-geofence-warning__note-textarea"
+          rows={3}
+          maxLength={500}
+          placeholder={`Explain why you are ${actionLabel.toLowerCase() === "clock out" ? "clocking out" : "clocking in"} here (e.g. "Covering at Heathmont today", "Location unavailable on phone")`}
+          value={note}
+          onChange={(e) => { onNoteChange(e.target.value); }}
+          disabled={isBusy}
+          aria-required="true"
+          aria-label={`Reason for ${actionLabel.toLowerCase()} location exception`}
+        />
+        <p className="ts-geofence-warning__note-hint">
+          Required — {500 - note.length} characters remaining
+        </p>
+      </div>
       <div className="ts-geofence-warning__actions">
         <button
           type="button"
           className="vds-btn vds-btn--primary ts-geofence-warning__confirm"
           onClick={onConfirm}
-          disabled={isBusy}
+          disabled={confirmDisabled}
+          aria-disabled={confirmDisabled}
         >
           {isBusy ? "Saving…" : `Confirm ${actionLabel}`}
         </button>
@@ -764,6 +811,13 @@ function ClockWidget({
   const [pendingAction, setPendingAction] = useState<"in" | "out" | null>(null);
   // Live location badge for the current open entry (shown while clocked in).
   const [liveClockInState, setLiveClockInState] = useState<TsLocationState>(null);
+
+  // ── Staff note state ───────────────────────────────────────────────────────
+  // Separate note fields for clock-in and clock-out.  Always optional in the
+  // UI; the backend enforces requirement when a geofence exception is detected.
+  // The GeofenceWarningPanel also disables "Confirm" until a note is provided.
+  const [clockInNoteText, setClockInNoteText] = useState("");
+  const [clockOutNoteText, setClockOutNoteText] = useState("");
 
   // Tracks which roster shift the staff member is clocking into.
   // null = ad-hoc (no roster link).
@@ -874,6 +928,10 @@ function ClockWidget({
       const clockInLocation: ClockLocationInput | null =
         location ? toClockLocationInput(location) : null;
 
+      // Pass the staff note — backend enforces it when geofence is an exception;
+      // empty string sent as null so the server stores null for no-note cases.
+      const clockInNote = clockInNoteText.trim() !== "" ? clockInNoteText.trim() : null;
+
       await onClockIn({
         rosterEntryId: selectedShift?.id ?? null,
         shiftStartAt: selectedShift
@@ -886,8 +944,11 @@ function ClockWidget({
         // Roster-linked: null (backend uses the roster entry's rosteredClinicId).
         physicalClinicId: selectedShift ? null : selectedPhysicalClinicId,
         clockInLocation,
+        clockInNote,
       });
       setLiveClockInState(toTsLocationState(location));
+      // Clear note state after successful clock-in.
+      setClockInNoteText("");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-in failed. Try again.");
     } finally {
@@ -943,10 +1004,17 @@ function ClockWidget({
       const clockOutLocation: ClockLocationInput | null =
         location ? toClockLocationInput(location) : null;
 
+      // Pass the staff note — backend enforces it when geofence is an exception;
+      // empty string sent as null so the server stores null for no-note cases.
+      const clockOutNote = clockOutNoteText.trim() !== "" ? clockOutNoteText.trim() : null;
+
       await onClockOut(timesheetId, {
         breakDurationMinutes: breakParsed,
         clockOutLocation,
+        clockOutNote,
       });
+      // Clear note state after successful clock-out.
+      setClockOutNoteText("");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Clock-out failed. Try again.");
     } finally {
@@ -988,6 +1056,8 @@ function ClockWidget({
             onConfirm={handleGeofenceConfirm}
             onCancel={handleGeofenceCancel}
             isBusy={isBusy}
+            note={clockOutNoteText}
+            onNoteChange={setClockOutNoteText}
           />
         </div>
       );
@@ -1030,6 +1100,21 @@ function ClockWidget({
               disabled={isBusy}
             />
           </div>
+          <div className="pr-clock-form__field">
+            <label className="pr-clock-form__label" htmlFor="clock-out-note">
+              Clock Out Note <span className="pr-clock-form__label-optional">(optional)</span>
+            </label>
+            <textarea
+              id="clock-out-note"
+              className="pr-clock-form__control ts-clock-note"
+              rows={2}
+              maxLength={500}
+              placeholder="Add a note (e.g. 'Emergency patient — stayed back')"
+              value={clockOutNoteText}
+              onChange={(e) => { setClockOutNoteText(e.target.value); }}
+              disabled={isBusy}
+            />
+          </div>
           <div className="pr-clock-form__actions ts-clock-actions">
             <button
               type="button"
@@ -1063,6 +1148,8 @@ function ClockWidget({
           onConfirm={handleGeofenceConfirm}
           onCancel={handleGeofenceCancel}
           isBusy={isBusy}
+          note={clockInNoteText}
+          onNoteChange={setClockInNoteText}
         />
       </div>
     );
@@ -1169,6 +1256,22 @@ function ClockWidget({
             </div>
           </>
         )}
+
+        <div className="pr-clock-form__field">
+          <label className="pr-clock-form__label" htmlFor="clock-in-note">
+            Clock In Note <span className="pr-clock-form__label-optional">(optional)</span>
+          </label>
+          <textarea
+            id="clock-in-note"
+            className="pr-clock-form__control ts-clock-note"
+            rows={2}
+            maxLength={500}
+            placeholder="Add a note (e.g. 'Covering at Heathmont today')"
+            value={clockInNoteText}
+            onChange={(e) => { setClockInNoteText(e.target.value); }}
+            disabled={isBusy}
+          />
+        </div>
 
         <div className="pr-clock-form__actions ts-clock-actions">
           <button
@@ -1334,6 +1437,7 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
             <th className="pr-table__th">Clock Out</th>
             <th className="pr-table__th">Hours</th>
             <th className="pr-table__th">Location</th>
+            <th className="pr-table__th">Staff Note</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Approval Notes</th>
           </tr>
@@ -1368,6 +1472,16 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
                   clockInLoc={entry.clockInLocation}
                   clockOutLoc={entry.clockOutLocation}
                 />
+              </td>
+              <td className="pr-table__td ts-staff-note-cell">
+                {(entry.clockInNote ?? entry.clockOutNote) ? (
+                  <span
+                    className="ts-staff-note"
+                    title={[entry.clockInNote, entry.clockOutNote].filter(Boolean).join(" / ")}
+                  >
+                    {entry.clockInNote ?? entry.clockOutNote}
+                  </span>
+                ) : null}
               </td>
               <td className="pr-table__td">
                 <TimesheetStatusBadge status={entry.timesheetStatus} />

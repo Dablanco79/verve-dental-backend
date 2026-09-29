@@ -95,6 +95,9 @@ type TimesheetEntryRow = {
   // Migration 051: JSONB location snapshots (null for historical entries).
   clock_in_location: unknown;
   clock_out_location: unknown;
+  // Migration 053: Staff-authored notes (null when not provided).
+  clock_in_note: string | null;
+  clock_out_note: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -148,6 +151,9 @@ function toTimesheetEntry(row: TimesheetEntryRow): TimesheetEntry {
     // NULL when the column is null (historical entries or permission-denied events).
     clockInLocation: (row.clock_in_location as GeofenceLocation | null) ?? null,
     clockOutLocation: (row.clock_out_location as GeofenceLocation | null) ?? null,
+    // Migration 053: staff-authored notes (null for pre-migration entries and when not provided).
+    clockInNote: row.clock_in_note,
+    clockOutNote: row.clock_out_note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -184,7 +190,8 @@ export function createPostgresTimesheetRepository(
             overtime_1_5x_hours, overtime_2x_hours, overtime_custom_hours,
             timesheet_status,
             commission_note, generated_by,
-            clock_in_location, clock_out_location)
+            clock_in_location, clock_out_location,
+            clock_in_note, clock_out_note)
          VALUES
            ($1,  $2,  $3,
             $4,  $5,  $6,  $7,
@@ -195,7 +202,8 @@ export function createPostgresTimesheetRepository(
             $17, $18, $19,
             $20,
             $21, $22,
-            $23::jsonb, $24::jsonb)
+            $23::jsonb, $24::jsonb,
+            $25, $26)
          RETURNING *`,
         [
           input.payrollType,
@@ -226,6 +234,8 @@ export function createPostgresTimesheetRepository(
           input.clockOutLocation !== null
             ? JSON.stringify(input.clockOutLocation)
             : null,
+          input.clockInNote ?? null,
+          input.clockOutNote ?? null,
         ],
       );
 
@@ -602,6 +612,12 @@ export function createPostgresTimesheetRepository(
         setClauses.push(`clock_out_location = $${String(params.length)}::jsonb`);
       }
 
+      // clock_out_note — staff-authored note recorded at clock-out time.
+      if (input.clockOutNote !== undefined) {
+        params.push(input.clockOutNote);
+        setClauses.push(`clock_out_note = $${String(params.length)}`);
+      }
+
       params.push(id);
       const idParam = params.length;
 
@@ -639,6 +655,7 @@ export function createPostgresTimesheetRepository(
       clockInAt: Date,
       generatedBy: string,
       clockInLocation?: GeofenceLocation | null,
+      clockInNote?: string | null,
     ): Promise<TimesheetEntry> {
       const locationJson =
         clockInLocation !== undefined && clockInLocation !== null
@@ -657,10 +674,11 @@ export function createPostgresTimesheetRepository(
              overtime_custom_hours   = NULL,
              generated_by            = $2,
              clock_in_location       = $4::jsonb,
+             clock_in_note           = $5,
              updated_at              = now()
          WHERE id = $3
          RETURNING *`,
-        [clockInAt, generatedBy, id, locationJson],
+        [clockInAt, generatedBy, id, locationJson, clockInNote ?? null],
       );
 
       const row = rows[0];

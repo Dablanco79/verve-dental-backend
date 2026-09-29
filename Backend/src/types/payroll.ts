@@ -251,6 +251,15 @@ export type TimesheetEntry = {
   // e.g. "Left early — half-day patient load", "No-show confirmed by reception".
   commissionNote: string | null;
 
+  // ── Staff notes (null when not provided) ──────────────────────────────────
+  // Optional explanatory note entered by the staff member at clock-in / clock-out.
+  // Becomes REQUIRED at the service layer when the resolved geofence state is
+  // an exception (outside radius, permission denied, or unavailable).
+  // These notes are completely distinct from approval_notes and commission_note,
+  // which are both manager-authored.
+  clockInNote: string | null;
+  clockOutNote: string | null;
+
   // ── Geofence location logs (null for historical / permission-denied entries) ─
   // Recorded at the moment of clock-in / clock-out.  Stored as JSONB.
   // See GeofenceLocation for field semantics.
@@ -305,6 +314,10 @@ export type LeaveRequest = {
  * `timesheetStatus` is excluded — the service sets it based on `payrollType`:
  *   hourly_auto / hourly_manual → 'draft'
  *   commission_log              → null
+ *
+ * clockInNote / clockOutNote are optional so existing callers (createManualEntry,
+ * in-memory fixtures, tests) do not need to be updated.  The service layer
+ * supplies them from the validated request body; they default to null when absent.
  */
 export type CreateTimesheetEntryInput = Omit<
   TimesheetEntry,
@@ -313,9 +326,16 @@ export type CreateTimesheetEntryInput = Omit<
   | "approvedByUserId"
   | "approvedAt"
   | "approvalNotes"
+  | "clockInNote"
+  | "clockOutNote"
   | "createdAt"
   | "updatedAt"
->;
+> & {
+  /** Staff-authored note at clock-in. Null when not provided. */
+  clockInNote?: string | null;
+  /** Staff-authored note at clock-out. Null when not provided. */
+  clockOutNote?: string | null;
+};
 
 /**
  * Atomic payload produced by `clockUpdatePayload()` in the service layer.
@@ -364,6 +384,8 @@ export type UpdateTimesheetEntryInput = Partial<{
   approvedByUserId: string | null;
   approvedAt: Date | null;
   approvalNotes: string | null;
+  /** Staff-authored note recorded at clock-out time. */
+  clockOutNote: string | null;
   /** Geofence location recorded at the moment of clock-out. */
   clockOutLocation: GeofenceLocation | null;
 }>;

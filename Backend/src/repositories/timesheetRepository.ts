@@ -67,6 +67,7 @@ export interface TimesheetRepository {
     clockInAt: Date,
     generatedBy: string,
     clockInLocation?: GeofenceLocation | null,
+    clockInNote?: string | null,
   ): Promise<TimesheetEntry>;
 }
 
@@ -89,6 +90,9 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         approvedByUserId: null,
         approvedAt: null,
         approvalNotes: null,
+        // Note fields default to null if not supplied by the caller.
+        clockInNote: input.clockInNote ?? null,
+        clockOutNote: input.clockOutNote ?? null,
         // Location fields default to null if not supplied by the caller.
         clockInLocation: input.clockInLocation ?? null,
         clockOutLocation: input.clockOutLocation ?? null,
@@ -257,6 +261,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
         ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
         ...(input.approvalNotes !== undefined && { approvalNotes: input.approvalNotes }),
+        ...(input.clockOutNote !== undefined && { clockOutNote: input.clockOutNote }),
         ...(input.clockOutLocation !== undefined && { clockOutLocation: input.clockOutLocation }),
         updatedAt: new Date(),
       };
@@ -270,6 +275,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
       clockInAt: Date,
       generatedBy: string,
       clockInLocation?: GeofenceLocation | null,
+      clockInNote?: string | null,
     ): Promise<TimesheetEntry> {
       const index = entries.findIndex((e) => e.id === id);
       const existing = entries[index];
@@ -291,8 +297,9 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         overtimeCustomHours: null,
         // Stamp actual identity so subsequent clock-in attempts are blocked.
         generatedBy,
-        // Record geofence snapshot if supplied.
+        // Record geofence snapshot and staff note if supplied.
         clockInLocation: clockInLocation !== undefined ? clockInLocation : (existing.clockInLocation ?? null),
+        clockInNote: clockInNote !== undefined ? clockInNote : (existing.clockInNote ?? null),
         updatedAt: new Date(),
       };
 

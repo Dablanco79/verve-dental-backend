@@ -234,6 +234,19 @@ export type TimesheetEntry = {
   /** Location snapshot at clock-out time. Null if not yet clocked out or legacy. */
   clockOutLocation: GeofenceLocation | null;
 
+  // ── Staff notes (null when not provided) ─────────────────────────────────
+  /**
+   * Staff-authored note entered at clock-in time.
+   * Optional normally; required by the backend when geofence state is an exception.
+   * Never the same as approvalNotes (manager-authored) or commissionNote (manager-authored).
+   */
+  clockInNote: string | null;
+  /**
+   * Staff-authored note entered at clock-out time.
+   * Optional normally; required by the backend when geofence state is an exception.
+   */
+  clockOutNote: string | null;
+
   // ── Commission annotation (null for hourly tracks) ───────────────────────
   /** Manager-entered note when verifying provider attendance. */
   commissionNote: string | null;
@@ -294,6 +307,13 @@ export type ClockInRequest = {
   physicalClinicId?: string | null;
   /** Raw device location data. Omit for legacy behaviour (server records null). */
   clockInLocation?: ClockLocationInput | null;
+  /**
+   * Staff-authored note for this clock-in event.
+   * Optional normally; the backend will reject with 422 if this is absent or blank
+   * when the server-computed geofence state is an exception (outside / denied / unavailable).
+   * Max 500 characters (enforced by the backend Zod schema).
+   */
+  clockInNote?: string | null;
 };
 
 /**
@@ -308,6 +328,13 @@ export type ClockOutRequest = {
   breakDurationMinutes: number;
   /** Raw device location data. Omit for legacy behaviour (server records null). */
   clockOutLocation?: ClockLocationInput | null;
+  /**
+   * Staff-authored note for this clock-out event.
+   * Optional normally; the backend will reject with 422 if this is absent or blank
+   * when the server-computed geofence state is an exception (outside / denied / unavailable).
+   * Max 500 characters (enforced by the backend Zod schema).
+   */
+  clockOutNote?: string | null;
 };
 
 /** POST /clinics/:clinicId/timesheets (manager manual entry) */

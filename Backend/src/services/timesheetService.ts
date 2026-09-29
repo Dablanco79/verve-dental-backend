@@ -206,8 +206,10 @@ async function buildTimesheetXlsx(
     row["Commission Note"]     = e.commissionNote ?? "";
     row["Clock In Location"]      = geofenceStatusLabel(e.clockInLocation);
     row["Clock In Distance (m)"]  = e.clockInLocation?.distanceMetres ?? "";
+    row["Clock In Note"]          = e.clockInNote ?? "";
     row["Clock Out Location"]     = geofenceStatusLabel(e.clockOutLocation);
     row["Clock Out Distance (m)"] = e.clockOutLocation?.distanceMetres ?? "";
+    row["Clock Out Note"]         = e.clockOutNote ?? "";
     return row;
   });
 
@@ -233,8 +235,10 @@ async function buildTimesheetXlsx(
     { wch: 30 }, // Commission Note
     { wch: 22 }, // Clock In Location
     { wch: 20 }, // Clock In Distance (m)
+    { wch: 50 }, // Clock In Note
     { wch: 22 }, // Clock Out Location
     { wch: 20 }, // Clock Out Distance (m)
+    { wch: 50 }, // Clock Out Note
   ];
 
   XLSX.utils.book_append_sheet(wb, detailSheet, "Timesheets");
@@ -347,6 +351,27 @@ function isUniqueViolation(err: unknown): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Returns true when the resolved geofence location represents an exception
+ * that requires a staff note — i.e. the location is outside the clinic radius,
+ * permission was denied, or the device location was unavailable.
+ *
+ * Returns false for a "within" state or when location is null (historical
+ * entries / pre-GPS clocks).  A null location means no location data was
+ * collected, which is not considered a geofence exception.
+ *
+ * IMPORTANT: This function is purely observational — it never alters the
+ * geofence result, distanceMetres, locationState, or any assignment.
+ */
+function isGeofenceException(location: GeofenceLocation | null): boolean {
+  if (!location) return false;
+  return (
+    location.locationState === "outside" ||
+    location.locationState === "denied" ||
+    location.locationState === "unavailable"
+  );
+}
+
+/**
  * Converts a raw `ClockLocationInput` (client-supplied device data) into a
  * fully-computed `GeofenceLocation` that is safe to persist.
  *
@@ -449,6 +474,13 @@ export function createTimesheetService(
         clockInLocation?: ClockLocationInput | null;
         /** Ad-hoc only: the physical clinic explicitly selected by the user. */
         physicalClinicId?: string | null;
+        /**
+         * Staff-authored note for this clock-in event.
+         * Optional under normal circumstances; REQUIRED when the backend-resolved
+         * geofence state is an exception (outside, denied, or unavailable).
+         * Max 500 characters (enforced by Zod at the controller layer).
+         */
+        clockInNote?: string | null;
       },
     ): Promise<TimesheetEntry> {
       // All authenticated roles may clock in using their own identity.
@@ -560,11 +592,27 @@ export function createTimesheetService(
               input.clockInLocation ?? null,
               clinicRepository,
             );
+
+            // Backend enforcement: require a note when the server-computed geofence
+            // state is an exception.  This is authoritative — the frontend must also
+            // validate, but this check cannot be bypassed by a crafted request.
+            const trimmedInNote = input.clockInNote?.trim() ?? "";
+            if (isGeofenceException(resolvedClockInLocation) && trimmedInNote === "") {
+              throw new AppError(
+                422,
+                "CLOCK_IN_NOTE_REQUIRED",
+                "A note is required when clocking in with a location exception (outside radius, permission denied, or location unavailable)",
+                [{ field: "clockInNote", message: "Please explain the location exception (e.g. 'Covering at Heathmont today', 'Location unavailable on phone')" }],
+              );
+            }
+            const clockInNote = trimmedInNote === "" ? null : trimmedInNote;
+
             return timesheetRepository.activateClockIn(
               existing.id,
               now,
               caller.email,
               resolvedClockInLocation,
+              clockInNote,
             );
           }
 
@@ -591,6 +639,20 @@ export function createTimesheetService(
         input.clockInLocation ?? null,
         clinicRepository,
       );
+
+      // Backend enforcement: require a note when the server-computed geofence
+      // state is an exception.  Soft geofence is preserved — staff may still
+      // clock in, they just must provide an explanation first.
+      const trimmedInNote = input.clockInNote?.trim() ?? "";
+      if (isGeofenceException(resolvedClockInLocation) && trimmedInNote === "") {
+        throw new AppError(
+          422,
+          "CLOCK_IN_NOTE_REQUIRED",
+          "A note is required when clocking in with a location exception (outside radius, permission denied, or location unavailable)",
+          [{ field: "clockInNote", message: "Please explain the location exception (e.g. 'Covering at Heathmont today', 'Location unavailable on phone')" }],
+        );
+      }
+      const clockInNote = trimmedInNote === "" ? null : trimmedInNote;
 
       try {
         return await timesheetRepository.create({
@@ -621,6 +683,7 @@ export function createTimesheetService(
           generatedBy: caller.email,
           clockInLocation: resolvedClockInLocation,
           clockOutLocation: null,
+          clockInNote,
         });
       } catch (err) {
         // Defensive backstop: if a concurrent pre-fill was created between the
@@ -654,6 +717,7 @@ export function createTimesheetService(
       timesheetId: string,
       breakDurationMinutes: number,
       clockOutLocation?: ClockLocationInput | null,
+      clockOutNote?: string | null,
     ): Promise<TimesheetEntry> {
       const entry = await timesheetRepository.findById(timesheetId);
 
@@ -705,10 +769,26 @@ export function createTimesheetService(
         clockOutLocation ?? null,
         clinicRepository,
       );
+
+      // Backend enforcement: require a note when the server-computed geofence
+      // state is an exception.  The soft geofence is preserved — staff may still
+      // clock out, they just must provide an explanation first.
+      const trimmedOutNote = clockOutNote?.trim() ?? "";
+      if (isGeofenceException(resolvedClockOutLocation) && trimmedOutNote === "") {
+        throw new AppError(
+          422,
+          "CLOCK_OUT_NOTE_REQUIRED",
+          "A note is required when clocking out with a location exception (outside radius, permission denied, or location unavailable)",
+          [{ field: "clockOutNote", message: "Please explain the location exception (e.g. 'Emergency patient — stayed back', 'Location unavailable on phone')" }],
+        );
+      }
+      const clockOutNoteValue = trimmedOutNote === "" ? null : trimmedOutNote;
+
       return timesheetRepository.update(timesheetId, {
         clockMutation: clockUpdatePayload(entry.clockInAt, now, breakDurationMinutes),
         timesheetStatus: "submitted",
         clockOutLocation: resolvedClockOutLocation,
+        clockOutNote: clockOutNoteValue,
       });
     },
 

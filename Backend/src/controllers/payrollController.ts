@@ -143,6 +143,9 @@ function serializeTimesheet(e: TimesheetEntry) {
     // Geofence location snapshots — null for historical entries.
     clockInLocation: e.clockInLocation ?? null,
     clockOutLocation: e.clockOutLocation ?? null,
+    // Staff-authored notes — null when not provided.
+    clockInNote: e.clockInNote,
+    clockOutNote: e.clockOutNote,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
   };
@@ -393,6 +396,15 @@ const clockInSchema = z
     // distanceMetres, withinRange, and locationState authoritatively.
     // The backend never blocks based on this; it is soft-enforcement only.
     clockInLocation: clockLocationInputSchema.nullable().optional(),
+    // Staff-authored note for this clock-in event.
+    // Optional normally; the service enforces it as required when the backend-
+    // resolved geofence state is an exception (outside / denied / unavailable).
+    clockInNote: z
+      .string()
+      .max(500, "Note must be at most 500 characters")
+      .trim()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -409,6 +421,15 @@ const clockOutSchema = z
     // Optional geofence snapshot — raw device data only; backend computes
     // distanceMetres, withinRange, and locationState authoritatively.
     clockOutLocation: clockLocationInputSchema.nullable().optional(),
+    // Staff-authored note for this clock-out event.
+    // Optional normally; the service enforces it as required when the backend-
+    // resolved geofence state is an exception (outside / denied / unavailable).
+    clockOutNote: z
+      .string()
+      .max(500, "Note must be at most 500 characters")
+      .trim()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -575,6 +596,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         shiftEndAt: new Date(body.shiftEndAt),
         physicalClinicId: body.physicalClinicId ?? null,
         clockInLocation,
+        clockInNote: body.clockInNote ?? null,
       });
 
       res.status(201).json({ data: serializeTimesheet(entry) });
@@ -612,6 +634,7 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         timesheetId,
         body.breakDurationMinutes,
         clockOutLocation,
+        body.clockOutNote ?? null,
       );
 
       res.status(200).json({ data: serializeTimesheet(entry) });

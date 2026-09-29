@@ -277,6 +277,8 @@ const submittedTimesheet: TimesheetEntry = {
   approvedAt: null,
   approvalNotes: null,
   commissionNote: null,
+  clockInNote: null,
+  clockOutNote: null,
   generatedBy: "system_auto",
   clockInLocation: null,
   clockOutLocation: null,
