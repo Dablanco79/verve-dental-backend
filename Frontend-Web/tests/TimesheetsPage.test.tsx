@@ -35,6 +35,8 @@ const {
   mockGetMyShifts,
   mockClockIn,
   mockGetClinicCoordinates,
+  mockApproveTimesheet,
+  mockRejectTimesheet,
 } = vi.hoisted(() => ({
   mockListMyTimesheets: vi.fn(),
   mockListTimesheets: vi.fn(),
@@ -51,6 +53,9 @@ const {
     latitude: -37.8136,
     longitude: 144.9631,
   }),
+  // Approve / reject — captured for bulk-action assertions.
+  mockApproveTimesheet: vi.fn(),
+  mockRejectTimesheet: vi.fn(),
 }));
 
 vi.mock("../src/api/client.js", () => ({
@@ -59,8 +64,8 @@ vi.mock("../src/api/client.js", () => ({
     listTimesheets: mockListTimesheets,
     clockIn: mockClockIn,
     clockOut: vi.fn(),
-    approveTimesheet: vi.fn(),
-    rejectTimesheet: vi.fn(),
+    approveTimesheet: mockApproveTimesheet,
+    rejectTimesheet: mockRejectTimesheet,
     verifyCommissionAttendance: vi.fn(),
     exportTimesheets: mockExportTimesheets,
     refresh: vi.fn().mockRejectedValue(new Error("no cookie")),
@@ -150,6 +155,9 @@ beforeEach(() => {
   });
   // Re-apply default shift result (empty = ad-hoc mode).
   mockGetMyShifts.mockResolvedValue([]);
+  // Approve / reject resolve with undefined by default (enough for hook's fetch re-trigger).
+  mockApproveTimesheet.mockResolvedValue(undefined);
+  mockRejectTimesheet.mockResolvedValue(undefined);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -500,6 +508,21 @@ function makeSubmittedEntry(id = "entry-1") {
     clockOutLocation: null,
     createdAt: "2026-09-21T07:02:00.000Z",
     updatedAt: "2026-09-21T15:05:00.000Z",
+  };
+}
+
+/** Minimal staff personal ledger entry (listMyTimesheets). */
+function makeMyTimesheetEntry(
+  overrides: Partial<Omit<ReturnType<typeof makeSubmittedEntry>, "approvalNotes">> & {
+    approvalNotes?: string | null;
+  } = {},
+) {
+  return {
+    ...makeSubmittedEntry(),
+    timesheetStatus: "approved" as const,
+    approvedByUserId: "manager-1",
+    approvedAt: "2026-09-22T10:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -1602,6 +1625,704 @@ describe("Staff Timesheet Notes — GeofenceWarningPanel note required for excep
         expect.objectContaining({ clockInNote: "Covering at Heathmont today" }),
       );
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk Timesheet Approval — checkboxes, bulk bar, sequential calls
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns two distinct submitted entries for multi-row bulk tests.
+ * Each has a unique id, staffEmail, and shiftDate so table cells are
+ * individually selectable via aria-label.
+ */
+function makeTwoSubmittedEntries() {
+  const e1 = makeSubmittedEntry("bulk-entry-1");
+  const e2: ReturnType<typeof makeSubmittedEntry> = {
+    ...makeSubmittedEntry("bulk-entry-2"),
+    staffEmail: "nurse2@clinic-a.au",
+    shiftDate: "2026-09-22",
+  };
+  return [e1, e2] as const;
+}
+
+describe("ApprovalQueue — bulk selection checkboxes", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("each pending row has a checkbox", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    // One checkbox per entry row (not counting the Select All header checkbox)
+    const rowCheckboxes = screen.getAllByRole("checkbox", {
+      name: /select timesheet for/i,
+    });
+    expect(rowCheckboxes).toHaveLength(2);
+  });
+
+  it("header Select All checkbox exists", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    expect(
+      screen.getByRole("checkbox", { name: /select all timesheets/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("Select All selects all visible pending rows", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const selectAll = screen.getByRole("checkbox", { name: /select all timesheets/i });
+    await userEvent.click(selectAll);
+
+    // Both row checkboxes should now be checked
+    const rowBoxes = screen.getAllByRole("checkbox", { name: /select timesheet for/i });
+    expect(rowBoxes[0]).toBeChecked();
+    expect(rowBoxes[1]).toBeChecked();
+  });
+
+  it("clicking Select All again clears all selections (deselect all)", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const selectAll = screen.getByRole("checkbox", { name: /select all timesheets/i });
+    // Select all, then click again to deselect all
+    await userEvent.click(selectAll);
+    await userEvent.click(selectAll);
+
+    const rowBoxes = screen.getAllByRole("checkbox", { name: /select timesheet for/i });
+    expect(rowBoxes[0]).not.toBeChecked();
+    expect(rowBoxes[1]).not.toBeChecked();
+  });
+
+  it("bulk action bar is hidden when zero rows are selected", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    // No checkboxes checked → bulk bar must NOT be in the DOM
+    expect(
+      screen.queryByRole("region", { name: /bulk actions/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("bulk action bar appears with correct count when one row is selected", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const rowBox = screen.getByRole("checkbox", { name: /select timesheet for/i });
+    await userEvent.click(rowBox);
+
+    const bar = screen.getByRole("region", { name: /bulk actions/i });
+    expect(bar).toBeInTheDocument();
+    // Count span text is exactly "1 selected" — distinct from button text "Approve 1 selected"
+    expect(within(bar).getByText("1 selected")).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /approve 1 selected/i })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /reject 1 selected/i })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /clear selection/i })).toBeInTheDocument();
+  });
+
+  it("bulk action bar shows correct count for multiple selected rows", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const selectAll = screen.getByRole("checkbox", { name: /select all timesheets/i });
+    await userEvent.click(selectAll);
+
+    const bar = screen.getByRole("region", { name: /bulk actions/i });
+    // Count span text is exactly "2 selected" — distinct from button text "Approve 2 selected"
+    expect(within(bar).getByText("2 selected")).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /approve 2 selected/i })).toBeInTheDocument();
+    expect(within(bar).getByRole("button", { name: /reject 2 selected/i })).toBeInTheDocument();
+  });
+
+  it("Clear selection hides the bulk action bar", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    const rowBox = screen.getByRole("checkbox", { name: /select timesheet for/i });
+    await userEvent.click(rowBox);
+    expect(screen.getByRole("region", { name: /bulk actions/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear selection/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: /bulk actions/i })).not.toBeInTheDocument();
+    });
+    expect(rowBox).not.toBeChecked();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk Approval — per-row notes, sequential calls, result summary
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ApprovalQueue — per-row approver comment", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("each selected row shows its own Approver Comment textarea", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    // Select both rows
+    const selectAll = screen.getByRole("checkbox", { name: /select all timesheets/i });
+    await userEvent.click(selectAll);
+
+    // Each selected row gets its own note textarea via the label
+    const noteAreas = screen.getAllByLabelText(/approver comment/i);
+    expect(noteAreas).toHaveLength(2);
+  });
+
+  it("typing in one row's approver comment does not affect the other row", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const selectAll = screen.getByRole("checkbox", { name: /select all timesheets/i });
+    await userEvent.click(selectAll);
+
+    const [note1, note2] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1 || !note2) throw new Error("Expected two note textareas");
+
+    await userEvent.type(note1, "Great shift");
+
+    // note1 has the text, note2 is still empty
+    expect(note1).toHaveValue("Great shift");
+    expect(note2).toHaveValue("");
+  });
+
+  it("deselecting a row removes its approver comment textarea", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    const rowBox = screen.getByRole("checkbox", { name: /select timesheet for/i });
+    await userEvent.click(rowBox); // select
+    expect(screen.getAllByLabelText(/approver comment/i)).toHaveLength(1);
+
+    await userEvent.click(rowBox); // deselect
+    await waitFor(() => {
+      expect(screen.queryAllByLabelText(/approver comment/i)).toHaveLength(0);
+    });
+  });
+});
+
+describe("ApprovalQueue — bulk approval flow", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("bulk approval calls approveTimesheet once per selected row with that row's individual comment", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    // Select both rows
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+
+    // Type a unique note for e1; leave e2 blank
+    const [note1] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1) throw new Error("Expected note textarea for first row");
+    await userEvent.type(note1, "Approved — all looks good");
+
+    // Open bulk approve confirmation
+    await userEvent.click(screen.getByRole("button", { name: /approve 2 selected/i }));
+    expect(
+      screen.getByRole("region", { name: /confirm bulk approval/i }),
+    ).toBeInTheDocument();
+
+    // Confirm
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(mockApproveTimesheet).toHaveBeenCalledTimes(2);
+    });
+
+    // e1 sent with its note; e2 sent with null (blank note → null)
+    expect(mockApproveTimesheet).toHaveBeenCalledWith(
+      expect.any(String),
+      "bulk-entry-1",
+      { approvalNotes: "Approved — all looks good" },
+    );
+    expect(mockApproveTimesheet).toHaveBeenCalledWith(
+      expect.any(String),
+      "bulk-entry-2",
+      { approvalNotes: null },
+    );
+  });
+
+  it("bulk approval works when all approver comments are left blank (silent approval)", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /select timesheet for/i }));
+    // Note left blank intentionally
+    await userEvent.click(screen.getByRole("button", { name: /approve 1 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(mockApproveTimesheet).toHaveBeenCalledTimes(1);
+    });
+    expect(mockApproveTimesheet).toHaveBeenCalledWith(
+      expect.any(String),
+      "bulk-entry-1",
+      { approvalNotes: null },
+    );
+  });
+
+  it("bulk approval shows confirmation panel with correct count before executing", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 2 selected/i }));
+
+    const panel = screen.getByRole("region", { name: /confirm bulk approval/i });
+    // Confirmation text must mention the count
+    expect(panel.textContent).toMatch(/approve 2 selected timesheets/i);
+    // approveTimesheet must NOT have been called yet
+    expect(mockApproveTimesheet).not.toHaveBeenCalled();
+  });
+
+  it("Cancel on confirmation panel returns to the bulk action bar without calling approve", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select timesheet for/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 1 selected/i }));
+
+    expect(screen.getByRole("region", { name: /confirm bulk approval/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: /confirm bulk approval/i })).not.toBeInTheDocument();
+    });
+    // Back to the bulk bar; approveTimesheet never called
+    expect(screen.getByRole("region", { name: /bulk actions/i })).toBeInTheDocument();
+    expect(mockApproveTimesheet).not.toHaveBeenCalled();
+  });
+
+  it("bulk approval result summary shows approved count after success", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select timesheet for/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 1 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("status").textContent).toMatch(/1 approved/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk Rejection — validation, sequential calls, partial failure
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ApprovalQueue — bulk rejection flow", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("bulk rejection is blocked when any selected row has no rejection reason", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    // Select both, type a note only for e1
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    const [note1] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1) throw new Error("Expected note textarea");
+    await userEvent.type(note1, "Clock times don't add up");
+
+    // Click Reject — e2 has no note → should be blocked
+    await userEvent.click(screen.getByRole("button", { name: /reject 2 selected/i }));
+
+    // Bar-level alert shown; no confirmation panel; rejectTimesheet NOT called
+    // (Two role="alert" elements appear: the bar message + per-row error — use text query to be precise)
+    await waitFor(() => {
+      expect(
+        screen.getByText(/add a rejection reason to each selected timesheet before continuing/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("region", { name: /confirm bulk rejection/i })).not.toBeInTheDocument();
+    expect(mockRejectTimesheet).not.toHaveBeenCalled();
+  });
+
+  it("row-level error is shown when that row is missing a rejection reason", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    // Select both, leave e2 note empty
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    const [note1] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1) throw new Error("Expected note textarea");
+    await userEvent.type(note1, "Clock times incorrect");
+
+    await userEvent.click(screen.getByRole("button", { name: /reject 2 selected/i }));
+
+    // Row-level alert for the missing entry
+    await waitFor(() => {
+      expect(
+        screen.getByText(/a rejection reason is required for this timesheet/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("typing a note for a missing row clears its error highlight", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    const [note1, note2] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1 || !note2) throw new Error("Expected two note textareas");
+    await userEvent.type(note1, "Missing clock-out");
+
+    // Trigger validation
+    await userEvent.click(screen.getByRole("button", { name: /reject 2 selected/i }));
+    await screen.findByText(/a rejection reason is required for this timesheet/i);
+
+    // Now fix e2's note
+    await userEvent.type(note2, "Unauthorised absence");
+
+    // Row error should disappear
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/a rejection reason is required for this timesheet/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("bulk rejection succeeds when every selected row has a non-empty reason", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    const [note1, note2] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1 || !note2) throw new Error("Expected two note textareas");
+
+    await userEvent.type(note1, "Clock-in time incorrect");
+    await userEvent.type(note2, "Unauthorised absence");
+
+    await userEvent.click(screen.getByRole("button", { name: /reject 2 selected/i }));
+
+    // Confirmation panel
+    const panel = screen.getByRole("region", { name: /confirm bulk rejection/i });
+    expect(panel.textContent).toMatch(/reject 2 selected timesheets/i);
+
+    await userEvent.click(within(panel).getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(mockRejectTimesheet).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mockRejectTimesheet).toHaveBeenCalledWith(
+      expect.any(String),
+      "bulk-entry-1",
+      { approvalNotes: "Clock-in time incorrect" },
+    );
+    expect(mockRejectTimesheet).toHaveBeenCalledWith(
+      expect.any(String),
+      "bulk-entry-2",
+      { approvalNotes: "Unauthorised absence" },
+    );
+  });
+
+  it("bulk rejection result summary shows rejected count", async () => {
+    const [e1] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /select timesheet for/i }));
+    const [note1] = screen.getAllByLabelText(/approver comment/i);
+    if (!note1) throw new Error("Expected note textarea");
+    await userEvent.type(note1, "Clock times don't match roster");
+
+    await userEvent.click(screen.getByRole("button", { name: /reject 1 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("status").textContent).toMatch(/1 rejected/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk — partial failure handling
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ApprovalQueue — partial failure handling", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("partial batch success: summary shows approved count and failed count", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    // e1 succeeds, e2 fails
+    mockApproveTimesheet
+      .mockResolvedValueOnce(undefined)               // e1 → success
+      .mockRejectedValueOnce(new Error("Already approved")); // e2 → failure
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 2 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(mockApproveTimesheet).toHaveBeenCalledTimes(2);
+    });
+
+    // Summary must mention both outcomes
+    const summary = await screen.findByRole("status");
+    expect(summary.textContent).toMatch(/1 approved/i);
+    expect(summary.textContent).toMatch(/1 failed/i);
+  });
+
+  it("failed rows remain selected after partial batch; successful rows are deselected", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    // e1 succeeds, e2 fails
+    mockApproveTimesheet
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Conflict"));
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 2 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(mockApproveTimesheet).toHaveBeenCalledTimes(2);
+    });
+
+    // e2's checkbox remains checked (failed); e1's is unchecked (succeeded)
+    const e1Box = screen.getByRole("checkbox", {
+      name: new RegExp(`select timesheet for ${e1.staffEmail}`, "i"),
+    });
+    const e2Box = screen.getByRole("checkbox", {
+      name: new RegExp(`select timesheet for ${e2.staffEmail}`, "i"),
+    });
+
+    await waitFor(() => {
+      expect(e1Box).not.toBeChecked();
+      expect(e2Box).toBeChecked();
+    });
+  });
+
+  it("do not stop entire batch after first failure — all selected IDs are attempted", async () => {
+    const [e1, e2] = makeTwoSubmittedEntries();
+    mockListTimesheets.mockResolvedValue([e1, e2]);
+
+    // e1 fails, e2 succeeds
+    mockApproveTimesheet
+      .mockRejectedValueOnce(new Error("Conflict"))
+      .mockResolvedValueOnce(undefined);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: e1.staffEmail });
+    await userEvent.click(screen.getByRole("checkbox", { name: /select all timesheets/i }));
+    await userEvent.click(screen.getByRole("button", { name: /approve 2 selected/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
+
+    // Both calls must have been attempted
+    await waitFor(() => {
+      expect(mockApproveTimesheet).toHaveBeenCalledTimes(2);
+    });
+    // Both e1 AND e2 were attempted
+    expect(mockApproveTimesheet).toHaveBeenCalledWith(
+      expect.any(String), "bulk-entry-1", expect.any(Object),
+    );
+    expect(mockApproveTimesheet).toHaveBeenCalledWith(
+      expect.any(String), "bulk-entry-2", expect.any(Object),
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Individual Approve / Reject preserved alongside bulk
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ApprovalQueue — individual actions preserved alongside bulk checkboxes", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  it("individual Approve button still opens the inline approval form", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    const emailCell = await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+    const entryRow = emailCell.closest("tr");
+    if (!entryRow) throw new Error("Expected entry row");
+
+    await userEvent.click(within(entryRow).getByRole("button", { name: /^approve$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/approval note \(optional\)/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("individual Reject button still opens the inline rejection form", async () => {
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    const emailCell = await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+    const entryRow = emailCell.closest("tr");
+    if (!entryRow) throw new Error("Expected entry row");
+
+    await userEvent.click(within(entryRow).getByRole("button", { name: /^reject$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/rejection reason \(required\)/i),
+      ).toBeInTheDocument();
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staff Timesheet Notes — Manager table columns
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MyLedger — staff can see manager's Approval / Rejection Note
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("MyLedger — Approval / Rejection Note column", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListTimesheets.mockResolvedValue([]);
+  });
+
+  it("staff My Timesheets table shows an 'Approval / Rejection Note' column header", async () => {
+    // Seed a real entry so the table (and its <th>) renders instead of the empty-state message
+    const entry = makeMyTimesheetEntry({ approvalNotes: null });
+    mockListMyTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    await screen.findByRole("columnheader", { name: /approval \/ rejection note/i });
+  });
+
+  it("staff sees manager's approvalNotes when the entry has one", async () => {
+    const entry = makeMyTimesheetEntry({
+      approvalNotes: "Great attendance — approved.",
+    });
+    mockListMyTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    await screen.findByText("Great attendance — approved.");
+  });
+
+  it("entries with no manager note render as — in the Approval / Rejection Note column", async () => {
+    const entry = makeMyTimesheetEntry({ approvalNotes: null });
+    mockListMyTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("clinical_staff"));
+
+    // The "—" placeholder
+    await screen.findByText("—");
   });
 });
 

@@ -256,14 +256,72 @@ type ApprovalQueueProps = {
 };
 
 function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
-  // Approval inline-form state (notes are optional).
+  // ── Individual-action state ───────────────────────────────────────────────
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveNotes, setApproveNotes] = useState("");
-  // Rejection inline-form state (notes are required).
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // ── Bulk selection state ──────────────────────────────────────────────────
+  // selectedIds: Set of entry IDs currently checked.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // rowNotes: per-row approver comment for bulk operations (id → text).
+  // Kept separate from the individual approve/reject inline-form notes.
+  const [rowNotes, setRowNotes] = useState<Map<string, string>>(new Map());
+  // missingNoteIds: IDs highlighted when bulk-reject validation finds missing reasons.
+  const [missingNoteIds, setMissingNoteIds] = useState<Set<string>>(new Set());
+  // Bulk async state.
+  const [isBulkBusy, setIsBulkBusy] = useState(false);
+  // bulkConfirmMode: shows confirmation panel for the given action; null = action bar.
+  const [bulkConfirmMode, setBulkConfirmMode] = useState<"approve" | "reject" | null>(null);
+  // bulkResult: displayed after a bulk operation completes (e.g. "5 approved · 1 failed").
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+
+  // ── Derived selection flags ───────────────────────────────────────────────
+  const allIds = entries.map((e) => e.id);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  // ── Selection helpers ─────────────────────────────────────────────────────
+
+  function toggleSelectAll(): void {
+    setSelectedIds(allSelected ? new Set() : new Set(allIds));
+    setMissingNoteIds(new Set());
+    setBulkResult(null);
+  }
+
+  function toggleSelectRow(id: string): void {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+    setMissingNoteIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setBulkResult(null);
+  }
+
+  function getRowNote(id: string): string {
+    return rowNotes.get(id) ?? "";
+  }
+
+  function setRowNote(id: string, value: string): void {
+    setRowNotes((prev) => new Map(prev).set(id, value));
+    if (value.trim()) {
+      setMissingNoteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  // ── Individual action handlers ────────────────────────────────────────────
 
   async function handleApprove(id: string, notes: string | null): Promise<void> {
     setIsBusy(true);
@@ -297,6 +355,75 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
     }
   }
 
+  // ── Bulk action handlers ──────────────────────────────────────────────────
+
+  function handleBulkApproveClick(): void {
+    setBulkResult(null);
+    setMissingNoteIds(new Set());
+    setBulkConfirmMode("approve");
+  }
+
+  async function executeBulkApprove(): Promise<void> {
+    setIsBulkBusy(true);
+    setBulkConfirmMode(null);
+    const ids = [...selectedIds];
+    let ok = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      const note = getRowNote(id).trim() || null;
+      try {
+        await onApprove(id, note);
+        ok++;
+      } catch {
+        failed.push(id);
+      }
+    }
+    setIsBulkBusy(false);
+    // Keep only failed IDs selected so the manager can retry them.
+    setSelectedIds(new Set(failed));
+    const parts: string[] = [];
+    if (ok > 0) parts.push(`${String(ok)} approved`);
+    if (failed.length > 0) parts.push(`${String(failed.length)} failed`);
+    setBulkResult(parts.join(" · "));
+  }
+
+  function handleBulkRejectClick(): void {
+    setBulkResult(null);
+    // Validate: every selected row must have a non-empty rejection note.
+    const missing = [...selectedIds].filter((id) => !getRowNote(id).trim());
+    if (missing.length > 0) {
+      setMissingNoteIds(new Set(missing));
+      return;
+    }
+    setMissingNoteIds(new Set());
+    setBulkConfirmMode("reject");
+  }
+
+  async function executeBulkReject(): Promise<void> {
+    setIsBulkBusy(true);
+    setBulkConfirmMode(null);
+    const ids = [...selectedIds];
+    let ok = 0;
+    const failed: string[] = [];
+    for (const id of ids) {
+      const note = getRowNote(id).trim();
+      try {
+        await onReject(id, note);
+        ok++;
+      } catch {
+        failed.push(id);
+      }
+    }
+    setIsBulkBusy(false);
+    setSelectedIds(new Set(failed));
+    const parts: string[] = [];
+    if (ok > 0) parts.push(`${String(ok)} rejected`);
+    if (failed.length > 0) parts.push(`${String(failed.length)} failed`);
+    setBulkResult(parts.join(" · "));
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
   if (entries.length === 0) {
     return (
       <p className="pr-table__empty">
@@ -305,11 +432,136 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
     );
   }
 
+  // Total column count: checkbox + Staff + Date + Type + Clock In + Clock Out +
+  //   Hours + Location + Staff Note + Status + Actions = 11
+  const COL_COUNT = 11;
+
   return (
     <div className="pr-table-wrap">
+      {/* ── Bulk action bar (shown when ≥ 1 row selected) ───────────────── */}
+      {selectedIds.size > 0 && !isBulkBusy && bulkConfirmMode === null && (
+        <div className="pr-bulk-bar" role="region" aria-label="Bulk actions">
+          <span className="pr-bulk-bar__count">{selectedIds.size} selected</span>
+          <div className="pr-bulk-bar__actions">
+            <button
+              type="button"
+              className="pr-action-btn pr-action-btn--approve"
+              onClick={handleBulkApproveClick}
+            >
+              Approve {selectedIds.size} selected
+            </button>
+            <button
+              type="button"
+              className="pr-action-btn pr-action-btn--reject"
+              onClick={handleBulkRejectClick}
+            >
+              Reject {selectedIds.size} selected
+            </button>
+            <button
+              type="button"
+              className="pr-action-btn pr-action-btn--ghost"
+              onClick={() => {
+                setSelectedIds(new Set());
+                setMissingNoteIds(new Set());
+                setBulkResult(null);
+              }}
+            >
+              Clear selection
+            </button>
+          </div>
+          {missingNoteIds.size > 0 && (
+            <p className="pr-bulk-bar__missing" role="alert">
+              Add a rejection reason to each selected timesheet before continuing.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Bulk approve confirmation panel ──────────────────────────────── */}
+      {bulkConfirmMode === "approve" && (
+        <div className="pr-bulk-confirm" role="region" aria-label="Confirm bulk approval">
+          <span className="pr-bulk-confirm__text">
+            Approve {selectedIds.size} selected{" "}
+            {selectedIds.size === 1 ? "timesheet" : "timesheets"}?
+          </span>
+          <div className="pr-bulk-confirm__actions">
+            <button
+              type="button"
+              className="pr-action-btn pr-action-btn--approve"
+              onClick={() => { void executeBulkApprove(); }}
+            >
+              Confirm
+            </button>
+            <button
+              type="button"
+              className="pr-inline-form__cancel"
+              onClick={() => { setBulkConfirmMode(null); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk reject confirmation panel ────────────────────────────────── */}
+      {bulkConfirmMode === "reject" && (
+        <div
+          className="pr-bulk-confirm pr-bulk-confirm--reject"
+          role="region"
+          aria-label="Confirm bulk rejection"
+        >
+          <span className="pr-bulk-confirm__text">
+            Reject {selectedIds.size} selected{" "}
+            {selectedIds.size === 1 ? "timesheet" : "timesheets"}?
+          </span>
+          <div className="pr-bulk-confirm__actions">
+            <button
+              type="button"
+              className="pr-action-btn pr-action-btn--reject"
+              onClick={() => { void executeBulkReject(); }}
+            >
+              Confirm
+            </button>
+            <button
+              type="button"
+              className="pr-inline-form__cancel"
+              onClick={() => { setBulkConfirmMode(null); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk processing indicator ─────────────────────────────────────── */}
+      {isBulkBusy && (
+        <p className="pr-bulk-bar__processing" aria-live="polite" aria-busy="true">
+          Processing…
+        </p>
+      )}
+
+      {/* ── Bulk result summary ───────────────────────────────────────────── */}
+      {bulkResult !== null && !isBulkBusy && (
+        <p className="pr-bulk-bar__result" role="status">
+          {bulkResult}
+        </p>
+      )}
+
       <table className="pr-table">
         <thead>
           <tr>
+            {/* ── Select All / Deselect All header checkbox ──────────────── */}
+            <th className="pr-table__th pr-table__th--checkbox">
+              <input
+                type="checkbox"
+                aria-label="Select all timesheets"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleSelectAll}
+              />
+            </th>
             <th className="pr-table__th">Staff</th>
             <th className="pr-table__th">Date</th>
             <th className="pr-table__th">Type</th>
@@ -325,7 +577,17 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
         <tbody>
           {entries.map((entry) => (
             <Fragment key={entry.id}>
-              <tr className="pr-table__row">
+              <tr className={`pr-table__row${selectedIds.has(entry.id) ? " pr-table__row--selected" : ""}`}>
+                {/* ── Row checkbox ──────────────────────────────────────── */}
+                <td className="pr-table__td pr-table__td--checkbox">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select timesheet for ${entry.staffEmail} on ${entry.shiftDate}`}
+                    checked={selectedIds.has(entry.id)}
+                    onChange={() => { toggleSelectRow(entry.id); }}
+                    disabled={isBulkBusy}
+                  />
+                </td>
                 <td className="pr-table__td">{entry.staffEmail}</td>
                 <td className="pr-table__td pr-table__td--mono">{entry.shiftDate}</td>
                 <td className="pr-table__td">
@@ -380,7 +642,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                         setRejectingId(null);
                         setActionError(null);
                       }}
-                      disabled={isBusy}
+                      disabled={isBusy || isBulkBusy}
                     >
                       Approve
                     </button>
@@ -395,17 +657,54 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                         setApproveNotes("");
                         setActionError(null);
                       }}
-                      disabled={isBusy}
+                      disabled={isBusy || isBulkBusy}
                     >
                       Reject
                     </button>
                   </div>
                 </td>
               </tr>
+
+              {/* ── Per-row approver comment (shown when checkbox is checked) ── */}
+              {selectedIds.has(entry.id) ? (
+                <tr className="pr-table__row pr-table__row--note-input">
+                  <td colSpan={COL_COUNT} className="pr-table__td pr-table__td--note">
+                    <div className="pr-row-note">
+                      <label
+                        htmlFor={`row-note-${entry.id}`}
+                        className="pr-row-note__label"
+                      >
+                        Approver Comment
+                        <span className="pr-row-note__hint">
+                          {" "}— optional for approval, required for rejection
+                        </span>
+                      </label>
+                      <textarea
+                        id={`row-note-${entry.id}`}
+                        className={`pr-row-note__textarea${
+                          missingNoteIds.has(entry.id) ? " pr-row-note__textarea--required" : ""
+                        }`}
+                        rows={2}
+                        maxLength={2000}
+                        placeholder="Approver comment…"
+                        value={getRowNote(entry.id)}
+                        onChange={(e) => { setRowNote(entry.id, e.target.value); }}
+                        disabled={isBulkBusy}
+                      />
+                      {missingNoteIds.has(entry.id) ? (
+                        <span className="pr-row-note__error" role="alert">
+                          A rejection reason is required for this timesheet.
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
+
               {/* ── Inline approval form (optional notes) ──────────────── */}
               {approvingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={10} className="pr-table__td">
+                  <td colSpan={COL_COUNT} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--approval">
                       {/* Notes are optional — manager may approve silently */}
                       <textarea
@@ -451,7 +750,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
               {/* ── Inline rejection form (required notes) ─────────────── */}
               {rejectingId === entry.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
-                  <td colSpan={10} className="pr-table__td">
+                  <td colSpan={COL_COUNT} className="pr-table__td">
                     <div className="pr-inline-form pr-inline-form--rejection">
                       <div className="pr-inline-form__rejection-header">
                         <AlertTriangle size={14} aria-hidden="true" className="pr-inline-form__rejection-icon" />
@@ -1317,6 +1616,8 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
             <th className="pr-table__th">Hours</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Attendance</th>
+            {/* Manager's response on the timesheet — distinct from staff notes */}
+            <th className="pr-table__th">Approval / Rejection Note</th>
           </tr>
         </thead>
         <tbody>
@@ -1350,6 +1651,12 @@ function MyLedger({ entries }: { entries: TimesheetEntry[] }) {
               </td>
               <td className="pr-table__td">
                 <AttendanceBadge status={entry.attendanceStatus} />
+              </td>
+              {/* Approver comment — shown to staff so they understand approval/rejection reasons.
+                  Kept visually distinct from clockInNote / clockOutNote (staff-authored).
+                  Renders "—" when the manager left no comment. */}
+              <td className="pr-table__td ts-approval-note-cell">
+                {entry.approvalNotes ?? "—"}
               </td>
             </tr>
           ))}
