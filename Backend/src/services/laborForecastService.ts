@@ -60,6 +60,8 @@ import type { AuthenticatedUser } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
+import type { StaffPayRateRepository } from "../repositories/staffPayRateRepository.js";
+import type { EffectivePayRate } from "../types/payRate.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level constants
@@ -121,6 +123,11 @@ export type RoleLaborProjection = {
   projectedOverheadCost: number;
   /** Grand total per role in AUD cents (integer). Divide by 100 for dollar display. */
   totalProjectedCost: number;
+  /**
+   * True when at least one staff member in this role group is using the
+   * hard-coded fallback rate rather than a configured staff pay rate.
+   */
+  usingFallbackForSomeStaff: boolean;
 };
 
 /**
@@ -143,6 +150,11 @@ export type LaborForecastSummary = {
   grandTotalProjectedCost: number;
   /** Per-role breakdown, sorted by role name for stable output. */
   breakdownByRole: RoleLaborProjection[];
+  /**
+   * True when any staff member in the forecast window is using the hard-coded
+   * default rate rather than a configured staff pay rate.
+   */
+  anyStaffUsingFallback: boolean;
 };
 
 /** Options accepted by getLaborForecast. */
@@ -170,6 +182,7 @@ export type LaborForecastService = ReturnType<typeof createLaborForecastService>
 export function createLaborForecastService(
   rosterRepository: RosterRepository,
   timesheetRepository: TimesheetRepository,
+  staffPayRateRepository?: StaffPayRateRepository,
 ) {
   // ── Internal helpers (closure scope) ─────────────────────────────────────
 
@@ -333,10 +346,27 @@ export function createLaborForecastService(
         }
       }
 
+      // ── 3b. Build per-staff pay rate cache (one lookup per unique staffUserId) ─
+      // Use today's local date as the rate lookup date — rates don't change
+      // mid-forecast-window, so today's rate is the correct proxy.
+      const staffRateCache = new Map<string, EffectivePayRate | null>();
+      if (staffPayRateRepository) {
+        const uniqueStaffIds = [...new Set(activeShifts.map((s) => s.staffUserId))];
+        await Promise.all(
+          uniqueStaffIds.map(async (staffId) => {
+            const rate = await staffPayRateRepository.findEffectiveRate(staffId, localNowStr);
+            staffRateCache.set(staffId, rate);
+          }),
+        );
+      }
+
       // ── 4. Aggregate projected hours and costs by shiftType ─────────────────
       const roleAccumulator = new Map<string, {
         projectedHours: number;
         hasHistoryCoverage: boolean;
+        baseCostCents: number;
+        overheadCostCents: number;
+        usingFallbackForSomeStaff: boolean;
       }>();
 
       for (const shift of activeShifts) {
@@ -357,15 +387,65 @@ export function createLaborForecastService(
           projectedHoursForShift = scheduledDurationHours;
         }
 
+        // Determine per-shift cost: use configured staff rate if available,
+        // otherwise fall back to the existing hard-coded default.
+        const staffRate = staffPayRateRepository
+          ? staffRateCache.get(shift.staffUserId) ?? null
+          : null;
+
+        let shiftBaseCostCents: number;
+        let shiftOverheadCostCents: number;
+        let shiftUsingFallback: boolean;
+
+        if (staffRate) {
+          // Staff-specific rate: use the configured cents/hr and their super %.
+          const roundedShiftHours = round2dp(projectedHoursForShift);
+          shiftBaseCostCents = Math.round(roundedShiftHours * staffRate.baseHourlyRateCents);
+          shiftOverheadCostCents = Math.round(shiftBaseCostCents * staffRate.superRatePercent / 100);
+          shiftUsingFallback = false;
+        } else {
+          // No configured rate — behavior depends on whether a staffPayRateRepository
+          // was wired in.
+          //
+          // With a repo (Module 08+): the repo was queried but returned no rate for
+          // this staff member.  Use DEFAULT_HOURLY_RATE_CENTS[shiftType] as the
+          // explicit fallback (history-coverage is not a proxy once real rates exist).
+          //
+          // Without a repo (legacy / pre-Module-08): preserve the original hasHistory
+          // logic — staff with no approved timesheet history fall back to the
+          // clinic-wide blended rate rather than the per-shiftType DEFAULT, because
+          // the DEFAULT rates are calibrated to staff with known shift patterns.
+          let hourlyRateCents: number;
+          if (staffPayRateRepository) {
+            hourlyRateCents =
+              DEFAULT_HOURLY_RATE_CENTS[shift.shiftType] ?? clinicWideFallbackCents;
+          } else {
+            const hasHistory = staffWithHistory.has(shift.staffUserId);
+            hourlyRateCents = hasHistory
+              ? (DEFAULT_HOURLY_RATE_CENTS[shift.shiftType] ?? clinicWideFallbackCents)
+              : clinicWideFallbackCents;
+          }
+          const roundedShiftHours = round2dp(projectedHoursForShift);
+          shiftBaseCostCents = Math.round(roundedShiftHours * hourlyRateCents);
+          shiftOverheadCostCents = Math.round(shiftBaseCostCents * (DEFAULT_OVERHEAD_MULTIPLIER - 1));
+          shiftUsingFallback = true;
+        }
+
         const existing = roleAccumulator.get(shift.shiftType) ?? {
           projectedHours: 0,
           hasHistoryCoverage: false,
+          baseCostCents: 0,
+          overheadCostCents: 0,
+          usingFallbackForSomeStaff: false,
         };
 
         roleAccumulator.set(shift.shiftType, {
           projectedHours: existing.projectedHours + projectedHoursForShift,
           hasHistoryCoverage:
             existing.hasHistoryCoverage || staffWithHistory.has(shift.staffUserId),
+          baseCostCents: existing.baseCostCents + shiftBaseCostCents,
+          overheadCostCents: existing.overheadCostCents + shiftOverheadCostCents,
+          usingFallbackForSomeStaff: existing.usingFallbackForSomeStaff || shiftUsingFallback,
         });
       }
 
@@ -375,19 +455,11 @@ export function createLaborForecastService(
       let totalProjectedBaseCost = 0;      // integer cents
       let totalProjectedOverheadCost = 0;  // integer cents
       let grandTotalProjectedCost = 0;     // integer cents
+      let anyStaffUsingFallback = false;
 
-      for (const [shiftType, { projectedHours, hasHistoryCoverage }] of roleAccumulator) {
-        // Determine the effective hourly rate (cents) for this shiftType.
-        const hourlyRateCents = hasHistoryCoverage
-          ? (DEFAULT_HOURLY_RATE_CENTS[shiftType] ?? clinicWideFallbackCents)
-          : clinicWideFallbackCents;
-
+      for (const [shiftType, { projectedHours, baseCostCents, overheadCostCents, usingFallbackForSomeStaff }] of roleAccumulator) {
         // Hours stay as a rounded float (2 dp) to eliminate IEEE 754 drift.
         const roundedHours = round2dp(projectedHours);
-
-        // Cost arithmetic in integer cents — Math.round eliminates sub-cent drift.
-        const baseCostCents = Math.round(roundedHours * hourlyRateCents);
-        const overheadCostCents = Math.round(baseCostCents * (DEFAULT_OVERHEAD_MULTIPLIER - 1));
         const totalCostCents = baseCostCents + overheadCostCents;
 
         breakdownByRole.push({
@@ -396,12 +468,14 @@ export function createLaborForecastService(
           projectedBaseCost: baseCostCents,
           projectedOverheadCost: overheadCostCents,
           totalProjectedCost: totalCostCents,
+          usingFallbackForSomeStaff,
         });
 
         totalProjectedHours = round2dp(totalProjectedHours + roundedHours);
         totalProjectedBaseCost += baseCostCents;
         totalProjectedOverheadCost += overheadCostCents;
         grandTotalProjectedCost += totalCostCents;
+        if (usingFallbackForSomeStaff) anyStaffUsingFallback = true;
       }
 
       // Stable output: sort by role name so the response order is deterministic
@@ -416,6 +490,7 @@ export function createLaborForecastService(
         totalProjectedOverheadCost,
         grandTotalProjectedCost,
         breakdownByRole,
+        anyStaffUsingFallback,
       };
     },
   };

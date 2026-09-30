@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import type { RoleLaborProjection } from "../../types/forecast.js";
 
-type SortKey = keyof Omit<RoleLaborProjection, "role"> | "role";
+type SortKey = Exclude<keyof RoleLaborProjection, "usingFallbackForSomeStaff">;
 type SortDir = "asc" | "desc";
 
 type Props = {
@@ -150,6 +150,7 @@ export function LaborForecastTable({ rows }: Props) {
               onSort={handleSort}
               numeric
             />
+            <th className="lf-table__th">Rate</th>
           </tr>
         </thead>
         <tbody>
@@ -165,6 +166,17 @@ export function LaborForecastTable({ rows }: Props) {
               <td className="lf-table__numeric">{formatAud(row.projectedOverheadCost)}</td>
               <td className="lf-table__numeric lf-table__numeric--total">
                 {formatAud(row.totalProjectedCost)}
+              </td>
+              <td>
+                {row.usingFallbackForSomeStaff ? (
+                  <span className="inventory-badge" title="At least one staff member is using the default hourly estimate">
+                    Using default estimate
+                  </span>
+                ) : (
+                  <span className="inventory-badge" title="All staff have configured pay rates">
+                    Configured
+                  </span>
+                )}
               </td>
             </tr>
           ))}

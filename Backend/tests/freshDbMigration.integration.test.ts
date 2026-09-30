@@ -4,7 +4,8 @@
  * Clean-slate and lifecycle integration gate for the migration chain through
  * 047_user_clinic_assignments, 048_rls_own_roster_entries,
  * 049_clinic_preferred_name, 050_fix_timesheet_roster_unique,
- * 051_geofence_columns, 052_module_permissions_backfill, and 053_timesheet_staff_notes.
+ * 051_geofence_columns, 052_module_permissions_backfill,
+ * 053_timesheet_staff_notes, and 054_staff_pay_rates.
  *
  * TWO GATING VARIABLES:
  *
@@ -124,7 +125,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 053_timesheet_staff_notes", async () => {
+  it("last migration recorded is 054_staff_pay_rates", async () => {
     if (SKIP_FRESH) return;
 
     // Migrations run in a single transaction so applied_at timestamps are
@@ -132,7 +133,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("053_timesheet_staff_notes");
+    expect(rows[0]?.id).toBe("054_staff_pay_rates");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {

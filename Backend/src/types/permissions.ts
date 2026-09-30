@@ -70,6 +70,10 @@ export const PERMISSIONS = {
   MODULE_PROCUREMENT: "module:procurement",
   MODULE_RECEIVING:   "module:receiving",
   MODULE_REPORTS:     "module:reports",
+
+  // Pay rate management — restricted to owner_admin by default
+  PAYROLL_RATES_READ:  "payroll:rates:read",
+  PAYROLL_RATES_WRITE: "payroll:rates:write",
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

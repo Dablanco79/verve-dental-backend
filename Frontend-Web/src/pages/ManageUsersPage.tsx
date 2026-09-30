@@ -6,14 +6,23 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
+import { usePayRates } from "../hooks/usePayRates.js";
 import type { ClinicData } from "../types/clinic.js";
 import type {
+  CreatePayRateRequest,
+  EmploymentType,
   StaffPayrollTrack,
   StaffUser,
   UserRole,
 } from "../types/index.js";
 
-import { PAYROLL_TRACK_LABELS, STAFF_PAYROLL_TRACKS } from "../types/index.js";
+import {
+  DEFAULT_SUPER_RATE,
+  EMPLOYMENT_TYPES,
+  EMPLOYMENT_TYPE_LABELS,
+  PAYROLL_TRACK_LABELS,
+  STAFF_PAYROLL_TRACKS,
+} from "../types/index.js";
 import { canManageUsers, ROLE_LABELS } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
@@ -27,6 +36,11 @@ const MODULE_ITEMS: Array<{ permission: string; label: string; roles: UserRole[]
   { permission: "module:procurement", label: "Procurement", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
   { permission: "module:receiving", label: "Receiving", roles: ["owner_admin", "group_practice_manager", "clinical_staff"] },
   { permission: "module:reports", label: "Reports & Analytics", roles: ["owner_admin", "group_practice_manager"] },
+  // Pay-rate access — GPM only.
+  // owner_admin has inherent payroll:rates:* access and does not need a toggle.
+  // clinical_staff must never access other staff members' pay rates.
+  { permission: "payroll:rates:read",  label: "View staff pay rates", roles: ["group_practice_manager"] },
+  { permission: "payroll:rates:write", label: "Edit staff pay rates",  roles: ["group_practice_manager"] },
 ];
 
 // Roles an owner_admin may assign.
@@ -90,6 +104,17 @@ type EditState = {
   error: string | null;
 };
 
+type PayRateFormState = {
+  baseHourlyRateDollars: string;
+  employmentType: EmploymentType;
+  contractedWeeklyHours: string;
+  superRatePercent: string;
+  effectiveFrom: string;
+  isSubmitting: boolean;
+  error: string | null;
+  isOpen: boolean;
+};
+
 /** Derive a display label for a user row: "First Last" > displayName > email. */
 function nameLabel(u: StaffUser): string {
   if (u.firstName && u.lastName) return `${u.firstName} ${u.lastName}`;
@@ -128,6 +153,12 @@ export function ManageUsersPage() {
 
   // ── Module access (owner_admin only) ───────────────────────────────────────
   const [moduleAccess, setModuleAccess] = useState<ModuleAccessState | null>(null);
+
+  // ── Pay profile (pay rates panel inside inline edit) ───────────────────────
+  const [payRateForm, setPayRateForm] = useState<PayRateFormState | null>(null);
+  const payProfileUserId = editState?.userId ?? null;
+  const { rates: payRates, isLoading: payRatesLoading, error: payRatesError, createRate } =
+    usePayRates(clinicId ?? null, payProfileUserId);
 
   // ── Init form when user is known ───────────────────────────────────────────
   function buildInitialForm(targetClinicId: string, targetClinicName: string): FormState {
@@ -232,6 +263,7 @@ export function ManageUsersPage() {
 
   function closeEdit(): void {
     setEditState(null);
+    setPayRateForm(null);
   }
 
   // ── Clinic access handlers ─────────────────────────────────────────────────
@@ -338,9 +370,12 @@ export function ManageUsersPage() {
       // unwrapped by request().  Do NOT access data.grants — there is no such
       // property; doing so returns undefined and crashes .filter().
       const data = await apiClient.listUserPermissions(u.homeClinicId, u.id);
+      // Include all non-revoked permissions tracked by MODULE_ITEMS
+      // (both "module:*" and "payroll:*" families).
+      const moduleItemPermissions = new Set(MODULE_ITEMS.map((m) => m.permission));
       const active = new Set(
         data
-          .filter((g) => g.revokedAt === null && g.permission.startsWith("module:"))
+          .filter((g) => g.revokedAt === null && moduleItemPermissions.has(g.permission))
           .map((g) => g.permission),
       );
       setModuleAccess((s) => s ? { ...s, isLoading: false, activePermissions: active } : s);
@@ -370,6 +405,31 @@ export function ManageUsersPage() {
       setModuleAccess((s) =>
         s ? { ...s, isSaving: null, error: err instanceof Error ? err.message : "Failed to update permission" } : s,
       );
+    }
+  }
+
+  /**
+   * Wraps toggleModulePermission with permission-dependency enforcement:
+   *   - Enabling  payroll:rates:write also grants  payroll:rates:read  (if not already active).
+   *   - Disabling payroll:rates:read  also revokes payroll:rates:write (if currently active).
+   */
+  async function handlePermissionToggle(u: StaffUser, permission: string, grant: boolean): Promise<void> {
+    if (!moduleAccess) return;
+
+    // Capture pre-change state before any API calls alter it.
+    const wasReadActive  = moduleAccess.activePermissions.has("payroll:rates:read");
+    const wasWriteActive = moduleAccess.activePermissions.has("payroll:rates:write");
+
+    // Enabling Write → first ensure Read is granted.
+    if (permission === "payroll:rates:write" && grant && !wasReadActive) {
+      await toggleModulePermission(u, "payroll:rates:read", true);
+    }
+
+    await toggleModulePermission(u, permission, grant);
+
+    // Disabling Read → also revoke Write so it can never outlive View.
+    if (permission === "payroll:rates:read" && !grant && wasWriteActive) {
+      await toggleModulePermission(u, "payroll:rates:write", false);
     }
   }
 
@@ -403,6 +463,63 @@ export function ManageUsersPage() {
             ...s,
             isSubmitting: false,
             error: err instanceof Error ? err.message : "Failed to save changes",
+          },
+      );
+    }
+  }
+
+  function openPayRateForm(): void {
+    setPayRateForm({
+      baseHourlyRateDollars: "",
+      employmentType: "full_time",
+      contractedWeeklyHours: "",
+      superRatePercent: String(DEFAULT_SUPER_RATE),
+      effectiveFrom: "",
+      isSubmitting: false,
+      error: null,
+      isOpen: true,
+    });
+  }
+
+  async function handleSubmitPayRate(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!payRateForm) return;
+
+    const rateDollars = parseFloat(payRateForm.baseHourlyRateDollars);
+    if (isNaN(rateDollars) || rateDollars <= 0) {
+      setPayRateForm((s) => s && { ...s, error: "Base hourly rate must be a positive number." });
+      return;
+    }
+
+    const superPercent = parseFloat(payRateForm.superRatePercent);
+    if (isNaN(superPercent) || superPercent < 0 || superPercent > 100) {
+      setPayRateForm((s) => s && { ...s, error: "Super rate must be between 0 and 100." });
+      return;
+    }
+
+    const contractedHours = payRateForm.contractedWeeklyHours.trim()
+      ? parseFloat(payRateForm.contractedWeeklyHours)
+      : null;
+
+    const payload: CreatePayRateRequest = {
+      baseHourlyRateCents: Math.round(rateDollars * 100),
+      employmentType: payRateForm.employmentType,
+      contractedWeeklyHours: contractedHours,
+      superRatePercent: superPercent,
+      effectiveFrom: payRateForm.effectiveFrom,
+    };
+
+    setPayRateForm((s) => s && { ...s, isSubmitting: true, error: null });
+    try {
+      await createRate(payload);
+      setPayRateForm(null);
+    } catch (err: unknown) {
+      setPayRateForm(
+        (s) =>
+          s && {
+            ...s,
+            isSubmitting: false,
+            error: err instanceof Error ? err.message : "Failed to save pay rate",
           },
       );
     }
@@ -888,6 +1005,167 @@ export function ManageUsersPage() {
                                 <p className="status-card__error">{editState.error}</p>
                               ) : null}
 
+                              {/* ── Pay Profile section ─────────────────────────────── */}
+                              {user.permissions.includes("payroll:rates:read") ? (
+                                <div className="product-form__section" style={{ marginTop: "1.5rem" }}>
+                                  <h4 style={{ marginBottom: "0.5rem" }}>Pay Profile</h4>
+
+                                  {payRatesLoading ? (
+                                    <p className="loading-message">Loading pay rates…</p>
+                                  ) : payRatesError ? (
+                                    <p className="status-card__error">{payRatesError}</p>
+                                  ) : (
+                                    <>
+                                      {/* Current active rate */}
+                                      {(() => {
+                                        const activeRate = payRates.find((r) => r.effectiveTo === null);
+                                        if (!activeRate) {
+                                          return (
+                                            <p className="inventory-page__subtitle">
+                                              No pay rate configured — using default estimate for forecasting.
+                                            </p>
+                                          );
+                                        }
+                                        return (
+                                          <div className="inventory-page__subtitle" style={{ marginBottom: "0.75rem" }}>
+                                            <strong>Current rate:</strong>{" "}
+                                            ${(activeRate.baseHourlyRateCents / 100).toFixed(2)}/hr
+                                            {" · "}
+                                            {EMPLOYMENT_TYPE_LABELS[activeRate.employmentType]}
+                                            {activeRate.contractedWeeklyHours !== null
+                                              ? ` · ${String(activeRate.contractedWeeklyHours)}h/wk`
+                                              : ""}
+                                            {" · "}
+                                            Super {activeRate.superRatePercent}%
+                                            {" · "}
+                                            From {activeRate.effectiveFrom}
+                                          </div>
+                                        );
+                                      })()}
+
+                                      {/* Add / Update Rate form — write permission required */}
+                                      {user.permissions.includes("payroll:rates:write") ? (
+                                        <>
+                                          {payRateForm ? (
+                                            <form
+                                              onSubmit={(e) => { void handleSubmitPayRate(e); }}
+                                              aria-label="Add or update pay rate"
+                                            >
+                                              <div className="product-form__grid">
+                                                <label>
+                                                  Base hourly rate ($)
+                                                  <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0.01"
+                                                    value={payRateForm.baseHourlyRateDollars}
+                                                    onChange={(e) => {
+                                                      setPayRateForm((s) => s && { ...s, baseHourlyRateDollars: e.target.value });
+                                                    }}
+                                                    required
+                                                    placeholder="e.g. 45.00"
+                                                  />
+                                                </label>
+
+                                                <label>
+                                                  Employment type
+                                                  <select
+                                                    value={payRateForm.employmentType}
+                                                    onChange={(e) => {
+                                                      setPayRateForm((s) => s && { ...s, employmentType: e.target.value as EmploymentType });
+                                                    }}
+                                                    aria-label="Employment type"
+                                                  >
+                                                    {EMPLOYMENT_TYPES.map((t) => (
+                                                      <option key={t} value={t}>
+                                                        {EMPLOYMENT_TYPE_LABELS[t]}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                </label>
+
+                                                <label>
+                                                  Contracted weekly hours (optional)
+                                                  <input
+                                                    type="number"
+                                                    step="0.5"
+                                                    min="0"
+                                                    max="168"
+                                                    value={payRateForm.contractedWeeklyHours}
+                                                    onChange={(e) => {
+                                                      setPayRateForm((s) => s && { ...s, contractedWeeklyHours: e.target.value });
+                                                    }}
+                                                    placeholder="e.g. 38"
+                                                  />
+                                                </label>
+
+                                                <label>
+                                                  Superannuation rate (%)
+                                                  <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0"
+                                                    max="100"
+                                                    value={payRateForm.superRatePercent}
+                                                    onChange={(e) => {
+                                                      setPayRateForm((s) => s && { ...s, superRatePercent: e.target.value });
+                                                    }}
+                                                    required
+                                                    aria-label="Superannuation rate percent"
+                                                  />
+                                                  <span className="inventory-page__subtitle" style={{ fontSize: "0.8rem" }}>
+                                                    Standard SG rate is prefilled. Adjust if this employee receives a different employer contribution.
+                                                  </span>
+                                                </label>
+
+                                                <label>
+                                                  Effective from (YYYY-MM-DD)
+                                                  <input
+                                                    type="date"
+                                                    value={payRateForm.effectiveFrom}
+                                                    onChange={(e) => {
+                                                      setPayRateForm((s) => s && { ...s, effectiveFrom: e.target.value });
+                                                    }}
+                                                    required
+                                                    aria-label="Effective from date"
+                                                  />
+                                                </label>
+                                              </div>
+
+                                              {payRateForm.error ? (
+                                                <p className="status-card__error">{payRateForm.error}</p>
+                                              ) : null}
+
+                                              <div className="product-form__actions">
+                                                <button type="submit" disabled={payRateForm.isSubmitting}>
+                                                  {payRateForm.isSubmitting ? "Saving rate…" : "Save rate"}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="link-button"
+                                                  onClick={() => { setPayRateForm(null); }}
+                                                  disabled={payRateForm.isSubmitting}
+                                                >
+                                                  Cancel
+                                                </button>
+                                              </div>
+                                            </form>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              className="link-button"
+                                              onClick={openPayRateForm}
+                                            >
+                                              + Add / Update Rate
+                                            </button>
+                                          )}
+                                        </>
+                                      ) : null}
+                                    </>
+                                  )}
+                                </div>
+                              ) : null}
+
                               <div className="product-form__actions">
                                 <button type="submit" disabled={editState.isSubmitting}>
                                   {editState.isSubmitting ? "Saving…" : "Save"}
@@ -985,7 +1263,7 @@ export function ManageUsersPage() {
                                                     disabled={isSaving}
                                                     aria-label={`${m.label} access`}
                                                     onChange={(e) => {
-                                                      void toggleModulePermission(u, m.permission, e.target.checked);
+                                                      void handlePermissionToggle(u, m.permission, e.target.checked);
                                                     }}
                                                   />
                                                   {isSaving ? <span style={{ marginLeft: "0.5rem" }}>…</span> : null}

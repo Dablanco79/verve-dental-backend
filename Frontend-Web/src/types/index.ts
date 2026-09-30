@@ -122,3 +122,38 @@ export type ChangePasswordRequest = {
 export type ResetPasswordRequest = {
   newPassword: string;
 };
+
+export type EmploymentType = "full_time" | "part_time" | "casual";
+
+export const EMPLOYMENT_TYPES: EmploymentType[] = ["full_time", "part_time", "casual"];
+
+export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: "Full-time",
+  part_time: "Part-time",
+  casual: "Casual",
+};
+
+export const DEFAULT_SUPER_RATE = 12.00;
+
+export type StaffPayRate = {
+  id: string;
+  staffUserId: string;
+  /** Base hourly rate in AUD cents. */
+  baseHourlyRateCents: number;
+  employmentType: EmploymentType;
+  contractedWeeklyHours: number | null;
+  superRatePercent: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePayRateRequest = {
+  baseHourlyRateCents: number;
+  employmentType: EmploymentType;
+  contractedWeeklyHours?: number | null;
+  superRatePercent: number;
+  effectiveFrom: string;
+};

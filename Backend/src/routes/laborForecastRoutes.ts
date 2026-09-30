@@ -136,6 +136,8 @@ type RoleLaborProjectionDTO = Omit<
   projectedOverheadCost: number;
   /** AUD dollars (e.g. 517.50). */
   totalProjectedCost: number;
+  /** True when at least one staff member in this role group is using the default estimate. */
+  usingFallbackForSomeStaff: boolean;
 };
 
 /**
@@ -155,6 +157,8 @@ type LaborForecastSummaryDTO = Omit<
   /** AUD dollars. */
   grandTotalProjectedCost: number;
   breakdownByRole: RoleLaborProjectionDTO[];
+  /** True when any staff member in the forecast is using the default estimate. */
+  anyStaffUsingFallback: boolean;
 };
 
 /**
@@ -171,12 +175,14 @@ function toSummaryDTO(summary: LaborForecastSummary): LaborForecastSummaryDTO {
     totalProjectedBaseCost: summary.totalProjectedBaseCost / 100,
     totalProjectedOverheadCost: summary.totalProjectedOverheadCost / 100,
     grandTotalProjectedCost: summary.grandTotalProjectedCost / 100,
+    anyStaffUsingFallback: summary.anyStaffUsingFallback,
     breakdownByRole: summary.breakdownByRole.map((row) => ({
       role: row.role,
       totalScheduledHours: row.totalScheduledHours,
       projectedBaseCost: row.projectedBaseCost / 100,
       projectedOverheadCost: row.projectedOverheadCost / 100,
       totalProjectedCost: row.totalProjectedCost / 100,
+      usingFallbackForSomeStaff: row.usingFallbackForSomeStaff,
     })),
   };
 }
@@ -192,6 +198,7 @@ function createLaborForecastHandlers(deps: AppDependencies) {
   const laborForecastService = createLaborForecastService(
     deps.rosterRepository,
     deps.timesheetRepository,
+    deps.staffPayRateRepository,
   );
 
   return {

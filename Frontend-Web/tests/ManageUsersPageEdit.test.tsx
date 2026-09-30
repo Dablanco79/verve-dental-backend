@@ -65,6 +65,8 @@ vi.mock("../src/api/client.js", () => ({
     updateUser: mockUpdateUser,
     resetUserPassword: vi.fn(),
     listClinics: mockListClinics,
+    listPayRates: vi.fn().mockResolvedValue([]),
+    createPayRate: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 

@@ -5,11 +5,13 @@ import type {
   AuthSession,
   AuthUser,
   ChangePasswordRequest,
+  CreatePayRateRequest,
   CreateUserRequest,
   HealthResponse,
   LoginResponse,
   MfaSetupData,
   ResetPasswordRequest,
+  StaffPayRate,
   StaffUser,
   UpdateUserRequest,
 } from "../types/index.js";
@@ -1290,6 +1292,28 @@ export function createApiClient(config: AppConfig) {
       config,
       `/api/v1/clinics/${clinicId}/forecast/labor${qs}`,
       {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listPayRates(clinicId: string, userId: string): Promise<StaffPayRate[]> {
+    return request<StaffPayRate[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/pay-rates`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createPayRate(
+    clinicId: string,
+    userId: string,
+    payload: CreatePayRateRequest,
+  ): Promise<StaffPayRate> {
+    return request<StaffPayRate>(
+      config,
+      `/api/v1/clinics/${clinicId}/users/${userId}/pay-rates`,
+      { method: "POST", body: JSON.stringify(payload) },
       requireAccessToken(),
     );
   }
@@ -2861,6 +2885,8 @@ export function createApiClient(config: AppConfig) {
     updateStocktakeLine,
     previewPilotReset,
     executePilotReset,
+    listPayRates,
+    createPayRate,
   };
 
   // ─── Pilot Reset ─────────────────────────────────────────────────────────────

@@ -17,6 +17,11 @@ export type RoleLaborProjection = {
   projectedOverheadCost: number;
   /** Grand total per role: baseCost + overheadCost (AUD). */
   totalProjectedCost: number;
+  /**
+   * True when at least one staff member in this role group is using the
+   * hard-coded default estimate rather than a configured pay rate.
+   */
+  usingFallbackForSomeStaff: boolean;
 };
 
 /** Clinic-level labor cost summary returned by GET /clinics/:clinicId/forecast/labor. */
@@ -34,4 +39,9 @@ export type LaborForecastSummary = {
   grandTotalProjectedCost: number;
   /** Per-role breakdown, sorted alphabetically by role name. */
   breakdownByRole: RoleLaborProjection[];
+  /**
+   * True when any staff member in the forecast window is using the
+   * default estimate rather than a configured pay rate.
+   */
+  anyStaffUsingFallback: boolean;
 };

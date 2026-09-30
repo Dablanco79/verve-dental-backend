@@ -3216,6 +3216,45 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ADD COLUMN IF NOT EXISTS clock_out_note text;
     `,
   },
+  /**
+   * Migration 054 — Staff pay rates.
+   *
+   * Introduces the staff_pay_rates table for V1 hourly labour costing.
+   * Monetary values are stored as INTEGER AUD CENTS (base_hourly_rate_cents).
+   * A partial unique index enforces at most one open-ended (effective_to IS NULL)
+   * row per staff member, preventing duplicate active rates.
+   * Exclusive effective_to semantics: a new rate's effective_from is set as the
+   * previous rate's effective_to (the boundary date belongs to the new rate,
+   * not the old one).
+   */
+  {
+    id: "054_staff_pay_rates",
+    sql: `
+      CREATE TABLE IF NOT EXISTS staff_pay_rates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        staff_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        base_hourly_rate_cents INTEGER NOT NULL CHECK (base_hourly_rate_cents > 0),
+        employment_type TEXT NOT NULL CHECK (employment_type IN ('full_time', 'part_time', 'casual')),
+        contracted_weekly_hours NUMERIC(5,2),
+        super_rate_percent NUMERIC(5,2) NOT NULL DEFAULT 12.00
+          CHECK (super_rate_percent >= 0 AND super_rate_percent <= 100),
+        effective_from DATE NOT NULL,
+        effective_to DATE,
+        created_by_user_id UUID NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT effective_dates_valid
+          CHECK (effective_to IS NULL OR effective_to > effective_from)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS staff_pay_rates_one_open_per_staff
+        ON staff_pay_rates (staff_user_id)
+        WHERE effective_to IS NULL;
+
+      CREATE INDEX IF NOT EXISTS staff_pay_rates_staff_date_idx
+        ON staff_pay_rates (staff_user_id, effective_from);
+    `,
+  },
 ];
 
 /**

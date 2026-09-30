@@ -54,6 +54,8 @@ const {
   mockListUserPermissions,
   mockGrantUserPermission,
   mockRevokeUserPermission,
+  mockListPayRates,
+  mockCreatePayRate,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
@@ -74,6 +76,21 @@ const {
       revokedAt: null,
     }),
     mockRevokeUserPermission: vi.fn().mockResolvedValue(undefined),
+    // Pay rate mocks — default to empty array / resolved value.
+    mockListPayRates: vi.fn().mockResolvedValue([]),
+    mockCreatePayRate: vi.fn().mockResolvedValue({
+      id: "pr-1",
+      staffUserId: "uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuu1",
+      baseHourlyRateCents: 5000,
+      employmentType: "full_time",
+      contractedWeeklyHours: 38,
+      superRatePercent: 12.0,
+      effectiveFrom: "2026-10-01",
+      effectiveTo: null,
+      createdByUserId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
   };
 });
 
@@ -96,6 +113,8 @@ vi.mock("../src/api/client.js", () => ({
     listUserPermissions: mockListUserPermissions,
     grantUserPermission: mockGrantUserPermission,
     revokeUserPermission: mockRevokeUserPermission,
+    listPayRates: mockListPayRates,
+    createPayRate: mockCreatePayRate,
   }),
 }));
 
@@ -531,5 +550,360 @@ describe("ManageUsersPage — Module Access panel", () => {
 
     // The rest of the table should still be visible
     expect(screen.getByText(namedUser.email)).toBeInTheDocument();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pay Profile panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Helper: render page as a given user, wait for the table, click "Edit" for namedUser.
+ */
+async function openEditPanel(pageUser = adminUser) {
+  setAuthenticatedUser(authTestState, pageUser);
+  mockListUsers.mockResolvedValue(sampleUsers);
+  mockListClinics.mockResolvedValue(sampleClinics);
+  mockListPayRates.mockResolvedValue([]);
+
+  renderPage();
+  await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+  const row = screen.getByText(namedUser.email).closest("tr") as HTMLElement;
+  const editBtn = within(row).getByRole("button", { name: /^edit$/i });
+  await userEvent.click(editBtn);
+}
+
+describe("ManageUsersPage — Pay Profile panel", () => {
+  beforeEach(() => {
+    mockListPayRates.mockResolvedValue([]);
+    mockCreatePayRate.mockResolvedValue({
+      id: "pr-1",
+      staffUserId: namedUser.id,
+      baseHourlyRateCents: 5000,
+      employmentType: "full_time",
+      contractedWeeklyHours: 38,
+      superRatePercent: 12.0,
+      effectiveFrom: "2026-10-01",
+      effectiveTo: null,
+      createdByUserId: adminUser.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  it("Pay Profile section is hidden when user lacks payroll:rates:read permission", async () => {
+    // Admin without payroll:rates:read
+    const adminWithoutRatesRead = createAdminUser({
+      permissions: ["users:read", "users:write"],
+    });
+    await openEditPanel(adminWithoutRatesRead);
+
+    // The Pay Profile section heading should not appear
+    expect(screen.queryByText(/pay profile/i)).not.toBeInTheDocument();
+  });
+
+  it("Pay Profile section is visible when user has payroll:rates:read permission", async () => {
+    const adminWithRatesRead = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read"],
+    });
+    await openEditPanel(adminWithRatesRead);
+
+    await waitFor(() =>
+      expect(screen.getByText(/pay profile/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("shows 'No pay rate configured' when no active rate exists", async () => {
+    mockListPayRates.mockResolvedValue([]);
+    const adminWithRatesRead = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read"],
+    });
+    await openEditPanel(adminWithRatesRead);
+
+    await waitFor(() =>
+      expect(screen.getByText(/no pay rate configured/i)).toBeInTheDocument(),
+    );
+  });
+
+  it("Add / Update Rate form is hidden when user lacks payroll:rates:write", async () => {
+    const adminReadOnly = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read"],
+      // no payroll:rates:write
+    });
+    await openEditPanel(adminReadOnly);
+
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    // The "+ Add / Update Rate" button should NOT appear
+    expect(screen.queryByRole("button", { name: /add.*update.*rate/i })).not.toBeInTheDocument();
+  });
+
+  it("Add / Update Rate form is accessible when user has payroll:rates:write", async () => {
+    const adminWithWrite = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read", "payroll:rates:write"],
+    });
+    await openEditPanel(adminWithWrite);
+
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+
+    expect(
+      screen.getByRole("form", { name: /add or update pay rate/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("super rate input defaults to 12.00 in the new rate form", async () => {
+    const adminWithWrite = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read", "payroll:rates:write"],
+    });
+    await openEditPanel(adminWithWrite);
+
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+
+    const superInput = screen.getByRole("spinbutton", { name: /superannuation rate/i });
+    expect((superInput as HTMLInputElement).value).toBe("12");
+  });
+
+  it("super rate is editable — user can change it from 12 to 15", async () => {
+    const adminWithWrite = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read", "payroll:rates:write"],
+    });
+    await openEditPanel(adminWithWrite);
+
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+
+    const superInput = screen.getByRole("spinbutton", { name: /superannuation rate/i });
+    await userEvent.clear(superInput);
+    await userEvent.type(superInput, "15");
+
+    expect((superInput as HTMLInputElement).value).toBe("15");
+  });
+
+  it("submitting the rate form calls createPayRate with correct payload", async () => {
+    const adminWithWrite = createAdminUser({
+      permissions: ["users:read", "users:write", "payroll:rates:read", "payroll:rates:write"],
+    });
+    setAuthenticatedUser(authTestState, adminWithWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+    mockListPayRates.mockResolvedValue([]);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    const row = screen.getByText(namedUser.email).closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: /^edit$/i }));
+
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+
+    // Fill in the form
+    await userEvent.type(
+      screen.getByRole("spinbutton", { name: /base hourly rate/i }),
+      "50",
+    );
+    const dateInput = screen.getByLabelText(/effective from/i);
+    await userEvent.type(dateInput, "2026-10-01");
+
+    const saveBtn = screen.getByRole("button", { name: /save rate/i });
+    await userEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(mockCreatePayRate).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        namedUser.id,
+        expect.objectContaining({
+          baseHourlyRateCents: 5000, // 50.00 * 100
+          effectiveFrom: "2026-10-01",
+        }),
+      );
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pay-rate permission controls in Module Access panel
+//
+// Coverage:
+//   - GPM target user sees "View staff pay rates" and "Edit staff pay rates" checkboxes
+//   - clinical_staff target user does NOT see those checkboxes
+//   - Enabling Edit grants View first (dependency rule)
+//   - Disabling View also revokes Edit (dependency rule)
+//   - View can be granted without granting Edit
+//   - Disabling Edit alone does NOT revoke View
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ManageUsersPage — pay-rate permission controls (Module Access panel)", () => {
+  beforeEach(() => {
+    // Clear call history so toHaveBeenCalledTimes() counts are test-local.
+    mockGrantUserPermission.mockClear();
+    mockRevokeUserPermission.mockClear();
+
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+    mockListUserPermissions.mockResolvedValue([]);
+    mockGrantUserPermission.mockResolvedValue({
+      id: "g-pr",
+      clinicId: TEST_CLINIC_ID,
+      userId: unnamedUser.id,
+      permission: "payroll:rates:read",
+      grantedBy: adminUser.id,
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+    });
+    mockRevokeUserPermission.mockResolvedValue(undefined);
+  });
+
+  it("GPM target user sees View and Edit pay-rate checkboxes in the module access panel", async () => {
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const viewBox = await screen.findByRole("checkbox", { name: /view staff pay rates access/i });
+    expect(viewBox).toBeInTheDocument();
+
+    const editBox = screen.getByRole("checkbox", { name: /edit staff pay rates access/i });
+    expect(editBox).toBeInTheDocument();
+  });
+
+  it("clinical_staff target user does NOT see pay-rate checkboxes", async () => {
+    // namedUser is clinical_staff — the checkboxes should be filtered out
+    await openModuleAccessPanel(namedUser.email);
+
+    // Wait for the panel to load (another checkbox must be present first)
+    await screen.findByRole("checkbox", { name: /timesheets access/i });
+
+    expect(screen.queryByRole("checkbox", { name: /view staff pay rates access/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /edit staff pay rates access/i })).not.toBeInTheDocument();
+  });
+
+  it("enabling Edit pay rates also calls grantUserPermission for View first (dependency)", async () => {
+    mockGrantUserPermission.mockResolvedValue({
+      id: "g-pr",
+      clinicId: TEST_CLINIC_ID,
+      userId: unnamedUser.id,
+      permission: "payroll:rates:read",
+      grantedBy: adminUser.id,
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+    });
+
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const editBox = await screen.findByRole("checkbox", { name: /edit staff pay rates access/i });
+    expect(editBox).not.toBeChecked();
+
+    await userEvent.click(editBox);
+
+    await waitFor(() => { expect(mockGrantUserPermission).toHaveBeenCalledTimes(2); });
+
+    // View must have been granted BEFORE Edit
+    const calls = mockGrantUserPermission.mock.calls as Array<[string, string, string]>;
+    const permissions = calls.map((c) => c[2]);
+    expect(permissions[0]).toBe("payroll:rates:read");
+    expect(permissions[1]).toBe("payroll:rates:write");
+  });
+
+  it("disabling View pay rates also calls revokeUserPermission for Edit (dependency)", async () => {
+    // Both read and write are initially active
+    mockListUserPermissions.mockResolvedValue([
+      { id: "g1", clinicId: TEST_CLINIC_ID, userId: unnamedUser.id, permission: "payroll:rates:read",  grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+      { id: "g2", clinicId: TEST_CLINIC_ID, userId: unnamedUser.id, permission: "payroll:rates:write", grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+    ]);
+
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const viewBox = await screen.findByRole("checkbox", { name: /view staff pay rates access/i });
+    expect(viewBox).toBeChecked();
+
+    await userEvent.click(viewBox);
+
+    await waitFor(() => { expect(mockRevokeUserPermission).toHaveBeenCalledTimes(2); });
+
+    const calls = mockRevokeUserPermission.mock.calls as Array<[string, string, string]>;
+    const permissions = calls.map((c) => c[2]);
+    // Read revoked first, then Write
+    expect(permissions).toContain("payroll:rates:read");
+    expect(permissions).toContain("payroll:rates:write");
+  });
+
+  it("granting View alone does NOT also grant Edit (no unintended side effect)", async () => {
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const viewBox = await screen.findByRole("checkbox", { name: /view staff pay rates access/i });
+    expect(viewBox).not.toBeChecked();
+
+    await userEvent.click(viewBox);
+
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        unnamedUser.homeClinicId,
+        unnamedUser.id,
+        "payroll:rates:read",
+      );
+    });
+
+    // Should only have been called once — no Edit grant
+    expect(mockGrantUserPermission).toHaveBeenCalledTimes(1);
+    expect(mockGrantUserPermission).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "payroll:rates:write",
+    );
+  });
+
+  it("disabling Edit alone does NOT revoke View (no unintended side effect)", async () => {
+    // Only write is active (abnormal state, but the dependency rule is one-way)
+    mockListUserPermissions.mockResolvedValue([
+      { id: "g1", clinicId: TEST_CLINIC_ID, userId: unnamedUser.id, permission: "payroll:rates:read",  grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+      { id: "g2", clinicId: TEST_CLINIC_ID, userId: unnamedUser.id, permission: "payroll:rates:write", grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+    ]);
+
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const editBox = await screen.findByRole("checkbox", { name: /edit staff pay rates access/i });
+    expect(editBox).toBeChecked();
+
+    await userEvent.click(editBox);
+
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        unnamedUser.homeClinicId,
+        unnamedUser.id,
+        "payroll:rates:write",
+      );
+    });
+
+    // Only one revoke call — View should remain intact
+    expect(mockRevokeUserPermission).toHaveBeenCalledTimes(1);
+    expect(mockRevokeUserPermission).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "payroll:rates:read",
+    );
+  });
+
+  it("pay-rate checkboxes are checked/unchecked according to active permissions", async () => {
+    mockListUserPermissions.mockResolvedValue([
+      { id: "g1", clinicId: TEST_CLINIC_ID, userId: unnamedUser.id, permission: "payroll:rates:read", grantedBy: adminUser.id, grantedAt: "2026-09-01T00:00:00Z", revokedAt: null },
+    ]);
+
+    await openModuleAccessPanel(unnamedUser.email);
+
+    const viewBox = await screen.findByRole("checkbox", { name: /view staff pay rates access/i });
+    expect(viewBox).toBeChecked();
+
+    const editBox = screen.getByRole("checkbox", { name: /edit staff pay rates access/i });
+    expect(editBox).not.toBeChecked();
   });
 });

@@ -131,6 +131,14 @@ export function LaborForecastPage() {
           <p className="loading-message">Calculating labor forecast…</p>
         ) : data ? (
           <>
+            {data.anyStaffUsingFallback ? (
+              <div className="status-card inventory-receiving-callout" role="status" style={{ marginBottom: "1rem" }}>
+                <p>
+                  <strong>Some staff shown as &ldquo;Using default estimate&rdquo;</strong> — configure pay
+                  rates in <strong>Manage Users</strong> to improve forecast accuracy.
+                </p>
+              </div>
+            ) : null}
             <LaborForecastSummaryCard summary={data} />
             <div className="lf-section">
               <h3 className="lf-section__heading">Breakdown by Role</h3>
