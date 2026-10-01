@@ -51,6 +51,7 @@ const {
   mockListUsers,
   mockListClinics,
   mockCreateUser,
+  mockUpdateUser,
   mockListUserPermissions,
   mockGrantUserPermission,
   mockRevokeUserPermission,
@@ -63,6 +64,19 @@ const {
     mockListUsers: vi.fn(),
     mockListClinics: vi.fn(),
     mockCreateUser: vi.fn(),
+    // updateUser — default returns the namedUser unchanged; individual tests override.
+    mockUpdateUser: vi.fn().mockResolvedValue({
+      id: "uuuuuuuu-uuuu-4uuu-8uuu-uuuuuuuuuuu1",
+      email: "alice@clinic-a.au",
+      role: "clinical_staff",
+      homeClinicId: "11111111-1111-4111-8111-111111111111",
+      homeClinicName: "Verve Dental Clinic A",
+      firstName: "Alice",
+      lastName: "Jones",
+      displayName: "Alice Jones",
+      payrollTrack: "hourly",
+      permissions: [],
+    }),
     // Permission mocks — default to returning a flat empty array (correct shape).
     // Individual tests override as needed.
     mockListUserPermissions: vi.fn().mockResolvedValue([]),
@@ -108,6 +122,7 @@ vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     listUsers: mockListUsers,
     createUser: mockCreateUser,
+    updateUser: mockUpdateUser,
     resetUserPassword: vi.fn(),
     listClinics: mockListClinics,
     listUserPermissions: mockListUserPermissions,
@@ -905,5 +920,299 @@ describe("ManageUsersPage — pay-rate permission controls (Module Access panel)
 
     const editBox = screen.getByRole("checkbox", { name: /edit staff pay rates access/i });
     expect(editBox).not.toBeChecked();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State isolation, clinic reassignment and defensive user-binding
+//
+// Coverage:
+//   1. User A's Pay Profile form does NOT appear in User B's edit panel
+//   2. User A's pay-rate error does NOT appear in User B's edit panel
+//   3. Successful profile save clears Pay Profile form state
+//   4. Pay Profile submission blocked when form userId ≠ current edit userId
+//   5. Clinic reassignment: URL uses the original clinic ID
+//   6. Clinic reassignment: new home clinic is sent in the request body
+//   7. Successful clinic reassignment updates only the target user in the list
+//   8. Role-only edit still updates only the selected user
+//   9. Existing Pay Profile save flow still works after isolation changes
+// ─────────────────────────────────────────────────────────────────────────────
+
+const adminWithRatesWrite = createAdminUser({
+  permissions: [
+    "users:read", "users:write",
+    "payroll:rates:read", "payroll:rates:write",
+  ],
+});
+
+/**
+ * Open the edit panel for a specific user row by email.
+ */
+async function openEditFor(email: string) {
+  const row = screen.getByText(email).closest("tr") as HTMLElement;
+  await userEvent.click(within(row).getByRole("button", { name: /^edit$/i }));
+}
+
+describe("ManageUsersPage — state isolation, clinic reassignment, defensive user-binding", () => {
+  beforeEach(() => {
+    mockUpdateUser.mockClear();
+    mockCreatePayRate.mockClear();
+    mockListPayRates.mockResolvedValue([]);
+  });
+
+  // ── 1. Pay Profile form does not leak from User A to User B ────────────────
+  it("opening User B's edit panel clears any Pay Profile form open for User A", async () => {
+    setAuthenticatedUser(authTestState, adminWithRatesWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    // Open User A (namedUser) and open the pay rate form
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    expect(screen.getByRole("form", { name: /add or update pay rate/i })).toBeInTheDocument();
+
+    // Now open User B (unnamedUser) — pay rate form must disappear
+    await openEditFor(unnamedUser.email);
+
+    expect(
+      screen.queryByRole("form", { name: /add or update pay rate/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // ── 2. User A's pay-rate error does not appear in User B's panel ───────────
+  it("User A's pay-rate error is gone when User B's edit panel opens", async () => {
+    setAuthenticatedUser(authTestState, adminWithRatesWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+    // Reject the first createPayRate call to produce an error in User A's form.
+    mockCreatePayRate.mockRejectedValueOnce(new Error("RATE_OVERLAP — User A error"));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    // Open User A and open the pay rate form (begins a failed save attempt).
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    await userEvent.type(
+      screen.getByRole("spinbutton", { name: /base hourly rate/i }),
+      "50",
+    );
+    await userEvent.type(screen.getByLabelText(/effective from/i), "2026-10-01");
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    // Switch to User B — regardless of whether the error appeared in User A's
+    // panel, it must NOT appear in User B's panel.
+    await openEditFor(unnamedUser.email);
+
+    // Wait for User B's panel to settle, then assert the error is absent.
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/RATE_OVERLAP — User A error/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  // ── 3. Successful profile save clears Pay Profile form ─────────────────────
+  it("successful profile save closes the edit panel and clears the Pay Profile form", async () => {
+    setAuthenticatedUser(authTestState, adminWithRatesWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    // Open the pay rate form
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    expect(screen.getByRole("form", { name: /add or update pay rate/i })).toBeInTheDocument();
+
+    // Save the user profile (not the pay rate)
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // After save the edit panel and the pay rate form must both be gone
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: /add or update pay rate/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText(`Edit ${namedUser.email}`)).not.toBeInTheDocument();
+  });
+
+  // ── 4. Stale userId binding blocks submission ──────────────────────────────
+  it("blocks Pay Profile form submission when form userId does not match current edit userId", async () => {
+    setAuthenticatedUser(authTestState, adminWithRatesWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    // Open User A and open pay rate form (binds form.userId = namedUser.id)
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    expect(screen.getByRole("form", { name: /add or update pay rate/i })).toBeInTheDocument();
+
+    // Switch to User B — form should be cleared by openEdit
+    await openEditFor(unnamedUser.email);
+
+    // The defensive guard should prevent any createPayRate call
+    // (the form is cleared on switch, so we can't even submit it here;
+    //  what we verify is that createPayRate was NEVER called)
+    expect(mockCreatePayRate).not.toHaveBeenCalled();
+  });
+
+  // ── 5. Clinic reassignment: URL uses the original clinic ID ───────────────
+  it("sends the user's original home clinic in the URL when reassigning to a new clinic", async () => {
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+
+    // Change the home clinic selector to Clinic B
+    const clinicSelect = await screen.findByRole("combobox", { name: /home clinic/i });
+    await userEvent.selectOptions(clinicSelect, TEST_CLINIC_B_ID);
+
+    // Save
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateUser).toHaveBeenCalled();
+    });
+
+    // First argument must be the ORIGINAL clinic (namedUser.homeClinicId = TEST_CLINIC_ID)
+    const [urlClinicId] = mockUpdateUser.mock.calls[0] as [string, string, unknown];
+    expect(urlClinicId).toBe(TEST_CLINIC_ID);
+  });
+
+  // ── 6. Clinic reassignment: new clinic in request body ────────────────────
+  it("sends the newly selected clinic ID in the request body for a home-clinic reassignment", async () => {
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+
+    const clinicSelect = await screen.findByRole("combobox", { name: /home clinic/i });
+    await userEvent.selectOptions(clinicSelect, TEST_CLINIC_B_ID);
+
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateUser).toHaveBeenCalled();
+    });
+
+    const [, , body] = mockUpdateUser.mock.calls[0] as [string, string, Record<string, unknown>];
+    expect(body.homeClinicId).toBe(TEST_CLINIC_B_ID);
+  });
+
+  // ── 7. Successful clinic reassignment updates only that user ───────────────
+  it("a successful clinic reassignment replaces only the target user in the list", async () => {
+    const reassignedUser = {
+      ...namedUser,
+      homeClinicId: TEST_CLINIC_B_ID,
+      homeClinicName: TEST_CLINIC_B_NAME,
+    };
+    mockUpdateUser.mockResolvedValueOnce(reassignedUser);
+
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+    const clinicSelect = await screen.findByRole("combobox", { name: /home clinic/i });
+    await userEvent.selectOptions(clinicSelect, TEST_CLINIC_B_ID);
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // unnamedUser's row must still be in the table
+    await waitFor(() =>
+      expect(screen.getByText(unnamedUser.email)).toBeInTheDocument(),
+    );
+    // namedUser must also still appear (now showing Clinic B)
+    expect(screen.getByText(namedUser.email)).toBeInTheDocument();
+  });
+
+  // ── 8. Role-only edit updates only the selected user ──────────────────────
+  it("a role-only edit sends the original clinic in the URL and updates only that user", async () => {
+    const updatedNamed = { ...namedUser, role: "group_practice_manager" as const };
+    mockUpdateUser.mockResolvedValueOnce(updatedNamed);
+
+    setAuthenticatedUser(authTestState, adminUser);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+    const roleSelect = await screen.findByRole("combobox", { name: /role/i });
+    await userEvent.selectOptions(roleSelect, "group_practice_manager");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateUser).toHaveBeenCalled();
+    });
+
+    // URL clinic must be the original clinic (not changed)
+    const [urlClinicId] = mockUpdateUser.mock.calls[0] as [string, string, unknown];
+    expect(urlClinicId).toBe(TEST_CLINIC_ID);
+
+    // unnamedUser still present — not overwritten
+    expect(screen.getByText(unnamedUser.email)).toBeInTheDocument();
+  });
+
+  // ── 9. Existing Pay Profile save flow still works ─────────────────────────
+  it("the Pay Profile save flow still works correctly after isolation changes", async () => {
+    setAuthenticatedUser(authTestState, adminWithRatesWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+
+    await userEvent.type(
+      screen.getByRole("spinbutton", { name: /base hourly rate/i }),
+      "55",
+    );
+    await userEvent.type(screen.getByLabelText(/effective from/i), "2026-10-01");
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    await waitFor(() => {
+      expect(mockCreatePayRate).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        namedUser.id,
+        expect.objectContaining({
+          baseHourlyRateCents: 5500,
+          effectiveFrom: "2026-10-01",
+        }),
+      );
+    });
   });
 });

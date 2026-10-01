@@ -98,6 +98,12 @@ type EditState = {
   displayName: string;
   payrollTrack: StaffPayrollTrack;
   role: UserRole;
+  /** The home-clinic ID the user had when the edit panel was opened.
+   *  Used as the URL :clinicId so the backend can locate the record by its
+   *  current clinic before applying any clinic-reassignment change. */
+  originalClinicId: string;
+  /** The clinic the admin has selected — may differ from originalClinicId
+   *  when the admin is reassigning the user to a new home clinic. */
   selectedClinicId: string;
   selectedClinicName: string;
   isSubmitting: boolean;
@@ -105,6 +111,9 @@ type EditState = {
 };
 
 type PayRateFormState = {
+  /** The userId this form was opened for.  Checked before every POST to
+   *  prevent stale form state from being submitted to the wrong staff member. */
+  userId: string;
   baseHourlyRateDollars: string;
   employmentType: EmploymentType;
   contractedWeeklyHours: string;
@@ -251,6 +260,9 @@ export function ManageUsersPage() {
       displayName: u.displayName ?? "",
       payrollTrack: u.payrollTrack,
       role: u.role,
+      // Capture the user's current home clinic so the URL always targets the
+      // right record even if the admin subsequently changes the selectedClinicId.
+      originalClinicId: u.homeClinicId,
       selectedClinicId: u.homeClinicId,
       selectedClinicName: u.homeClinicName,
       isSubmitting: false,
@@ -259,6 +271,9 @@ export function ManageUsersPage() {
     setResetState(null);
     setShowForm(false);
     setModuleAccess(null);
+    // Clear any pay-rate form from a previously edited user so it can never
+    // leak into this user's panel (state-isolation invariant).
+    setPayRateForm(null);
   }
 
   function closeEdit(): void {
@@ -449,13 +464,23 @@ export function ManageUsersPage() {
 
       if (isAdmin) {
         body.role = editState.role;
+        // Send the newly selected clinic in the body so the backend can
+        // apply a home-clinic reassignment.  The URL, however, must use
+        // originalClinicId — the clinic the user belonged to when the panel
+        // was opened — so the backend's ownership check (target.homeClinicId
+        // === URL clinicId) can locate the record.
         body.homeClinicId = editState.selectedClinicId;
         body.homeClinicName = editState.selectedClinicName;
       }
 
-      const updated = await apiClient.updateUser(editState.selectedClinicId, editState.userId, body);
+      const updated = await apiClient.updateUser(
+        editState.originalClinicId, // ← original clinic in URL (for backend scoping)
+        editState.userId,
+        body,
+      );
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-      setEditState(null);
+      // Use closeEdit() so payRateForm is cleared atomically with editState.
+      closeEdit();
     } catch (err: unknown) {
       setEditState(
         (s) =>
@@ -469,7 +494,12 @@ export function ManageUsersPage() {
   }
 
   function openPayRateForm(): void {
+    if (!editState) return;
     setPayRateForm({
+      // Bind the form to the currently open user so the defensive guard in
+      // handleSubmitPayRate can detect stale state if openEdit was called
+      // for a different user without clearing this form first.
+      userId: editState.userId,
       baseHourlyRateDollars: "",
       employmentType: "full_time",
       contractedWeeklyHours: "",
@@ -484,6 +514,15 @@ export function ManageUsersPage() {
   async function handleSubmitPayRate(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!payRateForm) return;
+
+    // Defensive invariant: the form must belong to the currently open user.
+    // If they differ it means state leaked from a previously edited user
+    // (e.g. openEdit was called without clearing this form).  Clear the
+    // stale form instead of silently submitting to the wrong staff member.
+    if (payRateForm.userId !== editState?.userId) {
+      setPayRateForm(null);
+      return;
+    }
 
     const rateDollars = parseFloat(payRateForm.baseHourlyRateDollars);
     if (isNaN(rateDollars) || rateDollars <= 0) {
