@@ -511,8 +511,16 @@ export function ManageUsersPage() {
     });
   }
 
-  async function handleSubmitPayRate(event: React.SubmitEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  /**
+   * Direct async handler for the Pay Profile "Save rate" button.
+   *
+   * Previously this was an onSubmit handler on an inner <form>, which caused
+   * React's SyntheticEvent bubbling to also fire handleSaveEdit on the outer
+   * user-edit <form>.  The Pay Profile section is now a <div role="form"> and
+   * this function is called directly from the button's onClick — no form event
+   * is involved and no bubbling to the parent form can occur.
+   */
+  async function handleSubmitPayRateDirect(): Promise<void> {
     if (!payRateForm) return;
 
     // Defensive invariant: the form must belong to the currently open user.
@@ -931,6 +939,7 @@ export function ManageUsersPage() {
                               className="product-form"
                               onSubmit={(event) => { void handleSaveEdit(event); }}
                               aria-label={`Edit ${u.email}`}
+                              noValidate
                             >
                               <div className="product-form__grid">
                                 <label>
@@ -1086,8 +1095,8 @@ export function ManageUsersPage() {
                                       {user.permissions.includes("payroll:rates:write") ? (
                                         <>
                                           {payRateForm ? (
-                                            <form
-                                              onSubmit={(e) => { void handleSubmitPayRate(e); }}
+                                            <div
+                                              role="form"
                                               aria-label="Add or update pay rate"
                                             >
                                               <div className="product-form__grid">
@@ -1176,7 +1185,11 @@ export function ManageUsersPage() {
                                               ) : null}
 
                                               <div className="product-form__actions">
-                                                <button type="submit" disabled={payRateForm.isSubmitting}>
+                                                <button
+                                                  type="button"
+                                                  disabled={payRateForm.isSubmitting}
+                                                  onClick={() => { void handleSubmitPayRateDirect(); }}
+                                                >
                                                   {payRateForm.isSubmitting ? "Saving rate…" : "Save rate"}
                                                 </button>
                                                 <button
@@ -1188,7 +1201,7 @@ export function ManageUsersPage() {
                                                   Cancel
                                                 </button>
                                               </div>
-                                            </form>
+                                            </div>
                                           ) : (
                                             <button
                                               type="button"

@@ -1216,3 +1216,210 @@ describe("ManageUsersPage — state isolation, clinic reassignment, defensive us
     });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Save Rate structural fix — no nested <form>
+//
+// These tests confirm the root-cause fix: the Pay Profile "Save rate" button is
+// now type="button" and calls handleSubmitPayRateDirect() directly, rather than
+// submitting an inner <form> whose submit event bubbled (via React SyntheticEvent)
+// to the outer user-edit <form> and fired handleSaveEdit.
+//
+// Coverage:
+//   1. Save Rate calls createPayRate exactly once
+//   2. Save Rate does NOT call updateUser
+//   3. Edit panel stays open while pay-rate save is in progress
+//   4. A successful pay-rate save closes the rate form and shows the new rate
+//   5. A failed pay-rate save shows the error and leaves the edit panel open
+//   6. The outer Save button still calls updateUser (regression)
+//   7. The rendered edit panel contains no nested <form> elements
+//   8. The pay-rate user-binding guard is preserved in the direct handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("ManageUsersPage — Save Rate structural fix (no nested form)", () => {
+  const adminWithWrite = createAdminUser({
+    permissions: [
+      "users:read", "users:write",
+      "payroll:rates:read", "payroll:rates:write",
+    ],
+  });
+
+  const resolvedRate = {
+    id: "pr-1",
+    staffUserId: namedUser.id,
+    baseHourlyRateCents: 5000,
+    employmentType: "full_time" as const,
+    contractedWeeklyHours: 38,
+    superRatePercent: 12.0,
+    effectiveFrom: "2026-10-01",
+    effectiveTo: null,
+    createdByUserId: adminUser.id,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  beforeEach(() => {
+    mockCreatePayRate.mockClear();
+    mockUpdateUser.mockClear();
+    mockListPayRates.mockResolvedValue([]);
+    mockCreatePayRate.mockResolvedValue(resolvedRate);
+  });
+
+  /**
+   * Render the page as adminWithWrite, open namedUser's edit panel, then open
+   * the pay rate form.  Returns after the "Save rate" button is visible.
+   */
+  async function openPayRateFormFor(email: string = namedUser.email) {
+    setAuthenticatedUser(authTestState, adminWithWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(email)).toBeInTheDocument());
+
+    const row = screen.getByText(email).closest("tr") as HTMLElement;
+    await userEvent.click(within(row).getByRole("button", { name: /^edit$/i }));
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    // Confirm the rate-form container is visible
+    await waitFor(() =>
+      expect(screen.getByRole("form", { name: /add or update pay rate/i })).toBeInTheDocument(),
+    );
+  }
+
+  async function fillRate(rate = "50", date = "2026-10-01") {
+    await userEvent.type(screen.getByRole("spinbutton", { name: /base hourly rate/i }), rate);
+    await userEvent.type(screen.getByLabelText(/effective from/i), date);
+  }
+
+  // ── 1. createPayRate called exactly once ───────────────────────────────────
+  it("clicking Save rate calls createPayRate exactly once", async () => {
+    await openPayRateFormFor();
+    await fillRate();
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    await waitFor(() => { expect(mockCreatePayRate).toHaveBeenCalledTimes(1); });
+  });
+
+  // ── 2. updateUser NOT called when saving a pay rate ────────────────────────
+  it("clicking Save rate does NOT call updateUser", async () => {
+    await openPayRateFormFor();
+    await fillRate();
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    // Wait for the pay-rate call to finish so we know the save completed
+    await waitFor(() => { expect(mockCreatePayRate).toHaveBeenCalledTimes(1); });
+    // The user-edit save must never have been triggered
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  // ── 3. Edit panel stays open during save ───────────────────────────────────
+  it("the edit panel stays open while the pay-rate save is in progress", async () => {
+    // Make createPayRate hang so we can inspect the in-progress state
+    mockCreatePayRate.mockImplementationOnce(
+      () => new Promise(() => { /* intentional — never resolves in this test */ }),
+    );
+
+    await openPayRateFormFor();
+    await fillRate();
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    // isSubmitting = true → button label changes; edit panel must still be mounted
+    expect(screen.getByRole("button", { name: /saving rate/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(`Edit ${namedUser.email}`)).toBeInTheDocument();
+    // No user-profile save was triggered
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  // ── 4. Successful save closes the rate form and shows the new rate ─────────
+  it("a successful pay-rate save closes the rate form and shows the new rate", async () => {
+    // After createPayRate resolves, the refetch (fetch()) will call listPayRates again.
+    // Return the new rate on that second call so it appears in the UI.
+    mockListPayRates
+      .mockResolvedValueOnce([])           // initial load — no existing rate
+      .mockResolvedValue([resolvedRate]);   // refetch after save
+
+    await openPayRateFormFor();
+    await fillRate();
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    // Rate form button disappears on success
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /save rate/i })).not.toBeInTheDocument(),
+    );
+
+    // The Current Rate line should now show $50.00/hr
+    await waitFor(() => {
+      const label = screen.getByText(/current rate:/i);
+      expect(label.closest("div")).toHaveTextContent("$50.00/hr");
+    });
+  });
+
+  // ── 5. Failed save shows error; edit panel stays open ─────────────────────
+  it("a failed pay-rate save shows the error message and leaves the edit panel open", async () => {
+    mockCreatePayRate.mockRejectedValueOnce(new Error("RATE_CONFLICT"));
+
+    await openPayRateFormFor();
+    await fillRate();
+    await userEvent.click(screen.getByRole("button", { name: /save rate/i }));
+
+    // Error message should appear inside the pay-rate section
+    await waitFor(() =>
+      expect(screen.getByText(/RATE_CONFLICT/i)).toBeInTheDocument(),
+    );
+
+    // The edit panel must remain open
+    expect(screen.getByLabelText(`Edit ${namedUser.email}`)).toBeInTheDocument();
+    // updateUser must NOT have been called (the outer form was not submitted)
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  // ── 6. Outer Save still calls updateUser (regression) ─────────────────────
+  it("the outer Save button still calls updateUser and does not call createPayRate", async () => {
+    await openPayRateFormFor();
+    // Click the outer user-edit Save (not Save rate)
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => { expect(mockUpdateUser).toHaveBeenCalledTimes(1); });
+    expect(mockCreatePayRate).not.toHaveBeenCalled();
+  });
+
+  // ── 7. No nested <form> elements inside the edit panel ───────────────────
+  it("the rendered edit panel contains no nested <form> elements", async () => {
+    await openPayRateFormFor(); // open rate form so it is fully visible
+
+    // The outer user-edit element has an accessible name matching the user
+    const editPanel = screen.getByRole("form", { name: `Edit ${namedUser.email}` });
+
+    // querySelectorAll("form") selects native <form> elements, NOT <div role="form">
+    // After the structural fix this must return an empty NodeList
+    const nestedForms = editPanel.querySelectorAll("form");
+    expect(nestedForms).toHaveLength(0);
+  });
+
+  // ── 8. User-binding guard still works in the direct handler ───────────────
+  it("switching users clears the rate form and blocks createPayRate (guard preserved)", async () => {
+    setAuthenticatedUser(authTestState, adminWithWrite);
+    mockListUsers.mockResolvedValue(sampleUsers);
+    mockListClinics.mockResolvedValue(sampleClinics);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByText(namedUser.email)).toBeInTheDocument());
+
+    // Open User A and open the pay rate form (binds form.userId = namedUser.id)
+    await openEditFor(namedUser.email);
+    await waitFor(() => expect(screen.getByText(/pay profile/i)).toBeInTheDocument());
+    const addBtn = await screen.findByRole("button", { name: /add.*update.*rate/i });
+    await userEvent.click(addBtn);
+    expect(screen.getByRole("form", { name: /add or update pay rate/i })).toBeInTheDocument();
+
+    // Switch to User B — openEdit calls setPayRateForm(null), clearing the form
+    await openEditFor(unnamedUser.email);
+
+    // The rate form is gone and createPayRate was never invoked
+    expect(screen.queryByRole("form", { name: /add or update pay rate/i })).not.toBeInTheDocument();
+    expect(mockCreatePayRate).not.toHaveBeenCalled();
+  });
+});
