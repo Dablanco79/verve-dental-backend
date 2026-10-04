@@ -276,6 +276,42 @@ export function createPostgresTimesheetRepository(
       return rows[0] ? toTimesheetEntry(rows[0]) : null;
     },
 
+    // ── findByRosterEntryIds ───────────────────────────────────────────────
+
+    /**
+     * Bulk lookup: returns a Map of rosterEntryId → TimesheetEntry | null.
+     * Uses a single WHERE roster_entry_id = ANY($1::uuid[]) query rather than
+     * N individual findByRosterEntry calls, making it safe for production-volume
+     * historical range queries.
+     *
+     * Uses the idx_timesheet_roster_unique partial index on roster_entry_id
+     * (WHERE roster_entry_id IS NOT NULL) for efficient batch retrieval.
+     */
+    async findByRosterEntryIds(
+      ids: string[],
+    ): Promise<Map<string, TimesheetEntry | null>> {
+      const result = new Map<string, TimesheetEntry | null>();
+      // Initialize all requested IDs to null before the query.
+      for (const id of ids) result.set(id, null);
+
+      // Short-circuit: avoid a round-trip for empty input.
+      if (ids.length === 0) return result;
+
+      const { rows } = await pool.query<TimesheetEntryRow>(
+        `SELECT * FROM timesheet_entries
+         WHERE roster_entry_id = ANY($1::uuid[])`,
+        [ids],
+      );
+
+      for (const row of rows) {
+        if (row.roster_entry_id) {
+          result.set(row.roster_entry_id, toTimesheetEntry(row));
+        }
+      }
+
+      return result;
+    },
+
     // ── listByStaff ────────────────────────────────────────────────────────
 
     async listByStaff(

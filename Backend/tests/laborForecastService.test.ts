@@ -44,9 +44,53 @@ import { createInMemoryTimesheetRepository } from "../src/repositories/timesheet
 
 import type { RosterRepository } from "../src/repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../src/repositories/timesheetRepository.js";
+import type { UserRepository } from "../src/repositories/userRepository.js";
+import type { UserRecord } from "../src/types/auth.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
-import type { CreateTimesheetEntryInput } from "../src/types/payroll.js";
+import type { CreateTimesheetEntryInput, StaffPayrollTrack } from "../src/types/payroll.js";
 import type { ShiftType } from "../src/types/roster.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal UserRepository factory for unit tests
+// (Only listByClinic is used by the labor-forecast service; all other methods
+//  throw "not implemented" to detect accidental calls.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function createMinimalUserRepo(
+  staffPayrollTracks: Record<string, StaffPayrollTrack>,
+): UserRepository {
+  const makeRecord = (id: string, payrollTrack: StaffPayrollTrack): UserRecord => ({
+    id,
+    email: `${id}@test.au`,
+    passwordHash: "",
+    role: "clinical_staff",
+    homeClinicId: CLINIC_A_ID,
+    homeClinicName: "Clinic A",
+    firstName: null,
+    lastName: null,
+    displayName: null,
+    payrollTrack,
+    totpSecret: null,
+    mfaEnabled: false,
+    isActive: true,
+  });
+
+  return {
+    findByEmail(): never { throw new Error("not implemented in test stub"); },
+    findById(id: string): Promise<ReturnType<typeof makeRecord> | null> {
+      const track = staffPayrollTracks[id];
+      return Promise.resolve(track ? makeRecord(id, track) : null);
+    },
+    createUser(): never { throw new Error("not implemented in test stub"); },
+    listByClinic(): Promise<ReturnType<typeof makeRecord>[]> {
+      return Promise.resolve(Object.entries(staffPayrollTracks).map(([id, track]) => makeRecord(id, track)));
+    },
+    getClinicName(): Promise<string> { return Promise.resolve("Clinic A"); },
+    async updatePassword() { /* no-op */ },
+    updateUser(): never { throw new Error("not implemented in test stub"); },
+    async setUserMfaEnrollment() { /* no-op */ },
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared fixtures
@@ -68,6 +112,12 @@ const callerAdmin: AuthenticatedUser = {
   lastName: null,
   displayName: null,
   permissions: [],
+};
+
+/** Admin caller WITH payroll:rates:read — use this for tests that assert cost values. */
+const callerAdminWithRates: AuthenticatedUser = {
+  ...callerAdmin,
+  permissions: ["payroll:rates:read"],
 };
 
 const callerManagerA: AuthenticatedUser = {
@@ -98,11 +148,22 @@ const callerStaffA: AuthenticatedUser = {
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns a date N days ago as a YYYY-MM-DD string. */
+/** Returns today as YYYY-MM-DD in the local system timezone (matches clinic-local date). */
+function localToday(): string {
+  return new Intl.DateTimeFormat("en-CA").format(new Date());
+}
+
+/**
+ * Returns a date N days ago as a YYYY-MM-DD string.
+ * Uses local system timezone for "today", then pure UTC calendar arithmetic
+ * so the returned date is always N calendar days before local today regardless
+ * of the UTC offset.
+ */
 function daysAgoStr(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  const [y, m, d] = localToday().split("-").map(Number) as [number, number, number];
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - n);
+  return dt.toISOString().slice(0, 10);
 }
 
 /**
@@ -132,9 +193,13 @@ async function seedShift(
   const shiftType = opts.shiftType ?? "standard";
   const status = opts.status ?? "scheduled";
 
-  const start = new Date();
-  start.setUTCDate(start.getUTCDate() + daysFromNow);
-  start.setUTCHours(8, 0, 0, 0);
+  // Use the local-date string (system timezone) so that shifts land on the
+  // correct clinic-local calendar day regardless of the UTC offset.
+  // The service defaults to Australia/Sydney (AEDT = UTC+11), so placing
+  // the shift at 08:00 UTC on the local date ensures the clinic-local date
+  // matches the intended daysFromNow offset.
+  const localDate = dateOffset(daysFromNow);
+  const start = new Date(`${localDate}T08:00:00.000Z`);
 
   const end = new Date(start.getTime() + durationHours * 3_600_000);
 
@@ -809,5 +874,1160 @@ describe("LaborForecastService — summary metadata", () => {
 
     expect(resultA.clinicId).toBe(CLINIC_A_ID);
     expect(resultB.clinicId).toBe(CLINIC_B_ID);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getLaborCostAnalysis — new method tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { createInMemoryStaffPayRateRepository } from "../src/repositories/staffPayRateRepository.js";
+import type { StaffPayRateRepository } from "../src/repositories/staffPayRateRepository.js";
+
+// Extra fixture IDs for analysis tests
+const RATE_MANAGER_ID = "11111111-0000-0000-0000-000000000001";
+
+/**
+ * Returns a YYYY-MM-DD date offset from local today by N days
+ * (positive = future, negative = past).
+ * Uses local system timezone for "today" so the result matches the service's
+ * clinic-local today (Australia/Sydney) without any UTC midnight boundary issues.
+ */
+function dateOffset(n: number): string {
+  const [y, m, d] = localToday().split("-").map(Number) as [number, number, number];
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Seeds a rate in the pay-rate repo. */
+async function seedRate(
+  rateRepo: StaffPayRateRepository,
+  staffUserId: string,
+  opts: {
+    baseHourlyRateCents: number;
+    superRatePercent: number;
+    effectiveFrom: string;
+  },
+): Promise<void> {
+  await rateRepo.createRate({
+    staffUserId,
+    baseHourlyRateCents: opts.baseHourlyRateCents,
+    superRatePercent: opts.superRatePercent,
+    effectiveFrom: opts.effectiveFrom,
+    employmentType: "full_time",
+    contractedWeeklyHours: null,
+    createdByUserId: RATE_MANAGER_ID,
+  });
+}
+
+/**
+ * Seeds a historical hourly timesheet with a given timesheetStatus.
+ */
+async function seedHistoricalTimesheet(
+  timesheetRepo: TimesheetRepository,
+  opts: {
+    clinicId: string;
+    staffUserId: string;
+    staffEmail?: string;
+    shiftDate: string;
+    totalHoursWorked: number;
+    rosterEntryId?: string | null;
+    payrollType?: "hourly_auto" | "hourly_manual" | "commission_log";
+    timesheetStatus?: "approved" | "submitted" | "rejected" | "requires_amendment" | "draft" | null;
+  },
+): Promise<void> {
+  const shiftDate = opts.shiftDate;
+  const input: CreateTimesheetEntryInput = {
+    payrollType: opts.payrollType ?? "hourly_auto",
+    staffUserId: opts.staffUserId,
+    staffEmail: opts.staffEmail ?? "staff@clinic-a.au",
+    clinicId: opts.clinicId,
+    rosteredClinicId: opts.clinicId,
+    rosteredClinicName: "Clinic A",
+    rosterEntryId: opts.rosterEntryId ?? null,
+    shiftDate,
+    shiftStartAt: new Date(`${shiftDate}T08:00:00.000Z`),
+    shiftEndAt: new Date(`${shiftDate}T17:00:00.000Z`),
+    attendanceStatus: "present",
+    clockInAt: new Date(`${shiftDate}T08:00:00.000Z`),
+    clockOutAt: new Date(`${shiftDate}T17:00:00.000Z`),
+    breakDurationMinutes: 0,
+    totalHoursWorked: opts.totalHoursWorked,
+    ordinaryHours: opts.totalHoursWorked,
+    overtime15xHours: null,
+    overtime2xHours: null,
+    overtimeCustomHours: null,
+    commissionNote: null,
+    generatedBy: "system_auto",
+    clockInLocation: null,
+    clockOutLocation: null,
+  };
+  const entry = await timesheetRepo.create(input);
+  const status = opts.timesheetStatus !== undefined ? opts.timesheetStatus : "approved";
+  if (status !== null && status !== "draft") {
+    await timesheetRepo.update(entry.id, {
+      timesheetStatus: status,
+      approvedByUserId: MANAGER_USER_ID,
+      approvedAt: new Date(),
+      approvalNotes: status === "rejected" || status === "requires_amendment" ? "Test note" : null,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite A — effective-dated rate lookup fix
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — effective-dated rate lookup", () => {
+  it("future shift BEFORE rate change date uses the OLD rate", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    // Old rate: $38/hr from well in the past (no end date yet)
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+    // New rate: $40/hr effective in 5 days — closes the old rate
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_000,
+      superRatePercent: 12,
+      effectiveFrom: dateOffset(5),
+    });
+
+    // Shift in 2 days (before the new rate kicks in)
+    await seedShift(rosterRepo, { clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_A, daysFromNow: 2, durationHours: 10 });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(3),
+    });
+
+    const shiftType = result.futureForecast?.breakdownByShiftType[0];
+    // 10h × 3800 c/hr = 38000 c
+    expect(shiftType?.baseCostCents).toBe(38_000);
+  });
+
+  it("future shift ON/AFTER rate change date uses the NEW rate", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_000,
+      superRatePercent: 12,
+      effectiveFrom: dateOffset(5),
+    });
+
+    // Shift in 7 days (after the new rate kicks in)
+    await seedShift(rosterRepo, { clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_A, daysFromNow: 7, durationHours: 10 });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(6),
+      to: dateOffset(8),
+    });
+
+    const shiftType = result.futureForecast?.breakdownByShiftType[0];
+    // 10h × 4000 c/hr = 40000 c
+    expect(shiftType?.baseCostCents).toBe(40_000);
+  });
+
+  it("historical approved cost uses the rate effective on the timesheet shiftDate", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    // Rate was $35/hr historically, now $38/hr
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_500,
+      superRatePercent: 11,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 12,
+      effectiveFrom: dateOffset(-10), // new rate from 10 days ago
+    });
+
+    // Historical timesheet from 20 days ago (when $35/hr applied)
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-20),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-25),
+      to: dateOffset(-1),
+    });
+
+    // 8h × 3500 c/hr = 28000 c base; super = 28000 × 11% = 3080 c
+    expect(result.historical?.approved.baseCostCents).toBe(28_000);
+    expect(result.historical?.approved.superCostCents).toBe(3_080);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite B — Historical status classification
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — historical status classification", () => {
+  it("classifies submitted timesheets as Pending Approval (not Approved)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "submitted",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.pending.hours).toBe(8);
+    expect(result.historical?.approved.hours).toBe(0);
+  });
+
+  it("classifies rejected timesheets separately — excluded from planning estimate", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "rejected",
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.rejected.hours).toBe(8);
+    expect(result.historical?.approved.hours).toBe(0);
+    expect(result.historical?.pending.hours).toBe(0);
+    // Rejected must NOT contribute to planning estimate
+    expect(result.planningEstimate.totalCostCents).toBe(0);
+  });
+
+  it("classifies requires_amendment separately from rejected", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 6,
+      timesheetStatus: "requires_amendment",
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.requiresAmendment.hours).toBe(6);
+    expect(result.historical?.rejected.hours).toBe(0);
+    // requires_amendment must NOT contribute to planning estimate
+    expect(result.planningEstimate.totalCostCents).toBe(0);
+  });
+
+  it("classifies draft hourly timesheets as Incomplete (no cost)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-3),
+      totalHoursWorked: 7,
+      timesheetStatus: "draft",
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.incomplete.count).toBe(1);
+    expect(result.planningEstimate.totalCostCents).toBe(0);
+  });
+
+  it("commission_log timesheets never enter Incomplete (filtered by payrollType)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    // commission_log timesheetStatus is null (not draft)
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-3),
+      totalHoursWorked: 0,
+      payrollType: "commission_log",
+      timesheetStatus: null,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.incomplete.count).toBe(0);
+    expect(result.historical?.approved.hours).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite C — Missing timesheet detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — missing timesheet detection", () => {
+  it("detects a historical roster entry with no linked timesheet as Missing", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    // Historical shift (3 days ago, 8 hours) with NO timesheet
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: -3,
+      durationHours: 8,
+      status: "completed",
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.missing.count).toBe(1);
+    expect(result.historical?.missing.scheduledHours).toBe(8);
+    // Missing contributes zero cost
+    expect(result.planningEstimate.totalCostCents).toBe(0);
+  });
+
+  it("does not count a roster entry as Missing when a linked hourly timesheet exists", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    const rosterEntry = await rosterRepo.createEntry({
+      staffUserId: STAFF_USER_ID_A,
+      staffEmail: "staff@clinic-a.au",
+      rosteredClinicId: CLINIC_A_ID,
+      rosteredClinicName: "Clinic A",
+      shiftStartAt: new Date(`${dateOffset(-5)}T08:00:00.000Z`),
+      shiftEndAt: new Date(`${dateOffset(-5)}T17:00:00.000Z`),
+      shiftType: "standard",
+      notes: null,
+      createdByUserId: MANAGER_USER_ID,
+      createdByEmail: "manager@clinic-a.au",
+    });
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      rosterEntryId: rosterEntry.id,
+      timesheetStatus: "approved",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    expect(result.historical?.missing.count).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite D — Planning estimate formula
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — planning estimate", () => {
+  it("planning estimate = Approved + Pending + Future (no other components)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    // Approved historical (8h × 5000 c/hr = 40000 c base + 6000 c overhead = 46000 c)
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-7),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+
+    // Pending historical (4h × 5000 c/hr = 20000 c base + 3000 c overhead = 23000 c)
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-3),
+      totalHoursWorked: 4,
+      timesheetStatus: "submitted",
+    });
+
+    // Rejected (should NOT appear in totalCost)
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-2),
+      totalHoursWorked: 9,
+      timesheetStatus: "rejected",
+    });
+
+    // Future shift (9h × 5500 c/hr fallback = 49500 c base + 7425 c overhead = 56925 c)
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: 2,
+      durationHours: 9,
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(5),
+    });
+
+    // Verify composition (all non-null because callerAdminWithRates has rates permission)
+    expect(result.planningEstimate.approvedCostCents).toBe(result.historical?.approved.totalCostCents);
+    expect(result.planningEstimate.pendingCostCents).toBe(result.historical?.pending.totalCostCents);
+    expect(result.planningEstimate.futureCostCents).toBe(result.futureForecast?.totalCostCents);
+    expect(result.planningEstimate.totalCostCents).toBe(
+      (result.planningEstimate.approvedCostCents ?? 0) +
+      (result.planningEstimate.pendingCostCents ?? 0) +
+      (result.planningEstimate.futureCostCents ?? 0),
+    );
+    // Rejected is visible but not in total
+    expect(result.historical?.rejected.hours).toBe(9);
+    expect(result.planningEstimate.totalCostCents).not.toBe(0);
+    expect(result.planningEstimate.totalCostCents).toBe(
+      (result.historical?.approved.totalCostCents ?? 0) +
+      (result.historical?.pending.totalCostCents ?? 0) +
+      (result.futureForecast?.totalCostCents ?? 0),
+    );
+  });
+
+  it("mixed range: planning estimate excludes rejected and requires_amendment", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "requires_amendment",
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(5),
+    });
+
+    expect(result.historical?.requiresAmendment.hours).toBe(8);
+    expect(result.planningEstimate.approvedCostCents).toBe(0);
+    expect(result.planningEstimate.pendingCostCents).toBe(0);
+    expect(result.planningEstimate.totalCostCents).toBe(
+      result.planningEstimate.futureCostCents, // future only
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite E — Fallback rate behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — fallback rate", () => {
+  it("uses fallback rate (DEFAULT_HOURLY_RATE or clinic-wide) when no configured rate exists", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    // NO rate configured for STAFF_USER_ID_B — should use fallback
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: 1,
+      durationHours: 10,
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(0),
+      to: dateOffset(2),
+    });
+
+    expect(result.futureForecast?.anyStaffUsingFallback).toBe(true);
+    // 10h × 5000 c/hr (DEFAULT standard) = 50000 c
+    expect(result.futureForecast?.baseCostCents).toBe(50_000);
+  });
+
+  it("uses configured rate when available and marks usingFallback=false", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_200,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 1,
+      durationHours: 10,
+    });
+
+    // Use callerAdminWithRates so cost fields are non-null
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(0),
+      to: dateOffset(2),
+    });
+
+    expect(result.futureForecast?.anyStaffUsingFallback).toBe(false);
+    // 10h × 4200 c/hr = 42000 c base; super = 42000 × 12% = 5040 c
+    expect(result.futureForecast?.baseCostCents).toBe(42_000);
+    expect(result.futureForecast?.superCostCents).toBe(5_040);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite F — Staff breakdown and GPM redaction
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — staff breakdown and GPM redaction", () => {
+  it("staff breakdown sums to clinic-level totals (approved hours)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_A, staffEmail: "a@clinic.au",
+      shiftDate: dateOffset(-5), totalHoursWorked: 7, timesheetStatus: "approved",
+    });
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_B, staffEmail: "b@clinic.au",
+      shiftDate: dateOffset(-4), totalHoursWorked: 5, timesheetStatus: "approved",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    const staffSumApproved = result.staffBreakdown.reduce(
+      (sum, s) => sum + s.approvedHours,
+      0,
+    );
+    expect(staffSumApproved).toBeCloseTo(result.historical?.approved.hours ?? 0, 5);
+  });
+
+  it("owner_admin receives full rate and cost data in staff breakdown", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5), totalHoursWorked: 8, timesheetStatus: "approved",
+    });
+
+    const adminCaller: typeof callerAdmin = {
+      ...callerAdmin,
+      permissions: ["payroll:rates:read"],
+    };
+
+    const result = await svc.getLaborCostAnalysis(adminCaller, CLINIC_A_ID, {
+      from: dateOffset(-10), to: dateOffset(-1),
+    });
+
+    const staffRow = result.staffBreakdown.find((s) => s.staffUserId === STAFF_USER_ID_A);
+    expect(staffRow?.baseHourlyRateCents).toBe(3_800);
+    expect(staffRow?.superRatePercent).toBe(12);
+    expect(staffRow?.approvedCostCents).not.toBeNull();
+    expect(staffRow?.approvedCostCents).toBeGreaterThan(0);
+  });
+
+  it("GPM without payroll:rates:read receives null for per-staff rate and cost fields", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID, staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5), totalHoursWorked: 8, timesheetStatus: "approved",
+    });
+
+    // GPM WITHOUT payroll:rates:read
+    const gpmCaller: typeof callerManagerA = {
+      ...callerManagerA,
+      permissions: [], // no payroll:rates:read
+    };
+
+    const result = await svc.getLaborCostAnalysis(gpmCaller, CLINIC_A_ID, {
+      from: dateOffset(-10), to: dateOffset(-1),
+    });
+
+    const staffRow = result.staffBreakdown.find((s) => s.staffUserId === STAFF_USER_ID_A);
+    expect(staffRow?.baseHourlyRateCents).toBeNull();
+    expect(staffRow?.superRatePercent).toBeNull();
+    expect(staffRow?.approvedCostCents).toBeNull();
+    expect(staffRow?.pendingCostCents).toBeNull();
+    expect(staffRow?.futureCostCents).toBeNull();
+
+    // Hours are still visible
+    expect(staffRow?.approvedHours).toBe(8);
+
+    // ISSUE 1 FIX: Clinic-level aggregate costs ALSO redacted for GPM without rates permission.
+    expect(result.planningEstimate.approvedCostCents).toBeNull();
+    expect(result.planningEstimate.totalCostCents).toBeNull();
+    expect(result.historical?.approved.totalCostCents).toBeNull();
+    expect(result.historical?.approved.baseCostCents).toBeNull();
+
+    // Hours at clinic level are still visible
+    expect(result.historical?.approved.hours).toBe(8);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite G — Date range + timezone validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — date range validation", () => {
+  it("throws 400 INVALID_DATE_RANGE when from > to", async () => {
+    const svc = createLaborForecastService(
+      createInMemoryRosterRepository(),
+      createInMemoryTimesheetRepository(),
+    );
+
+    await expect(
+      svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+        from: "2026-12-31",
+        to: "2026-01-01",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_DATE_RANGE", statusCode: 400 });
+  });
+
+  it("throws 400 DATE_RANGE_TOO_LARGE for ranges exceeding 365 days", async () => {
+    const svc = createLaborForecastService(
+      createInMemoryRosterRepository(),
+      createInMemoryTimesheetRepository(),
+    );
+
+    await expect(
+      svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+        from: "2025-01-01",
+        to: "2027-01-01",
+      }),
+    ).rejects.toMatchObject({ code: "DATE_RANGE_TOO_LARGE", statusCode: 400 });
+  });
+
+  it("returns historical=null for future-only range", async () => {
+    const svc = createLaborForecastService(
+      createInMemoryRosterRepository(),
+      createInMemoryTimesheetRepository(),
+    );
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    expect(result.historical).toBeNull();
+    expect(result.futureForecast).not.toBeNull();
+  });
+
+  it("returns futureForecast=null for historical-only range", async () => {
+    const svc = createLaborForecastService(
+      createInMemoryRosterRepository(),
+      createInMemoryTimesheetRepository(),
+    );
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-14),
+      to: dateOffset(-1),
+    });
+
+    expect(result.futureForecast).toBeNull();
+    expect(result.historical).not.toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite H — Today hybrid classification (Issue 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — today hybrid classification", () => {
+  it("today's shift with an approved timesheet is classified as Approved, not Future Forecast", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    const todayStr = dateOffset(0);
+
+    // Create today's roster entry
+    const rosterEntry = await rosterRepo.createEntry({
+      staffUserId: STAFF_USER_ID_A,
+      staffEmail: "staff@clinic-a.au",
+      rosteredClinicId: CLINIC_A_ID,
+      rosteredClinicName: "Clinic A",
+      shiftStartAt: new Date(`${todayStr}T08:00:00.000Z`),
+      shiftEndAt:   new Date(`${todayStr}T17:00:00.000Z`),
+      shiftType: "standard",
+      notes: null,
+      createdByUserId: MANAGER_USER_ID,
+      createdByEmail: "manager@clinic-a.au",
+    });
+
+    // Seed an APPROVED timesheet linked to today's roster entry
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: todayStr,
+      totalHoursWorked: 8,
+      rosterEntryId: rosterEntry.id,
+      timesheetStatus: "approved",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: todayStr,
+      to: dateOffset(7),
+    });
+
+    // Today's approved timesheet must appear in historical Approved
+    expect(result.historical?.approved.hours).toBe(8);
+
+    // Today's shift must NOT be in Future Forecast (it was counted in historical)
+    expect(result.futureForecast?.totalHours ?? 0).toBe(0);
+  });
+
+  it("today's shift with a submitted timesheet is classified as Pending Approval", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    const todayStr = dateOffset(0);
+
+    const rosterEntry = await rosterRepo.createEntry({
+      staffUserId: STAFF_USER_ID_A,
+      staffEmail: "staff@clinic-a.au",
+      rosteredClinicId: CLINIC_A_ID,
+      rosteredClinicName: "Clinic A",
+      shiftStartAt: new Date(`${todayStr}T08:00:00.000Z`),
+      shiftEndAt:   new Date(`${todayStr}T17:00:00.000Z`),
+      shiftType: "standard",
+      notes: null,
+      createdByUserId: MANAGER_USER_ID,
+      createdByEmail: "manager@clinic-a.au",
+    });
+
+    // Seed a SUBMITTED (pending) timesheet linked to today's roster entry
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: todayStr,
+      totalHoursWorked: 7,
+      rosterEntryId: rosterEntry.id,
+      timesheetStatus: "submitted",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-3),
+      to: dateOffset(3),
+    });
+
+    // Classified as Pending Approval (not Approved, not Future Forecast)
+    expect(result.historical?.pending.hours).toBe(7);
+    expect(result.historical?.approved.hours).toBe(0);
+    // The roster entry is excluded from future forecast
+    expect(result.futureForecast?.totalHours ?? 0).toBe(0);
+  });
+
+  it("today's shift with no linked timesheet stays in Future Forecast (not Missing)", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    // Today's shift — no timesheet yet (shift in progress or upcoming)
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 0,
+      durationHours: 9,
+      status: "confirmed",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(0),
+      to: dateOffset(7),
+    });
+
+    // Today's un-timesheeted shift is UPCOMING → in Future Forecast, not Missing
+    expect(result.futureForecast?.totalHours).toBe(9);
+    expect(result.historical?.missing.count ?? 0).toBe(0);
+  });
+
+  it("same-day shifts are not double-counted: one approved + one upcoming", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    const todayStr = dateOffset(0);
+
+    // Shift 1: already approved today (am shift)
+    const rosterEntry1 = await rosterRepo.createEntry({
+      staffUserId: STAFF_USER_ID_A,
+      staffEmail: "staff@clinic-a.au",
+      rosteredClinicId: CLINIC_A_ID,
+      rosteredClinicName: "Clinic A",
+      shiftStartAt: new Date(`${todayStr}T06:00:00.000Z`),
+      shiftEndAt:   new Date(`${todayStr}T14:00:00.000Z`),
+      shiftType: "standard",
+      notes: null,
+      createdByUserId: MANAGER_USER_ID,
+      createdByEmail: "manager@clinic-a.au",
+    });
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: todayStr,
+      totalHoursWorked: 8,
+      rosterEntryId: rosterEntry1.id,
+      timesheetStatus: "approved",
+    });
+
+    // Shift 2: no timesheet yet (pm shift, still upcoming).
+    // Times are 05:00–13:00 UTC = 15:00–23:00 AEST — well within the local
+    // calendar day to avoid the midnight-AEST boundary (T14:00:00Z) which
+    // equals tomorrowStartUTC and would be excluded by strict < comparators.
+    await rosterRepo.createEntry({
+      staffUserId: STAFF_USER_ID_B,
+      staffEmail: "staff-b@clinic-a.au",
+      rosteredClinicId: CLINIC_A_ID,
+      rosteredClinicName: "Clinic A",
+      shiftStartAt: new Date(`${todayStr}T05:00:00.000Z`),
+      shiftEndAt:   new Date(`${todayStr}T13:00:00.000Z`),
+      shiftType: "standard",
+      notes: null,
+      createdByUserId: MANAGER_USER_ID,
+      createdByEmail: "manager@clinic-a.au",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: todayStr,
+      to: todayStr,
+    });
+
+    // Shift 1 (approved, 8h) → historical Approved
+    expect(result.historical?.approved.hours).toBe(8);
+
+    // Shift 2 (no timesheet, 8h) → future forecast, not missing
+    expect(result.futureForecast?.totalHours).toBe(8);
+    expect(result.historical?.missing.count ?? 0).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite I — Commission staff regression (authoritative payroll_track)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These tests verify that missing-timesheet detection uses the authoritative
+// users.payroll_track column (injected via UserRepository) rather than
+// inferring commission status from historical commission_log activity.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — commission staff regression (authoritative payroll_track)", () => {
+  it("commission staff (payroll_track='commission') with NO commission log history is NOT counted as Missing", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    // UserRepository: STAFF_USER_ID_A is commission-track — no timesheets are seeded at all.
+    const userRepo = createMinimalUserRepo({ [STAFF_USER_ID_A]: "commission" });
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, undefined, userRepo);
+
+    // Commission dentist has a completed historical roster entry with NO linked timesheet
+    // and NO commission_log history — the 90-day lookback would have missed them, but
+    // the authoritative payroll_track correctly identifies them as commission-track.
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: -5,
+      durationHours: 8,
+      status: "completed",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-20),
+      to: dateOffset(-1),
+    });
+
+    // Commission staff must NOT be flagged as "Missing hourly timesheet"
+    expect(result.historical?.missing.count).toBe(0);
+    expect(result.historical?.missing.scheduledHours).toBe(0);
+  });
+
+  it("hourly staff (payroll_track='hourly') with no linked timesheet IS counted as Missing", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    // UserRepository: STAFF_USER_ID_B is hourly-track.
+    const userRepo = createMinimalUserRepo({ [STAFF_USER_ID_B]: "hourly" });
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, undefined, userRepo);
+
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: -5,
+      durationHours: 8,
+      status: "completed",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-20),
+      to: dateOffset(-1),
+    });
+
+    // Hourly staff with no timesheet MUST be flagged as Missing
+    expect(result.historical?.missing.count).toBe(1);
+    expect(result.historical?.missing.scheduledHours).toBe(8);
+  });
+
+  it("commission detection does NOT depend on historical commission log presence", async () => {
+    // STAFF_USER_ID_A has payroll_track='commission' but ZERO commission_log history.
+    // STAFF_USER_ID_B has commission_log history but payroll_track='hourly'.
+    // → only the payroll_track column must determine the classification.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const userRepo = createMinimalUserRepo({
+      [STAFF_USER_ID_A]: "commission", // no commission history — should still be excluded from Missing
+      [STAFF_USER_ID_B]: "hourly",     // has commission history — should still be Missing if no timesheet
+    });
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, undefined, userRepo);
+
+    // Seed a commission_log for STAFF_USER_ID_B (the hourly one) — should not exempt them
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      shiftDate: dateOffset(-10),
+      totalHoursWorked: 0,
+      payrollType: "commission_log",
+      timesheetStatus: null,
+    });
+
+    // Both staff have historical roster entries with no linked hourly timesheet
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: -5,
+      durationHours: 8,
+      status: "completed",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: -3,
+      durationHours: 6,
+      status: "completed",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdmin, CLINIC_A_ID, {
+      from: dateOffset(-20),
+      to: dateOffset(-1),
+    });
+
+    // STAFF_USER_ID_A (commission track, no commission history) → NOT Missing
+    // STAFF_USER_ID_B (hourly track, has commission history) → IS Missing
+    expect(result.historical?.missing.count).toBe(1);
+    expect(result.historical?.missing.scheduledHours).toBe(6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite J — Aggregate cost redaction (Issue 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — aggregate cost redaction for callers without payroll:rates:read", () => {
+  it("GPM without payroll:rates:read receives null for all historical aggregate cost fields", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-3),
+      totalHoursWorked: 4,
+      timesheetStatus: "submitted",
+    });
+
+    const gpmCaller: AuthenticatedUser = { ...callerManagerA, permissions: [] };
+    const result = await svc.getLaborCostAnalysis(gpmCaller, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    // Hours MUST be visible
+    expect(result.historical?.approved.hours).toBe(8);
+    expect(result.historical?.pending.hours).toBe(4);
+
+    // ALL aggregate cost fields must be null
+    expect(result.historical?.approved.baseCostCents).toBeNull();
+    expect(result.historical?.approved.superCostCents).toBeNull();
+    expect(result.historical?.approved.totalCostCents).toBeNull();
+    expect(result.historical?.pending.baseCostCents).toBeNull();
+    expect(result.historical?.pending.totalCostCents).toBeNull();
+  });
+
+  it("GPM without payroll:rates:read receives null for all future forecast aggregate cost fields", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 9,
+    });
+
+    const gpmCaller: AuthenticatedUser = { ...callerManagerA, permissions: [] };
+    const result = await svc.getLaborCostAnalysis(gpmCaller, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    // Hours MUST be visible
+    expect(result.futureForecast?.totalHours).toBe(9);
+
+    // ALL aggregate cost fields must be null
+    expect(result.futureForecast?.baseCostCents).toBeNull();
+    expect(result.futureForecast?.superCostCents).toBeNull();
+    expect(result.futureForecast?.totalCostCents).toBeNull();
+    expect(result.futureForecast?.breakdownByShiftType[0]?.baseCostCents).toBeNull();
+    expect(result.futureForecast?.breakdownByShiftType[0]?.totalCostCents).toBeNull();
+  });
+
+  it("GPM without payroll:rates:read receives null for all planning estimate cost fields", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: 2,
+      durationHours: 9,
+    });
+
+    const gpmCaller: AuthenticatedUser = { ...callerManagerA, permissions: [] };
+    const result = await svc.getLaborCostAnalysis(gpmCaller, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(5),
+    });
+
+    // ALL planning estimate cost fields must be null
+    expect(result.planningEstimate.approvedCostCents).toBeNull();
+    expect(result.planningEstimate.pendingCostCents).toBeNull();
+    expect(result.planningEstimate.futureCostCents).toBeNull();
+    expect(result.planningEstimate.totalCostCents).toBeNull();
+
+    // Data quality flags and hours must still be visible.
+    // Approved hours = 8 (historical timesheet for STAFF_USER_ID_A).
+    // Future hours = 8 (clinic-wide avg from STAFF_USER_ID_A's timesheet applies
+    // to STAFF_USER_ID_B who has no personal history; scheduled duration not used).
+    expect(result.historical?.approved.hours).toBe(8);
+    expect(result.futureForecast?.totalHours).toBe(8);
+  });
+
+  it("caller WITH payroll:rates:read receives real non-null cost values for all aggregate fields", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo);
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-5),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-10),
+      to: dateOffset(-1),
+    });
+
+    // All cost fields non-null and positive
+    expect(result.historical?.approved.baseCostCents).toBeGreaterThan(0);
+    expect(result.historical?.approved.superCostCents).toBeGreaterThan(0);
+    expect(result.historical?.approved.totalCostCents).toBeGreaterThan(0);
+    expect(result.planningEstimate.approvedCostCents).toBeGreaterThan(0);
+    expect(result.planningEstimate.totalCostCents).toBeGreaterThan(0);
   });
 });

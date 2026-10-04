@@ -23,6 +23,14 @@ export interface TimesheetRepository {
    * when a roster shift transitions to 'completed' more than once (e.g. retry).
    */
   findByRosterEntry(rosterEntryId: string): Promise<TimesheetEntry | null>;
+  /**
+   * Returns a Map of rosterEntryId → TimesheetEntry | null for a batch of IDs.
+   * IDs with no linked timesheet entry map to null.
+   * Uses a single DB query (WHERE roster_entry_id = ANY($1::uuid[])) rather than N
+   * individual findByRosterEntry calls — safe for production-volume history queries.
+   * Empty input returns an empty Map immediately without a DB round-trip.
+   */
+  findByRosterEntryIds(ids: string[]): Promise<Map<string, TimesheetEntry | null>>;
   listByStaff(staffUserId: string, options?: ListTimesheetOptions): Promise<TimesheetEntry[]>;
   listByClinic(clinicId: string, options?: ListTimesheetOptions): Promise<TimesheetEntry[]>;
   listByClinicPaginated(clinicId: string, options?: ListTimesheetPageOptions): Promise<TimesheetPage>;
@@ -111,6 +119,15 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
     findByRosterEntry(rosterEntryId: string): Promise<TimesheetEntry | null> {
       const found = entries.find((e) => e.rosterEntryId === rosterEntryId);
       return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findByRosterEntryIds(ids: string[]): Promise<Map<string, TimesheetEntry | null>> {
+      const result = new Map<string, TimesheetEntry | null>();
+      for (const id of ids) {
+        const found = entries.find((e) => e.rosterEntryId === id);
+        result.set(id, found ? { ...found } : null);
+      }
+      return Promise.resolve(result);
     },
 
     listByStaff(

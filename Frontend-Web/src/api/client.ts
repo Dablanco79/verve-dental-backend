@@ -49,7 +49,7 @@ import type {
   RosterEntry,
   UpdateShiftRequest,
 } from "../types/roster.js";
-import type { LaborForecastSummary } from "../types/forecast.js";
+import type { LaborCostAnalysis } from "../types/forecast.js";
 import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
@@ -1285,10 +1285,17 @@ export function createApiClient(config: AppConfig) {
 
   async function getLaborForecast(
     clinicId: string,
-    forecastDays?: number,
-  ): Promise<LaborForecastSummary> {
-    const qs = forecastDays !== undefined ? `?forecastDays=${String(forecastDays)}` : "";
-    return request<LaborForecastSummary>(
+    params?: { from: string; to: string } | { forecastDays: number },
+  ): Promise<LaborCostAnalysis> {
+    let qs = "";
+    if (params) {
+      if ("from" in params) {
+        qs = `?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`;
+      } else {
+        qs = `?forecastDays=${String(params.forecastDays)}`;
+      }
+    }
+    return request<LaborCostAnalysis>(
       config,
       `/api/v1/clinics/${clinicId}/forecast/labor${qs}`,
       {},

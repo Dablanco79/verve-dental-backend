@@ -1,47 +1,153 @@
 /**
- * Labor cost projection types — mirrors the Backend service output shapes from
- * laborForecastService.ts (Module 06, Session 3).
+ * Labour Cost Analysis types — mirrors the Backend service output shapes.
  *
- * All monetary values are AUD, rounded to 2 decimal places by the API.
+ * All monetary values are AUD dollars (divided by 100 from integer cents by the API).
+ * Hours are decimal (e.g. 7.5 = 7 hours 30 minutes).
  */
 
-/** Per-role (shiftType) labor cost projection within the forecast window. */
-export type RoleLaborProjection = {
-  /** ShiftType acting as role proxy: "standard" | "overtime" | "on_call" | "training". */
-  role: string;
-  /** Total projected hours for all non-cancelled shifts of this role in the window. */
-  totalScheduledHours: number;
-  /** Base labor cost: totalScheduledHours × hourlyRate (AUD). */
-  projectedBaseCost: number;
-  /** Overhead component: baseCost × (overheadMultiplier − 1) (AUD). */
-  projectedOverheadCost: number;
-  /** Grand total per role: baseCost + overheadCost (AUD). */
-  totalProjectedCost: number;
-  /**
-   * True when at least one staff member in this role group is using the
-   * hard-coded default estimate rather than a configured pay rate.
-   */
+// ── Cost breakdown ────────────────────────────────────────────────────────────
+
+/**
+ * Hours + costs for a single status bucket (Approved / Pending / Rejected / RequiresAmendment).
+ * Cost fields are null when the caller lacks "payroll:rates:read".
+ */
+export type CostBreakdown = {
+  hours: number;
+  /** null when the caller lacks payroll:rates:read. */
+  baseCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  superCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  totalCost: number | null;
+};
+
+/** Count + scheduled hours for exception categories (no cost). */
+export type ExceptionSummary = {
+  count: number;
+  scheduledHours: number;
+};
+
+// ── Historical section ────────────────────────────────────────────────────────
+
+/** Historical labour status breakdown for dates before clinic-local today. */
+export type HistoricalBreakdown = {
+  /** Approved timesheets — confirmed labour cost. */
+  approved: CostBreakdown;
+  /** Pending Approval (timesheetStatus = "submitted"). */
+  pending: CostBreakdown;
+  /** Rejected — shown for visibility, excluded from planning estimate. */
+  rejected: CostBreakdown;
+  /** Requires Amendment — own exception category, excluded from planning estimate. */
+  requiresAmendment: CostBreakdown;
+  /** Draft hourly timesheets — no cost, report count only. */
+  incomplete: ExceptionSummary;
+  /** Historical roster entries with no linked timesheet. */
+  missing: ExceptionSummary;
+};
+
+// ── Future forecast section ───────────────────────────────────────────────────
+
+/** Projected costs per shift type within the future forecast window. */
+export type ShiftTypeProjection = {
+  shiftType: string;
+  projectedHours: number;
+  /** null when the caller lacks payroll:rates:read. */
+  baseCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  superCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  totalCost: number | null;
   usingFallbackForSomeStaff: boolean;
 };
 
-/** Clinic-level labor cost summary returned by GET /clinics/:clinicId/forecast/labor. */
-export type LaborForecastSummary = {
-  clinicId: string;
-  /** Number of calendar days in the forward-looking forecast window. */
-  forecastWindowDays: number;
-  /** Sum of projected hours across all roles. */
-  totalProjectedHours: number;
-  /** Sum of base costs across all roles (AUD). */
-  totalProjectedBaseCost: number;
-  /** Sum of overhead components across all roles (AUD). */
-  totalProjectedOverheadCost: number;
-  /** Grand total cost including all roles and overhead (AUD). */
-  grandTotalProjectedCost: number;
-  /** Per-role breakdown, sorted alphabetically by role name. */
-  breakdownByRole: RoleLaborProjection[];
-  /**
-   * True when any staff member in the forecast window is using the
-   * default estimate rather than a configured pay rate.
-   */
+/** Future forecast section (null when date range contains no future dates). */
+export type FutureForecastSection = {
+  totalHours: number;
+  /** null when the caller lacks payroll:rates:read. */
+  baseCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  superCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  totalCost: number | null;
   anyStaffUsingFallback: boolean;
+  breakdownByShiftType: ShiftTypeProjection[];
 };
+
+// ── Planning estimate ─────────────────────────────────────────────────────────
+
+/**
+ * Planning estimate = Approved + Pending Approval + Future Forecast.
+ * All cost fields are null when the caller lacks "payroll:rates:read".
+ */
+export type PlanningEstimate = {
+  /** null when the caller lacks payroll:rates:read. */
+  approvedCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  pendingCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  futureCost: number | null;
+  /** null when the caller lacks payroll:rates:read. */
+  totalCost: number | null;
+};
+
+// ── Staff breakdown ───────────────────────────────────────────────────────────
+
+/**
+ * Per-staff cost breakdown row.
+ *
+ * Rate and cost fields are null when the API caller does not have
+ * "payroll:rates:read" permission (GPM without explicit rate access).
+ * Hours fields are always present.
+ */
+export type StaffCostBreakdown = {
+  staffUserId: string;
+  staffEmail: string;
+  // Hours — always visible
+  approvedHours: number;
+  pendingHours: number;
+  rejectedHours: number;
+  requiresAmendmentHours: number;
+  incompleteCount: number;
+  incompleteScheduledHours: number;
+  missingShiftCount: number;
+  missingScheduledHours: number;
+  futureProjectedHours: number;
+  // Rate info — null when redacted
+  baseHourlyRate: number | null;
+  superRatePercent: number | null;
+  rateSource: "configured" | "fallback" | null;
+  // Costs — null when redacted
+  approvedCost: number | null;
+  pendingCost: number | null;
+  rejectedCost: number | null;
+  requiresAmendmentCost: number | null;
+  futureCost: number | null;
+};
+
+// ── Data quality ──────────────────────────────────────────────────────────────
+
+export type DataQuality = {
+  hasIncompleteTimesheets: boolean;
+  hasMissingTimesheets: boolean;
+  hasRejectedTimesheets: boolean;
+  hasRequiresAmendment: boolean;
+};
+
+// ── Top-level response ────────────────────────────────────────────────────────
+
+/** Full Labour Cost Analysis response from GET /clinics/:clinicId/forecast/labor. */
+export type LaborCostAnalysis = {
+  clinicId: string;
+  dateRange: { from: string; to: string; timezone: string };
+  /** null when the date range contains no historical dates. */
+  historical: HistoricalBreakdown | null;
+  /** null when the date range contains no future dates. */
+  futureForecast: FutureForecastSection | null;
+  planningEstimate: PlanningEstimate;
+  staffBreakdown: StaffCostBreakdown[];
+  dataQuality: DataQuality;
+};
+
+// ── Legacy alias (kept to avoid breaking imports elsewhere) ───────────────────
+/** @deprecated Use LaborCostAnalysis. Kept for any remaining references. */
+export type LaborForecastSummary = LaborCostAnalysis;

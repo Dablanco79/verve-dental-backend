@@ -1,40 +1,26 @@
 /**
  * laborForecastRoutes.ts
  *
- * Authenticated, tenant-isolated Express router for the Labor Cost Projection
- * Engine.  Mounted at `/clinics/:clinicId/forecast` in routes/index.ts,
- * exposing a single endpoint:
+ * Authenticated, tenant-isolated Express router for the Labour Cost Analysis
+ * engine.  Mounted at `/clinics/:clinicId/forecast` in routes/index.ts.
  *
  *   GET /clinics/:clinicId/forecast/labor
- *     Returns the full labor cost projection summary for the clinic including
- *     per-role breakdowns, base costs, overhead costs, and grand totals.
  *
- * Multi-tenant isolation is enforced at two independent layers:
- *   1. Route layer  — enforceTenantParam("clinicId") rejects any token whose
- *      homeClinicId does not match the :clinicId URL segment (owner_admin is
- *      the only role exempt).
- *   2. Service layer — LaborForecastService.assertTenantAccess() performs the
- *      same check independently, so a misconfigured router cannot bypass it.
+ * Query parameters (all optional):
+ *   from          (YYYY-MM-DD) — start of analysis window (clinic-local).
+ *   to            (YYYY-MM-DD) — end of analysis window inclusive (clinic-local).
+ *   forecastDays  (integer 1–90) — convenience shorthand: sets from=today,
+ *                 to=today+forecastDays.  Ignored when from/to are present.
  *
- * RBAC gate:
- *   Labor cost data is financial — only owner_admin and group_practice_manager
- *   are permitted.  clinical_staff is denied at both the route layer (requireRoles)
- *   and the service layer (assertFinancialAccess), providing defence in depth.
+ * When neither from/to nor forecastDays is provided the default is a 14-day
+ * future-only window (forecastDays=14), matching prior behaviour.
+ *
+ * RBAC: owner_admin and group_practice_manager only.
+ * Per-staff rate/cost fields are redacted for callers without "payroll:rates:read".
  *
  * Monetary serialisation:
- *   LaborForecastService returns all cost fields as INTEGER AUD CENTS to ensure
- *   deterministic ledger arithmetic.  This handler divides every cost field by
- *   100 before writing the JSON response so the client receives fractional AUD
- *   dollar amounts (e.g. 45000 cents → 450.00 dollars).  The division-by-100
- *   step must remain exclusively in this layer — never inside the service.
- *
- * Timezone calibration:
- *   The clinic's IANA timezone is fetched from clinicRepository and forwarded
- *   to the service via LaborForecastOptions.timezone so that lookback and
- *   forecast windows are anchored to clinic-local calendar-day boundaries.
- *
- * Query parameters:
- *   forecastDays  (integer, 1–90, default 14) — forward-looking window in days.
+ *   All cost fields from the service are INTEGER AUD CENTS.
+ *   This handler divides by 100 before writing JSON (e.g. 45000 → 450.00).
  */
 
 import { Router } from "express";
@@ -48,236 +34,328 @@ import {
   requireRoles,
 } from "../middleware/authMiddleware.js";
 import { createLaborForecastService } from "../services/laborForecastService.js";
-import type { LaborForecastSummary, RoleLaborProjection } from "../services/laborForecastService.js";
+import type {
+  CostBreakdown,
+  DataQuality,
+  ExceptionSummary,
+  FutureForecastSection,
+  HistoricalBreakdown,
+  LaborCostAnalysis,
+  PlanningEstimate,
+  ShiftTypeProjection,
+  StaffCostBreakdown,
+} from "../services/laborForecastService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../types/errors.js";
 import { zodToDetails } from "../utils/validation.js";
 
 // ── Role gates ────────────────────────────────────────────────────────────────
 
-/**
- * Roles permitted to view labor cost / financial forecast data.
- * clinical_staff is intentionally excluded — it must not see raw cost figures.
- */
 const LABOR_FORECAST_ROLES = ["owner_admin", "group_practice_manager"] as const;
 
 // ── Query parameter schema ─────────────────────────────────────────────────────
 
-/**
- * Strict digits-only pattern.  Rejects mixed strings like "14abc" that
- * parseInt would silently truncate to 14, producing a deceptive valid result.
- */
 const DIGITS_ONLY = /^\d+$/;
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-/**
- * Validates the optional `forecastDays` query string parameter.
- * Applies a strict digits-only regex before parseInt so that values like
- * "14abc" are rejected at the perimeter rather than silently coerced to 14.
- */
 const laborForecastQuerySchema = z.object({
+  /** Legacy shorthand: forward-only window. Ignored when from/to present. */
   forecastDays: z
     .string()
     .regex(DIGITS_ONLY, "forecastDays must contain digits only")
     .optional()
     .transform((v) => (v !== undefined ? parseInt(v, 10) : undefined))
     .pipe(z.number().int().min(1).max(90).optional()),
+  /** Start of analysis window, clinic-local YYYY-MM-DD. */
+  from: z
+    .string()
+    .regex(DATE_REGEX, "from must be YYYY-MM-DD")
+    .optional(),
+  /** End of analysis window, clinic-local YYYY-MM-DD (inclusive). */
+  to: z
+    .string()
+    .regex(DATE_REGEX, "to must be YYYY-MM-DD")
+    .optional(),
 });
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Extracts and validates a UUID path parameter.
- * Throws 400 INVALID_PARAM when the value is absent or malformed.
- */
 function requireUuidParam(req: Request, paramName: string): string {
   const raw = req.params[paramName];
   const value = typeof raw === "string" ? raw : "";
-
   if (!UUID_REGEX.test(value)) {
-    throw new AppError(
-      400,
-      "VALIDATION_ERROR",
-      "Request validation failed",
-      [{ field: paramName, message: `${paramName} must be a valid UUID` }],
-    );
+    throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+      { field: paramName, message: `${paramName} must be a valid UUID` },
+    ]);
   }
-
   return value;
 }
 
-/**
- * Asserts that req.user is populated (authentication middleware must run first).
- * Returns the authenticated user or throws 401 UNAUTHORIZED.
- */
 function requireUser(req: Request) {
-  if (!req.user) {
-    throw new AppError(401, "UNAUTHORIZED", "Authentication required");
-  }
-
+  if (!req.user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
   return req.user;
 }
 
-// ── Monetary serialisation ────────────────────────────────────────────────────
+/** Returns clinic-local today as YYYY-MM-DD using the clinic's IANA timezone. */
+function localToday(timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
 
-/**
- * API payload shape for a per-role row — cost fields expressed in AUD dollars
- * (2 decimal places) rather than the integer cents stored by the service.
- */
-type RoleLaborProjectionDTO = Omit<
-  RoleLaborProjection,
-  "projectedBaseCost" | "projectedOverheadCost" | "totalProjectedCost"
-> & {
-  /** AUD dollars (e.g. 450.00). */
-  projectedBaseCost: number;
-  /** AUD dollars (e.g. 67.50). */
-  projectedOverheadCost: number;
-  /** AUD dollars (e.g. 517.50). */
-  totalProjectedCost: number;
-  /** True when at least one staff member in this role group is using the default estimate. */
+/** Adds N calendar days to a YYYY-MM-DD string. */
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number) as [number, number, number];
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+// ── DTO serialisation (cents → dollars) ───────────────────────────────────────
+
+type CostBreakdownDTO = {
+  hours: number;
+  baseCost: number | null;
+  superCost: number | null;
+  totalCost: number | null;
+};
+
+type ExceptionSummaryDTO = ExceptionSummary;
+
+type HistoricalBreakdownDTO = {
+  approved: CostBreakdownDTO;
+  pending: CostBreakdownDTO;
+  rejected: CostBreakdownDTO;
+  requiresAmendment: CostBreakdownDTO;
+  incomplete: ExceptionSummaryDTO;
+  missing: ExceptionSummaryDTO;
+};
+
+type ShiftTypeProjectionDTO = {
+  shiftType: string;
+  projectedHours: number;
+  baseCost: number | null;
+  superCost: number | null;
+  totalCost: number | null;
   usingFallbackForSomeStaff: boolean;
 };
 
-/**
- * API payload shape for the top-level summary — cost totals in AUD dollars.
- */
-type LaborForecastSummaryDTO = Omit<
-  LaborForecastSummary,
-  | "totalProjectedBaseCost"
-  | "totalProjectedOverheadCost"
-  | "grandTotalProjectedCost"
-  | "breakdownByRole"
-> & {
-  /** AUD dollars. */
-  totalProjectedBaseCost: number;
-  /** AUD dollars. */
-  totalProjectedOverheadCost: number;
-  /** AUD dollars. */
-  grandTotalProjectedCost: number;
-  breakdownByRole: RoleLaborProjectionDTO[];
-  /** True when any staff member in the forecast is using the default estimate. */
+type FutureForecastDTO = {
+  totalHours: number;
+  baseCost: number | null;
+  superCost: number | null;
+  totalCost: number | null;
   anyStaffUsingFallback: boolean;
+  breakdownByShiftType: ShiftTypeProjectionDTO[];
 };
 
-/**
- * Converts a LaborForecastSummary (integer cents) to the JSON-safe DTO
- * (fractional AUD dollars) for the API response.
- *
- * Division by 100 is performed exclusively here — never inside the service.
- */
-function toSummaryDTO(summary: LaborForecastSummary): LaborForecastSummaryDTO {
+type PlanningEstimateDTO = {
+  approvedCost: number | null;
+  pendingCost: number | null;
+  futureCost: number | null;
+  totalCost: number | null;
+};
+
+type StaffCostBreakdownDTO = {
+  staffUserId: string;
+  staffEmail: string;
+  approvedHours: number;
+  pendingHours: number;
+  rejectedHours: number;
+  requiresAmendmentHours: number;
+  incompleteCount: number;
+  incompleteScheduledHours: number;
+  missingShiftCount: number;
+  missingScheduledHours: number;
+  futureProjectedHours: number;
+  // null when redacted
+  baseHourlyRate: number | null;
+  superRatePercent: number | null;
+  rateSource: "configured" | "fallback" | null;
+  approvedCost: number | null;
+  pendingCost: number | null;
+  rejectedCost: number | null;
+  requiresAmendmentCost: number | null;
+  futureCost: number | null;
+};
+
+type LaborCostAnalysisDTO = {
+  clinicId: string;
+  dateRange: { from: string; to: string; timezone: string };
+  historical: HistoricalBreakdownDTO | null;
+  futureForecast: FutureForecastDTO | null;
+  planningEstimate: PlanningEstimateDTO;
+  staffBreakdown: StaffCostBreakdownDTO[];
+  dataQuality: DataQuality;
+};
+
+function c2d(cents: number): number { return cents / 100; }
+function c2dN(cents: number | null): number | null { return cents !== null ? cents / 100 : null; }
+
+function toCostBreakdownDTO(b: CostBreakdown): CostBreakdownDTO {
   return {
-    clinicId: summary.clinicId,
-    forecastWindowDays: summary.forecastWindowDays,
-    totalProjectedHours: summary.totalProjectedHours,
-    totalProjectedBaseCost: summary.totalProjectedBaseCost / 100,
-    totalProjectedOverheadCost: summary.totalProjectedOverheadCost / 100,
-    grandTotalProjectedCost: summary.grandTotalProjectedCost / 100,
-    anyStaffUsingFallback: summary.anyStaffUsingFallback,
-    breakdownByRole: summary.breakdownByRole.map((row) => ({
-      role: row.role,
-      totalScheduledHours: row.totalScheduledHours,
-      projectedBaseCost: row.projectedBaseCost / 100,
-      projectedOverheadCost: row.projectedOverheadCost / 100,
-      totalProjectedCost: row.totalProjectedCost / 100,
-      usingFallbackForSomeStaff: row.usingFallbackForSomeStaff,
-    })),
+    hours: b.hours,
+    baseCost:  c2dN(b.baseCostCents),
+    superCost: c2dN(b.superCostCents),
+    totalCost: c2dN(b.totalCostCents),
+  };
+}
+
+function toShiftTypeProjectionDTO(p: ShiftTypeProjection): ShiftTypeProjectionDTO {
+  return {
+    shiftType: p.shiftType,
+    projectedHours: p.projectedHours,
+    baseCost:  c2dN(p.baseCostCents),
+    superCost: c2dN(p.superCostCents),
+    totalCost: c2dN(p.totalCostCents),
+    usingFallbackForSomeStaff: p.usingFallbackForSomeStaff,
+  };
+}
+
+function toHistoricalDTO(h: HistoricalBreakdown): HistoricalBreakdownDTO {
+  return {
+    approved:          toCostBreakdownDTO(h.approved),
+    pending:           toCostBreakdownDTO(h.pending),
+    rejected:          toCostBreakdownDTO(h.rejected),
+    requiresAmendment: toCostBreakdownDTO(h.requiresAmendment),
+    incomplete:        h.incomplete,
+    missing:           h.missing,
+  };
+}
+
+function toFutureForecastDTO(f: FutureForecastSection): FutureForecastDTO {
+  return {
+    totalHours: f.totalHours,
+    baseCost:  c2dN(f.baseCostCents),
+    superCost: c2dN(f.superCostCents),
+    totalCost: c2dN(f.totalCostCents),
+    anyStaffUsingFallback: f.anyStaffUsingFallback,
+    breakdownByShiftType: f.breakdownByShiftType.map(toShiftTypeProjectionDTO),
+  };
+}
+
+function toPlanningEstimateDTO(p: PlanningEstimate): PlanningEstimateDTO {
+  return {
+    approvedCost: c2dN(p.approvedCostCents),
+    pendingCost:  c2dN(p.pendingCostCents),
+    futureCost:   c2dN(p.futureCostCents),
+    totalCost:    c2dN(p.totalCostCents),
+  };
+}
+
+function toStaffBreakdownDTO(s: StaffCostBreakdown): StaffCostBreakdownDTO {
+  return {
+    staffUserId: s.staffUserId,
+    staffEmail: s.staffEmail,
+    approvedHours: s.approvedHours,
+    pendingHours: s.pendingHours,
+    rejectedHours: s.rejectedHours,
+    requiresAmendmentHours: s.requiresAmendmentHours,
+    incompleteCount: s.incompleteCount,
+    incompleteScheduledHours: s.incompleteScheduledHours,
+    missingShiftCount: s.missingShiftCount,
+    missingScheduledHours: s.missingScheduledHours,
+    futureProjectedHours: s.futureProjectedHours,
+    baseHourlyRate: s.baseHourlyRateCents !== null ? c2d(s.baseHourlyRateCents) : null,
+    superRatePercent: s.superRatePercent,
+    rateSource: s.rateSource,
+    approvedCost: s.approvedCostCents !== null ? c2d(s.approvedCostCents) : null,
+    pendingCost: s.pendingCostCents !== null ? c2d(s.pendingCostCents) : null,
+    rejectedCost: s.rejectedCostCents !== null ? c2d(s.rejectedCostCents) : null,
+    requiresAmendmentCost: s.requiresAmendmentCostCents !== null ? c2d(s.requiresAmendmentCostCents) : null,
+    futureCost: s.futureCostCents !== null ? c2d(s.futureCostCents) : null,
+  };
+}
+
+function toAnalysisDTO(analysis: LaborCostAnalysis): LaborCostAnalysisDTO {
+  return {
+    clinicId: analysis.clinicId,
+    dateRange: analysis.dateRange,
+    historical: analysis.historical ? toHistoricalDTO(analysis.historical) : null,
+    futureForecast: analysis.futureForecast ? toFutureForecastDTO(analysis.futureForecast) : null,
+    planningEstimate: toPlanningEstimateDTO(analysis.planningEstimate),
+    staffBreakdown: analysis.staffBreakdown.map(toStaffBreakdownDTO),
+    dataQuality: analysis.dataQuality,
   };
 }
 
 // ── Handlers factory ──────────────────────────────────────────────────────────
 
-/**
- * Creates the route handler(s) with the labor forecast service injected from
- * AppDependencies.  The service is instantiated once per router lifecycle,
- * not per request.
- */
 function createLaborForecastHandlers(deps: AppDependencies) {
   const laborForecastService = createLaborForecastService(
     deps.rosterRepository,
     deps.timesheetRepository,
     deps.staffPayRateRepository,
+    deps.userRepository,
   );
 
   return {
-    /**
-     * GET /clinics/:clinicId/forecast/labor
-     *
-     * 1. Parses and validates the forecastDays query parameter.
-     * 2. Fetches the clinic's IANA timezone from clinicRepository and passes it
-     *    to the service so boundaries are computed in clinic-local time.
-     * 3. Delegates to LaborForecastService.getLaborForecast (returns cents).
-     * 4. Converts cents → dollars via toSummaryDTO before writing the response.
-     */
     async getLaborForecast(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
       const clinicId = requireUuidParam(req, "clinicId");
 
       const parsed = laborForecastQuerySchema.safeParse(req.query);
-
       if (!parsed.success) {
         throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       }
 
-      // Resolve clinic timezone for calendar-day boundary calibration.
-      // A missing clinic is a hard 404 — the unsafe "Australia/Sydney" fallback
-      // has been removed because it masks missing data and silently produces
-      // mis-anchored forecast windows for non-Sydney clinics.
       const clinic = await deps.clinicRepository.findById(clinicId);
       if (!clinic) {
-        throw new AppError(
-          404,
-          "CLINIC_NOT_FOUND",
-          "The requested clinic resource does not exist.",
-        );
+        throw new AppError(404, "CLINIC_NOT_FOUND", "The requested clinic resource does not exist.");
       }
       const timezone = clinic.timezone;
 
-      const summary = await laborForecastService.getLaborForecast(caller, clinicId, {
-        forecastDays: parsed.data.forecastDays,
+      const today = localToday(timezone);
+
+      // Resolve from/to: explicit dates take precedence over forecastDays.
+      let fromDate: string;
+      let toDate: string;
+
+      if (parsed.data.from !== undefined && parsed.data.to !== undefined) {
+        fromDate = parsed.data.from;
+        toDate = parsed.data.to;
+      } else if (parsed.data.from !== undefined || parsed.data.to !== undefined) {
+        // Partial: both from and to are required when either is provided.
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Both from and to must be provided together",
+          [{ field: "from", message: "from and to must both be provided" }],
+        );
+      } else {
+        // Legacy / default: forecastDays forward from today
+        const days = parsed.data.forecastDays ?? 14;
+        fromDate = today;
+        toDate = addDays(today, days);
+      }
+
+      const analysis = await laborForecastService.getLaborCostAnalysis(caller, clinicId, {
+        from: fromDate,
+        to: toDate,
         timezone,
       });
 
-      res.status(200).json({ data: toSummaryDTO(summary) });
+      res.status(200).json({ data: toAnalysisDTO(analysis) });
     },
   };
 }
 
 // ── Router factory ────────────────────────────────────────────────────────────
 
-/**
- * Builds the Express router for the Labor Cost Forecast endpoint.
- *
- * Mounting in routes/index.ts:
- *   router.use("/clinics/:clinicId/forecast", createLaborForecastRouter(deps));
- *
- * This co-mounts alongside createForecastRouter at the same prefix so that
- * both /forecast/materials and /forecast/labor are handled by their respective
- * routers — Express matches each request against registered routes in order.
- *
- * mergeParams: true is required so that :clinicId from the parent router is
- * accessible inside this child router (same convention as forecastRoutes.ts).
- */
 export function createLaborForecastRouter(deps: AppDependencies): Router {
   const router = Router({ mergeParams: true });
 
-  const authenticate = createAuthenticateMiddleware(
-    deps.authService,
-    deps.auditService,
-  );
-
+  const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
   const handlers = createLaborForecastHandlers(deps);
 
-  // All labor forecast routes require a valid access token.
   router.use(authenticate);
-
-  // Tenant isolation: the session token's homeClinicId must match :clinicId.
-  // owner_admin is exempt and may query any clinic.
   router.use(enforceTenantParam("clinicId"));
 
-  // GET /clinics/:clinicId/forecast/labor
   router.get(
     "/labor",
     requireRoles(...LABOR_FORECAST_ROLES),

@@ -1,26 +1,17 @@
-import { useState } from "react";
-
-import type { RoleLaborProjection } from "../../types/forecast.js";
-
-type SortKey = Exclude<keyof RoleLaborProjection, "usingFallbackForSomeStaff">;
-type SortDir = "asc" | "desc";
+/**
+ * LaborForecastTable — legacy/compat shim.
+ *
+ * The primary shift-type breakdown table is now rendered inline in LaborForecastPage.tsx.
+ * This component is kept to avoid breaking any tests/imports that reference it.
+ */
+import type { ShiftTypeProjection } from "../../types/forecast.js";
 
 type Props = {
-  rows: RoleLaborProjection[];
+  rows: ShiftTypeProjection[];
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  standard: "Standard",
-  overtime: "Overtime",
-  on_call: "On-Call",
-  training: "Training",
-};
-
-function formatRole(role: string): string {
-  return ROLE_LABELS[role] ?? role;
-}
-
-function formatAud(value: number): string {
+function formatAud(value: number | null): string {
+  if (value === null) return "—";
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
     currency: "AUD",
@@ -29,153 +20,46 @@ function formatAud(value: number): string {
   }).format(value);
 }
 
-function sortRows(
-  rows: RoleLaborProjection[],
-  key: SortKey,
-  dir: SortDir,
-): RoleLaborProjection[] {
-  return [...rows].sort((a, b) => {
-    const av = a[key];
-    const bv = b[key];
-    if (typeof av === "string" && typeof bv === "string") {
-      return dir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
-    }
-    if (typeof av === "number" && typeof bv === "number") {
-      return dir === "asc" ? av - bv : bv - av;
-    }
-    return 0;
-  });
-}
-
-type HeaderProps = {
-  label: string;
-  sortKey: SortKey;
-  currentKey: SortKey;
-  currentDir: SortDir;
-  onSort: (key: SortKey) => void;
-  numeric?: boolean;
-};
-
-function SortableHeader({
-  label,
-  sortKey,
-  currentKey,
-  currentDir,
-  onSort,
-  numeric,
-}: HeaderProps) {
-  const isActive = currentKey === sortKey;
-  const indicator = isActive ? (currentDir === "asc" ? " ▲" : " ▼") : "";
-
-  return (
-    <th
-      className={`lf-table__th${numeric ? " lf-table__th--numeric" : ""}${isActive ? " lf-table__th--active" : ""}`}
-      onClick={() => { onSort(sortKey); }}
-      role="columnheader"
-      aria-sort={isActive ? (currentDir === "asc" ? "ascending" : "descending") : "none"}
-      style={{ cursor: "pointer", userSelect: "none" }}
-    >
-      {label}{indicator}
-    </th>
-  );
-}
-
 export function LaborForecastTable({ rows }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("role");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
   if (rows.length === 0) {
     return (
       <div className="lf-table-empty">
         <p className="lf-table-empty__title">No scheduled shifts in this window.</p>
-        <p className="lf-table-empty__hint">
-          Adjust the forecast window or check the roster for upcoming shifts.
-        </p>
+        <p className="lf-table-empty__hint">Adjust the date range or check the roster.</p>
       </div>
     );
   }
-
-  const sorted = sortRows(rows, sortKey, sortDir);
 
   return (
     <div className="lf-table-wrapper">
       <table className="lf-table">
         <thead>
           <tr>
-            <SortableHeader
-              label="Role"
-              sortKey="role"
-              currentKey={sortKey}
-              currentDir={sortDir}
-              onSort={handleSort}
-            />
-            <SortableHeader
-              label="Projected Hours"
-              sortKey="totalScheduledHours"
-              currentKey={sortKey}
-              currentDir={sortDir}
-              onSort={handleSort}
-              numeric
-            />
-            <SortableHeader
-              label="Base Cost (AUD)"
-              sortKey="projectedBaseCost"
-              currentKey={sortKey}
-              currentDir={sortDir}
-              onSort={handleSort}
-              numeric
-            />
-            <SortableHeader
-              label="Overhead Cost (AUD)"
-              sortKey="projectedOverheadCost"
-              currentKey={sortKey}
-              currentDir={sortDir}
-              onSort={handleSort}
-              numeric
-            />
-            <SortableHeader
-              label="Total Cost (AUD)"
-              sortKey="totalProjectedCost"
-              currentKey={sortKey}
-              currentDir={sortDir}
-              onSort={handleSort}
-              numeric
-            />
-            <th className="lf-table__th">Rate</th>
+            <th className="lf-table__th">Shift type</th>
+            <th className="lf-table__th lf-table__th--numeric">Projected hrs</th>
+            <th className="lf-table__th lf-table__th--numeric">Base cost</th>
+            <th className="lf-table__th lf-table__th--numeric">Super</th>
+            <th className="lf-table__th lf-table__th--numeric">Total cost</th>
+            <th className="lf-table__th">Rate source</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row) => (
-            <tr key={row.role} className="lf-table__row">
-              <td className="lf-table__role">
-                <span className={`lf-role-badge lf-role-badge--${row.role}`}>
-                  {formatRole(row.role)}
+          {rows.map((row) => (
+            <tr key={row.shiftType} className="lf-table__row">
+              <td className="lf-table__cell">
+                <span className={`lf-role-badge lf-role-badge--${row.shiftType}`}>
+                  {row.shiftType.replace("_", "-")}
                 </span>
               </td>
-              <td className="lf-table__numeric">{row.totalScheduledHours.toFixed(2)}</td>
-              <td className="lf-table__numeric">{formatAud(row.projectedBaseCost)}</td>
-              <td className="lf-table__numeric">{formatAud(row.projectedOverheadCost)}</td>
-              <td className="lf-table__numeric lf-table__numeric--total">
-                {formatAud(row.totalProjectedCost)}
-              </td>
+              <td className="lf-table__numeric">{row.projectedHours.toFixed(2)}</td>
+              <td className="lf-table__numeric">{formatAud(row.baseCost)}</td>
+              <td className="lf-table__numeric">{formatAud(row.superCost)}</td>
+              <td className="lf-table__numeric lf-table__numeric--total">{formatAud(row.totalCost)}</td>
               <td>
                 {row.usingFallbackForSomeStaff ? (
-                  <span className="inventory-badge" title="At least one staff member is using the default hourly estimate">
-                    Using default estimate
-                  </span>
+                  <span className="inventory-badge" title="Using default estimate">Default estimate</span>
                 ) : (
-                  <span className="inventory-badge" title="All staff have configured pay rates">
-                    Configured
-                  </span>
+                  <span className="inventory-badge" title="Configured pay rates">Configured</span>
                 )}
               </td>
             </tr>

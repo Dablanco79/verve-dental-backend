@@ -2,33 +2,45 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createApiClient } from "../api/client.js";
 import { loadConfig } from "../config/index.js";
-import type { LaborForecastSummary } from "../types/forecast.js";
+import type { LaborCostAnalysis } from "../types/forecast.js";
 
 const apiClient = createApiClient(loadConfig());
 
+export type DateRangeParams =
+  | { mode: "range"; from: string; to: string }
+  | { mode: "days"; forecastDays: number };
+
 export type UseLaborForecastResult = {
-  data: LaborForecastSummary | null;
+  data: LaborCostAnalysis | null;
   isLoading: boolean;
   error: string | null;
   refetch: () => void;
 };
 
 /**
- * Fetches the labor cost forecast for a clinic from
- * GET /clinics/:clinicId/forecast/labor?forecastDays=N.
+ * Fetches the labour cost analysis for a clinic.
  *
- * Re-fetches automatically when clinicId or forecastDays changes.
- * forecastDays is bounded [1, 90] by both the hook (clamped) and the API (Zod validated).
+ * Supports two modes:
+ *   - { mode: "range", from: "YYYY-MM-DD", to: "YYYY-MM-DD" }
+ *     Fetches a specific date range (may be historical, future, or mixed).
+ *   - { mode: "days", forecastDays: N }
+ *     Legacy/quick mode: forward-only window of N days from today (1–90).
+ *
+ * Re-fetches automatically when clinicId or params change.
  */
 export function useLaborForecast(
   clinicId: string | undefined,
-  forecastDays: number,
+  params: DateRangeParams,
 ): UseLaborForecastResult {
-  const [data, setData] = useState<LaborForecastSummary | null>(null);
+  const [data, setData] = useState<LaborCostAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const clampedDays = Math.min(90, Math.max(1, Math.round(forecastDays)));
+  // Serialize params for stable dependency tracking
+  const paramsKey =
+    params.mode === "range"
+      ? `range:${params.from}:${params.to}`
+      : `days:${String(Math.min(90, Math.max(1, Math.round(params.forecastDays))))}`;
 
   const fetch = useCallback(() => {
     if (!clinicId) return;
@@ -36,19 +48,25 @@ export function useLaborForecast(
     setIsLoading(true);
     setError(null);
 
+    const apiParams =
+      params.mode === "range"
+        ? { from: params.from, to: params.to }
+        : { forecastDays: Math.min(90, Math.max(1, Math.round(params.forecastDays))) };
+
     void apiClient
-      .getLaborForecast(clinicId, clampedDays)
+      .getLaborForecast(clinicId, apiParams)
       .then((result) => {
         setData(result);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Unable to load labor forecast");
+        setError(err instanceof Error ? err.message : "Unable to load labour cost analysis");
         setData(null);
       })
       .finally(() => {
         setIsLoading(false);
       });
-  }, [clinicId, clampedDays]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clinicId, paramsKey]);
 
   useEffect(() => {
     fetch();
