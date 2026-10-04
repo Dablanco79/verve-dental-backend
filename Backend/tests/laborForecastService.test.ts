@@ -148,9 +148,20 @@ const callerStaffA: AuthenticatedUser = {
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns today as YYYY-MM-DD in the local system timezone (matches clinic-local date). */
+/**
+ * Returns today as YYYY-MM-DD in the clinic's authoritative IANA timezone
+ * (Australia/Sydney — matches the service default used in all tests that do
+ * not explicitly pass a timezone option).
+ *
+ * CRITICAL: Do NOT use the system/process timezone here.  GitHub CI runners
+ * use UTC, which produces a date one calendar day behind AEDT (UTC+11).  Any
+ * test that compares against the service's localTodayStr must use the same
+ * IANA zone the service uses; otherwise the today-hybrid boundary logic fails
+ * deterministically on CI even though it passes locally (developer machines
+ * are typically already set to Australia/Sydney).
+ */
 function localToday(): string {
-  return new Intl.DateTimeFormat("en-CA").format(new Date());
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney" }).format(new Date());
 }
 
 /**
