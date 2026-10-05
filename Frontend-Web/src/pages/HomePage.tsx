@@ -8,6 +8,7 @@ import { useAuth } from "../auth/useAuth.js";
 import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { loadConfig } from "../config/index.js";
+import type { LaborCostAnalysis, GroupLaborCostAnalysis } from "../types/forecast.js";
 import type { AllClinicsDashboardKpis, DashboardKpis } from "../types/analytics.js";
 import type { InventoryItem, PurchaseOrderLine } from "../types/inventory.js";
 import type { LeaveRequest, TimesheetEntry } from "../types/payroll.js";
@@ -47,6 +48,8 @@ type DashboardProps = {
   summary: DailySummary;
   stats: DashboardStats;
   isAllClinicsScope: boolean;
+  laborForecast: LaborCostAnalysis | GroupLaborCostAnalysis | null;
+  isLoadingLabor: boolean;
 };
 
 type DashboardCardTone = "default" | "positive" | "warning" | "danger" | "teal";
@@ -269,7 +272,7 @@ function ClinicHealthTable({ rows }: { rows: HealthRow[] }) {
           <span>Clinic</span>
           <span>Score</span>
           <span>Inventory</span>
-          <span>Payroll</span>
+          <span>Roster Fill</span>
           <span>Budget</span>
           <span>Compliance</span>
         </div>
@@ -433,6 +436,8 @@ function OwnerAdminDashboard({
   summary,
   stats,
   isAllClinicsScope,
+  laborForecast,
+  isLoadingLabor,
 }: DashboardProps) {
   const analytics = summary.analytics;
   const allClinicsAnalytics = isAllClinicsAnalytics(analytics) ? analytics : null;
@@ -499,11 +504,35 @@ function OwnerAdminDashboard({
       tone: "purple",
     },
     {
-      title: "Payroll Forecast",
-      value: "—",
-      trend: "Awaiting payroll forecast",
+      title: "Labour Cost Forecast",
+      value: (() => {
+        if (isLoadingLabor) return "…";
+        const cost = isAllClinicsScope
+          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalCost ?? null
+          : (laborForecast as LaborCostAnalysis | null)?.planningEstimate.totalCost ?? null;
+        return cost !== null
+          ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 }).format(cost)
+          : "—";
+      })(),
+      trend: (() => {
+        if (isLoadingLabor) return "Loading…";
+        const hours = isAllClinicsScope
+          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalHours ?? null
+          : (() => {
+              const lf = laborForecast as LaborCostAnalysis | null;
+              if (!lf) return null;
+              return (
+                (lf.historical?.approved.hours ?? 0) +
+                (lf.historical?.pending.hours ?? 0) +
+                (lf.futureForecast?.totalHours ?? 0)
+              );
+            })();
+        return hours !== null
+          ? `${hours.toFixed(1)} h estimated · 14-day window`
+          : "No labour data";
+      })(),
       icon: Users,
-      tone: "orange",
+      tone: "orange" as const,
       to: "/forecast/labor",
     },
     {
@@ -545,8 +574,28 @@ function OwnerAdminDashboard({
       tone: "green",
     },
     {
-      label: "Labour forecast awaiting payroll forecast",
-      tone: "blue",
+      label: (() => {
+        if (isLoadingLabor) return "Loading labour forecast…";
+        const cost = isAllClinicsScope
+          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalCost ?? null
+          : (laborForecast as LaborCostAnalysis | null)?.planningEstimate.totalCost ?? null;
+        const hours = isAllClinicsScope
+          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalHours ?? null
+          : (() => {
+              const lf = laborForecast as LaborCostAnalysis | null;
+              if (!lf) return null;
+              return (
+                (lf.historical?.approved.hours ?? 0) +
+                (lf.historical?.pending.hours ?? 0) +
+                (lf.futureForecast?.totalHours ?? 0)
+              );
+            })();
+        if (cost !== null && hours !== null) {
+          return `Labour forecast: ${new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 }).format(cost)} · ${hours.toFixed(1)} h (next 14 days)`;
+        }
+        return "Labour forecast not available";
+      })(),
+      tone: "blue" as const,
     },
   ];
   const actionItems: ActionCentreItem[] = [
@@ -1043,6 +1092,11 @@ export function HomePage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // ── Labour Cost Forecast ────────────────────────────────────────────────────
+  // Separate from the main summary load — different endpoint, different cadence.
+  const [laborForecast, setLaborForecast] = useState<LaborCostAnalysis | GroupLaborCostAnalysis | null>(null);
+  const [isLoadingLabor, setIsLoadingLabor] = useState(false);
+
   useEffect(() => {
     if (!user || (!selectedClinicId && selectedDashboardScope?.type !== "all_clinics")) {
       return;
@@ -1235,6 +1289,45 @@ export function HomePage() {
     };
   }, [availableClinics, selectedClinicId, selectedDashboardScope, user]);
 
+  // Labour Cost Forecast — fetches from the same endpoint as LaborForecastPage.
+  // Specific clinic: /clinics/:clinicId/forecast/labor (14-day forward window)
+  // All Clinics:     /forecast/labor/group (14-day forward window)
+  useEffect(() => {
+    if (!user) return;
+    const today = todayLocalDate();
+    const toDate = new Date();
+    toDate.setDate(toDate.getDate() + 13);
+    const to = toDate.toISOString().slice(0, 10);
+
+    let cancelled = false;
+    setIsLoadingLabor(true);
+    setLaborForecast(null);
+
+    const scopeIsAll = user.role === "owner_admin" && selectedDashboardScope?.type === "all_clinics";
+    const scopeClinicId =
+      selectedDashboardScope?.type === "clinic"
+        ? selectedDashboardScope.clinic.id
+        : selectedClinicId;
+
+    if (scopeIsAll) {
+      void apiClient
+        .getGroupLaborForecast({ from: today, to })
+        .then((result) => { if (!cancelled) setLaborForecast(result); })
+        .catch(() => { if (!cancelled) setLaborForecast(null); })
+        .finally(() => { if (!cancelled) setIsLoadingLabor(false); });
+    } else if (scopeClinicId) {
+      void apiClient
+        .getLaborForecast(scopeClinicId, { from: today, to })
+        .then((result) => { if (!cancelled) setLaborForecast(result); })
+        .catch(() => { if (!cancelled) setLaborForecast(null); })
+        .finally(() => { if (!cancelled) setIsLoadingLabor(false); });
+    } else {
+      setIsLoadingLabor(false);
+    }
+
+    return () => { cancelled = true; };
+  }, [user, selectedDashboardScope, selectedClinicId]);
+
   const stats = useMemo<DashboardStats>(
     () => ({
       lowStockItems: summary.inventoryItems.filter((item) => item.isBelowReorderPoint),
@@ -1294,6 +1387,8 @@ export function HomePage() {
           summary,
           stats,
           isAllClinicsScope,
+          laborForecast,
+          isLoadingLabor,
         }}
       />
     </AppShell>

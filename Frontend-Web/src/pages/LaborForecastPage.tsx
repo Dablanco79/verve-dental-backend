@@ -5,9 +5,9 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useClinicTimezone } from "../hooks/useClinicTimezone.js";
-import { useLaborForecast } from "../hooks/useLaborForecast.js";
+import { useLaborForecast, useGroupLaborForecast } from "../hooks/useLaborForecast.js";
 import { canViewLaborForecast, canAccessModule } from "../utils/roles.js";
-import type { LaborCostAnalysis, CostBreakdown, ExceptionSummary } from "../types/forecast.js";
+import type { LaborCostAnalysis, CostBreakdown, ExceptionSummary, GroupClinicEntry } from "../types/forecast.js";
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
@@ -434,6 +434,11 @@ export function LaborForecastPage() {
     { mode: "range", from: fromDate, to: toDate },
   );
 
+  const { data: groupData, isLoading: groupLoading, error: groupError, refetch: groupRefetch } = useGroupLaborForecast(
+    { mode: "range", from: fromDate, to: toDate },
+    isAllClinicsScope,
+  );
+
   if (!user) return null;
 
   if (!canViewLaborForecast(user.role)) {
@@ -443,10 +448,142 @@ export function LaborForecastPage() {
   if (isAllClinicsScope) {
     return (
       <AppShell>
-        <section className="status-card inventory-receiving-callout" role="status">
-          <h2>Select a clinic to view the labour cost analysis</h2>
-          <p>Labour analysis is clinic-specific. Choose a clinic from the selector to continue.</p>
-        </section>
+        <div className="lf-page">
+          <header className="lf-page__header">
+            <h1 className="lf-page__title">Labour Cost Analysis — All Clinics</h1>
+          </header>
+
+          {/* Date range controls (reused from clinic view) */}
+          <section className="lf-date-controls" aria-label="Date range">
+            <div className="lf-date-controls__quick">
+              {quickOptions.map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  className="lf-quick-btn"
+                  onClick={() => { applyQuickOption(opt); }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="lf-date-controls__range">
+              <label htmlFor="group-lf-from">From</label>
+              <input
+                id="group-lf-from"
+                type="date"
+                value={fromDate}
+                onChange={(e) => { setFromDate(e.target.value); setDateError(null); }}
+              />
+              <label htmlFor="group-lf-to">To</label>
+              <input
+                id="group-lf-to"
+                type="date"
+                value={toDate}
+                onChange={(e) => { setToDate(e.target.value); setDateError(null); }}
+              />
+              <button type="button" className="lf-apply-btn" onClick={groupRefetch}>
+                Apply
+              </button>
+            </div>
+            {dateError ? <p className="lf-date-error" role="alert">{dateError}</p> : null}
+          </section>
+
+          {groupLoading ? (
+            <p className="lf-loading">Loading group labour cost analysis…</p>
+          ) : groupError ? (
+            <p className="lf-error" role="alert">{groupError}</p>
+          ) : groupData ? (
+            <>
+              {/* Group summary KPIs */}
+              <section className="lf-summary" aria-label="Group Labour Cost Summary">
+                <div className="lf-summary__kpis">
+                  <div className="lf-summary__kpi lf-summary__kpi--primary">
+                    <span className="lf-summary__kpi-label">Estimated Period Labour Cost</span>
+                    <span className="lf-summary__kpi-value">
+                      {groupData.totals.totalCost !== null
+                        ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(groupData.totals.totalCost)
+                        : "—"}
+                    </span>
+                    <span className="lf-summary__kpi-sub">
+                      {groupData.totals.totalHours.toFixed(1)} h across {String(groupData.clinics.length)} clinic{groupData.clinics.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="lf-summary__kpi">
+                    <span className="lf-summary__kpi-label">Approved</span>
+                    <span className="lf-summary__kpi-value">
+                      {groupData.totals.approvedCost !== null
+                        ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(groupData.totals.approvedCost)
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="lf-summary__kpi">
+                    <span className="lf-summary__kpi-label">Pending Approval</span>
+                    <span className="lf-summary__kpi-value">
+                      {groupData.totals.pendingCost !== null
+                        ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(groupData.totals.pendingCost)
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="lf-summary__kpi">
+                    <span className="lf-summary__kpi-label">Future Forecast</span>
+                    <span className="lf-summary__kpi-value">
+                      {groupData.totals.futureCost !== null
+                        ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(groupData.totals.futureCost)
+                        : "—"}
+                    </span>
+                  </div>
+                  {groupData.totals.missingCount > 0 ? (
+                    <div className="lf-summary__kpi lf-summary__kpi--warning">
+                      <span className="lf-summary__kpi-label">Missing Timesheets</span>
+                      <span className="lf-summary__kpi-value">{String(groupData.totals.missingCount)}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+
+              {/* Per-clinic breakdown table */}
+              <section className="lf-group-breakdown" aria-label="Per-Clinic Breakdown">
+                <h2 className="lf-group-breakdown__title">Clinic Breakdown</h2>
+                <div className="lf-group-table" role="table" aria-label="Per-clinic labour cost breakdown">
+                  <div className="lf-group-table__head" role="row">
+                    <span>Clinic</span>
+                    <span>Approved</span>
+                    <span>Pending</span>
+                    <span>Future</span>
+                    <span>Total</span>
+                    <span>Hours</span>
+                  </div>
+                  {groupData.clinics.map((entry: GroupClinicEntry) => {
+                    const p = entry.analysis.planningEstimate;
+                    const h = entry.analysis.historical;
+                    const f = entry.analysis.futureForecast;
+                    const clinicHours =
+                      (h?.approved.hours ?? 0) +
+                      (h?.pending.hours ?? 0) +
+                      (f?.totalHours ?? 0);
+                    const fmt = (v: number | null) =>
+                      v !== null
+                        ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(v)
+                        : "—";
+                    return (
+                      <div key={entry.clinicId} className="lf-group-table__row" role="row">
+                        <span className="lf-group-table__clinic">{entry.clinicName}</span>
+                        <span>{fmt(p.approvedCost)}</span>
+                        <span>{fmt(p.pendingCost)}</span>
+                        <span>{fmt(p.futureCost)}</span>
+                        <strong>{fmt(p.totalCost)}</strong>
+                        <span>{clinicHours.toFixed(1)} h</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </>
+          ) : (
+            <p className="lf-empty">No labour data available for the selected date range.</p>
+          )}
+        </div>
       </AppShell>
     );
   }

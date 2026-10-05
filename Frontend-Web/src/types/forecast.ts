@@ -151,3 +151,37 @@ export type LaborCostAnalysis = {
 // ── Legacy alias (kept to avoid breaking imports elsewhere) ───────────────────
 /** @deprecated Use LaborCostAnalysis. Kept for any remaining references. */
 export type LaborForecastSummary = LaborCostAnalysis;
+
+// ── Group analysis types ─────────────────────────────────────────────────────
+
+/** Per-clinic entry within a group labour cost analysis. */
+export type GroupClinicEntry = {
+  clinicId: string;
+  clinicName: string;
+  timezone: string;
+  /** Full per-clinic analysis (all monetary values in AUD dollars). */
+  analysis: LaborCostAnalysis;
+};
+
+/** Aggregated group totals (all monetary values in AUD dollars). */
+export type GroupLaborTotals = {
+  /** Sum of approved + pending + future hours across all clinics. */
+  totalHours: number;
+  approvedCost: number | null;
+  pendingCost: number | null;
+  futureCost: number | null;
+  totalCost: number | null;
+  /** Sum of missing shift counts across all clinics. */
+  missingCount: number;
+};
+
+/**
+ * Full group Labour Cost Analysis response from GET /api/v1/forecast/labor/group.
+ * Accessible to owner_admin only (V1).
+ */
+export type GroupLaborCostAnalysis = {
+  scope: "all_clinics";
+  dateRange: { from: string; to: string };
+  totals: GroupLaborTotals;
+  clinics: GroupClinicEntry[];
+};

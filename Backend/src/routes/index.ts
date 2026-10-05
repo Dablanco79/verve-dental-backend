@@ -30,7 +30,7 @@ import {
 import { createBillingRouter } from "./billingRoutes.js";
 import { createClinicRouter } from "./clinicRoutes.js";
 import { createForecastRouter } from "./forecastRoutes.js";
-import { createLaborForecastRouter } from "./laborForecastRoutes.js";
+import { createGroupLaborForecastRouter, createLaborForecastRouter } from "./laborForecastRoutes.js";
 import { createInventoryRouter } from "./inventoryRoutes.js";
 import { createStocktakeRouter } from "./stocktakeRoutes.js";
 import { createLeaveRouter, createTimesheetRouter } from "./payrollRoutes.js";
@@ -164,6 +164,10 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   // Owner Admin all-clinics dashboard scope. This route intentionally lives
   // outside /clinics/:clinicId so no synthetic clinic ID enters tenant-scoped routes.
   router.use("/analytics", createGlobalAnalyticsRouter(deps));
+
+  // Owner Admin all-clinics labour forecast. Group endpoint lives outside /clinics/:clinicId
+  // so no synthetic clinic ID enters tenant-scoped routes. Route: GET /forecast/labor/group
+  router.use("/forecast", createGroupLaborForecastRouter(deps));
 
   // Personal cross-clinic roster — GET /roster/me returns the caller's own shifts
   // across ALL clinics regardless of rostered_clinic_id. Clinic-agnostic by design.

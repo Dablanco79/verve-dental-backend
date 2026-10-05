@@ -167,7 +167,6 @@ function computeConflictingEntryIds(entries: RosterEntry[]): Set<string> {
 
 // "all" means load from all accessible clinics; otherwise a specific clinic UUID.
 // The `& Record<never, never>` prevents TypeScript from collapsing `"all" | string → string`.
-type RosterClinicScope = "all" | (string & Record<never, never>);
 
 type ShiftFormState = {
   clinicId: string;       // required — which clinic this shift is for
@@ -207,7 +206,7 @@ function formFromEntry(entry: RosterEntry): ShiftFormState {
 
 export function RosterCalendarPage() {
   const { user } = useAuth();
-  const { clinicId, clinicName } = useOperationalClinic();
+  const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
@@ -216,8 +215,6 @@ export function RosterCalendarPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // ── Roster scope selector (managers only) ────────────────────────────────
-  const [rosterScope, setRosterScope] = useState<RosterClinicScope>(() => clinicId ?? "all");
   const [accessibleClinics, setAccessibleClinics] = useState<{ id: string; name: string }[]>([]);
 
   const [showModal, setShowModal] = useState(false);
@@ -253,10 +250,6 @@ export function RosterCalendarPage() {
       .getRosterAccessibleClinics()
       .then((clinics) => {
         setAccessibleClinics(clinics);
-        // Default scope: if exactly one clinic, use it; otherwise keep current
-        if (clinics.length === 1 && clinics[0]) {
-          setRosterScope(clinics[0].id);
-        }
       })
       .catch(() => undefined);
   }, [user, canWrite]);
@@ -296,17 +289,13 @@ export function RosterCalendarPage() {
         to = addDays(monthLastDay, 1).toISOString();
       }
 
-      if (rosterScope === "all" && accessibleClinics.length > 0) {
-        // Load from all accessible clinics concurrently
+      if (isAllClinicsScope && accessibleClinics.length > 0) {
+        // All Clinics global scope: load from all accessible clinics concurrently
         const results = await Promise.all(
           accessibleClinics.map((c) => apiClient.listRoster(c.id, { from, to })),
         );
         setEntries(results.flat());
-      } else if (rosterScope !== "all" && rosterScope) {
-        const result = await apiClient.listRoster(rosterScope, { from, to });
-        setEntries(result);
       } else if (clinicId) {
-        // Fallback: use global clinic context (clinical_staff / initial load)
         const result = await apiClient.listRoster(clinicId, { from, to });
         setEntries(result);
       } else {
@@ -317,7 +306,7 @@ export function RosterCalendarPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [user, clinicId, rosterScope, accessibleClinics, viewMode, anchorDate]);
+  }, [user, clinicId, isAllClinicsScope, accessibleClinics, viewMode, anchorDate]);
 
   useEffect(() => {
     void loadEntries();
@@ -326,13 +315,12 @@ export function RosterCalendarPage() {
   // ── Load staff list for the grid (resolving staff names) ─────────────────
   useEffect(() => {
     if (!user || !canWrite) return;
-    const targetClinicId = rosterScope !== "all" ? rosterScope : clinicId;
-    if (!targetClinicId) return;
+    if (!clinicId) return;
     void apiClient
-      .listRosterEligibleStaff(targetClinicId)
+      .listRosterEligibleStaff(clinicId)
       .then(setStaffList)
       .catch(() => undefined);
-  }, [user, clinicId, rosterScope, canWrite]);
+  }, [user, clinicId, canWrite]);
 
   // ── Load staff list for the form (reloads when form.clinicId changes) ─────
   useEffect(() => {
@@ -456,10 +444,9 @@ export function RosterCalendarPage() {
   // ── Modal helpers ─────────────────────────────────────────────────────────────
 
   function openCreate(dayDate: Date) {
-    const defaultClinicId =
-      rosterScope !== "all"
-        ? rosterScope
-        : (accessibleClinics[0]?.id ?? clinicId ?? "");
+    const defaultClinicId = isAllClinicsScope
+      ? (accessibleClinics[0]?.id ?? clinicId ?? "")
+      : (clinicId ?? accessibleClinics[0]?.id ?? "");
     setEditingEntry(null);
     setForm(blankForm(toDateInput(dayDate), defaultClinicId));
     setFormError(null);
@@ -888,33 +875,6 @@ export function RosterCalendarPage() {
         </div>
       </div>
 
-      {/* ── Roster scope selector (managers with multiple accessible clinics) ── */}
-      {canWrite && accessibleClinics.length > 1 ? (
-        <div className="roster-scope-selector">
-          <label className="roster-scope-selector__label">Roster scope:</label>
-          <div className="roster-scope-selector__controls" role="group" aria-label="Roster clinic scope">
-            <button
-              type="button"
-              className={`roster-scope-btn${rosterScope === "all" ? " roster-scope-btn--active" : ""}`}
-              onClick={() => { setRosterScope("all"); }}
-              aria-pressed={rosterScope === "all"}
-            >
-              All assigned clinics
-            </button>
-            {accessibleClinics.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`roster-scope-btn${rosterScope === c.id ? " roster-scope-btn--active" : ""}`}
-                onClick={() => { setRosterScope(c.id); }}
-                aria-pressed={rosterScope === c.id}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       {/* ── Toolbar: view selector + navigation ── */}
       <div className="roster-hub__toolbar">

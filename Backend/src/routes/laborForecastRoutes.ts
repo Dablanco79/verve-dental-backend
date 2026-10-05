@@ -39,6 +39,8 @@ import type {
   DataQuality,
   ExceptionSummary,
   FutureForecastSection,
+  GroupClinicAnalysis,
+  GroupLaborCostAnalysis,
   HistoricalBreakdown,
   LaborCostAnalysis,
   PlanningEstimate,
@@ -194,6 +196,29 @@ type LaborCostAnalysisDTO = {
   dataQuality: DataQuality;
 };
 
+type GroupLaborTotalsDTO = {
+  totalHours: number;
+  approvedCost: number | null;
+  pendingCost: number | null;
+  futureCost: number | null;
+  totalCost: number | null;
+  missingCount: number;
+};
+
+type GroupClinicAnalysisDTO = {
+  clinicId: string;
+  clinicName: string;
+  timezone: string;
+  analysis: LaborCostAnalysisDTO;
+};
+
+type GroupLaborCostAnalysisDTO = {
+  scope: "all_clinics";
+  dateRange: { from: string; to: string };
+  totals: GroupLaborTotalsDTO;
+  clinics: GroupClinicAnalysisDTO[];
+};
+
 function c2d(cents: number): number { return cents / 100; }
 function c2dN(cents: number | null): number | null { return cents !== null ? cents / 100 : null; }
 
@@ -284,6 +309,27 @@ function toAnalysisDTO(analysis: LaborCostAnalysis): LaborCostAnalysisDTO {
   };
 }
 
+function toGroupAnalysisDTO(group: GroupLaborCostAnalysis): GroupLaborCostAnalysisDTO {
+  return {
+    scope: group.scope,
+    dateRange: group.dateRange,
+    totals: {
+      totalHours: group.totals.totalHours,
+      approvedCost: c2dN(group.totals.approvedCostCents),
+      pendingCost:  c2dN(group.totals.pendingCostCents),
+      futureCost:   c2dN(group.totals.futureCostCents),
+      totalCost:    c2dN(group.totals.totalCostCents),
+      missingCount: group.totals.missingCount,
+    },
+    clinics: group.clinics.map((entry: GroupClinicAnalysis) => ({
+      clinicId: entry.clinicId,
+      clinicName: entry.clinicName,
+      timezone: entry.timezone,
+      analysis: toAnalysisDTO(entry.analysis),
+    })),
+  };
+}
+
 // ── Handlers factory ──────────────────────────────────────────────────────────
 
 function createLaborForecastHandlers(deps: AppDependencies) {
@@ -292,6 +338,7 @@ function createLaborForecastHandlers(deps: AppDependencies) {
     deps.timesheetRepository,
     deps.staffPayRateRepository,
     deps.userRepository,
+    deps.clinicRepository,
   );
 
   return {
@@ -342,6 +389,46 @@ function createLaborForecastHandlers(deps: AppDependencies) {
 
       res.status(200).json({ data: toAnalysisDTO(analysis) });
     },
+
+    async getGroupLaborForecast(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+
+      const parsed = laborForecastQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+
+      // Resolve date range. For the group endpoint we use a UTC-based today
+      // as a neutral reference; each clinic interprets these dates in its own
+      // timezone inside getLaborCostAnalysis.
+      const utcToday = new Date().toISOString().slice(0, 10);
+
+      let fromDate: string;
+      let toDate: string;
+
+      if (parsed.data.from !== undefined && parsed.data.to !== undefined) {
+        fromDate = parsed.data.from;
+        toDate = parsed.data.to;
+      } else if (parsed.data.from !== undefined || parsed.data.to !== undefined) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Both from and to must be provided together",
+          [{ field: "from", message: "from and to must both be provided" }],
+        );
+      } else {
+        const days = parsed.data.forecastDays ?? 14;
+        fromDate = utcToday;
+        toDate = addDays(utcToday, days);
+      }
+
+      const group = await laborForecastService.getGroupLaborCostAnalysis(caller, {
+        from: fromDate,
+        to: toDate,
+      });
+
+      res.status(200).json({ data: toGroupAnalysisDTO(group) });
+    },
   };
 }
 
@@ -360,6 +447,25 @@ export function createLaborForecastRouter(deps: AppDependencies): Router {
     "/labor",
     requireRoles(...LABOR_FORECAST_ROLES),
     asyncHandler((req, res) => handlers.getLaborForecast(req, res)),
+  );
+
+  return router;
+}
+
+// ── Group router (no clinicId — global owner_admin scope) ─────────────────────
+
+export function createGroupLaborForecastRouter(deps: AppDependencies): Router {
+  const router = Router({ mergeParams: true });
+
+  const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+  const handlers = createLaborForecastHandlers(deps);
+
+  router.use(authenticate);
+
+  router.get(
+    "/labor/group",
+    requireRoles("owner_admin"),
+    asyncHandler((req, res) => handlers.getGroupLaborForecast(req, res)),
   );
 
   return router;

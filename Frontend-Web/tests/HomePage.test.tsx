@@ -109,6 +109,9 @@ vi.mock("../src/api/client.js", () => ({
     listMyTimesheets: mockListMyTimesheets,
     listLeave: mockListLeave,
     listMyLeave: mockListMyLeave,
+    // Labour Cost Forecast — return empty rejection so the Hub still renders
+    getLaborForecast: vi.fn().mockRejectedValue(new Error("not mocked")),
+    getGroupLaborForecast: vi.fn().mockRejectedValue(new Error("not mocked")),
   }),
 }));
 

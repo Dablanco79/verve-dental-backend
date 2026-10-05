@@ -39,6 +39,7 @@ import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { StaffPayRateRepository } from "../repositories/staffPayRateRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { EffectivePayRate } from "../types/payRate.js";
 import type { StaffPayrollTrack, TimesheetEntry } from "../types/payroll.js";
 
@@ -228,6 +229,44 @@ export type LaborCostAnalysisOptions = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Group analysis types (getGroupLaborCostAnalysis)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Per-clinic entry within a group labour cost analysis. */
+export type GroupClinicAnalysis = {
+  clinicId: string;
+  clinicName: string;
+  timezone: string;
+  analysis: LaborCostAnalysis;
+};
+
+/** Aggregated group totals (monetary values in integer AUD cents). */
+export type GroupLaborTotals = {
+  /** Sum of approved + pending + future hours across all clinics. */
+  totalHours: number;
+  approvedCostCents: number | null;
+  pendingCostCents: number | null;
+  futureCostCents: number | null;
+  totalCostCents: number | null;
+  /** Sum of missing shift counts across all clinics. */
+  missingCount: number;
+};
+
+/** Full group Labour Cost Analysis result from getGroupLaborCostAnalysis. */
+export type GroupLaborCostAnalysis = {
+  scope: "all_clinics";
+  dateRange: { from: string; to: string };
+  totals: GroupLaborTotals;
+  clinics: GroupClinicAnalysis[];
+};
+
+export type GroupLaborCostAnalysisOptions = {
+  /** Shared calendar date (YYYY-MM-DD) for all clinics. Each clinic interprets it in its own timezone. */
+  from: string;
+  to: string;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Service factory
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -238,6 +277,7 @@ export function createLaborForecastService(
   timesheetRepository: TimesheetRepository,
   staffPayRateRepository?: StaffPayRateRepository,
   userRepository?: UserRepository,
+  clinicRepository?: ClinicRepository,
 ) {
   // ── Internal helpers (closure scope) ─────────────────────────────────────
 
@@ -281,7 +321,8 @@ export function createLaborForecastService(
 
   // ── Exported service methods ───────────────────────────────────────────────
 
-  return {
+  // Named constant so getGroupLaborCostAnalysis can self-reference getLaborCostAnalysis
+  const service = {
     // ── getLaborForecast (PRESERVED — backward compatible) ─────────────────
     /**
      * Forward-only projection. Kept for backward compatibility; existing tests
@@ -1056,7 +1097,113 @@ export function createLaborForecastService(
         dataQuality,
       };
     },
+
+    // ── getGroupLaborCostAnalysis ──────────────────────────────────────────
+    /**
+     * Organisation-wide labour cost analysis across all active clinics.
+     *
+     * ACCESS: owner_admin only. GPM access is explicitly denied in V1 for
+     * remuneration/privacy reasons — this is not a technical limitation.
+     *
+     * Delegates per-clinic calculations to getLaborCostAnalysis so there is
+     * exactly one calculation implementation. Each clinic uses its own timezone
+     * to interpret the shared from/to calendar date strings.
+     *
+     * Aggregates totals in integer AUD cents; the route handler divides by 100.
+     */
+    async getGroupLaborCostAnalysis(
+      caller: AuthenticatedUser,
+      options: GroupLaborCostAnalysisOptions,
+    ): Promise<GroupLaborCostAnalysis> {
+      // V1 explicit restriction: organisation-wide labour cost is owner_admin only.
+      // GPMs may have multi-clinic access via can_operate, but this endpoint
+      // is restricted for remuneration/privacy reasons, not technical ones.
+      if (caller.role !== "owner_admin") {
+        throw new AppError(
+          403,
+          "INSUFFICIENT_PERMISSIONS",
+          "Organisation-wide labour cost analysis is restricted to owner administrators (V1)",
+        );
+      }
+      if (!clinicRepository) {
+        throw new AppError(
+          500,
+          "INTERNAL_ERROR",
+          "Clinic repository is required for group labour analysis",
+        );
+      }
+
+      const clinics = await clinicRepository.findAll();
+
+      const clinicResults = await Promise.all(
+        clinics.map(async (clinic) => ({
+          clinic,
+          analysis: await service.getLaborCostAnalysis(caller, clinic.id, {
+            from: options.from,
+            to: options.to,
+            timezone: clinic.timezone,
+          }),
+        })),
+      );
+
+      // Aggregate totals in cents.
+      // owner_admin always has payroll:rates:read so costs are never null here,
+      // but we propagate null correctly in case the permission model changes.
+      let totalHours = 0;
+      let approvedCostCents: number | null = 0;
+      let pendingCostCents: number | null = 0;
+      let futureCostCents: number | null = 0;
+      let totalCostCents: number | null = 0;
+      let missingCount = 0;
+
+      for (const { analysis } of clinicResults) {
+        const h = analysis.historical;
+        const f = analysis.futureForecast;
+        const p = analysis.planningEstimate;
+
+        totalHours +=
+          (h?.approved.hours ?? 0) +
+          (h?.pending.hours ?? 0) +
+          (f?.totalHours ?? 0);
+
+        // Null-propagating sum: if any clinic's cost is null, the group total is null.
+        approvedCostCents = approvedCostCents !== null && p.approvedCostCents !== null
+          ? approvedCostCents + p.approvedCostCents
+          : null;
+        pendingCostCents = pendingCostCents !== null && p.pendingCostCents !== null
+          ? pendingCostCents + p.pendingCostCents
+          : null;
+        futureCostCents = futureCostCents !== null && p.futureCostCents !== null
+          ? futureCostCents + p.futureCostCents
+          : null;
+        totalCostCents = totalCostCents !== null && p.totalCostCents !== null
+          ? totalCostCents + p.totalCostCents
+          : null;
+
+        missingCount += h?.missing.count ?? 0;
+      }
+
+      return {
+        scope: "all_clinics",
+        dateRange: { from: options.from, to: options.to },
+        totals: {
+          totalHours,
+          approvedCostCents,
+          pendingCostCents,
+          futureCostCents,
+          totalCostCents,
+          missingCount,
+        },
+        clinics: clinicResults.map(({ clinic, analysis }) => ({
+          clinicId: clinic.id,
+          clinicName: clinic.name,
+          timezone: clinic.timezone,
+          analysis,
+        })),
+      };
+    },
   };
+  return service;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

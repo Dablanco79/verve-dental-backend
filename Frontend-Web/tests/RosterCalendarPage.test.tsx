@@ -342,7 +342,7 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
     });
   });
 
-  it("shows scope selector with 'All assigned clinics' and individual clinic buttons when manager has multiple accessible clinics", async () => {
+  it("scope selector buttons are NOT rendered — scope is driven by global clinic context only", async () => {
     mockGetRosterAccessibleClinics.mockResolvedValue([
       { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
       { id: "22222222-2222-4222-8222-222222222222", name: "Verve Dental Clinic B" },
@@ -356,13 +356,10 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
       expect(mockGetRosterAccessibleClinics).toHaveBeenCalled();
     });
 
-    // Scope selector with "All assigned clinics" button
-    const allBtn = await screen.findByRole("button", { name: /All assigned clinics/i });
-    expect(allBtn).toBeInTheDocument();
-
-    // Individual clinic buttons
-    expect(screen.getByRole("button", { name: TEST_CLINIC_NAME })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Verve Dental Clinic B" })).toBeInTheDocument();
+    // The page-level scope selector has been removed.
+    // Scope is driven exclusively by the global clinic selector (ClinicContext).
+    expect(screen.queryByRole("button", { name: /All assigned clinics/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verve Dental Clinic B" })).toBeNull();
   });
 
   it("In All assigned clinics mode, shifts from both clinics render with clinic identity", async () => {
@@ -426,9 +423,16 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
     expect(calledClinicIds).toContain(CLINIC_B_ID);
   });
 
-  it("Selecting an individual clinic scope filters to that clinic only", async () => {
-    const user = userEvent.setup();
+  it("global scope 'specific clinic' loads only that clinic's roster (no scope-selector UI)", async () => {
     const CLINIC_B_ID = "22222222-2222-4222-8222-222222222222";
+
+    // Override to specific-clinic scope — the global context is the only scope control now.
+    mockUseOperationalClinic.mockReturnValue({
+      clinicId: TEST_CLINIC_ID,
+      clinicName: TEST_CLINIC_NAME,
+      selectedClinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      isAllClinicsScope: false,
+    });
 
     mockGetRosterAccessibleClinics.mockResolvedValue([
       { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
@@ -441,56 +445,28 @@ describe("RosterCalendarPage — Roster Scope Selector", () => {
       rosteredClinicId: TEST_CLINIC_ID,
       rosteredClinicName: TEST_CLINIC_NAME,
     });
-    const entryB = buildEntry({
-      id: "scope-entry-b",
-      staffUserId: "staff-id-9999",
-      staffEmail: "bob@clinic-b.au",
-      rosteredClinicId: CLINIC_B_ID,
-      rosteredClinicName: "Verve Dental Clinic B",
-    });
 
+    // Clear call history from any previous tests in this describe block before rendering.
+    mockListRoster.mockClear();
     mockListRoster.mockImplementation((clinicId: string) => {
       if (clinicId === TEST_CLINIC_ID) return Promise.resolve([entryA]);
-      if (clinicId === CLINIC_B_ID) return Promise.resolve([entryB]);
       return Promise.resolve([]);
     });
 
     renderPage();
 
-    // Wait for the scope selector button to appear.
-    const clinicABtn = await screen.findByRole("button", { name: TEST_CLINIC_NAME });
-
-    // findByRole resolves as soon as the button is in the DOM — which is the
-    // same React commit that makes the accessible-clinics list available.
-    // The "all clinics" useEffect fires in that *same* commit cycle, so
-    // listRoster(A) and listRoster(B) may not have been recorded yet.
-    // Wait explicitly for both initial fetches to fire before clearing,
-    // so that mockClear() is guaranteed to be past all pre-scope-change calls.
+    // With specific-clinic global scope, only clinic A is fetched.
+    // waitFor polls until the assertion passes, so we wait for the initial load.
     await waitFor(() => {
-      const initialCalls = mockListRoster.mock.calls.map((c) => c[0] as string);
-      expect(initialCalls).toContain(TEST_CLINIC_ID);
-      expect(initialCalls).toContain(CLINIC_B_ID);
+      expect(mockListRoster).toHaveBeenCalled();
     });
+    // All calls must be for TEST_CLINIC_ID only — no cross-clinic fan-out.
+    const calledClinicIds = mockListRoster.mock.calls.map((c) => c[0] as string);
+    expect(calledClinicIds).toContain(TEST_CLINIC_ID);
+    expect(calledClinicIds.every((id) => id === TEST_CLINIC_ID)).toBe(true);
 
-    // Now safe to clear — all pre-scope-change calls are recorded and flushed.
-    mockListRoster.mockClear();
-    mockListRoster.mockImplementation((clinicId: string) => {
-      if (clinicId === TEST_CLINIC_ID) return Promise.resolve([entryA]);
-      if (clinicId === CLINIC_B_ID) return Promise.resolve([entryB]);
-      return Promise.resolve([]);
-    });
-
-    // Click the clinic A scope button
-    await user.click(clinicABtn);
-
-    // After selecting clinic A scope, listRoster is called only for clinic A
-    await waitFor(() => {
-      const calledClinicIds = mockListRoster.mock.calls.map(
-        (call) => call[0] as string,
-      );
-      expect(calledClinicIds).toContain(TEST_CLINIC_ID);
-      expect(calledClinicIds.every((id) => id === TEST_CLINIC_ID)).toBe(true);
-    });
+    // No manual scope-selector buttons should be present.
+    expect(screen.queryByRole("button", { name: /All assigned clinics/i })).toBeNull();
   });
 });
 

@@ -2333,3 +2333,201 @@ describe("getLaborCostAnalysis — pilot acceptance (future forecast, scheduled 
     expect(result.futureForecast?.totalCostCents).toBe(45_990);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite L — getGroupLaborCostAnalysis
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {
+  createInMemoryClinicRepository,
+  SEED_CLINIC_A_ID,
+  SEED_CLINIC_B_ID,
+} from "../src/repositories/clinicRepository.js";
+
+describe("Suite L — getGroupLaborCostAnalysis", () => {
+  // L.1 GPM is denied (V1 explicit restriction — not a technical limitation)
+  it("L.1: group_practice_manager is denied with INSUFFICIENT_PERMISSIONS", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, undefined, undefined, clinicRepo,
+    );
+    await expect(
+      svc.getGroupLaborCostAnalysis(callerManagerA, { from: dateOffset(0), to: dateOffset(13) }),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_PERMISSIONS" });
+  });
+
+  // L.2 clinical_staff is also denied
+  it("L.2: clinical_staff is denied with INSUFFICIENT_PERMISSIONS", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, undefined, undefined, clinicRepo,
+    );
+    await expect(
+      svc.getGroupLaborCostAnalysis(callerStaffA, { from: dateOffset(0), to: dateOffset(13) }),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_PERMISSIONS" });
+  });
+
+  // L.3 owner_admin, no shifts → zero totals, 2 clinic entries returned
+  it("L.3: owner_admin with no shifts → zero totals, 2 clinic entries", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, undefined, undefined, clinicRepo,
+    );
+    const result = await svc.getGroupLaborCostAnalysis(callerAdminWithRates, {
+      from: dateOffset(0),
+      to: dateOffset(13),
+    });
+
+    expect(result.scope).toBe("all_clinics");
+    expect(result.clinics).toHaveLength(2);
+    expect(result.totals.totalHours).toBe(0);
+    // With rates access but no shifts, costs start at 0 (not null)
+    expect(result.totals.totalCostCents).toBe(0);
+    expect(result.totals.missingCount).toBe(0);
+  });
+
+  // L.4 Group total exactly equals sum of per-clinic planning estimates
+  it("L.4: group totalCostCents == clinic-A totalCostCents + clinic-B totalCostCents", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, rateRepo, undefined, clinicRepo,
+    );
+
+    // $45/hr + 11% super
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_500,
+      superRatePercent: 11,
+      effectiveFrom: "2026-01-01",
+    });
+
+    // Clinic A: 6 h future shift
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 6,
+    });
+    // Clinic B: 4 h future shift
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_B_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 5,
+      durationHours: 4,
+    });
+
+    const from = dateOffset(0);
+    const to = dateOffset(13);
+
+    // Get per-clinic results independently for comparison
+    const clinicAResult = await svc.getLaborCostAnalysis(callerAdminWithRates, SEED_CLINIC_A_ID, { from, to });
+    const clinicBResult = await svc.getLaborCostAnalysis(callerAdminWithRates, SEED_CLINIC_B_ID, { from, to });
+
+    const groupResult = await svc.getGroupLaborCostAnalysis(callerAdminWithRates, { from, to });
+
+    // Hours: sum of future forecast hours across both clinics
+    const expectedHours =
+      (clinicAResult.futureForecast?.totalHours ?? 0) +
+      (clinicBResult.futureForecast?.totalHours ?? 0);
+    expect(groupResult.totals.totalHours).toBe(expectedHours);
+    expect(groupResult.totals.totalHours).toBe(10); // 6 + 4
+
+    // Cost: group total == sum of per-clinic planning totals
+    const expectedCostCents =
+      (clinicAResult.planningEstimate.totalCostCents ?? 0) +
+      (clinicBResult.planningEstimate.totalCostCents ?? 0);
+    expect(groupResult.totals.totalCostCents).toBe(expectedCostCents);
+
+    // Per-clinic breakdown exists in the result
+    const clinicIds = groupResult.clinics.map((c) => c.clinicId).sort();
+    expect(clinicIds).toContain(SEED_CLINIC_A_ID);
+    expect(clinicIds).toContain(SEED_CLINIC_B_ID);
+  });
+
+  // L.5 Group Approved + Pending + Future = Total (planning estimate consistency)
+  it("L.5: group approvedCostCents + pendingCostCents + futureCostCents = totalCostCents", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, rateRepo, undefined, clinicRepo,
+    );
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 5_000,
+      superRatePercent: 10,
+      effectiveFrom: "2026-01-01",
+    });
+
+    // Approved historical in Clinic A
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: SEED_CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-2),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+
+    // Future shift in Clinic B
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_B_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 5,
+    });
+
+    const from = dateOffset(-3);
+    const to = dateOffset(7);
+    const result = await svc.getGroupLaborCostAnalysis(callerAdminWithRates, { from, to });
+
+    const { approvedCostCents, pendingCostCents, futureCostCents, totalCostCents } = result.totals;
+    // All components must be non-null (owner_admin has rates access)
+    expect(totalCostCents).not.toBeNull();
+    // Planning estimate integrity: Approved + Pending + Future = Total
+    expect(
+      (approvedCostCents ?? 0) + (pendingCostCents ?? 0) + (futureCostCents ?? 0),
+    ).toBe(totalCostCents);
+  });
+
+  // L.6 Missing count is the sum of missing shifts across all clinics
+  it("L.6: missingCount sums missing shifts across both clinics", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const clinicRepo = createInMemoryClinicRepository();
+    const svc = createLaborForecastService(
+      rosterRepo, timesheetRepo, undefined, undefined, clinicRepo,
+    );
+
+    // One completed past shift in each clinic — no timesheets → both missing
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: -3,
+      durationHours: 8,
+      status: "completed",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_B_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: -2,
+      durationHours: 8,
+      status: "completed",
+    });
+
+    const from = dateOffset(-7);
+    const to = dateOffset(-1);
+    const result = await svc.getGroupLaborCostAnalysis(callerAdminWithRates, { from, to });
+
+    // Both shifts have no timesheets → 2 missing across the group
+    expect(result.totals.missingCount).toBe(2);
+  });
+});

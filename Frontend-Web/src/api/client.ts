@@ -49,7 +49,7 @@ import type {
   RosterEntry,
   UpdateShiftRequest,
 } from "../types/roster.js";
-import type { LaborCostAnalysis } from "../types/forecast.js";
+import type { GroupLaborCostAnalysis, LaborCostAnalysis } from "../types/forecast.js";
 import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
@@ -1298,6 +1298,21 @@ export function createApiClient(config: AppConfig) {
     return request<LaborCostAnalysis>(
       config,
       `/api/v1/clinics/${clinicId}/forecast/labor${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getGroupLaborForecast(
+    params?: { from: string; to: string },
+  ): Promise<GroupLaborCostAnalysis> {
+    let qs = "";
+    if (params) {
+      qs = `?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`;
+    }
+    return request<GroupLaborCostAnalysis>(
+      config,
+      `/api/v1/forecast/labor/group${qs}`,
       {},
       requireAccessToken(),
     );
@@ -2792,6 +2807,7 @@ export function createApiClient(config: AppConfig) {
     updateShift,
     cancelShift,
     getLaborForecast,
+    getGroupLaborForecast,
     getMaterialsForecast,
     getMaterialsAlerts,
     listClinics,
