@@ -2452,6 +2452,7 @@ body {
 .lf-summary__kpi--primary .lf-summary__kpi-value {
   color: #fff;
   font-size: 2rem;
+  font-weight: 700;
 }
 
 .lf-summary__kpi--primary .lf-summary__kpi-sub {
@@ -7202,10 +7203,13 @@ textarea:focus-visible {
   white-space: normal;
 }
 
-.analytics-card__value--primary,
-.lf-summary__kpi--primary .lf-summary__kpi-value {
+.analytics-card__value--primary {
   color: var(--vds-colour-purple);
 }
+/* The primary KPI card (.lf-summary__kpi--primary) has a dark purple/charcoal
+   gradient background — its value text must remain white (#fff, set at the
+   canonical rule above) for sufficient contrast.  Do NOT add
+   .lf-summary__kpi--primary .lf-summary__kpi-value here. */
 
 .analytics-card__value--positive,
 .billing-kpi-bar__dd--paid,

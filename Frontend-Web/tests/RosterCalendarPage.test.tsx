@@ -42,7 +42,15 @@ import {
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
-const { authTestState, mockListRoster, mockListUsers, mockGetRosterAccessibleClinics, mockUseOperationalClinic } = vi.hoisted(() => {
+const {
+  authTestState,
+  mockListRoster,
+  mockListUsers,
+  mockGetRosterAccessibleClinics,
+  mockUseOperationalClinic,
+  mockCancelShift,
+  mockUpdateShift,
+} = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   // Default clinicId mirrors managerUser.homeClinicId — preserves existing tests.
   const DEFAULT_CLINIC_ID = "11111111-1111-4111-8111-111111111111";
@@ -52,6 +60,8 @@ const { authTestState, mockListRoster, mockListUsers, mockGetRosterAccessibleCli
     mockListRoster: vi.fn(),
     mockListUsers: vi.fn(),
     mockGetRosterAccessibleClinics: vi.fn(),
+    mockCancelShift: vi.fn(),
+    mockUpdateShift: vi.fn(),
     mockUseOperationalClinic: vi.fn().mockReturnValue({
       clinicId: DEFAULT_CLINIC_ID,
       clinicName: DEFAULT_CLINIC_NAME,
@@ -77,8 +87,8 @@ vi.mock("../src/api/client.js", () => ({
     listUsers: mockListUsers,
     listRosterEligibleStaff: mockListUsers,
     createShift: vi.fn(),
-    updateShift: vi.fn(),
-    cancelShift: vi.fn(),
+    updateShift: mockUpdateShift,
+    cancelShift: mockCancelShift,
     checkShiftConflicts: vi.fn().mockResolvedValue({ overlapping: [], sameDay: [] }),
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
   }),
@@ -538,6 +548,159 @@ describe("RosterCalendarPage — preferred name in Month compact labels", () => 
 
     await waitFor(() => {
       expect(screen.getAllByText((c) => c.includes(TEST_CLINIC_NAME)).length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ── Saving state regression ──────────────────────────────────────────────────
+//
+// After a successful cancel or save, the modal closes.  If the user
+// immediately opens a DIFFERENT shift the new modal must NOT inherit the
+// previous operation's isSubmitting=true state.
+//
+// Root cause (fixed): closeModal() did not call setIsSubmitting(false).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("RosterCalendarPage — saving state resets between shifts", () => {
+  const today = new Date();
+  const mkTime = (h: number, m = 0) =>
+    new Date(today.getFullYear(), today.getMonth(), today.getDate(), h, m, 0).toISOString();
+
+  // Two distinct entries on today so both appear in Week/Day view.
+  const entryA = buildEntry({
+    id: "shift-a",
+    staffUserId: namedStaff.id,
+    staffEmail: namedStaff.email,
+    shiftStartAt: mkTime(8),
+    shiftEndAt: mkTime(12),
+    status: "confirmed",
+  });
+  const entryB = buildEntry({
+    id: "shift-b",
+    staffUserId: namedStaff.id,
+    staffEmail: namedStaff.email,
+    shiftStartAt: mkTime(13),
+    shiftEndAt: mkTime(17),
+    status: "scheduled",
+  });
+
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, managerUser);
+    mockListUsers.mockResolvedValue([namedStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME, preferredName: null },
+    ]);
+    // Both shifts visible; after cancel of entryA return the updated version.
+    mockListRoster.mockResolvedValue([entryA, entryB]);
+    mockCancelShift.mockResolvedValue({ ...entryA, status: "cancelled" });
+    mockUpdateShift.mockResolvedValue({ ...entryB, notes: "updated" });
+  });
+
+  it("after successfully cancelling shift A, opening shift B shows no Saving state", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // Switch to Day view so individual shift buttons are visible.
+    const dayBtn = await screen.findByRole("button", { name: "Day" });
+    await user.click(dayBtn);
+
+    // Open shift A (8:00–12:00)
+    const shiftABtn = await screen.findByRole("button", {
+      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+    });
+    await user.click(shiftABtn);
+
+    // Confirm the modal is open and not in a submitting state.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /cancel shift/i })).not.toBeDisabled();
+    });
+
+    // Cancel shift A.
+    await user.click(screen.getByRole("button", { name: /cancel shift/i }));
+
+    // Modal must close (the cancel button disappears).
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /cancel shift/i })).toBeNull();
+    });
+
+    // Immediately open shift B (13:00–17:00).
+    const shiftBBtn = await screen.findByRole("button", {
+      name: /13:00.*17:00|Shift.*Alice Jones.*13:00/i,
+    });
+    await user.click(shiftBBtn);
+
+    // The Save button must NOT say "Saving…" — it must be interactive.
+    await waitFor(() => {
+      const saveBtn = screen.getByRole("button", { name: /save changes/i });
+      expect(saveBtn).not.toBeDisabled();
+      expect(saveBtn).toHaveTextContent(/save changes/i);
+    });
+  });
+
+  it("failed cancel shows error and leaves the modal interactive for retry", async () => {
+    const user = userEvent.setup();
+    mockCancelShift.mockRejectedValue(new Error("Network error"));
+
+    renderPage();
+
+    const dayBtn = await screen.findByRole("button", { name: "Day" });
+    await user.click(dayBtn);
+
+    const shiftABtn = await screen.findByRole("button", {
+      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+    });
+    await user.click(shiftABtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /cancel shift/i })).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: /cancel shift/i }));
+
+    // Error message must appear.
+    await waitFor(() => {
+      expect(screen.getByText(/failed to cancel shift|network error/i)).toBeInTheDocument();
+    });
+
+    // The Cancel shift button must be enabled again (not stuck in Saving…).
+    expect(screen.getByRole("button", { name: /cancel shift/i })).not.toBeDisabled();
+  });
+
+  it("after successfully saving shift B edits, opening another shift shows no Saving state", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const dayBtn = await screen.findByRole("button", { name: "Day" });
+    await user.click(dayBtn);
+
+    // Open shift B
+    const shiftBBtn = await screen.findByRole("button", {
+      name: /13:00.*17:00|Shift.*Alice Jones.*13:00/i,
+    });
+    await user.click(shiftBBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /save changes/i })).not.toBeDisabled();
+    });
+
+    // Submit the form (save changes).
+    await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+    // Modal must close.
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /save changes/i })).toBeNull();
+    });
+
+    // Open shift A — it must not inherit Saving… state.
+    const shiftABtn = await screen.findByRole("button", {
+      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+    });
+    await user.click(shiftABtn);
+
+    await waitFor(() => {
+      const saveBtn = screen.getByRole("button", { name: /save changes/i });
+      expect(saveBtn).not.toBeDisabled();
+      expect(saveBtn).toHaveTextContent(/save changes/i);
     });
   });
 });

@@ -846,6 +846,10 @@ export function createLaborForecastService(
           timesheetStatus: "approved",
         });
 
+        // Calibration: approved timesheets from the past 30 days.
+        // Used only to determine staffWithHistory (for rate-fallback blending).
+        // NOTE: historical hour averages must NOT replace the roster's authoritative
+        // scheduled duration — see projectedHours assignment below.
         const hoursAccum = new Map<string, { totalHours: number; count: number }>();
         for (const ts of calibrationTs) {
           if (ts.totalHoursWorked === null || ts.totalHoursWorked <= 0) continue;
@@ -856,22 +860,8 @@ export function createLaborForecastService(
           });
         }
 
-        const staffAvgHoursMap = new Map<string, number>();
-        for (const [sid, { totalHours, count }] of hoursAccum) {
-          staffAvgHoursMap.set(sid, totalHours / count);
-        }
-
-        let clinicAvgHoursPerShift: number | null = null;
-        {
-          let totalH = 0, totalC = 0;
-          for (const [, { totalHours, count }] of hoursAccum) {
-            totalH += totalHours;
-            totalC += count;
-          }
-          if (totalC > 0) clinicAvgHoursPerShift = totalH / totalC;
-        }
-
-        const staffWithHistory = new Set(staffAvgHoursMap.keys());
+        // staffWithHistory is used only for clinicWideFallbackCents blending.
+        const staffWithHistory = new Set(hoursAccum.keys());
 
         // Clinic-wide fallback rate (blended from covered shift types)
         let clinicWideFallbackCents = CLINIC_WIDE_FALLBACK_RATE_CENTS;
@@ -903,16 +893,15 @@ export function createLaborForecastService(
           const scheduledDurationHours =
             (shift.shiftEndAt.getTime() - shift.shiftStartAt.getTime()) / (1_000 * 60 * 60);
 
-          // Hours calibration (per-staff → clinic-wide → scheduled)
-          let projectedHours: number;
-          const staffAvg = staffAvgHoursMap.get(shift.staffUserId);
-          if (staffAvg !== undefined) {
-            projectedHours = staffAvg;
-          } else if (clinicAvgHoursPerShift !== null) {
-            projectedHours = clinicAvgHoursPerShift;
-          } else {
-            projectedHours = scheduledDurationHours;
-          }
+          // Projected hours = roster-scheduled duration.
+          //
+          // The roster entry is the authoritative source of planned hours for a
+          // future shift.  Historical approved-hour averages must NOT substitute
+          // the scheduled duration — doing so causes values like ~32 h or ~2 h
+          // to appear for a single rostered day, depending on each staff member's
+          // approval history.  Historical data remains available for
+          // utilisation/variance analysis but must not distort planned hours.
+          const projectedHours = scheduledDurationHours;
 
           // Rate lookup using shift's clinic-local date (THE FIX)
           const shiftLocalDate = toLocalDateString(shift.shiftStartAt, timezone);

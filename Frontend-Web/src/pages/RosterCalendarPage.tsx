@@ -471,6 +471,7 @@ export function RosterCalendarPage() {
     setEditingEntry(entry);
     setForm(formFromEntry(entry));
     setFormError(null);
+    setIsSubmitting(false); // belt-and-suspenders: every modal open starts clean
     setConflictResult(null);
     setShowModal(true);
   }
@@ -479,6 +480,11 @@ export function RosterCalendarPage() {
     setShowModal(false);
     setEditingEntry(null);
     setFormError(null);
+    // Reset submitting state so the NEXT modal open always starts clean.
+    // Without this, a successful cancel/save leaves isSubmitting=true: the
+    // next shift opened immediately after shows "Saving…" with all buttons
+    // disabled and the user must navigate away to recover.
+    setIsSubmitting(false);
     setConflictResult(null);
   }
 

@@ -2010,10 +2010,10 @@ describe("getLaborCostAnalysis — aggregate cost redaction for callers without 
 
     // Data quality flags and hours must still be visible.
     // Approved hours = 8 (historical timesheet for STAFF_USER_ID_A).
-    // Future hours = 8 (clinic-wide avg from STAFF_USER_ID_A's timesheet applies
-    // to STAFF_USER_ID_B who has no personal history; scheduled duration not used).
+    // Future hours = 9 (STAFF_USER_ID_B's scheduled shift duration — historical
+    // averages must NOT override the roster's authoritative planned hours).
     expect(result.historical?.approved.hours).toBe(8);
-    expect(result.futureForecast?.totalHours).toBe(8);
+    expect(result.futureForecast?.totalHours).toBe(9);
   });
 
   it("caller WITH payroll:rates:read receives real non-null cost values for all aggregate fields", async () => {
@@ -2040,5 +2040,296 @@ describe("getLaborCostAnalysis — aggregate cost redaction for callers without 
     expect(result.historical?.approved.totalCostCents).toBeGreaterThan(0);
     expect(result.planningEstimate.approvedCostCents).toBeGreaterThan(0);
     expect(result.planningEstimate.totalCostCents).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suite K — Pilot Acceptance Tests: Future Forecast (scheduled-duration basis)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// These tests verify end-to-end business outcomes, not internal implementation
+// details.  Every assertion uses exact, hand-calculated values.  The tests act
+// as a regression guard: if the projected hours, rate application, or cost
+// arithmetic changes, they fail loudly.
+//
+// Key invariant: future projected hours MUST equal the roster scheduled
+// duration.  Historical per-staff or clinic-wide average hours must never
+// replace the planned shift length.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getLaborCostAnalysis — pilot acceptance (future forecast, scheduled duration)", () => {
+  it("1 staff, 1 eight-hour shift at configured rate → exact 8 h, exact cost", async () => {
+    // Scenario: Staff A rostered 09:00–17:00 (8 h).
+    // Rate: $50.00/hr base, 10% super.
+    // Expected: baseCost = 8 × 5000 c = 40 000 c, super = 4 000 c, total = 44 000 c.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 5_000,
+      superRatePercent: 10,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 2,
+      durationHours: 8,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    expect(result.futureForecast?.totalHours).toBe(8);
+    expect(result.futureForecast?.baseCostCents).toBe(40_000);
+    expect(result.futureForecast?.superCostCents).toBe(4_000);
+    expect(result.futureForecast?.totalCostCents).toBe(44_000);
+  });
+
+  it("2 staff with different shift lengths → each contributes their scheduled hours", async () => {
+    // Staff A rostered for 6 h, Staff B rostered for 4 h.
+    // Combined expected: 10 h total.
+    // Staff A rate: $40/hr, 9% super. Staff B rate: $35/hr, 11% super.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_000,
+      superRatePercent: 9,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedRate(rateRepo, STAFF_USER_ID_B, {
+      baseHourlyRateCents: 3_500,
+      superRatePercent: 11,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 6,
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_B,
+      daysFromNow: 3,
+      durationHours: 4,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    // Combined hours = 6 + 4 = 10
+    expect(result.futureForecast?.totalHours).toBe(10);
+
+    // Staff A: 6 × 4000 = 24 000 base, 9% super = 2 160, total = 26 160
+    // Staff B: 4 × 3500 = 14 000 base, 11% super = 1 540, total = 15 540
+    expect(result.futureForecast?.baseCostCents).toBe(38_000);
+    expect(result.futureForecast?.superCostCents).toBe(3_700);
+    expect(result.futureForecast?.totalCostCents).toBe(41_700);
+  });
+
+  it("cancelled shift excluded; confirmed shift included at scheduled duration", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_000,
+      superRatePercent: 10,
+      effectiveFrom: "2026-01-01",
+    });
+
+    // Confirmed shift (8 h) — must be included
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 2,
+      durationHours: 8,
+      status: "confirmed",
+    });
+    // Cancelled shift (9 h) — must be excluded
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 9,
+      status: "cancelled",
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    expect(result.futureForecast?.totalHours).toBe(8);
+    expect(result.futureForecast?.baseCostCents).toBe(32_000); // 8 × 4000
+  });
+
+  it("future rate change: effective-dated rate applied to scheduled duration", async () => {
+    // Old rate $38/hr until day+4; new rate $48/hr from day+5.
+    // Shift on day+7 should use the new rate.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 3_800,
+      superRatePercent: 10,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_800,
+      superRatePercent: 10,
+      effectiveFrom: dateOffset(5),
+    });
+
+    // 5-hour shift after the rate change
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 7,
+      durationHours: 5,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(14),
+    });
+
+    // 5 h × 4800 c/hr = 24 000 c base; super 10% = 2 400 c
+    expect(result.futureForecast?.totalHours).toBe(5);
+    expect(result.futureForecast?.baseCostCents).toBe(24_000);
+    expect(result.futureForecast?.superCostCents).toBe(2_400);
+  });
+
+  it("approved historical + future mixed range: both sections correct, no double-count", async () => {
+    // Historical: approved 8 h timesheet (3 days ago).
+    // Future: 6 h roster shift (3 days from now).
+    // Each must appear in their correct section; neither contaminates the other.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 4_500,
+      superRatePercent: 12,
+      effectiveFrom: "2026-01-01",
+    });
+
+    await seedHistoricalTimesheet(timesheetRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      shiftDate: dateOffset(-3),
+      totalHoursWorked: 8,
+      timesheetStatus: "approved",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 6,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(-7),
+      to: dateOffset(7),
+    });
+
+    // Historical approved: 8 h × 4500 c/hr = 36 000 c base
+    expect(result.historical?.approved.hours).toBe(8);
+    expect(result.historical?.approved.baseCostCents).toBe(36_000);
+
+    // Future: 6 h × 4500 c/hr = 27 000 c base
+    expect(result.futureForecast?.totalHours).toBe(6);
+    expect(result.futureForecast?.baseCostCents).toBe(27_000);
+  });
+
+  it("historical average does NOT override the scheduled shift duration (regression)", async () => {
+    // Staff A has 10 approved historical timesheets each of 2 hours (avg = 2 h).
+    // Staff A is rostered for 8 hours tomorrow.
+    // Projected hours MUST be 8 — not the historical average of 2.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 5_000,
+      superRatePercent: 10,
+      effectiveFrom: "2026-01-01",
+    });
+
+    // Seed 10 short historical timesheets — avg = 2 h
+    for (let i = 1; i <= 10; i++) {
+      await seedHistoricalTimesheet(timesheetRepo, {
+        clinicId: CLINIC_A_ID,
+        staffUserId: STAFF_USER_ID_A,
+        shiftDate: dateOffset(-i),
+        totalHoursWorked: 2,
+        timesheetStatus: "approved",
+      });
+    }
+
+    // Future shift is 8 h — must NOT be replaced by the 2 h average
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 2,
+      durationHours: 8,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    // Must use 8 h (scheduled), not 2 h (historical avg)
+    expect(result.futureForecast?.totalHours).toBe(8);
+    // Cost: 8 × 5000 = 40 000 base; super 10% = 4 000
+    expect(result.futureForecast?.baseCostCents).toBe(40_000);
+    expect(result.futureForecast?.superCostCents).toBe(4_000);
+  });
+
+  it("super applied to scheduled hours at configured rate", async () => {
+    // 7 h shift at $60/hr base, 9.5% super.
+    // Expected: base = 7 × 6000 = 42 000 c; super = round(42000 × 0.095) = 3 990 c.
+    const rosterRepo = createInMemoryRosterRepository();
+    const timesheetRepo = createInMemoryTimesheetRepository();
+    const rateRepo = createInMemoryStaffPayRateRepository();
+    const svc = createLaborForecastService(rosterRepo, timesheetRepo, rateRepo);
+
+    await seedRate(rateRepo, STAFF_USER_ID_A, {
+      baseHourlyRateCents: 6_000,
+      superRatePercent: 9.5,
+      effectiveFrom: "2026-01-01",
+    });
+    await seedShift(rosterRepo, {
+      clinicId: CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 1,
+      durationHours: 7,
+    });
+
+    const result = await svc.getLaborCostAnalysis(callerAdminWithRates, CLINIC_A_ID, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    expect(result.futureForecast?.totalHours).toBe(7);
+    expect(result.futureForecast?.baseCostCents).toBe(42_000);
+    expect(result.futureForecast?.superCostCents).toBe(3_990); // Math.round(42000 × 0.095)
+    expect(result.futureForecast?.totalCostCents).toBe(45_990);
   });
 });
