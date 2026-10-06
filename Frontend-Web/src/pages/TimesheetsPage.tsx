@@ -193,18 +193,33 @@ function PayrollTypeBadge({ type }: { type: PayrollType }) {
 
 /**
  * Compact geofence summary shown in manager approval/review tables.
- * Shows an exception badge when either event was outside range, and a
- * two-line detail (clock-in / clock-out) for the location audit trail.
+ *
+ * Renders the physical clinic name (rosteredClinicName) at the top so
+ * managers can immediately see which site the staff member worked at —
+ * critical when staff clock in across clinics.
+ *
+ * Below the clinic name: the existing exception badge and per-event
+ * In / Out geofence detail lines.
  */
 function GeofenceSummaryCell({
   clockInLoc,
   clockOutLoc,
+  rosteredClinicName,
 }: {
   clockInLoc: GeofenceLocation | null;
   clockOutLoc: GeofenceLocation | null;
+  /** Physical clinic worked — shown above the geofence detail. */
+  rosteredClinicName?: string | null;
 }) {
   if (!clockInLoc && !clockOutLoc) {
-    return <span className="ts-loc-historical">Not recorded</span>;
+    return (
+      <div className="ts-geofence-summary">
+        {rosteredClinicName ? (
+          <div className="ts-geofence-clinic">{rosteredClinicName}</div>
+        ) : null}
+        <span className="ts-loc-historical">Not recorded</span>
+      </div>
+    );
   }
 
   const hasException =
@@ -233,6 +248,9 @@ function GeofenceSummaryCell({
 
   return (
     <div className="ts-geofence-summary">
+      {rosteredClinicName ? (
+        <div className="ts-geofence-clinic">{rosteredClinicName}</div>
+      ) : null}
       {hasException && (
         <div className="ts-geofence-exception" role="status">
           <AlertTriangle size={12} aria-hidden="true" />
@@ -614,6 +632,7 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                   <GeofenceSummaryCell
                     clockInLoc={entry.clockInLocation}
                     clockOutLoc={entry.clockOutLocation}
+                    rosteredClinicName={entry.rosteredClinicName}
                   />
                 </td>
                 <td className="pr-table__td ts-staff-note-cell">
@@ -1777,6 +1796,7 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
                 <GeofenceSummaryCell
                   clockInLoc={entry.clockInLocation}
                   clockOutLoc={entry.clockOutLocation}
+                  rosteredClinicName={entry.rosteredClinicName}
                 />
               </td>
               <td className="pr-table__td ts-staff-note-cell">

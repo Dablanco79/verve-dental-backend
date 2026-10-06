@@ -2425,3 +2425,131 @@ describe("Staff Timesheet Notes — Manager table Staff Note column", () => {
     expect(screen.getByRole("columnheader", { name: /staff note/i })).toBeInTheDocument();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Physical clinic name in manager Location column
+//
+// Covers:
+//   - owner_admin sees rosteredClinicName in Hourly Approval Queue
+//   - group_practice_manager sees rosteredClinicName in Hourly Approval Queue
+//   - clinic name renders even when both geofence snapshots are null
+//   - clinic name appears in ReviewedTimesheets (Approved tab)
+//   - PM does NOT see hourly rate / cost values in the timesheet surfaces
+//   - owner_admin does NOT see hourly rate / cost in the timesheet surfaces
+//     (remuneration belongs to LaborForecastPage, not here)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Physical clinic name in manager Location column", () => {
+  beforeEach(() => {
+    mockGetMyShifts.mockResolvedValue([]);
+    mockListMyTimesheets.mockResolvedValue([]);
+  });
+
+  /** Builds a submitted hourly entry with a distinctive cross-clinic name. */
+  function makeCrossClinicEntry(): TimesheetEntry {
+    return {
+      ...makeSubmittedEntry("cross-clinic-entry"),
+      rosteredClinicId: "22222222-2222-4222-8222-222222222222",
+      rosteredClinicName: "Verve Dental - Heathmont",
+      clockInLocation: null,
+      clockOutLocation: null,
+    };
+  }
+
+  it("owner_admin sees rosteredClinicName in the Hourly Approval Queue Location column", async () => {
+    mockListTimesheets.mockResolvedValue([makeCrossClinicEntry()]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    // Wait for the approval queue to render
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    // The physical clinic name must appear in the Location column
+    expect(screen.getByText("Verve Dental - Heathmont")).toBeInTheDocument();
+  });
+
+  it("group_practice_manager sees rosteredClinicName in the Hourly Approval Queue Location column", async () => {
+    mockListTimesheets.mockResolvedValue([makeCrossClinicEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    expect(screen.getByText("Verve Dental - Heathmont")).toBeInTheDocument();
+  });
+
+  it("clinic name renders in the Location column even when both geofence snapshots are null", async () => {
+    // Entry with no GPS data at all — should still show the clinic name
+    const entry: TimesheetEntry = {
+      ...makeSubmittedEntry("no-geo-entry"),
+      rosteredClinicName: "Verve Dental - Cheltenham",
+      clockInLocation: null,
+      clockOutLocation: null,
+    };
+    mockListTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    // Clinic name must appear above the "Not recorded" fallback
+    expect(screen.getByText("Verve Dental - Cheltenham")).toBeInTheDocument();
+    // "Not recorded" should still be present as the geofence fallback
+    expect(screen.getByText("Not recorded")).toBeInTheDocument();
+  });
+
+  it("clinic name appears in the ReviewedTimesheets Location column (Approved tab)", async () => {
+    const entry: TimesheetEntry = {
+      ...makeSubmittedEntry("approved-cross"),
+      timesheetStatus: "approved",
+      rosteredClinicName: "Verve Dental - Bentleigh East",
+      approvedByUserId: "manager-1",
+      approvedAt: "2026-09-22T10:00:00.000Z",
+      clockInLocation: null,
+      clockOutLocation: null,
+    };
+    mockListTimesheets.mockResolvedValue([entry]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    // Switch to Approved tab
+    const approvedBtn = await screen.findByRole("button", { name: /^approved/i });
+    await userEvent.click(approvedBtn);
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    expect(screen.getByText("Verve Dental - Bentleigh East")).toBeInTheDocument();
+  });
+
+  it("PM does NOT see hourly rate or cost columns in the Hourly Approval Queue", async () => {
+    mockListTimesheets.mockResolvedValue([makeCrossClinicEntry()]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    // Confirm column headers — no rate / cost columns must be present
+    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    const rateKeywords = ["rate", "cost", "$/hr", "base", "super", "labour cost", "pay rate"];
+    for (const keyword of rateKeywords) {
+      const found = headers.some((h) => h.toLowerCase().includes(keyword));
+      expect(found, `Column header must not contain "${keyword}"`).toBe(false);
+    }
+  });
+
+  it("owner_admin does NOT see hourly rate or cost columns in the Hourly Approval Queue", async () => {
+    mockListTimesheets.mockResolvedValue([makeCrossClinicEntry()]);
+
+    renderTimesheetsPage(makeUser("owner_admin"));
+
+    await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
+
+    // Remuneration belongs to the Labour Cost Analysis page, not timesheets
+    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    const rateKeywords = ["rate", "cost", "$/hr", "base", "super", "labour cost", "pay rate"];
+    for (const keyword of rateKeywords) {
+      const found = headers.some((h) => h.toLowerCase().includes(keyword));
+      expect(found, `Column header must not contain "${keyword}"`).toBe(false);
+    }
+  });
+});
