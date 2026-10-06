@@ -489,7 +489,7 @@ describe("TimesheetsPage — Timesheet view filter bar", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Minimal submitted timesheet entry fixture. */
-function makeSubmittedEntry(id = "entry-1") {
+function makeSubmittedEntry(id = "entry-1"): TimesheetEntry {
   return {
     id,
     payrollType: "hourly_auto",
