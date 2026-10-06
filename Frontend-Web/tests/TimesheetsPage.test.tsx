@@ -2529,7 +2529,7 @@ describe("Physical clinic name in manager Location column", () => {
     await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
 
     // Confirm column headers — no rate / cost columns must be present
-    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent);
     const rateKeywords = ["rate", "cost", "$/hr", "base", "super", "labour cost", "pay rate"];
     for (const keyword of rateKeywords) {
       const found = headers.some((h) => h.toLowerCase().includes(keyword));
@@ -2545,7 +2545,7 @@ describe("Physical clinic name in manager Location column", () => {
     await screen.findByRole("cell", { name: "nurse@clinic-a.au" });
 
     // Remuneration belongs to the Labour Cost Analysis page, not timesheets
-    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent);
     const rateKeywords = ["rate", "cost", "$/hr", "base", "super", "labour cost", "pay rate"];
     for (const keyword of rateKeywords) {
       const found = headers.some((h) => h.toLowerCase().includes(keyword));
