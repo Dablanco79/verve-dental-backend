@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HomePage } from "../src/pages/HomePage.js";
 import type { AllClinicsDashboardKpis, DashboardKpis } from "../src/types/analytics.js";
+import type { GroupLaborCostAnalysis, LaborCostAnalysis } from "../src/types/forecast.js";
 import type { InventoryItem, PurchaseOrderLine } from "../src/types/inventory.js";
 import type { LeaveRequest, TimesheetEntry } from "../src/types/payroll.js";
 import type { SupplierInvoice } from "../src/types/supplier.js";
@@ -30,13 +31,16 @@ const {
   mockListMyTimesheets,
   mockListLeave,
   mockListMyLeave,
+  mockGetLaborForecast,
+  mockGetGroupLaborForecast,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   const selectedClinicState: {
-    selectedClinic: { id: string; name: string };
+    selectedClinic: { id: string; name: string } | null;
     selectedDashboardScope:
       | { type: "all_clinics" }
-      | { type: "clinic"; clinic: { id: string; name: string } };
+      | { type: "clinic"; clinic: { id: string; name: string } }
+      | null;
     availableClinics: { id: string; name: string }[];
   } = {
     selectedClinic: {
@@ -70,6 +74,8 @@ const {
     mockListMyTimesheets: vi.fn(),
     mockListLeave: vi.fn(),
     mockListMyLeave: vi.fn(),
+    mockGetLaborForecast: vi.fn(),
+    mockGetGroupLaborForecast: vi.fn(),
   };
 });
 
@@ -109,9 +115,8 @@ vi.mock("../src/api/client.js", () => ({
     listMyTimesheets: mockListMyTimesheets,
     listLeave: mockListLeave,
     listMyLeave: mockListMyLeave,
-    // Labour Cost Forecast — return empty rejection so the Hub still renders
-    getLaborForecast: vi.fn().mockRejectedValue(new Error("not mocked")),
-    getGroupLaborForecast: vi.fn().mockRejectedValue(new Error("not mocked")),
+    getLaborForecast: mockGetLaborForecast,
+    getGroupLaborForecast: mockGetGroupLaborForecast,
   }),
 }));
 
@@ -307,6 +312,69 @@ const pendingLeave: LeaveRequest = {
   updatedAt: "2026-06-26T00:00:00.000Z",
 };
 
+const CHELTENHAM_ID = "33333333-3333-4333-8333-333333333333";
+const HEATHMONT_ID = "44444444-4444-4444-8444-444444444444";
+
+function clinicLaborForecast(clinicId: string, totalCost: number): LaborCostAnalysis {
+  return {
+    clinicId,
+    dateRange: {
+      from: "2026-10-06",
+      to: "2026-10-19",
+      timezone: "Australia/Melbourne",
+    },
+    historical: null,
+    futureForecast: {
+      totalHours: 10,
+      baseCost: totalCost,
+      superCost: 0,
+      totalCost,
+      anyStaffUsingFallback: false,
+      breakdownByShiftType: [],
+    },
+    planningEstimate: {
+      approvedCost: 0,
+      pendingCost: 0,
+      futureCost: totalCost,
+      totalCost,
+    },
+    staffBreakdown: [],
+    dataQuality: {
+      hasIncompleteTimesheets: false,
+      hasMissingTimesheets: false,
+      hasRejectedTimesheets: false,
+      hasRequiresAmendment: false,
+    },
+  };
+}
+
+function groupLaborForecast(totalCost: number): GroupLaborCostAnalysis {
+  return {
+    scope: "all_clinics",
+    dateRange: { from: "2026-10-06", to: "2026-10-19" },
+    totals: {
+      totalHours: 30,
+      approvedCost: 0,
+      pendingCost: 0,
+      futureCost: totalCost,
+      totalCost,
+      missingCount: 0,
+    },
+    clinics: [],
+  };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 function renderHomePage() {
   return render(
     <MemoryRouter>
@@ -335,6 +403,8 @@ describe("HomePage role dashboards", () => {
     mockListMyTimesheets.mockReset();
     mockListLeave.mockReset();
     mockListMyLeave.mockReset();
+    mockGetLaborForecast.mockReset();
+    mockGetGroupLaborForecast.mockReset();
 
     mockGetAnalyticsDashboard.mockResolvedValue(dashboardKpis);
     mockGetAllClinicsAnalyticsDashboard.mockResolvedValue(allClinicsDashboardKpis);
@@ -345,6 +415,8 @@ describe("HomePage role dashboards", () => {
     mockListMyTimesheets.mockResolvedValue([submittedTimesheet]);
     mockListLeave.mockResolvedValue([pendingLeave]);
     mockListMyLeave.mockResolvedValue([pendingLeave]);
+    mockGetLaborForecast.mockRejectedValue(new Error("not mocked"));
+    mockGetGroupLaborForecast.mockRejectedValue(new Error("not mocked"));
   });
 
   it("renders the owner admin executive dashboard", async () => {
@@ -477,5 +549,139 @@ describe("HomePage role dashboards", () => {
       limit: 50,
     });
     expect(mockListPurchaseOrders).toHaveBeenCalledWith(TEST_CLINIC_B_ID);
+  });
+
+  it("never blanks through All Clinics → Bentleigh → All Clinics → Cheltenham → All Clinics → Heathmont", async () => {
+    authTestState.user = createAdminUser();
+    const clinics = [
+      { id: TEST_CLINIC_ID, name: "Verve Dental - Bentleigh East" },
+      { id: CHELTENHAM_ID, name: "Verve Dental - Cheltenham" },
+      { id: HEATHMONT_ID, name: "Verve Dental - Heathmont" },
+    ];
+    selectedClinicState.selectedClinic = clinics[0] as (typeof clinics)[number];
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    selectedClinicState.availableClinics = clinics;
+
+    mockGetGroupLaborForecast.mockResolvedValue(groupLaborForecast(3911.04));
+    mockGetLaborForecast.mockImplementation((clinicId: string) => {
+      const costs: Record<string, number> = {
+        [TEST_CLINIC_ID]: 2882.88,
+        [CHELTENHAM_ID]: 1028.16,
+        [HEATHMONT_ID]: 0,
+      };
+      return Promise.resolve(clinicLaborForecast(clinicId, costs[clinicId] ?? 0));
+    });
+
+    const view = renderHomePage();
+
+    async function expectHubScope(scopeText: RegExp): Promise<void> {
+      expect(
+        await screen.findByRole("heading", {
+          name: /good (morning|afternoon|evening), admin/i,
+        }),
+      ).toBeInTheDocument();
+      expect(await screen.findByText(scopeText)).toBeInTheDocument();
+    }
+
+    function selectAllClinics(): void {
+      selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+      view.rerender(<MemoryRouter><HomePage /></MemoryRouter>);
+    }
+
+    function selectClinic(clinic: (typeof clinics)[number]): void {
+      selectedClinicState.selectedClinic = clinic;
+      selectedClinicState.selectedDashboardScope = { type: "clinic", clinic };
+      view.rerender(<MemoryRouter><HomePage /></MemoryRouter>);
+    }
+
+    await expectHubScope(/3 clinics · group overview/i);
+    expect((await screen.findAllByText("$3,911")).length).toBeGreaterThan(0);
+
+    selectClinic(clinics[0] as (typeof clinics)[number]);
+    await expectHubScope(/Verve Dental - Bentleigh East · owner overview/i);
+    expect((await screen.findAllByText("$2,883")).length).toBeGreaterThan(0);
+
+    selectAllClinics();
+    await expectHubScope(/3 clinics · group overview/i);
+
+    selectClinic(clinics[1] as (typeof clinics)[number]);
+    await expectHubScope(/Verve Dental - Cheltenham · owner overview/i);
+    expect((await screen.findAllByText("$1,028")).length).toBeGreaterThan(0);
+
+    selectAllClinics();
+    await expectHubScope(/3 clinics · group overview/i);
+
+    selectClinic(clinics[2] as (typeof clinics)[number]);
+    await expectHubScope(/Verve Dental - Heathmont · owner overview/i);
+    expect((await screen.findAllByText("$0")).length).toBeGreaterThan(0);
+
+    expect(mockGetLaborForecast).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      expect.any(Object),
+    );
+    expect(mockGetLaborForecast).toHaveBeenCalledWith(
+      CHELTENHAM_ID,
+      expect.any(Object),
+    );
+    expect(mockGetLaborForecast).toHaveBeenCalledWith(
+      HEATHMONT_ID,
+      expect.any(Object),
+    );
+  });
+
+  it("ignores delayed group and clinic responses from previous scopes", async () => {
+    authTestState.user = createAdminUser();
+    const bentleigh = { id: TEST_CLINIC_ID, name: "Verve Dental - Bentleigh East" };
+    selectedClinicState.selectedClinic = bentleigh;
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    selectedClinicState.availableClinics = [bentleigh];
+
+    const delayedGroup = deferred<GroupLaborCostAnalysis>();
+    const delayedClinic = deferred<LaborCostAnalysis>();
+    mockGetGroupLaborForecast
+      .mockImplementationOnce(() => delayedGroup.promise)
+      .mockResolvedValueOnce(groupLaborForecast(2222));
+    mockGetLaborForecast.mockImplementationOnce(() => delayedClinic.promise);
+
+    const view = renderHomePage();
+    await waitFor(() => {
+      expect(mockGetGroupLaborForecast).toHaveBeenCalledTimes(1);
+    });
+
+    selectedClinicState.selectedDashboardScope = {
+      type: "clinic",
+      clinic: bentleigh,
+    };
+    view.rerender(<MemoryRouter><HomePage /></MemoryRouter>);
+    await waitFor(() => {
+      expect(mockGetLaborForecast).toHaveBeenCalledTimes(1);
+    });
+
+    selectedClinicState.selectedDashboardScope = { type: "all_clinics" };
+    view.rerender(<MemoryRouter><HomePage /></MemoryRouter>);
+    expect((await screen.findAllByText("$2,222")).length).toBeGreaterThan(0);
+
+    await act(async () => {
+      delayedGroup.resolve(groupLaborForecast(9999));
+      delayedClinic.resolve(clinicLaborForecast(TEST_CLINIC_ID, 8888));
+      await Promise.all([delayedGroup.promise, delayedClinic.promise]);
+    });
+
+    expect(screen.queryByText("$9,999")).not.toBeInTheDocument();
+    expect(screen.queryByText("$8,888")).not.toBeInTheDocument();
+    expect(screen.getAllByText("$2,222").length).toBeGreaterThan(0);
+  });
+
+  it("does not request a clinic forecast when the operational clinic ID is undefined", async () => {
+    authTestState.user = createAdminUser();
+    selectedClinicState.selectedClinic = null;
+    selectedClinicState.selectedDashboardScope = null;
+    selectedClinicState.availableClinics = [];
+
+    renderHomePage();
+
+    expect(await screen.findByText("Loading clinic context…")).toBeInTheDocument();
+    expect(mockGetLaborForecast).not.toHaveBeenCalled();
+    expect(mockGetGroupLaborForecast).not.toHaveBeenCalled();
   });
 });

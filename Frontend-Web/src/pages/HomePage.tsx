@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import { AlertTriangle, Building2, CalendarDays, CalendarOff, CheckCircle2, ClipboardList, DollarSign, FileText, Info, Layers, Package, ScanLine, ShoppingCart, Sparkles, Timer, TrendingUp, Users } from "lucide-react";
@@ -38,6 +38,11 @@ type DashboardStats = {
   lowStockItems: InventoryItem[];
   draftPurchaseOrderLines: PurchaseOrderLine[];
   openTimesheet: TimesheetEntry | null;
+};
+
+type ScopedLaborForecast = {
+  scopeKey: string;
+  data: LaborCostAnalysis | GroupLaborCostAnalysis;
 };
 
 type DashboardProps = {
@@ -122,6 +127,18 @@ function isAllClinicsAnalytics(
   analytics: DailySummary["analytics"],
 ): analytics is AllClinicsDashboardKpis {
   return analytics !== null && "scope" in analytics;
+}
+
+function isGroupLaborForecast(
+  forecast: DashboardProps["laborForecast"],
+): forecast is GroupLaborCostAnalysis {
+  return forecast !== null && "scope" in forecast;
+}
+
+function isClinicLaborForecast(
+  forecast: DashboardProps["laborForecast"],
+): forecast is LaborCostAnalysis {
+  return forecast !== null && "planningEstimate" in forecast;
 }
 
 function formatUserName(user: NonNullable<ReturnType<typeof useAuth>["user"]>): string {
@@ -440,7 +457,10 @@ function OwnerAdminDashboard({
   isLoadingLabor,
 }: DashboardProps) {
   const analytics = summary.analytics;
-  const allClinicsAnalytics = isAllClinicsAnalytics(analytics) ? analytics : null;
+  const allClinicsAnalytics =
+    isAllClinicsScope && isAllClinicsAnalytics(analytics) ? analytics : null;
+  const groupLaborForecast = isGroupLaborForecast(laborForecast) ? laborForecast : null;
+  const clinicLaborForecast = isClinicLaborForecast(laborForecast) ? laborForecast : null;
   const inventoryTotal = analytics?.inventory.totalItems ?? summary.inventoryItems.length;
   const lowStockCount = analytics?.inventory.lowStockCount ?? stats.lowStockItems.length;
   const inventoryHealth = inventoryTotal > 0
@@ -508,8 +528,8 @@ function OwnerAdminDashboard({
       value: (() => {
         if (isLoadingLabor) return "…";
         const cost = isAllClinicsScope
-          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalCost ?? null
-          : (laborForecast as LaborCostAnalysis | null)?.planningEstimate.totalCost ?? null;
+          ? groupLaborForecast?.totals.totalCost ?? null
+          : clinicLaborForecast?.planningEstimate.totalCost ?? null;
         return cost !== null
           ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", maximumFractionDigits: 0 }).format(cost)
           : "—";
@@ -517,9 +537,9 @@ function OwnerAdminDashboard({
       trend: (() => {
         if (isLoadingLabor) return "Loading…";
         const hours = isAllClinicsScope
-          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalHours ?? null
+          ? groupLaborForecast?.totals.totalHours ?? null
           : (() => {
-              const lf = laborForecast as LaborCostAnalysis | null;
+              const lf = clinicLaborForecast;
               if (!lf) return null;
               return (
                 (lf.historical?.approved.hours ?? 0) +
@@ -577,12 +597,12 @@ function OwnerAdminDashboard({
       label: (() => {
         if (isLoadingLabor) return "Loading labour forecast…";
         const cost = isAllClinicsScope
-          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalCost ?? null
-          : (laborForecast as LaborCostAnalysis | null)?.planningEstimate.totalCost ?? null;
+          ? groupLaborForecast?.totals.totalCost ?? null
+          : clinicLaborForecast?.planningEstimate.totalCost ?? null;
         const hours = isAllClinicsScope
-          ? (laborForecast as GroupLaborCostAnalysis | null)?.totals.totalHours ?? null
+          ? groupLaborForecast?.totals.totalHours ?? null
           : (() => {
-              const lf = laborForecast as LaborCostAnalysis | null;
+              const lf = clinicLaborForecast;
               if (!lf) return null;
               return (
                 (lf.historical?.approved.hours ?? 0) +
@@ -1088,14 +1108,27 @@ export function HomePage() {
   const { user } = useAuth();
   const { selectedClinic, selectedDashboardScope, availableClinics } = useSelectedClinic();
   const selectedClinicId = selectedClinic?.id;
+  const isAllClinicsScope =
+    user?.role === "owner_admin" && selectedDashboardScope?.type === "all_clinics";
+  const currentLaborScopeKey = isAllClinicsScope
+    ? "all_clinics"
+    : selectedDashboardScope?.type === "clinic"
+      ? selectedDashboardScope.clinic.id
+      : selectedClinicId ?? null;
   const [summary, setSummary] = useState<DailySummary>(EMPTY_SUMMARY);
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // ── Labour Cost Forecast ────────────────────────────────────────────────────
   // Separate from the main summary load — different endpoint, different cadence.
-  const [laborForecast, setLaborForecast] = useState<LaborCostAnalysis | GroupLaborCostAnalysis | null>(null);
+  const [scopedLaborForecast, setScopedLaborForecast] =
+    useState<ScopedLaborForecast | null>(null);
   const [isLoadingLabor, setIsLoadingLabor] = useState(false);
+  const laborRequestGenerationRef = useRef(0);
+  const activeLaborForecast =
+    scopedLaborForecast?.scopeKey === currentLaborScopeKey
+      ? scopedLaborForecast.data
+      : null;
 
   useEffect(() => {
     if (!user || (!selectedClinicId && selectedDashboardScope?.type !== "all_clinics")) {
@@ -1293,7 +1326,13 @@ export function HomePage() {
   // Specific clinic: /clinics/:clinicId/forecast/labor (14-day forward window)
   // All Clinics:     /forecast/labor/group (14-day forward window)
   useEffect(() => {
-    if (!user) return;
+    const requestGeneration = ++laborRequestGenerationRef.current;
+    if (!user || !currentLaborScopeKey) {
+      setScopedLaborForecast(null);
+      setIsLoadingLabor(false);
+      return;
+    }
+
     const today = todayLocalDate();
     const toDate = new Date();
     toDate.setDate(toDate.getDate() + 13);
@@ -1301,32 +1340,43 @@ export function HomePage() {
 
     let cancelled = false;
     setIsLoadingLabor(true);
-    setLaborForecast(null);
+    setScopedLaborForecast(null);
 
-    const scopeIsAll = user.role === "owner_admin" && selectedDashboardScope?.type === "all_clinics";
-    const scopeClinicId =
-      selectedDashboardScope?.type === "clinic"
-        ? selectedDashboardScope.clinic.id
-        : selectedClinicId;
+    const canCommit = (): boolean =>
+      !cancelled && requestGeneration === laborRequestGenerationRef.current;
 
-    if (scopeIsAll) {
+    if (currentLaborScopeKey === "all_clinics") {
       void apiClient
         .getGroupLaborForecast({ from: today, to })
-        .then((result) => { if (!cancelled) setLaborForecast(result); })
-        .catch(() => { if (!cancelled) setLaborForecast(null); })
-        .finally(() => { if (!cancelled) setIsLoadingLabor(false); });
-    } else if (scopeClinicId) {
-      void apiClient
-        .getLaborForecast(scopeClinicId, { from: today, to })
-        .then((result) => { if (!cancelled) setLaborForecast(result); })
-        .catch(() => { if (!cancelled) setLaborForecast(null); })
-        .finally(() => { if (!cancelled) setIsLoadingLabor(false); });
+        .then((result) => {
+          if (canCommit()) {
+            setScopedLaborForecast({ scopeKey: currentLaborScopeKey, data: result });
+          }
+        })
+        .catch(() => {
+          if (canCommit()) setScopedLaborForecast(null);
+        })
+        .finally(() => {
+          if (canCommit()) setIsLoadingLabor(false);
+        });
     } else {
-      setIsLoadingLabor(false);
+      void apiClient
+        .getLaborForecast(currentLaborScopeKey, { from: today, to })
+        .then((result) => {
+          if (canCommit()) {
+            setScopedLaborForecast({ scopeKey: currentLaborScopeKey, data: result });
+          }
+        })
+        .catch(() => {
+          if (canCommit()) setScopedLaborForecast(null);
+        })
+        .finally(() => {
+          if (canCommit()) setIsLoadingLabor(false);
+        });
     }
 
     return () => { cancelled = true; };
-  }, [user, selectedDashboardScope, selectedClinicId]);
+  }, [currentLaborScopeKey, user]);
 
   const stats = useMemo<DashboardStats>(
     () => ({
@@ -1338,8 +1388,6 @@ export function HomePage() {
     }),
     [summary.inventoryItems, summary.pendingTimesheets, summary.purchaseOrderLines],
   );
-  const isAllClinicsScope =
-    user?.role === "owner_admin" && selectedDashboardScope?.type === "all_clinics";
   const dashboardClinicName = isAllClinicsScope
     ? "All Clinics"
     : selectedDashboardScope?.type === "clinic"
@@ -1387,7 +1435,7 @@ export function HomePage() {
           summary,
           stats,
           isAllClinicsScope,
-          laborForecast,
+          laborForecast: activeLaborForecast,
           isLoadingLabor,
         }}
       />
