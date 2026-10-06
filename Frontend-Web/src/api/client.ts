@@ -1135,6 +1135,19 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  /**
+   * GET /api/v1/users/me/attendance-clinics
+   * Returns physical attendance locations without granting module access.
+   */
+  async function getMyAttendanceClinics(): Promise<{ id: string; name: string }[]> {
+    return request<{ id: string; name: string }[]>(
+      config,
+      `/api/v1/users/me/attendance-clinics`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function createShift(
     clinicId: string,
     body: CreateShiftRequest,
@@ -2803,6 +2816,7 @@ export function createApiClient(config: AppConfig) {
     grantUserPermission,
     revokeUserPermission,
     getMyOperationalClinics,
+    getMyAttendanceClinics,
     createShift,
     updateShift,
     cancelShift,

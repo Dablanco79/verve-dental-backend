@@ -5,6 +5,7 @@ import { AppError } from "../types/errors.js";
 import { parseBody } from "../utils/validation.js";
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
+import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 
 function routeParam(value: string | string[] | undefined): string {
@@ -40,6 +41,7 @@ export function createClinicAssignmentHandlers(
   assignmentsRepository: UserClinicAssignmentsRepository,
   clinicRepository: ClinicRepository,
   userRepository: UserRepository,
+  rosterRepository: RosterRepository,
 ) {
   return {
     /**
@@ -153,6 +155,58 @@ export function createClinicAssignmentHandlers(
       // clinical_staff: only their home clinic.
       res.status(200).json({
         data: [{ id: caller.homeClinicId, name: caller.homeClinicName }],
+      });
+    },
+
+    /**
+     * GET /users/me/attendance-clinics
+     * Returns clinics where the caller may physically attend work without
+     * widening operational/module access:
+     *   owner_admin → all active clinics
+     *   other roles → home + active can_roster clinics + clinics from owned,
+     *                 non-cancelled roster entries
+     */
+    async getAttendanceClinics(req: Request, res: Response): Promise<void> {
+      const caller = req.user;
+      if (!caller) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+
+      if (caller.role === "owner_admin") {
+        const clinics = await clinicRepository.findAll();
+        res.status(200).json({
+          data: clinics
+            .filter((clinic) => clinic.isActive)
+            .map((clinic) => ({ id: clinic.id, name: clinic.name })),
+        });
+        return;
+      }
+
+      const [assignments, rosterEntries] = await Promise.all([
+        assignmentsRepository.listByUser(caller.id),
+        rosterRepository.listByStaff(caller.id),
+      ]);
+
+      const clinicIds = new Set<string>([
+        ...assignments
+          .filter((assignment) => assignment.canRoster)
+          .map((assignment) => assignment.clinicId),
+        ...rosterEntries
+          .filter((entry) => entry.status !== "cancelled")
+          .map((entry) => entry.rosteredClinicId),
+      ]);
+      clinicIds.delete(caller.homeClinicId);
+
+      const clinics = await Promise.all(
+        Array.from(clinicIds, (clinicId) => clinicRepository.findById(clinicId)),
+      );
+
+      res.status(200).json({
+        data: [
+          { id: caller.homeClinicId, name: caller.homeClinicName },
+          ...clinics
+            .filter((clinic): clinic is NonNullable<typeof clinic> =>
+              clinic !== null && clinic.isActive)
+            .map((clinic) => ({ id: clinic.id, name: clinic.name })),
+        ],
       });
     },
   };

@@ -526,7 +526,41 @@ export function createTimesheetService(
         if (!physicalClinic) {
           throw new AppError(404, "CLINIC_NOT_FOUND", "Clinic not found");
         }
+        if (
+          rosteredClinicId !== caller.homeClinicId &&
+          (
+            !physicalClinic.isActive ||
+            (
+              caller.role !== "owner_admin" &&
+              !(await clinicAssignmentsRepository.hasRosterEligibility(
+                caller.id,
+                rosteredClinicId,
+              ))
+            )
+          )
+        ) {
+          throw new AppError(
+            403,
+            "PHYSICAL_CLINIC_ACCESS_DENIED",
+            "You are not eligible to clock in at this physical clinic",
+          );
+        }
         rosteredClinicName = physicalClinic.name;
+      }
+
+      if (
+        input.clockInLocation &&
+        input.clockInLocation.targetClinicId !== rosteredClinicId
+      ) {
+        throw new AppError(
+          422,
+          "GEOFENCE_CLINIC_MISMATCH",
+          "Clock-in location does not match the physical clinic",
+          [{
+            field: "clockInLocation.targetClinicId",
+            message: "Geofence target must match the physical clinic",
+          }],
+        );
       }
 
       // Validate the authoritative shift window BEFORE writing anything.

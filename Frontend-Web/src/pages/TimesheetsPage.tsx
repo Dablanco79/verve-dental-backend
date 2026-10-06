@@ -4,7 +4,6 @@ import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
-import { useSelectedClinic } from "../clinic/useSelectedClinic.js";
 import { loadConfig } from "../config/index.js";
 import { useTimesheets } from "../hooks/useTimesheets.js";
 import type {
@@ -1951,11 +1950,6 @@ function ExportPanel({ availableStaff, onExport }: ExportPanelProps) {
 export function TimesheetsPage() {
   const { user } = useAuth();
   const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
-  // Read the full operational clinic list from ClinicContext (already fetched by
-  // ClinicProvider on mount).  For GPM this contains all can_operate=true clinics;
-  // for owner_admin all org clinics; for clinical_staff only the home clinic.
-  // Used to populate the Physical Location dropdown — see availableClinics below.
-  const { availableClinics: contextClinics } = useSelectedClinic();
 
   // Stable 30-day window initialised once at mount — avoids refetch on re-render.
   const [filters] = useState<TimesheetFilters>(() => ({
@@ -1974,41 +1968,59 @@ export function TimesheetsPage() {
   // roles — managers and admins are also entitled to their own personal Clock
   // In/Out.  Errors are silently ignored; widget falls back to ad-hoc mode.
   const [todayShifts, setTodayShifts] = useState<RosterEntry[]>([]);
+  const [attendanceClinics, setAttendanceClinics] = useState<
+    { id: string; name: string }[]
+  >([]);
 
   // Available clinics for ad-hoc physical location selection.
-  // Primary source: contextClinics from ClinicContext (already fetched by
-  // ClinicProvider — no extra API call):
-  //   owner_admin  → all org clinics
-  //   GPM          → home + can_operate=true non-home clinics only
-  //   staff        → home clinic only
-  // Secondary: currently selected clinic (covers edge cases where clinicId
-  // differs from anything in contextClinics, e.g. loading race).
-  // Tertiary: roster-derived physical clinics from today's personal shifts.
-  // All three sources are deduplicated by clinic ID.
+  // Attendance eligibility is deliberately separate from operational/module
+  // scope. Merge the dedicated attendance endpoint, home/current clinic, and
+  // clinics from the caller's own cross-clinic roster shifts.
   // MUST be computed before early returns (useMemo is a hook call).
   // MUST be declared after todayShifts useState (used in dependency array).
   const availableClinics = useMemo(() => {
     const map = new Map<string, string>();
-    // 1. Operational clinics from ClinicContext (the authoritative list).
-    for (const c of contextClinics) {
+    for (const c of attendanceClinics) {
       map.set(c.id, c.name);
     }
-    // 2. Currently selected scope clinic (ensures correct display name if
-    //    already in contextClinics; harmlessly adds it when not yet present).
-    if (clinicId) {
+    if (user) {
+      map.set(user.homeClinicId, user.homeClinicName);
+    }
+    if (
+      clinicId &&
+      (clinicId === user?.homeClinicId || map.has(clinicId))
+    ) {
       map.set(clinicId, clinicName ?? user?.homeClinicName ?? "Home Clinic");
     }
-    // 3. Roster-derived physical clinics from today's personal shifts.
-    //    These appear when the user is rostered at a clinic that is not yet
-    //    in the operational list (e.g. staff at a non-home physical location).
     for (const s of todayShifts) {
       map.set(s.rosteredClinicId, s.rosteredClinicName);
     }
     return Array.from(map, ([id, name]) => ({ id, name }));
-  }, [contextClinics, clinicId, clinicName, todayShifts, user]);
+  }, [attendanceClinics, clinicId, clinicName, todayShifts, user]);
 
   useEffect(() => {
-    if (!clinicId) return;
+    if (!user) return;
+    let cancelled = false;
+
+    void apiClient
+      .getMyAttendanceClinics()
+      .then((clinics) => {
+        if (!cancelled) setAttendanceClinics(clinics);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAttendanceClinics([
+            { id: user.homeClinicId, name: user.homeClinicName },
+          ]);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
 
     // ±12-hour window captures any shift whose scheduled start falls within
     // a generous "today" regardless of the Melbourne / UTC offset.
@@ -2017,14 +2029,18 @@ export function TimesheetsPage() {
     const to   = new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString();
 
     void apiClient
-      .getMyShifts(clinicId, { from, to })
+      .getMyShiftsAllClinics({ from, to })
       .then((shifts) => {
-        setTodayShifts(shifts.filter((s) => s.status !== "cancelled"));
+        if (!cancelled) {
+          setTodayShifts(shifts.filter((s) => s.status !== "cancelled"));
+        }
       })
       .catch(() => {
         // Silently ignore — ClockWidget falls back to ad-hoc mode.
       });
-  }, [clinicId, isManager]);
+
+    return () => { cancelled = true; };
+  }, [user]);
 
   const {
     timesheets,

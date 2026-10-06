@@ -33,6 +33,7 @@ const {
   mockListTimesheets,
   mockExportTimesheets,
   mockGetMyShifts,
+  mockGetMyAttendanceClinics,
   mockClockIn,
   mockGetClinicCoordinates,
   mockApproveTimesheet,
@@ -43,6 +44,12 @@ const {
   mockExportTimesheets: vi.fn(),
   // Roster fetch for today's shifts — default empty (ad-hoc mode)
   mockGetMyShifts: vi.fn().mockResolvedValue([]),
+  mockGetMyAttendanceClinics: vi.fn().mockResolvedValue([
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Verve Dental Clinic A",
+    },
+  ]),
   // Clock-in — captured to assert the request payload
   mockClockIn: vi.fn(),
   // Geofence: return clinic coords at the same location as the mocked device
@@ -71,6 +78,8 @@ vi.mock("../src/api/client.js", () => ({
     refresh: vi.fn().mockRejectedValue(new Error("no cookie")),
     getMe: vi.fn(),
     getMyShifts: mockGetMyShifts,
+    getMyShiftsAllClinics: mockGetMyShifts,
+    getMyAttendanceClinics: mockGetMyAttendanceClinics,
     getClinicCoordinates: mockGetClinicCoordinates,
   }),
 }));
@@ -155,6 +164,12 @@ beforeEach(() => {
   });
   // Re-apply default shift result (empty = ad-hoc mode).
   mockGetMyShifts.mockResolvedValue([]);
+  mockGetMyAttendanceClinics.mockResolvedValue([
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Verve Dental Clinic A",
+    },
+  ]);
   // Approve / reject resolve with undefined by default (enough for hook's fetch re-trigger).
   mockApproveTimesheet.mockResolvedValue(undefined);
   mockRejectTimesheet.mockResolvedValue(undefined);
@@ -1254,9 +1269,7 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
     ).toBeInTheDocument();
   });
 
-  it("GPM sees non-home can_operate=true clinics in the Physical Location dropdown", async () => {
-    // Both home and Clinic B are in availableClinics — simulating getMyOperationalClinics()
-    // returning [homeClinic, clinicB] (both have can_operate=true).
+  it("can_operate alone does not add a physical attendance clinic", async () => {
     const gpmCtx = makeClinicContext({
       availableClinics: [HOME_CLINIC, CLINIC_B],
       canSwitchClinics: true,
@@ -1269,16 +1282,14 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
       within(physicalSelect).getByRole("option", { name: HOME_CLINIC.name }),
     ).toBeInTheDocument();
     expect(
-      within(physicalSelect).getByRole("option", { name: CLINIC_B.name }),
-    ).toBeInTheDocument();
+      within(physicalSelect).queryByRole("option", { name: CLINIC_B.name }),
+    ).not.toBeInTheDocument();
   });
 
-  it("GPM does NOT gain a clinic in the dropdown solely from can_roster=true (no can_operate)", async () => {
-    // ROSTER_CLINIC is absent from availableClinics because getMyOperationalClinics()
-    // only returns can_operate=true assignments — can_roster alone is excluded.
-    // getMyShifts returns no shifts today, so roster-derived path is also empty.
+  it("can_roster adds a physical attendance clinic without operational access", async () => {
+    mockGetMyAttendanceClinics.mockResolvedValue([HOME_CLINIC, ROSTER_CLINIC]);
     const gpmCtx = makeClinicContext({
-      availableClinics: [HOME_CLINIC], // ROSTER_CLINIC intentionally absent
+      availableClinics: [HOME_CLINIC],
       canSwitchClinics: true,
     });
 
@@ -1286,12 +1297,8 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
 
     const physicalSelect = await screen.findByRole("combobox", { name: /physical location/i });
     expect(
-      within(physicalSelect).queryByRole("option", { name: /roster-only/i }),
-    ).not.toBeInTheDocument();
-    // Specifically: ROSTER_CLINIC is absent
-    expect(
-      within(physicalSelect).queryByRole("option", { name: ROSTER_CLINIC.name }),
-    ).not.toBeInTheDocument();
+      within(physicalSelect).getByRole("option", { name: ROSTER_CLINIC.name }),
+    ).toBeInTheDocument();
   });
 
   it("clinical_staff unchanged — sees home clinic only when no roster shifts", async () => {
@@ -1310,15 +1317,53 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
     expect(valueOptions).toHaveLength(1);
   });
 
-  it("roster-linked shift still uses the exact rostered clinic — physical dropdown not shown", async () => {
+  it("shows Bentleigh, Cheltenham, and Heathmont from attendance permissions", async () => {
+    const bentleigh = { ...HOME_CLINIC, name: "Verve Dental - Bentleigh East" };
+    const cheltenham = { ...CLINIC_B, name: "Verve Dental - Cheltenham" };
+    const heathmont = { ...ROSTER_CLINIC, name: "Verve Dental - Heathmont" };
+    mockGetMyAttendanceClinics.mockResolvedValue([
+      bentleigh,
+      cheltenham,
+      heathmont,
+    ]);
+
+    renderTimesheetsPageWithClinicContext(
+      {
+        ...makeUser("clinical_staff"),
+        homeClinicName: bentleigh.name,
+      },
+      makeClinicContext({
+        selectedClinic: bentleigh,
+        selectedDashboardScope: { type: "clinic", clinic: bentleigh },
+        availableClinics: [bentleigh],
+      }),
+    );
+
+    const physicalSelect = await screen.findByRole("combobox", {
+      name: /physical location/i,
+    });
+    expect(within(physicalSelect).getByRole("option", { name: bentleigh.name }))
+      .toBeInTheDocument();
+    expect(within(physicalSelect).getByRole("option", { name: cheltenham.name }))
+      .toBeInTheDocument();
+    expect(within(physicalSelect).getByRole("option", { name: heathmont.name }))
+      .toBeInTheDocument();
+
+    await userEvent.selectOptions(physicalSelect, cheltenham.id);
+    expect(physicalSelect).toHaveValue(cheltenham.id);
+    await userEvent.selectOptions(physicalSelect, heathmont.id);
+    expect(physicalSelect).toHaveValue(heathmont.id);
+  });
+
+  it("owned cross-clinic shift is loaded across clinics and auto-selected", async () => {
     // When a roster shift is auto-selected, ClockWidget hides the Physical Location dropdown
     // and sends the shift's rosteredClinicId directly — the dropdown has no bearing on it.
     const rosterEntry = {
       id:                       "rrrrr-shift-fix2",
       staffUserId:              "user-1",
       staffEmail:               "user@clinic-a.au",
-      rosteredClinicId:         HOME_CLINIC.id,
-      rosteredClinicName:       HOME_CLINIC.name,
+      rosteredClinicId:         ROSTER_CLINIC.id,
+      rosteredClinicName:       ROSTER_CLINIC.name,
       rosteredClinicPreferredName: null,
       shiftStartAt:             "2026-09-28T22:00:00.000Z",
       shiftEndAt:               "2026-09-29T06:00:00.000Z",
@@ -1336,6 +1381,7 @@ describe("TimesheetsPage — Physical Location dropdown (Fix 2 — multi-clinic 
 
     // Roster shift auto-selected — dropdown must not be present.
     await screen.findByText(/rostered shift:/i);
+    expect(mockGetMyShifts).toHaveBeenCalledOnce();
     expect(
       screen.queryByRole("combobox", { name: /physical location/i }),
     ).not.toBeInTheDocument();

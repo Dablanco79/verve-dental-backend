@@ -6,6 +6,7 @@ import {
   createAuthenticateMiddleware,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { rlsTenantContextMiddleware } from "../db/tenantContext.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 export function createClinicAssignmentRouter(deps: AppDependencies): Router {
@@ -15,6 +16,7 @@ export function createClinicAssignmentRouter(deps: AppDependencies): Router {
     deps.clinicAssignmentsRepository,
     deps.clinicRepository,
     deps.userRepository,
+    deps.rosterRepository,
   );
 
   router.use(authenticate);
@@ -47,15 +49,23 @@ export function createUserAccessRouter(deps: AppDependencies): Router {
     deps.clinicAssignmentsRepository,
     deps.clinicRepository,
     deps.userRepository,
+    deps.rosterRepository,
   );
 
   router.use(authenticate);
+  router.use(rlsTenantContextMiddleware());
 
   // GET /users/me/operational-clinics
   router.get(
     "/me/operational-clinics",
     requireRoles("owner_admin", "group_practice_manager", "clinical_staff"),
     asyncHandler((req, res) => handlers.getOperationalClinics(req, res)),
+  );
+
+  router.get(
+    "/me/attendance-clinics",
+    requireRoles("owner_admin", "group_practice_manager", "clinical_staff"),
+    asyncHandler((req, res) => handlers.getAttendanceClinics(req, res)),
   );
 
   return router;

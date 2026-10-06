@@ -805,7 +805,7 @@ describe("Geofence — ad-hoc requires explicit physical clinic selection", () =
     expect(entry.clockInLocation?.targetClinicId).toBe(SEED_CLINIC_A_ID);
   });
 
-  it("ad-hoc with physicalClinicId = Clinic B sets rosteredClinicId to Clinic B while payroll stays Clinic A", async () => {
+  it("rejects ad-hoc physical clinic without can_roster eligibility", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
@@ -820,11 +820,112 @@ describe("Geofence — ad-hoc requires explicit physical clinic selection", () =
         clockInLocation: { lat: CLINIC_B_LAT, lng: CLINIC_B_LNG, accuracyMetres: 10, targetClinicId: SEED_CLINIC_B_ID },
       });
 
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("PHYSICAL_CLINIC_ACCESS_DENIED");
+  });
+
+  it("does not treat can_operate alone as ad-hoc attendance eligibility", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const access = await request(app)
+      .put(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`,
+      )
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({
+        assignments: [
+          {
+            clinicId: SEED_CLINIC_A_ID,
+            canRoster: true,
+            canOperate: true,
+          },
+          {
+            clinicId: SEED_CLINIC_B_ID,
+            canRoster: false,
+            canOperate: true,
+          },
+        ],
+      });
+    expect(access.status).toBe(200);
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: SHIFT_START,
+        shiftEndAt: SHIFT_END,
+        physicalClinicId: SEED_CLINIC_B_ID,
+        clockInLocation: { lat: CLINIC_B_LAT, lng: CLINIC_B_LNG, accuracyMetres: 10, targetClinicId: SEED_CLINIC_B_ID },
+      });
+
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("PHYSICAL_CLINIC_ACCESS_DENIED");
+  });
+
+  it("allows can_roster ad-hoc Clinic B while payroll stays Clinic A", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const access = await request(app)
+      .put(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`,
+      )
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({
+        assignments: [
+          {
+            clinicId: SEED_CLINIC_A_ID,
+            canRoster: true,
+            canOperate: true,
+          },
+          {
+            clinicId: SEED_CLINIC_B_ID,
+            canRoster: true,
+            canOperate: false,
+          },
+        ],
+      });
+    expect(access.status).toBe(200);
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: SHIFT_START,
+        shiftEndAt: SHIFT_END,
+        physicalClinicId: SEED_CLINIC_B_ID,
+        clockInLocation: { lat: CLINIC_B_LAT, lng: CLINIC_B_LNG, accuracyMetres: 10, targetClinicId: SEED_CLINIC_B_ID },
+      });
+
     expect(res.status).toBe(201);
     const entry = (res.body as ApiData<TimesheetEntry>).data;
     expect(entry.clinicId).toBe(SEED_CLINIC_A_ID);          // payroll: home clinic A
     expect(entry.rosteredClinicId).toBe(SEED_CLINIC_B_ID);  // physical: explicit B
     expect(entry.clockInLocation?.targetClinicId).toBe(SEED_CLINIC_B_ID);
+  });
+
+  it("rejects a geofence target that does not match the physical clinic", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const res = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        rosterEntryId: null,
+        shiftStartAt: SHIFT_START,
+        shiftEndAt: SHIFT_END,
+        physicalClinicId: SEED_CLINIC_A_ID,
+        clockInLocation: { lat: CLINIC_B_LAT, lng: CLINIC_B_LNG, accuracyMetres: 10, targetClinicId: SEED_CLINIC_B_ID },
+      });
+
+    expect(res.status).toBe(422);
+    expect((res.body as ApiError).error.code).toBe("GEOFENCE_CLINIC_MISMATCH");
   });
 });
 

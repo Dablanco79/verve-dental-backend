@@ -457,6 +457,123 @@ describe("Operational Clinics — GET /users/me/operational-clinics", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// G. Physical attendance clinics (separate from operational/module access)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Attendance Clinics — GET /users/me/attendance-clinics", () => {
+  async function setClinicBAccess(
+    app: Awaited<ReturnType<typeof createTestApp>>,
+    ownerToken: string,
+    flags: { canRoster: boolean; canOperate: boolean },
+  ): Promise<void> {
+    const access = await request(app)
+      .put(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`,
+      )
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({
+        assignments: [
+          {
+            clinicId: SEED_CLINIC_A_ID,
+            canRoster: true,
+            canOperate: true,
+          },
+          {
+            clinicId: SEED_CLINIC_B_ID,
+            ...flags,
+          },
+        ],
+      });
+    expect(access.status).toBe(200);
+  }
+
+  async function getAttendanceClinics(
+    app: Awaited<ReturnType<typeof createTestApp>>,
+    token: string,
+  ): Promise<{ id: string; name: string }[]> {
+    const res = await request(app)
+      .get("/api/v1/users/me/attendance-clinics")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    return (res.body as ApiData<{ id: string; name: string }[]>).data;
+  }
+
+  it("home-only staff receives only the home clinic", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const clinics = await getAttendanceClinics(app, token);
+
+    expect(clinics.map((clinic) => clinic.id)).toEqual([SEED_CLINIC_A_ID]);
+  });
+
+  it("can_roster adds a non-home clinic while can_operate alone does not", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    await setClinicBAccess(app, ownerToken, {
+      canRoster: false,
+      canOperate: true,
+    });
+    expect((await getAttendanceClinics(app, staffToken)).some(
+      (clinic) => clinic.id === SEED_CLINIC_B_ID,
+    )).toBe(false);
+
+    await setClinicBAccess(app, ownerToken, {
+      canRoster: true,
+      canOperate: false,
+    });
+    expect((await getAttendanceClinics(app, staffToken)).some(
+      (clinic) => clinic.id === SEED_CLINIC_B_ID,
+    )).toBe(true);
+  });
+
+  it("both flags include the clinic because can_roster is true", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    await setClinicBAccess(app, ownerToken, {
+      canRoster: true,
+      canOperate: true,
+    });
+
+    const clinics = await getAttendanceClinics(app, staffToken);
+
+    expect(clinics.some((clinic) => clinic.id === SEED_CLINIC_B_ID)).toBe(true);
+  });
+
+  it("includes a clinic from an owned non-cancelled roster shift", async () => {
+    const app = await createTestApp();
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const shift = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send(buildShiftPayload({
+        staffUserId: SEED_USER_IDS.clinicAStaff,
+        rosteredClinicName: "Verve Dental Clinic B",
+      }));
+    expect(shift.status).toBe(201);
+
+    const clinics = await getAttendanceClinics(app, staffToken);
+
+    expect(clinics.some((clinic) => clinic.id === SEED_CLINIC_B_ID)).toBe(true);
+  });
+
+  it("owner_admin receives all active clinics", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const clinics = await getAttendanceClinics(app, token);
+
+    expect(clinics.some((clinic) => clinic.id === SEED_CLINIC_A_ID)).toBe(true);
+    expect(clinics.some((clinic) => clinic.id === SEED_CLINIC_B_ID)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // G. Timesheet compatibility — cross-clinic roster entry
 // ─────────────────────────────────────────────────────────────────────────────
 
