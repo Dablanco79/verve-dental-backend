@@ -28,7 +28,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LaborForecastPage } from "../src/pages/LaborForecastPage.js";
-import type { LaborCostAnalysis } from "../src/types/forecast.js";
+import type { GroupLaborCostAnalysis, LaborCostAnalysis } from "../src/types/forecast.js";
 import {
   createAdminUser,
   createManagerUser,
@@ -42,11 +42,23 @@ import {
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
-const { authTestState, mockGetLaborForecast, mockGetClinicTimezone } = vi.hoisted(() => {
+const {
+  authTestState,
+  operationalClinicState,
+  mockGetLaborForecast,
+  mockGetGroupLaborForecast,
+  mockGetClinicTimezone,
+} = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
     authTestState,
+    operationalClinicState: {
+      clinicId: undefined as string | undefined,
+      clinicName: undefined as string | undefined,
+      isAllClinicsScope: false,
+    },
     mockGetLaborForecast: vi.fn(),
+    mockGetGroupLaborForecast: vi.fn(),
     // Synchronous mock for useClinicTimezone — defaults to "Australia/Sydney"
     // so that date calculations in the page match the test's today() helper.
     mockGetClinicTimezone: vi.fn<() => string>().mockReturnValue("Australia/Sydney"),
@@ -66,15 +78,12 @@ vi.mock("../src/auth/useAuth.js", () => ({
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
     getLaborForecast: mockGetLaborForecast,
+    getGroupLaborForecast: mockGetGroupLaborForecast,
   }),
 }));
 
 vi.mock("../src/clinic/useOperationalClinic.js", () => ({
-  useOperationalClinic: () => ({
-    clinicId: TEST_CLINIC_ID,
-    clinicName: "Verve Dental Clinic A",
-    isAllClinicsScope: false,
-  }),
+  useOperationalClinic: () => operationalClinicState,
 }));
 
 // Mock useClinicTimezone so tests don't need a live getClinic API call.
@@ -88,6 +97,12 @@ vi.mock("../src/hooks/useClinicTimezone.js", () => ({
 const adminUser = { ...createAdminUser(), permissions: ["payroll:rates:read"] };
 const managerUser = { ...createManagerUser(), permissions: [] }; // no payroll:rates:read
 const staffUser = createStaffUser();
+
+beforeEach(() => {
+  operationalClinicState.clinicId = TEST_CLINIC_ID;
+  operationalClinicState.clinicName = "Verve Dental Clinic A";
+  operationalClinicState.isAllClinicsScope = false;
+});
 
 /**
  * Clinic-local date as YYYY-MM-DD.
@@ -230,6 +245,45 @@ function makeRedactedAnalysis(): LaborCostAnalysis {
         requiresAmendmentCost: null, futureCost: null,
       },
     ],
+  };
+}
+
+function makeGroupAnalysis(): GroupLaborCostAnalysis {
+  const bentleigh = makeFutureOnlyAnalysis({
+    clinicId: TEST_CLINIC_ID,
+    futureForecast: {
+      totalHours: 72,
+      baseCost: 2574,
+      superCost: 308.88,
+      totalCost: 2882.88,
+      anyStaffUsingFallback: false,
+      breakdownByShiftType: [],
+    },
+    planningEstimate: {
+      approvedCost: 0,
+      pendingCost: 0,
+      futureCost: 2882.88,
+      totalCost: 2882.88,
+    },
+  });
+
+  return {
+    scope: "all_clinics",
+    dateRange: bentleigh.dateRange,
+    totals: {
+      totalHours: 72,
+      approvedCost: 0,
+      pendingCost: 0,
+      futureCost: 2882.88,
+      totalCost: 2882.88,
+      missingCount: 0,
+    },
+    clinics: [{
+      clinicId: TEST_CLINIC_ID,
+      clinicName: "Verve Dental - Bentleigh East",
+      timezone: "Australia/Melbourne",
+      analysis: bentleigh,
+    }],
   };
 }
 
@@ -593,6 +647,56 @@ describe("LaborForecastPage — access control", () => {
 
     // Navigate replaces the route; the page itself won't render
     expect(screen.queryByText(/labour cost analysis/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("LaborForecastPage — clinic scope switching", () => {
+  it("renders deterministic data through Clinic → All Clinics → Clinic → All Clinics", async () => {
+    setAuthenticatedUser(authTestState, adminUser);
+    mockGetLaborForecast.mockImplementation((clinicId: string) =>
+      Promise.resolve(makeFutureOnlyAnalysis({ clinicId })),
+    );
+    mockGetGroupLaborForecast.mockResolvedValue(makeGroupAnalysis());
+
+    const view = renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Verve Dental Clinic A — historical timesheet costs and future roster forecast"))
+        .not.toBeNull();
+    });
+
+    operationalClinicState.clinicId = undefined;
+    operationalClinicState.clinicName = undefined;
+    operationalClinicState.isAllClinicsScope = true;
+    view.rerender(<MemoryRouter><LaborForecastPage /></MemoryRouter>);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /labour cost analysis — all clinics/i }))
+        .not.toBeNull();
+      expect(screen.getAllByText("$2,882.88").length).toBeGreaterThan(0);
+    });
+
+    operationalClinicState.clinicId = TEST_CLINIC_ID;
+    operationalClinicState.clinicName = "Verve Dental Clinic A";
+    operationalClinicState.isAllClinicsScope = false;
+    view.rerender(<MemoryRouter><LaborForecastPage /></MemoryRouter>);
+
+    await waitFor(() => {
+      expect(screen.getByText("Verve Dental Clinic A — historical timesheet costs and future roster forecast"))
+        .not.toBeNull();
+      expect(screen.getByText("alice@clinic.au")).not.toBeNull();
+    });
+
+    operationalClinicState.clinicId = undefined;
+    operationalClinicState.clinicName = undefined;
+    operationalClinicState.isAllClinicsScope = true;
+    view.rerender(<MemoryRouter><LaborForecastPage /></MemoryRouter>);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("$2,882.88").length).toBeGreaterThan(0);
+    });
+
+    expect(mockGetGroupLaborForecast).toHaveBeenCalledTimes(2);
   });
 });
 

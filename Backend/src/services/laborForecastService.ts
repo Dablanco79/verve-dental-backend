@@ -42,6 +42,7 @@ import type { UserRepository } from "../repositories/userRepository.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { EffectivePayRate } from "../types/payRate.js";
 import type { StaffPayrollTrack, TimesheetEntry } from "../types/payroll.js";
+import { runWithTenantContext } from "../db/tenantContext.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level constants
@@ -1136,14 +1137,16 @@ export function createLaborForecastService(
       const clinics = await clinicRepository.findAll();
 
       const clinicResults = await Promise.all(
-        clinics.map(async (clinic) => ({
-          clinic,
-          analysis: await service.getLaborCostAnalysis(caller, clinic.id, {
-            from: options.from,
-            to: options.to,
-            timezone: clinic.timezone,
-          }),
-        })),
+        clinics.map((clinic) =>
+          runWithTenantContext(clinic.id, true, async () => ({
+            clinic,
+            analysis: await service.getLaborCostAnalysis(caller, clinic.id, {
+              from: options.from,
+              to: options.to,
+              timezone: clinic.timezone,
+            }),
+          })),
+        ),
       );
 
       // Aggregate totals in cents.

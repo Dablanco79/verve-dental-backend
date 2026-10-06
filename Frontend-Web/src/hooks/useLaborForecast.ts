@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createApiClient } from "../api/client.js";
 import { loadConfig } from "../config/index.js";
@@ -35,6 +35,7 @@ export function useLaborForecast(
   const [data, setData] = useState<LaborCostAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   // Serialize params for stable dependency tracking
   const paramsKey =
@@ -43,7 +44,13 @@ export function useLaborForecast(
       : `days:${String(Math.min(90, Math.max(1, Math.round(params.forecastDays))))}`;
 
   const fetch = useCallback(() => {
-    if (!clinicId) return;
+    const requestId = ++requestIdRef.current;
+    if (!clinicId) {
+      setData(null);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
@@ -56,14 +63,16 @@ export function useLaborForecast(
     void apiClient
       .getLaborForecast(clinicId, apiParams)
       .then((result) => {
-        setData(result);
+        if (requestId === requestIdRef.current) setData(result);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Unable to load labour cost analysis");
-        setData(null);
+        if (requestId === requestIdRef.current) {
+          setError(err instanceof Error ? err.message : "Unable to load labour cost analysis");
+          setData(null);
+        }
       })
       .finally(() => {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) setIsLoading(false);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clinicId, paramsKey]);
@@ -93,6 +102,7 @@ export function useGroupLaborForecast(
   const [data, setData] = useState<GroupLaborCostAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const paramsKey =
     params.mode === "range"
@@ -100,7 +110,13 @@ export function useGroupLaborForecast(
       : `days:${String(Math.min(90, Math.max(1, Math.round(params.forecastDays))))}`;
 
   const fetch = useCallback(() => {
-    if (!enabled) return;
+    const requestId = ++requestIdRef.current;
+    if (!enabled) {
+      setData(null);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
@@ -113,14 +129,16 @@ export function useGroupLaborForecast(
     void apiClient
       .getGroupLaborForecast(apiParams)
       .then((result) => {
-        setData(result);
+        if (requestId === requestIdRef.current) setData(result);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Unable to load group labour cost analysis");
-        setData(null);
+        if (requestId === requestIdRef.current) {
+          setError(err instanceof Error ? err.message : "Unable to load group labour cost analysis");
+          setData(null);
+        }
       })
       .finally(() => {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) setIsLoading(false);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, paramsKey]);

@@ -2343,6 +2343,7 @@ import {
   SEED_CLINIC_A_ID,
   SEED_CLINIC_B_ID,
 } from "../src/repositories/clinicRepository.js";
+import { getCurrentTenantCtx } from "../src/db/tenantContext.js";
 
 describe("Suite L — getGroupLaborCostAnalysis", () => {
   // L.1 GPM is denied (V1 explicit restriction — not a technical limitation)
@@ -2529,5 +2530,62 @@ describe("Suite L — getGroupLaborCostAnalysis", () => {
 
     // Both shifts have no timesheets → 2 missing across the group
     expect(result.totals.missingCount).toBe(2);
+  });
+
+  it("L.7: concurrent clinic calculations retain distinct explicit owner-admin contexts", async () => {
+    const rosterRepo = createInMemoryRosterRepository();
+    const originalListByClinic = rosterRepo.listByClinic.bind(rosterRepo);
+    const observedContexts: Array<{
+      requestedClinicId: string;
+      context: ReturnType<typeof getCurrentTenantCtx>;
+    }> = [];
+
+    rosterRepo.listByClinic = async (clinicId, options) => {
+      // Force both Promise.all branches to overlap before inspecting ALS.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, clinicId === SEED_CLINIC_A_ID ? 10 : 1);
+      });
+      observedContexts.push({
+        requestedClinicId: clinicId,
+        context: getCurrentTenantCtx(),
+      });
+      return originalListByClinic(clinicId, options);
+    };
+
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_A_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 2,
+      durationHours: 6,
+    });
+    await seedShift(rosterRepo, {
+      clinicId: SEED_CLINIC_B_ID,
+      staffUserId: STAFF_USER_ID_A,
+      daysFromNow: 3,
+      durationHours: 4,
+    });
+
+    const svc = createLaborForecastService(
+      rosterRepo,
+      createInMemoryTimesheetRepository(),
+      undefined,
+      undefined,
+      createInMemoryClinicRepository(),
+    );
+
+    const result = await svc.getGroupLaborCostAnalysis(callerAdminWithRates, {
+      from: dateOffset(1),
+      to: dateOffset(7),
+    });
+
+    expect(result.totals.totalHours).toBe(10);
+    expect(observedContexts).toHaveLength(2);
+    for (const observation of observedContexts) {
+      expect(observation.context).toEqual({
+        clinicId: observation.requestedClinicId,
+        ownerAdmin: true,
+      });
+    }
+    expect(getCurrentTenantCtx()).toBeNull();
   });
 });
