@@ -22,6 +22,14 @@ export type RosterEntry = {
   updatedAt: string;
 };
 
+export type RosterLeaveBlock = {
+  leaveId: string;
+  staffUserId: string;
+  staffEmail: string;
+  startDate: string;
+  endDate: string;
+};
+
 export type CreateShiftRequest = {
   staffUserId: string;
   // rosteredClinicName is intentionally absent — the service derives it

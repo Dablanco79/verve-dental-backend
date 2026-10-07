@@ -101,6 +101,12 @@ export function createLeaveRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.approveLeaveRequest(req, res)),
   );
 
+  router.get(
+    "/:leaveId/conflicts",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.listLeaveRosterConflicts(req, res)),
+  );
+
   router.post(
     "/:leaveId/reject",
     requireRoles(...PAYROLL_MANAGER_ROLES),

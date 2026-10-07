@@ -293,7 +293,7 @@ export type LeaveRequest = {
   startDate: string;
   /** Inclusive end date. YYYY-MM-DD (DB `date` type). */
   endDate: string;
-  /** Decimal to support half-day requests (0.5, 1.5, etc.). */
+  /** Server-derived inclusive whole-day count. */
   totalDays: number;
   /** Employee's explanation for the request. */
   reason: string | null;
@@ -305,6 +305,31 @@ export type LeaveRequest = {
   reviewNotes: string | null;
   createdAt: Date;
   updatedAt: Date;
+};
+
+/** Existing roster shift left unchanged when leave is approved. */
+export type LeaveRosterConflict = {
+  rosterEntryId: string;
+  staffUserId: string;
+  rosteredClinicId: string;
+  rosteredClinicName: string;
+  shiftStartAt: Date;
+  shiftEndAt: Date;
+  status: "scheduled" | "confirmed";
+};
+
+export type ApproveLeaveResult = {
+  leave: LeaveRequest;
+  conflicts: LeaveRosterConflict[];
+};
+
+/** Privacy-minimal approved leave projection consumed by roster views. */
+export type RosterLeaveBlock = {
+  leaveId: string;
+  staffUserId: string;
+  staffEmail: string;
+  startDate: string;
+  endDate: string;
 };
 
 // ── Input shapes ──────────────────────────────────────────────────────────────

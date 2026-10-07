@@ -47,6 +47,7 @@ const {
   mockListRoster,
   mockListUsers,
   mockGetRosterAccessibleClinics,
+  mockListRosterApprovedLeave,
   mockUseOperationalClinic,
   mockCancelShift,
   mockUpdateShift,
@@ -60,6 +61,7 @@ const {
     mockListRoster: vi.fn(),
     mockListUsers: vi.fn(),
     mockGetRosterAccessibleClinics: vi.fn(),
+    mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
     mockCancelShift: vi.fn(),
     mockUpdateShift: vi.fn(),
     mockUseOperationalClinic: vi.fn().mockReturnValue({
@@ -69,6 +71,37 @@ const {
       isAllClinicsScope: false,
     }),
   };
+});
+
+describe("RosterCalendarPage — pilot approved leave views", () => {
+  it("shows approved leave in Day, Week and Month and hides long-range controls", async () => {
+    const user = userEvent.setup();
+    const date = todayDateString();
+    setAuthenticatedUser(authTestState, managerUser);
+    mockListRoster.mockResolvedValue([]);
+    mockListUsers.mockResolvedValue([namedStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+    ]);
+    mockListRosterApprovedLeave.mockResolvedValue([{
+      leaveId: "leave-visible-1",
+      staffUserId: namedStaff.id,
+      staffEmail: namedStaff.email,
+      startDate: date,
+      endDate: date,
+    }]);
+
+    renderPage();
+    expect(await screen.findByLabelText(/Approved leave: Alice Jones/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "2 Months" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quarter" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Day" }));
+    expect(await screen.findByLabelText(/Approved leave: Alice Jones/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Week" }));
+    expect(await screen.findByLabelText(/Approved leave: Alice Jones/i)).toBeInTheDocument();
+  });
 });
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -91,6 +124,7 @@ vi.mock("../src/api/client.js", () => ({
     cancelShift: mockCancelShift,
     checkShiftConflicts: vi.fn().mockResolvedValue({ overlapping: [], sameDay: [] }),
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
+    listRosterApprovedLeave: mockListRosterApprovedLeave,
   }),
 }));
 
@@ -169,6 +203,11 @@ function renderPage() {
       <RosterCalendarPage />
     </MemoryRouter>,
   );
+}
+
+function todayDateString(): string {
+  const today = new Date();
+  return `${today.getFullYear().toString()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 }
 
 // ── Pure helper unit tests ────────────────────────────────────────────────────

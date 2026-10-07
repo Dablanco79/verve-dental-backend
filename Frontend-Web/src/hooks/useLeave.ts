@@ -5,9 +5,11 @@ import { loadConfig } from "../config/index.js";
 import type { UserRole } from "../types/index.js";
 import type {
   ApproveLeaveRequest,
+  ApproveLeaveResult,
   CreateLeaveRequest,
   LeaveFilters,
   LeaveRequest,
+  LeaveRosterConflict,
   RejectLeaveRequest,
 } from "../types/payroll.js";
 import { canManagePayroll } from "../utils/roles.js";
@@ -35,7 +37,8 @@ export type UseLeaveResult = {
    * Approve a pending leave request (manager/admin only).
    * `reviewNotes` is optional for approvals.
    */
-  approveLeave: (leaveId: string, payload?: ApproveLeaveRequest) => Promise<LeaveRequest>;
+  approveLeave: (leaveId: string, payload?: ApproveLeaveRequest) => Promise<ApproveLeaveResult>;
+  listRosterConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
   /**
    * Reject a leave request (manager/admin only).
    * `reviewNotes` is required so the staff member understands the reason.
@@ -118,7 +121,7 @@ export function useLeave(
   );
 
   const approveLeave = useCallback(
-    async (leaveId: string, payload: ApproveLeaveRequest = {}): Promise<LeaveRequest> => {
+    async (leaveId: string, payload: ApproveLeaveRequest = {}): Promise<ApproveLeaveResult> => {
       if (!clinicId) throw new Error("No clinic selected");
       if (!canManagePayroll(role ?? "clinical_staff")) {
         throw new Error("Insufficient permissions to approve leave requests");
@@ -128,6 +131,17 @@ export function useLeave(
       return updated;
     },
     [clinicId, role, fetch],
+  );
+
+  const listRosterConflicts = useCallback(
+    async (leaveId: string): Promise<LeaveRosterConflict[]> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to review leave conflicts");
+      }
+      return apiClient.listLeaveRosterConflicts(clinicId, leaveId);
+    },
+    [clinicId, role],
   );
 
   const rejectLeave = useCallback(
@@ -160,6 +174,7 @@ export function useLeave(
     refetch: fetch,
     submitRequest,
     approveLeave,
+    listRosterConflicts,
     rejectLeave,
     withdrawLeave,
   };

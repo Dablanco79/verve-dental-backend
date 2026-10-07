@@ -74,7 +74,9 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
             [AUTH_BYPASS_CLINIC_ID],
           );
           await client.query(
-            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            `SELECT pg_advisory_xact_lock(
+               hashtextextended('workforce-person:' || $1::text, 0)
+             )`,
             [input.staffUserId],
           );
           const { rows: conflictRows } = await client.query<RosterEntryRow>(
@@ -101,6 +103,35 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
               "ROSTER_CONFLICT",
               `Roster conflict: ${name} is already rostered at ${first.rosteredClinicName} from ${fmtT(first.shiftStartAt)}–${fmtT(first.shiftEndAt)}. The proposed shift overlaps this roster.`,
             );
+          }
+
+          if (conflictCheck.approvedLeaveWindow) {
+            const { rows: leaveRows } = await client.query<{
+              start_date: string;
+              end_date: string;
+            }>(
+              `SELECT start_date, end_date
+                 FROM leave_requests
+                WHERE staff_user_id = $1
+                  AND status = 'approved'
+                  AND start_date <= $3::date
+                  AND end_date >= $2::date
+                ORDER BY start_date
+                LIMIT 1`,
+              [
+                input.staffUserId,
+                conflictCheck.approvedLeaveWindow.firstDate,
+                conflictCheck.approvedLeaveWindow.lastDate,
+              ],
+            );
+            const leave = leaveRows[0];
+            if (leave) {
+              throw new AppError(
+                409,
+                "APPROVED_LEAVE_CONFLICT",
+                `This staff member has approved leave from ${leave.start_date} to ${leave.end_date}.`,
+              );
+            }
           }
         }
 
@@ -416,9 +447,26 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
             [AUTH_BYPASS_CLINIC_ID],
           );
           await client.query(
-            `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+            `SELECT pg_advisory_xact_lock(
+               hashtextextended('workforce-person:' || $1::text, 0)
+             )`,
             [conflictCheck.staffUserId],
           );
+
+          const lockedEntry = await client.query<{ staff_user_id: string; status: string }>(
+            `SELECT staff_user_id, status
+               FROM roster_entries
+              WHERE id = $1
+              FOR UPDATE`,
+            [entryId],
+          );
+          const current = lockedEntry.rows[0];
+          if (!current || current.staff_user_id !== conflictCheck.staffUserId) {
+            throw new AppError(404, "NOT_FOUND", "Roster entry not found");
+          }
+          if (current.status === "cancelled") {
+            throw new AppError(409, "ENTRY_CANCELLED", "Cannot update a cancelled roster entry");
+          }
 
           const params: unknown[] = [
             conflictCheck.staffUserId,
@@ -452,6 +500,35 @@ export function createPostgresRosterRepository(pool: DatabasePool): RosterReposi
               "ROSTER_CONFLICT",
               `Roster conflict: staff member is already rostered at ${first.rosteredClinicName} from ${fmtT(first.shiftStartAt)}–${fmtT(first.shiftEndAt)}. The updated shift times overlap this roster.`,
             );
+          }
+
+          if (conflictCheck.approvedLeaveWindow) {
+            const { rows: leaveRows } = await client.query<{
+              start_date: string;
+              end_date: string;
+            }>(
+              `SELECT start_date, end_date
+                 FROM leave_requests
+                WHERE staff_user_id = $1
+                  AND status = 'approved'
+                  AND start_date <= $3::date
+                  AND end_date >= $2::date
+                ORDER BY start_date
+                LIMIT 1`,
+              [
+                conflictCheck.staffUserId,
+                conflictCheck.approvedLeaveWindow.firstDate,
+                conflictCheck.approvedLeaveWindow.lastDate,
+              ],
+            );
+            const leave = leaveRows[0];
+            if (leave) {
+              throw new AppError(
+                409,
+                "APPROVED_LEAVE_CONFLICT",
+                `This staff member has approved leave from ${leave.start_date} to ${leave.end_date}.`,
+              );
+            }
           }
         }
 

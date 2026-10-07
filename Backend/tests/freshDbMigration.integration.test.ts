@@ -5,7 +5,8 @@
  * 047_user_clinic_assignments, 048_rls_own_roster_entries,
  * 049_clinic_preferred_name, 050_fix_timesheet_roster_unique,
  * 051_geofence_columns, 052_module_permissions_backfill,
- * 053_timesheet_staff_notes, and 054_staff_pay_rates.
+ * 053_timesheet_staff_notes, 054_staff_pay_rates, and
+ * 055_leave_pilot_safety.
  *
  * TWO GATING VARIABLES:
  *
@@ -28,6 +29,7 @@
  *     tests/freshDbMigration.integration.test.ts --runInBand --forceExit --verbose
  */
 
+import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { jest } from "@jest/globals";
 import { runBootstrapMigrations, BOOTSTRAP_MIGRATIONS } from "../src/db/migrate.js";
@@ -125,7 +127,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 054_staff_pay_rates", async () => {
+  it("last migration recorded is 055_leave_pilot_safety", async () => {
     if (SKIP_FRESH) return;
 
     // Migrations run in a single transaction so applied_at timestamps are
@@ -133,7 +135,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("054_staff_pay_rates");
+    expect(rows[0]?.id).toBe("055_leave_pilot_safety");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
@@ -182,6 +184,106 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
 function anyPool(): pg.Pool {
   return (freshPool ?? sharedPool) as pg.Pool;
 }
+
+async function expectLeavePilotMigrationToRejectWithoutRewrite(
+  invalidTotalDays: number,
+): Promise<void> {
+  const pool = anyPool();
+  const client = await pool.connect();
+  const schema = `leave_055_${randomUUID().replaceAll("-", "")}`;
+  const leaveId = randomUUID();
+  const migration = BOOTSTRAP_MIGRATIONS.find(
+    (candidate) => candidate.id === "055_leave_pilot_safety",
+  );
+  if (!migration) throw new Error("Migration 055 is not registered");
+
+  try {
+    await client.query(`CREATE SCHEMA "${schema}"`);
+    await client.query(`
+      CREATE TABLE "${schema}".leave_requests (
+        id uuid PRIMARY KEY,
+        staff_user_id uuid NOT NULL,
+        start_date date NOT NULL,
+        end_date date NOT NULL,
+        total_days numeric NOT NULL,
+        status text NOT NULL
+      )
+    `);
+    await client.query(
+      `INSERT INTO "${schema}".leave_requests
+         (id, staff_user_id, start_date, end_date, total_days, status)
+       VALUES ($1, $2, '2035-01-15', '2035-01-15', $3, 'pending')`,
+      [leaveId, randomUUID(), invalidTotalDays],
+    );
+
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL search_path TO "${schema}", public`);
+    let migrationError: unknown;
+    try {
+      await client.query(migration.sql);
+    } catch (error) {
+      migrationError = error;
+    }
+    expect(migrationError).toBeDefined();
+    await client.query("ROLLBACK");
+
+    const { rows } = await client.query<{ total_days: string }>(
+      `SELECT total_days::text AS total_days
+         FROM "${schema}".leave_requests
+        WHERE id = $1`,
+      [leaveId],
+    );
+    expect(rows[0]?.total_days).toBe(String(invalidTotalDays));
+
+    const constraint = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM pg_constraint
+        WHERE conrelid = $1::regclass
+          AND conname = 'leave_requests_whole_day_count'`,
+      [`${schema}.leave_requests`],
+    );
+    expect(Number(constraint.rows[0]?.count)).toBe(0);
+
+    const index = await client.query<{ index_name: string | null }>(
+      "SELECT to_regclass($1) AS index_name",
+      [`${schema}.idx_leave_requests_staff_approved_range`],
+    );
+    expect(index.rows[0]?.index_name).toBeNull();
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    client.release();
+  }
+}
+
+describe("Migration 055 — leave pilot safety", () => {
+  it("installs the whole-day constraint and person-wide approved-leave index", async () => {
+    if (SKIP_ALL) return;
+
+    const constraint = await anyPool().query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM pg_constraint
+        WHERE conrelid = 'leave_requests'::regclass
+          AND conname = 'leave_requests_whole_day_count'`,
+    );
+    expect(Number(constraint.rows[0]?.count)).toBe(1);
+
+    const index = await anyPool().query<{ index_name: string | null }>(
+      "SELECT to_regclass('idx_leave_requests_staff_approved_range') AS index_name",
+    );
+    expect(index.rows[0]?.index_name).toBe("idx_leave_requests_staff_approved_range");
+  });
+
+  it("rejects fractional total_days, rolls back, and preserves the invalid row", async () => {
+    if (SKIP_ALL) return;
+    await expectLeavePilotMigrationToRejectWithoutRewrite(0.5);
+  });
+
+  it("rejects integer-but-inconsistent total_days, rolls back, and preserves the invalid row", async () => {
+    if (SKIP_ALL) return;
+    await expectLeavePilotMigrationToRejectWithoutRewrite(2);
+  });
+});
 
 describe("Migration 047 — user_clinic_assignments schema", () => {
   it("user_clinic_assignments table exists with expected columns", async () => {

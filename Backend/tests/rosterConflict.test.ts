@@ -22,6 +22,7 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
+import { formatCalendarDate } from "../src/utils/calendarDate.js";
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
@@ -61,6 +62,20 @@ type RosterEntryDto = {
   createdByUserId: string;
 };
 
+type ApprovedLeaveDto = {
+  leaveId: string;
+  staffUserId: string;
+  staffEmail: string;
+  startDate: string;
+  endDate: string;
+};
+
+type ConflictData = {
+  overlapping: RosterEntryDto[];
+  sameDay: RosterEntryDto[];
+  approvedLeave: ApprovedLeaveDto[];
+};
+
 async function mkShiftAt(
   app: Awaited<ReturnType<typeof createTestApp>>,
   token: string,
@@ -75,6 +90,42 @@ async function mkShiftAt(
     .set("Authorization", `Bearer ${token}`)
     .send({ staffUserId, shiftStartAt: startAt, shiftEndAt: endAt, shiftType: "standard", notes: null })
     .expect(expectStatus);
+}
+
+async function createLeaveAt(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  token: string,
+  clinicId: string,
+  date: string,
+): Promise<request.Response> {
+  return request(app)
+    .post(`/api/v1/clinics/${clinicId}/leave`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      leaveType: "annual",
+      startDate: date,
+      endDate: date,
+      reason: "Conflict endpoint test",
+    })
+    .expect(201);
+}
+
+async function getConflicts(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  token: string,
+  clinicId: string,
+  staffUserId: string,
+): Promise<ConflictData> {
+  const response = await request(app)
+    .get(
+      `/api/v1/clinics/${clinicId}/roster/conflicts` +
+        `?staffUserId=${staffUserId}` +
+        `&start=${encodeURIComponent(STD_START)}` +
+        `&end=${encodeURIComponent(STD_END)}`,
+    )
+    .set("Authorization", `Bearer ${token}`)
+    .expect(200);
+  return (response.body as ApiData<ConflictData>).data;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -311,6 +362,102 @@ describe("Cross-clinic roster conflict detection", () => {
       )
       .set("Authorization", `Bearer ${gpmToken}`)
       .expect(403);
+  });
+});
+
+describe("Approved leave in roster conflict preflight", () => {
+  const LEAVE_DATE = formatCalendarDate(
+    new Date(STD_START),
+    "Australia/Melbourne",
+  );
+
+  it("returns person-wide approved leave when preflighting at another clinic", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const leaveResponse = await createLeaveAt(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      LEAVE_DATE,
+    );
+    const leaveId = (leaveResponse.body as ApiData<{ id: string }>).data.id;
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/approve`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({})
+      .expect(200);
+
+    const conflicts = await getConflicts(
+      app,
+      ownerToken,
+      SEED_CLINIC_B_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+    expect(conflicts.approvedLeave).toEqual([
+      expect.objectContaining({
+        leaveId,
+        staffUserId: SEED_USER_IDS.clinicAStaff,
+        startDate: LEAVE_DATE,
+        endDate: LEAVE_DATE,
+      }),
+    ]);
+  });
+
+  it("does not return rejected leave as blocking", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const leaveResponse = await createLeaveAt(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      LEAVE_DATE,
+    );
+    const leaveId = (leaveResponse.body as ApiData<{ id: string }>).data.id;
+
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/reject`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ reviewNotes: "Coverage unavailable" })
+      .expect(200);
+
+    const conflicts = await getConflicts(
+      app,
+      ownerToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+    expect(conflicts.approvedLeave).toHaveLength(0);
+  });
+
+  it("does not return withdrawn pending leave as blocking", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const leaveResponse = await createLeaveAt(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      LEAVE_DATE,
+    );
+    const leaveId = (leaveResponse.body as ApiData<{ id: string }>).data.id;
+
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/withdraw`)
+      .set("Authorization", `Bearer ${staffToken}`)
+      .expect(200);
+
+    const conflicts = await getConflicts(
+      app,
+      ownerToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+    expect(conflicts.approvedLeave).toHaveLength(0);
   });
 });
 

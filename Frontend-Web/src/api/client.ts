@@ -47,6 +47,7 @@ import type {
 import type {
   CreateShiftRequest,
   RosterEntry,
+  RosterLeaveBlock,
   UpdateShiftRequest,
 } from "../types/roster.js";
 import type { GroupLaborCostAnalysis, LaborCostAnalysis } from "../types/forecast.js";
@@ -81,6 +82,7 @@ import type {
 } from "../types/analytics.js";
 import type {
   ApproveLeaveRequest,
+  ApproveLeaveResult,
   ApproveTimesheetRequest,
   ClockInRequest,
   ClockOutRequest,
@@ -89,6 +91,7 @@ import type {
   ExportTimesheetParams,
   LeaveFilters,
   LeaveRequest,
+  LeaveRosterConflict,
   RejectLeaveRequest,
   RejectTimesheetRequest,
   TimesheetEntry,
@@ -1014,16 +1017,37 @@ export function createApiClient(config: AppConfig) {
       end: string;
       excludeEntryId?: string;
     },
-  ): Promise<{ overlapping: RosterEntry[]; sameDay: RosterEntry[] }> {
+  ): Promise<{
+    overlapping: RosterEntry[];
+    sameDay: RosterEntry[];
+    approvedLeave: RosterLeaveBlock[];
+  }> {
     const q = new URLSearchParams({
       staffUserId: params.staffUserId,
       start: params.start,
       end: params.end,
     });
     if (params.excludeEntryId) q.set("excludeEntryId", params.excludeEntryId);
-    return request<{ overlapping: RosterEntry[]; sameDay: RosterEntry[] }>(
+    return request<{
+      overlapping: RosterEntry[];
+      sameDay: RosterEntry[];
+      approvedLeave: RosterLeaveBlock[];
+    }>(
       config,
       `/api/v1/clinics/${clinicId}/roster/conflicts?${q.toString()}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listRosterApprovedLeave(
+    clinicId: string,
+    params: { from: string; to: string },
+  ): Promise<RosterLeaveBlock[]> {
+    const query = new URLSearchParams({ from: params.from, to: params.to });
+    return request<RosterLeaveBlock[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/roster/leave-blocks?${query.toString()}`,
       {},
       requireAccessToken(),
     );
@@ -1739,11 +1763,23 @@ export function createApiClient(config: AppConfig) {
     clinicId: string,
     leaveId: string,
     body: ApproveLeaveRequest = {},
-  ): Promise<LeaveRequest> {
-    return request<LeaveRequest>(
+  ): Promise<ApproveLeaveResult> {
+    return request<ApproveLeaveResult>(
       config,
       `/api/v1/clinics/${clinicId}/leave/${leaveId}/approve`,
       { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function listLeaveRosterConflicts(
+    clinicId: string,
+    leaveId: string,
+  ): Promise<LeaveRosterConflict[]> {
+    return request<LeaveRosterConflict[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/conflicts`,
+      {},
       requireAccessToken(),
     );
   }
@@ -2810,6 +2846,7 @@ export function createApiClient(config: AppConfig) {
     getRosterAccessibleClinics,
     listRosterEligibleStaff,
     checkShiftConflicts,
+    listRosterApprovedLeave,
     getUserClinicAccess,
     putUserClinicAccess,
     listUserPermissions,
@@ -2852,6 +2889,7 @@ export function createApiClient(config: AppConfig) {
     listMyLeave,
     createLeaveRequest,
     approveLeave,
+    listLeaveRosterConflicts,
     rejectLeave,
     withdrawLeave,
     listSuppliers,

@@ -3255,6 +3255,69 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         ON staff_pay_rates (staff_user_id, effective_from);
     `,
   },
+  /**
+   * Migration 055 — Workforce pilot whole-day leave safety.
+   *
+   * Refuses to run when historical leave duration disagrees with the
+   * authoritative inclusive date range. No data is silently rewritten.
+   */
+  {
+    id: "055_leave_pilot_safety",
+    sql: `
+      DO $$
+      DECLARE
+        invalid_count integer;
+        sample_ids text;
+      BEGIN
+        SELECT COUNT(*)
+          INTO invalid_count
+          FROM leave_requests
+         WHERE total_days <> (end_date - start_date + 1)::numeric
+            OR total_days <> trunc(total_days);
+
+        SELECT string_agg(id::text, ', ' ORDER BY id::text)
+          INTO sample_ids
+          FROM (
+            SELECT id
+              FROM leave_requests
+             WHERE total_days <> (end_date - start_date + 1)::numeric
+                OR total_days <> trunc(total_days)
+             ORDER BY id
+             LIMIT 10
+          ) invalid;
+
+        IF invalid_count > 0 THEN
+          RAISE EXCEPTION
+            'Migration 055 blocked: % fractional/inconsistent leave_requests rows exist (sample IDs: %). No rows were modified.',
+            invalid_count,
+            sample_ids;
+        END IF;
+      END
+      $$;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint
+           WHERE conname = 'leave_requests_whole_day_count'
+             AND conrelid = 'leave_requests'::regclass
+        ) THEN
+          ALTER TABLE leave_requests
+            ADD CONSTRAINT leave_requests_whole_day_count
+            CHECK (
+              total_days = trunc(total_days)
+              AND total_days = (end_date - start_date + 1)::numeric
+            );
+        END IF;
+      END
+      $$;
+
+      CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_approved_range
+        ON leave_requests (staff_user_id, start_date, end_date)
+        WHERE status = 'approved';
+    `,
+  },
 ];
 
 /**

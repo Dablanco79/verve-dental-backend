@@ -120,6 +120,8 @@ import { createProductMatchingService } from "../services/productMatchingService
 import { createTimesheetService } from "../services/timesheetService.js";
 import { createUserService } from "../services/userService.js";
 import type { Logger } from "../utils/logger.js";
+import { coveredCalendarDateRange } from "../utils/calendarDate.js";
+import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
 import type { DatabasePool } from "../db/pool.js";
 import type { RedisClient } from "../redis/client.js";
 import type { AnalyticsRepository } from "../repositories/analyticsRepository.js";
@@ -356,7 +358,8 @@ export async function createAppDependencies(
     clinicAssignmentsRepository = createPostgresUserClinicAssignmentsRepository(connectedPool);
     inventoryRepository = createPostgresInventoryRepository(connectedPool);
     rosterRepository = createPostgresRosterRepository(connectedPool);
-    timesheetRepository = createPostgresTimesheetRepository(connectedPool);    leaveRepository = createPostgresLeaveRepository(connectedPool);
+    timesheetRepository = createPostgresTimesheetRepository(connectedPool);
+    leaveRepository = createPostgresLeaveRepository(connectedPool);
     billingRepository = createPostgresBillingRepository(connectedPool);
     analyticsRepository = createPostgresAnalyticsRepository(connectedPool);
     supplierRepository = createPostgresSupplierRepository(connectedPool);
@@ -385,9 +388,32 @@ export async function createAppDependencies(
     clinicRepository = createInMemoryClinicRepository();
     clinicAssignmentsRepository = createInMemoryUserClinicAssignmentsRepository();
     inventoryRepository = createInMemoryInventoryRepository(catalogRepository);
-    rosterRepository = createInMemoryRosterRepository();
+    leaveRepository = createInMemoryLeaveRepository(async (staffUserId, startDate, endDate) => {
+      const entries = await rosterRepository.listByStaff(staffUserId);
+      return entries
+        .filter((entry) => {
+          if (entry.status !== "scheduled" && entry.status !== "confirmed") return false;
+          const covered = coveredCalendarDateRange(
+            entry.shiftStartAt,
+            entry.shiftEndAt,
+            OPERATIONAL_TZ,
+          );
+          return covered.firstDate <= endDate && covered.lastDate >= startDate;
+        })
+        .map((entry) => ({
+          rosterEntryId: entry.id,
+          staffUserId: entry.staffUserId,
+          rosteredClinicId: entry.rosteredClinicId,
+          rosteredClinicName: entry.rosteredClinicName,
+          shiftStartAt: entry.shiftStartAt,
+          shiftEndAt: entry.shiftEndAt,
+          status: entry.status as "scheduled" | "confirmed",
+        }));
+    });
+    rosterRepository = createInMemoryRosterRepository((staffUserId, firstDate, lastDate) =>
+      leaveRepository.findApprovedOverlapRange(staffUserId, firstDate, lastDate),
+    );
     timesheetRepository = createInMemoryTimesheetRepository();
-    leaveRepository = createInMemoryLeaveRepository();
     billingRepository = createInMemoryBillingRepository();
     analyticsRepository = createInMemoryAnalyticsRepository();
     supplierRepository = createInMemorySupplierRepository();
@@ -532,7 +558,7 @@ export async function createAppDependencies(
     clinicAssignmentsRepository,
     clinicRepository,
   );
-  const leaveService = createLeaveService(leaveRepository, rosterRepository, analyticsRepository);
+  const leaveService = createLeaveService(leaveRepository, analyticsRepository);
   const billingService = createBillingService(billingRepository, analyticsRepository);
   const analyticsService = createAnalyticsService(
     analyticsRepository,

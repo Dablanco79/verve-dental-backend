@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  ApproveLeaveResult,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveRosterConflict,
   ListLeaveOptions,
   ListLeavePageOptions,
+  RosterLeaveBlock,
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 
@@ -27,6 +30,30 @@ export interface LeaveRepository {
     staffUserId: string,
     date: string,
   ): Promise<LeaveRequest[]>;
+  findApprovedOverlapRange(
+    staffUserId: string,
+    firstDate: string,
+    lastDate: string,
+  ): Promise<LeaveRequest[]>;
+  approveWithRosterConflicts(input: {
+    leaveId: string;
+    clinicId: string;
+    expectedStaffUserId: string;
+    reviewedByUserId: string;
+    reviewNotes: string | null;
+    timeZone: string;
+  }): Promise<ApproveLeaveResult>;
+  listRosterConflicts(input: {
+    leaveId: string;
+    clinicId: string;
+    expectedStaffUserId: string;
+    timeZone: string;
+  }): Promise<LeaveRosterConflict[]>;
+  listApprovedForStaff(
+    staffUserIds: string[],
+    firstDate: string,
+    lastDate: string,
+  ): Promise<RosterLeaveBlock[]>;
   updateStatus(id: string, input: UpdateLeaveStatusInput): Promise<LeaveRequest>;
 }
 
@@ -34,7 +61,13 @@ export interface LeaveRepository {
 // In-memory implementation (used when DATABASE_URL is absent)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function createInMemoryLeaveRepository(): LeaveRepository {
+export function createInMemoryLeaveRepository(
+  loadRosterConflicts?: (
+    staffUserId: string,
+    startDate: string,
+    endDate: string,
+  ) => Promise<LeaveRosterConflict[]>,
+): LeaveRepository {
   const records: LeaveRequest[] = [];
 
   return {
@@ -134,6 +167,89 @@ export function createInMemoryLeaveRepository(): LeaveRepository {
               r.endDate >= date,
           )
           .map((r) => ({ ...r })),
+      );
+    },
+
+    findApprovedOverlapRange(
+      staffUserId: string,
+      firstDate: string,
+      lastDate: string,
+    ): Promise<LeaveRequest[]> {
+      return Promise.resolve(
+        records
+          .filter(
+            (r) =>
+              r.staffUserId === staffUserId &&
+              r.status === "approved" &&
+              r.startDate <= lastDate &&
+              r.endDate >= firstDate,
+          )
+          .map((r) => ({ ...r })),
+      );
+    },
+
+    async approveWithRosterConflicts(input): Promise<ApproveLeaveResult> {
+      const request = records.find(
+        (record) =>
+          record.id === input.leaveId &&
+          record.clinicId === input.clinicId &&
+          record.staffUserId === input.expectedStaffUserId,
+      );
+      if (!request) throw new Error(`Leave request not found: ${input.leaveId}`);
+      if (request.status !== "pending") {
+        throw new Error(`Leave request is already '${request.status}' and cannot be approved`);
+      }
+
+      const conflicts = loadRosterConflicts
+        ? await loadRosterConflicts(request.staffUserId, request.startDate, request.endDate)
+        : [];
+      const leave: LeaveRequest = {
+        ...request,
+        status: "approved",
+        reviewedByUserId: input.reviewedByUserId,
+        reviewedAt: new Date(),
+        reviewNotes: input.reviewNotes,
+        updatedAt: new Date(),
+      };
+      records[records.indexOf(request)] = leave;
+      return { leave, conflicts };
+    },
+
+    async listRosterConflicts(input): Promise<LeaveRosterConflict[]> {
+      const request = records.find(
+        (record) =>
+          record.id === input.leaveId &&
+          record.clinicId === input.clinicId &&
+          record.staffUserId === input.expectedStaffUserId,
+      );
+      if (!request) return [];
+      return loadRosterConflicts
+        ? loadRosterConflicts(request.staffUserId, request.startDate, request.endDate)
+        : [];
+    },
+
+    listApprovedForStaff(
+      staffUserIds: string[],
+      firstDate: string,
+      lastDate: string,
+    ): Promise<RosterLeaveBlock[]> {
+      const staff = new Set(staffUserIds);
+      return Promise.resolve(
+        records
+          .filter(
+            (record) =>
+              staff.has(record.staffUserId) &&
+              record.status === "approved" &&
+              record.startDate <= lastDate &&
+              record.endDate >= firstDate,
+          )
+          .map((record) => ({
+            leaveId: record.id,
+            staffUserId: record.staffUserId,
+            staffEmail: record.staffEmail,
+            startDate: record.startDate,
+            endDate: record.endDate,
+          })),
       );
     },
 

@@ -5,9 +5,11 @@ import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { useLeave } from "../hooks/useLeave.js";
 import type {
+  ApproveLeaveResult,
   CreateLeaveRequest,
   LeaveFilters,
   LeaveRequest,
+  LeaveRosterConflict,
   LeaveRequestStatus,
   LeaveType,
 } from "../types/payroll.js";
@@ -27,6 +29,17 @@ function formatDate(iso: string | null): string {
     month: "short",
     year: "numeric",
   });
+}
+
+function inclusiveDayCount(startDate: string, endDate: string): number {
+  if (!startDate || !endDate) return 0;
+  const [sy, sm, sd] = startDate.split("-").map(Number);
+  const [ey, em, ed] = endDate.split("-").map(Number);
+  return Math.floor(
+    (Date.UTC(ey ?? 0, (em ?? 1) - 1, ed ?? 1) -
+      Date.UTC(sy ?? 0, (sm ?? 1) - 1, sd ?? 1)) /
+      86_400_000,
+  ) + 1;
 }
 
 // ── Badge components ─────────────────────────────────────────────────────────
@@ -51,7 +64,7 @@ function LeaveTypeBadge({ type }: { type: LeaveType }) {
 
 type PendingLeaveQueueProps = {
   entries: LeaveRequest[];
-  onApprove: (id: string) => Promise<void>;
+  onApprove: (id: string) => Promise<ApproveLeaveResult>;
   onReject: (id: string, notes: string) => Promise<void>;
 };
 
@@ -60,12 +73,14 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
   const [rejectNotes, setRejectNotes] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [approvalResult, setApprovalResult] = useState<ApproveLeaveResult | null>(null);
 
   async function handleApprove(id: string): Promise<void> {
     setIsBusy(true);
     setActionError(null);
     try {
-      await onApprove(id);
+      const result = await onApprove(id);
+      setApprovalResult(result);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Approval failed.");
     } finally {
@@ -91,14 +106,38 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
     }
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && !approvalResult) {
     return (
       <p className="pr-table__empty">No leave requests pending your approval.</p>
     );
   }
 
   return (
-    <div className="pr-table-wrap">
+    <>
+      {approvalResult ? (
+        <div className="lv-approval-result" role="status">
+          <strong>Leave was approved.</strong>
+          {approvalResult.conflicts.length > 0 ? (
+            <>
+              <p>
+                Existing shifts remain unchanged. Manual roster action is required for:
+              </p>
+              <ul>
+                {approvalResult.conflicts.map((conflict) => (
+                  <li key={conflict.rosterEntryId}>
+                    {conflict.rosteredClinicName}:{" "}
+                    {new Date(conflict.shiftStartAt).toLocaleString("en-AU")} –{" "}
+                    {new Date(conflict.shiftEndAt).toLocaleTimeString("en-AU")}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>No existing roster shifts conflict with this leave.</p>
+          )}
+        </div>
+      ) : null}
+      {entries.length > 0 ? <div className="pr-table-wrap">
       <table className="pr-table">
         <thead>
           <tr>
@@ -196,13 +235,37 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
           ))}
         </tbody>
       </table>
-    </div>
+      </div> : null}
+    </>
   );
 }
 
 // ── Manager: All-requests read-only table ────────────────────────────────────
 
-function AllLeaveTable({ entries }: { entries: LeaveRequest[] }) {
+function AllLeaveTable({
+  entries,
+  onReviewConflicts,
+}: {
+  entries: LeaveRequest[];
+  onReviewConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
+}) {
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<Record<string, LeaveRosterConflict[]>>({});
+  const [conflictError, setConflictError] = useState<string | null>(null);
+
+  async function reviewConflicts(leaveId: string): Promise<void> {
+    setReviewingId(leaveId);
+    setConflictError(null);
+    try {
+      const result = await onReviewConflicts(leaveId);
+      setConflicts((current) => ({ ...current, [leaveId]: result }));
+    } catch (error) {
+      setConflictError(error instanceof Error ? error.message : "Unable to load roster conflicts.");
+    } finally {
+      setReviewingId(null);
+    }
+  }
+
   if (entries.length === 0) {
     return (
       <p className="pr-table__empty">No leave requests found for the last 90 days.</p>
@@ -221,6 +284,7 @@ function AllLeaveTable({ entries }: { entries: LeaveRequest[] }) {
             <th className="pr-table__th">Days</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Review Notes</th>
+            <th className="pr-table__th">Roster Conflicts</th>
           </tr>
         </thead>
         <tbody>
@@ -241,10 +305,44 @@ function AllLeaveTable({ entries }: { entries: LeaveRequest[] }) {
                 <LeaveStatusBadge status={req.status} />
               </td>
               <td className="pr-table__td">{req.reviewNotes ?? "—"}</td>
+              <td className="pr-table__td">
+                {req.status === "approved" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="button-link"
+                      disabled={reviewingId === req.id}
+                      onClick={() => { void reviewConflicts(req.id); }}
+                    >
+                      {reviewingId === req.id ? "Checking…" : "Review conflicts"}
+                    </button>
+                    {conflicts[req.id] ? (
+                      (conflicts[req.id]?.length ?? 0) > 0 ? (
+                        <>
+                          <span className="lv-conflict-count">
+                            {conflicts[req.id]?.length ?? 0} unresolved
+                          </span>
+                          <ul className="lv-conflict-list">
+                            {(conflicts[req.id] ?? []).map((conflict) => (
+                              <li key={conflict.rosterEntryId}>
+                                {conflict.rosteredClinicName},{" "}
+                                {new Date(conflict.shiftStartAt).toLocaleString("en-AU")}
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : (
+                        <span className="lv-conflict-count">None</span>
+                      )
+                    ) : null}
+                  </>
+                ) : "—"}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {conflictError ? <p className="status-card__error">{conflictError}</p> : null}
     </div>
   );
 }
@@ -259,7 +357,6 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
   const [leaveType, setLeaveType] = useState<LeaveType>("annual");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [totalDays, setTotalDays] = useState("1");
   const [reason, setReason] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -277,26 +374,18 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
       setFormError("End date must be on or after the start date.");
       return;
     }
-    const days = parseFloat(totalDays);
-    if (Number.isNaN(days) || days <= 0) {
-      setFormError("Total days must be a positive number (use 0.5 for a half-day).");
-      return;
-    }
-
     setIsBusy(true);
     try {
       await onSubmit({
         leaveType,
         startDate,
         endDate,
-        totalDays: days,
         reason: reason.trim() || null,
       });
       setSubmitted(true);
       // Reset form fields for the next submission.
       setStartDate("");
       setEndDate("");
-      setTotalDays("1");
       setReason("");
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Submission failed. Please try again.");
@@ -384,21 +473,13 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
       </div>
 
       <div className="lv-request-form__field">
-        <label className="lv-request-form__label" htmlFor="lv-days">
-          Total Days
-          <span className="lv-request-form__hint"> (0.5 for half-day)</span>
-        </label>
-        <input
-          id="lv-days"
-          type="number"
-          className="lv-request-form__control"
-          value={totalDays}
-          onChange={(e) => { setTotalDays(e.target.value); }}
-          min="0.5"
-          step="0.5"
-          disabled={isBusy}
-          required
-        />
+        <span className="lv-request-form__label">Whole Days</span>
+        <output className="lv-request-form__control">
+          {startDate && endDate ? inclusiveDayCount(startDate, endDate) : "—"}
+        </output>
+        <span className="lv-request-form__hint">
+          Every calendar date from start through end is unavailable.
+        </span>
       </div>
 
       <div className="lv-request-form__field lv-request-form__field--full">
@@ -546,6 +627,7 @@ export function LeavePage() {
     refetch,
     submitRequest,
     approveLeave,
+    listRosterConflicts,
     rejectLeave,
     withdrawLeave,
   } = useLeave(clinicId, user?.role, filters);
@@ -615,7 +697,7 @@ export function LeavePage() {
               <PendingLeaveQueue
                 entries={pendingRequests}
                 onApprove={async (id) => {
-                  await approveLeave(id, {});
+                  return approveLeave(id, {});
                 }}
                 onReject={async (id, notes) => {
                   await rejectLeave(id, { reviewNotes: notes });
@@ -626,7 +708,10 @@ export function LeavePage() {
             {/* ── Manager: All requests (last 90 days) ── */}
             <div className="pr-section">
               <h3 className="pr-section__title">All Requests (Last 90 Days)</h3>
-              <AllLeaveTable entries={requests} />
+              <AllLeaveTable
+                entries={requests}
+                onReviewConflicts={listRosterConflicts}
+              />
             </div>
           </>
         ) : (

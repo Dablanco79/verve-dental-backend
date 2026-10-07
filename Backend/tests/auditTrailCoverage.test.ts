@@ -269,7 +269,6 @@ describe("Audit trail — leave request approval", () => {
         leaveType: "annual",
         startDate: fmt(tomorrow),
         endDate: fmt(dayAfter),
-        totalDays: 2,
         reason: "Family holiday",
       });
 

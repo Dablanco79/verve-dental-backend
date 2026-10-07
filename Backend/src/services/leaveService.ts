@@ -1,15 +1,18 @@
 import type { AuthenticatedUser } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import type {
+  ApproveLeaveResult,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveRosterConflict,
   ListLeaveOptions,
   ListLeavePageOptions,
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
-import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
+import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
+import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
 
 type AuditWriter = {
   recordEvent(input: CreateAuditEventInput): Promise<unknown>;
@@ -41,7 +44,6 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 
 export function createLeaveService(
   leaveRepository: LeaveRepository,
-  rosterRepository: RosterRepository,
   auditWriter?: AuditWriter,
 ) {
   return {
@@ -53,23 +55,30 @@ export function createLeaveService(
     async createLeaveRequest(
       caller: AuthenticatedUser,
       clinicId: string,
-      input: Omit<CreateLeaveRequestInput, "staffUserId" | "staffEmail" | "clinicId">,
+      input: Omit<
+        CreateLeaveRequestInput,
+        "staffUserId" | "staffEmail" | "clinicId" | "totalDays"
+      >,
     ): Promise<LeaveRequest> {
       // clinical_staff may only submit for their own home clinic.
       if (caller.role === "clinical_staff" && caller.homeClinicId !== clinicId) {
         throw new AppError(403, "FORBIDDEN", "You can only submit leave for your home clinic");
       }
 
-      if (input.startDate > input.endDate) {
-        throw new AppError(400, "INVALID_DATE_RANGE", "startDate must be on or before endDate");
-      }
-
-      if (input.totalDays <= 0) {
-        throw new AppError(400, "INVALID_TOTAL_DAYS", "totalDays must be greater than zero");
+      let totalDays: number;
+      try {
+        totalDays = inclusiveCalendarDayCount(input.startDate, input.endDate);
+      } catch (error) {
+        throw new AppError(
+          400,
+          "INVALID_DATE_RANGE",
+          error instanceof Error ? error.message : "Invalid leave date range",
+        );
       }
 
       return leaveRepository.create({
         ...input,
+        totalDays,
         staffUserId: caller.id,
         staffEmail: caller.email,
         clinicId,
@@ -79,18 +88,15 @@ export function createLeaveService(
     /**
      * Manager approves a leave request.
      *
-     * ROSTER GUARDRAIL: Any scheduled or confirmed roster shifts for the staff
-     * member that overlap the leave date window are automatically cancelled.
-     * This prevents the roster from showing the staff member as available on
-     * days they have approved leave, protecting both scheduling integrity and
-     * the materials forecasting engine (cancelled shifts → zero expected usage).
+     * Existing roster shifts are never changed. Cross-clinic conflicts are
+     * returned so managers can resolve them manually.
      */
     async approveLeaveRequest(
       caller: AuthenticatedUser,
       clinicId: string,
       leaveId: string,
       reviewNotes: string | null = null,
-    ): Promise<LeaveRequest> {
+    ): Promise<ApproveLeaveResult> {
       assertReviewAccess(caller, clinicId);
 
       const request = await leaveRepository.findById(leaveId);
@@ -107,47 +113,13 @@ export function createLeaveService(
         );
       }
 
-      // ── Roster guardrail ──────────────────────────────────────────────────
-      // Find all roster entries for the staff member that overlap the leave
-      // date window. The from/to window is expressed as TIMESTAMPTZ boundaries:
-      //   from = midnight on the first leave day (UTC)
-      //   to   = midnight on the day AFTER the last leave day (exclusive)
-      //
-      // CROSS-TENANT SAFETY: listByStaffAtClinic is used intentionally rather
-      // than listByStaff.  The underlying query requires BOTH employee_id AND
-      // clinic_id predicates (WHERE staff_user_id = $1 AND rostered_clinic_id = $2),
-      // guaranteeing that an approval action inside Tenant A cannot cascade-cancel
-      // roster shifts belonging to Tenant B even if the staff member is rostered
-      // across multiple clinics.
-      const leaveFrom = new Date(`${request.startDate}T00:00:00.000Z`);
-      const leaveTo = new Date(`${request.endDate}T00:00:00.000Z`);
-      leaveTo.setUTCDate(leaveTo.getUTCDate() + 1);
-
-      const overlappingShifts = await rosterRepository.listByStaffAtClinic(
-        request.staffUserId,
+      const result = await leaveRepository.approveWithRosterConflicts({
+        leaveId,
         clinicId,
-        { from: leaveFrom, to: leaveTo },
-      );
-
-      const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set(["scheduled", "confirmed"]);
-
-      await Promise.all(
-        overlappingShifts
-          .filter((s) => CANCELLABLE_STATUSES.has(s.status))
-          .map((s) =>
-            rosterRepository.updateEntry(
-              s.id,
-              { status: "cancelled" },
-              { userId: caller.id, email: caller.email },
-            ),
-          ),
-      );
-      // ─────────────────────────────────────────────────────────────────────
-
-      const approved = await leaveRepository.updateStatus(leaveId, {
-        status: "approved",
+        expectedStaffUserId: request.staffUserId,
         reviewedByUserId: caller.id,
         reviewNotes,
+        timeZone: OPERATIONAL_TZ,
       });
 
       auditWriter?.recordEvent({
@@ -168,7 +140,25 @@ export function createLeaveService(
         console.error("[Audit Failure Guard]:", err);
       });
 
-      return approved;
+      return result;
+    },
+
+    async getRosterConflicts(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+    ): Promise<LeaveRosterConflict[]> {
+      assertReviewAccess(caller, clinicId);
+      const request = await leaveRepository.findById(leaveId);
+      if (!request || request.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Leave request not found");
+      }
+      return leaveRepository.listRosterConflicts({
+        leaveId,
+        clinicId,
+        expectedStaffUserId: request.staffUserId,
+        timeZone: OPERATIONAL_TZ,
+      });
     },
 
     /** Manager rejects a leave request with a mandatory review note. */

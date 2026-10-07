@@ -19,6 +19,7 @@ type EligibleStaff = {
 };
 import type {
   RosterEntry,
+  RosterLeaveBlock,
   ShiftType,
 } from "../types/roster.js";
 import {
@@ -35,7 +36,8 @@ const apiClient = createApiClient(loadConfig());
 
 type ViewMode = "day" | "week" | "month" | "two_months" | "quarter";
 
-const VIEW_MODES: ViewMode[] = ["day", "week", "month", "two_months", "quarter"];
+// Pilot: long-range views remain deferred and are intentionally hidden.
+const VIEW_MODES: ViewMode[] = ["day", "week", "month"];
 
 const VIEW_MODE_LABELS: Record<ViewMode, string> = {
   day: "Day",
@@ -211,6 +213,7 @@ export function RosterCalendarPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("month");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [entries, setEntries] = useState<RosterEntry[]>([]);
+  const [leaveBlocks, setLeaveBlocks] = useState<RosterLeaveBlock[]>([]);
   const [staffList, setStaffList] = useState<EligibleStaff[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -231,6 +234,7 @@ export function RosterCalendarPage() {
   const [conflictResult, setConflictResult] = useState<{
     overlapping: RosterEntry[];
     sameDay: RosterEntry[];
+    approvedLeave?: RosterLeaveBlock[];
   } | null>(null);
   const [isCheckingConflict, setIsCheckingConflict] = useState(false);
   const conflictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -241,6 +245,27 @@ export function RosterCalendarPage() {
   function resolveStaffName(userId: string, email: string): string {
     const found = staffList.find((s) => s.id === userId);
     return found ? staffDisplayName(found) : staffLabelFromEmail(email);
+  }
+
+  function approvedLeaveOn(day: Date): RosterLeaveBlock[] {
+    const date = toDateInput(day);
+    return leaveBlocks.filter(
+      (leave) => leave.startDate <= date && leave.endDate >= date,
+    );
+  }
+
+  function renderLeaveBlock(leave: RosterLeaveBlock, compact = false) {
+    const name = resolveStaffName(leave.staffUserId, leave.staffEmail);
+    return (
+      <div
+        key={leave.leaveId}
+        className={compact ? "roster-leave-block roster-leave-block--compact" : "roster-leave-block"}
+        aria-label={`Approved leave: ${name}`}
+      >
+        <strong>{compact ? getInitials(name) : name}</strong>
+        <span>Approved leave</span>
+      </div>
+    );
   }
 
   // ── Load accessible clinics for managers ──────────────────────────────────
@@ -263,6 +288,7 @@ export function RosterCalendarPage() {
     if (viewMode === "two_months" || viewMode === "quarter") {
       setIsLoading(false);
       setEntries([]);
+      setLeaveBlocks([]);
       return;
     }
 
@@ -292,14 +318,27 @@ export function RosterCalendarPage() {
       if (isAllClinicsScope && accessibleClinics.length > 0) {
         // All Clinics global scope: load from all accessible clinics concurrently
         const results = await Promise.all(
-          accessibleClinics.map((c) => apiClient.listRoster(c.id, { from, to })),
+          accessibleClinics.map(async (c) => ({
+            entries: await apiClient.listRoster(c.id, { from, to }),
+            leave: await apiClient.listRosterApprovedLeave(c.id, { from, to }),
+          })),
         );
-        setEntries(results.flat());
+        setEntries(results.flatMap((result) => result.entries));
+        const uniqueLeave = new Map<string, RosterLeaveBlock>();
+        results.flatMap((result) => result.leave).forEach((leave) => {
+          uniqueLeave.set(leave.leaveId, leave);
+        });
+        setLeaveBlocks([...uniqueLeave.values()]);
       } else if (clinicId) {
-        const result = await apiClient.listRoster(clinicId, { from, to });
+        const [result, leave] = await Promise.all([
+          apiClient.listRoster(clinicId, { from, to }),
+          apiClient.listRosterApprovedLeave(clinicId, { from, to }),
+        ]);
         setEntries(result);
+        setLeaveBlocks(leave);
       } else {
         setEntries([]);
+        setLeaveBlocks([]);
       }
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : "Unable to load roster");
@@ -569,6 +608,7 @@ export function RosterCalendarPage() {
                 </div>
 
                 <div className="roster-day__shifts">
+                  {approvedLeaveOn(dayDate).map((leave) => renderLeaveBlock(leave))}
                   {dayEntries.map((entry) => (
                     <button
                       key={entry.id}
@@ -639,16 +679,18 @@ export function RosterCalendarPage() {
         (a, b) =>
           new Date(a.shiftStartAt).getTime() - new Date(b.shiftStartAt).getTime(),
       );
+    const dayLeave = approvedLeaveOn(anchorDate);
 
     return (
       <div className={`roster-day-view${isToday ? " roster-day-view--today" : ""}`}>
-        {dayEntries.length === 0 ? (
+        {dayEntries.length === 0 && dayLeave.length === 0 ? (
           <p className="roster-empty">
             No shifts scheduled {isToday ? "today" : "on this day"}.
           </p>
         ) : null}
 
         <div className="roster-day-view__shifts">
+          {dayLeave.map((leave) => renderLeaveBlock(leave))}
           {dayEntries.map((entry) => (
             <button
               key={entry.id}
@@ -744,6 +786,7 @@ export function RosterCalendarPage() {
               );
             const shown = dayEntries.slice(0, MAX_PER_CELL);
             const rest = dayEntries.length - shown.length;
+            const dayLeave = approvedLeaveOn(dayDate);
 
             return (
               <div
@@ -759,6 +802,7 @@ export function RosterCalendarPage() {
                 <span className="roster-month-cell__num">{dayDate.getDate()}</span>
 
                 <div className="roster-month-cell__entries">
+                  {dayLeave.map((leave) => renderLeaveBlock(leave, true))}
                   {shown.map((entry) => {
                     const staffName = resolveStaffName(
                       entry.staffUserId,
@@ -1126,6 +1170,23 @@ export function RosterCalendarPage() {
                 <p className="roster-conflict-checking">Checking for conflicts…</p>
               ) : null}
 
+              {conflictResult && (conflictResult.approvedLeave?.length ?? 0) > 0 ? (
+                <div className="roster-conflict-banner roster-conflict-banner--error" role="alert">
+                  <strong>⛔ Approved leave conflict</strong>
+                  <ul className="roster-conflict-list">
+                    {(conflictResult.approvedLeave ?? []).map((leave) => (
+                      <li key={leave.leaveId}>
+                        {resolveStaffName(leave.staffUserId, leave.staffEmail)} has approved
+                        leave from {leave.startDate} to {leave.endDate}.
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="roster-conflict-hint">
+                    This shift cannot be saved during approved leave.
+                  </p>
+                </div>
+              ) : null}
+
               {conflictResult && conflictResult.overlapping.length > 0 ? (
                 <div className="roster-conflict-banner roster-conflict-banner--error" role="alert">
                   <strong>⛔ Roster conflict detected</strong>
@@ -1207,7 +1268,11 @@ export function RosterCalendarPage() {
                   <button
                     type="submit"
                     className="roster-form__submit-btn"
-                    disabled={isSubmitting || (conflictResult?.overlapping.length ?? 0) > 0}
+                    disabled={
+                      isSubmitting ||
+                      (conflictResult?.overlapping.length ?? 0) > 0 ||
+                      (conflictResult?.approvedLeave?.length ?? 0) > 0
+                    }
                   >
                     {isSubmitting
                       ? editingEntry

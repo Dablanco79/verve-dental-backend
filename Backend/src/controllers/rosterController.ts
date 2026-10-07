@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { RosterService } from "../services/rosterService.js";
 import type { RosterEntry } from "../types/roster.js";
+import type { RosterLeaveBlock } from "../types/payroll.js";
 import { AppError } from "../types/errors.js";
 import { parseBody, zodToDetails } from "../utils/validation.js";
 
@@ -112,6 +113,16 @@ function serializeEntry(entry: RosterEntry) {
     createdByUserId: entry.createdByUserId,
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
+  };
+}
+
+function serializeLeaveBlock(block: RosterLeaveBlock) {
+  return {
+    leaveId: block.leaveId,
+    staffUserId: block.staffUserId,
+    staffEmail: block.staffEmail,
+    startDate: block.startDate,
+    endDate: block.endDate,
   };
 }
 
@@ -243,6 +254,26 @@ export function createRosterHandlers(rosterService: RosterService) {
       res.status(200).json({ data: staff });
     },
 
+    /** GET /clinics/:clinicId/roster/leave-blocks */
+    async listApprovedLeave(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = listQuerySchema.safeParse(req.query);
+      if (!parsed.success || !parsed.data.from || !parsed.data.to) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "from and to are required valid ISO datetimes",
+          parsed.success ? undefined : zodToDetails(parsed.error),
+        );
+      }
+      const blocks = await rosterService.getApprovedLeaveForRoster(caller, clinicId, {
+        from: new Date(parsed.data.from),
+        to: new Date(parsed.data.to),
+      });
+      res.status(200).json({ data: blocks.map(serializeLeaveBlock) });
+    },
+
     /** GET /roster/me (clinic-agnostic personal endpoint) */
     async getMyShiftsAllClinics(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
@@ -309,6 +340,7 @@ export function createRosterHandlers(rosterService: RosterService) {
         data: {
           overlapping: result.overlapping.map(serializeEntry),
           sameDay: result.sameDay.map(serializeEntry),
+          approvedLeave: result.approvedLeave.map(serializeLeaveBlock),
         },
       });
     },

@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import type { LeaveService } from "../services/leaveService.js";
 import type { TimesheetService } from "../services/timesheetService.js";
-import type { LeaveRequest, TimesheetEntry } from "../types/payroll.js";
+import type { LeaveRequest, LeaveRosterConflict, TimesheetEntry } from "../types/payroll.js";
 import {
   ATTENDANCE_STATUSES,
   LEAVE_REQUEST_STATUSES,
@@ -112,6 +112,18 @@ function serializeLeave(r: LeaveRequest) {
   };
 }
 
+function serializeLeaveRosterConflict(conflict: LeaveRosterConflict) {
+  return {
+    rosterEntryId: conflict.rosterEntryId,
+    staffUserId: conflict.staffUserId,
+    rosteredClinicId: conflict.rosteredClinicId,
+    rosteredClinicName: conflict.rosteredClinicName,
+    shiftStartAt: conflict.shiftStartAt.toISOString(),
+    shiftEndAt: conflict.shiftEndAt.toISOString(),
+    status: conflict.status,
+  };
+}
+
 function serializeTimesheet(e: TimesheetEntry) {
   return {
     id: e.id,
@@ -162,8 +174,6 @@ const createLeaveSchema = z
     leaveType: z.enum(LEAVE_TYPES),
     startDate: isoDate(),
     endDate: isoDate(),
-    // Decimal to support half-day requests (e.g. 0.5, 1.5).
-    totalDays: z.number().positive("totalDays must be greater than zero"),
     reason: z.string().trim().max(2000).nullable().optional(),
   })
   .strict();
@@ -235,7 +245,6 @@ export function createLeaveHandlers(leaveService: LeaveService) {
         leaveType: body.leaveType,
         startDate: body.startDate,
         endDate: body.endDate,
-        totalDays: body.totalDays,
         reason: body.reason ?? null,
       });
 
@@ -293,8 +302,8 @@ export function createLeaveHandlers(leaveService: LeaveService) {
     /**
      * POST /clinics/:clinicId/leave/:leaveId/approve
      * Manager approves a pending leave request.
-     * The service automatically cancels any overlapping scheduled/confirmed
-     * roster shifts for the staff member (roster guardrail).
+     * Existing shifts remain unchanged and are returned as conflicts requiring
+     * manual roster resolution.
      */
     async approveLeaveRequest(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
@@ -302,14 +311,28 @@ export function createLeaveHandlers(leaveService: LeaveService) {
       const leaveId = requireUuidParam(req, "leaveId");
       const body = parseBody(approveLeaveSchema, req.body);
 
-      const request = await leaveService.approveLeaveRequest(
+      const result = await leaveService.approveLeaveRequest(
         caller,
         clinicId,
         leaveId,
         body.reviewNotes ?? null,
       );
 
-      res.status(200).json({ data: serializeLeave(request) });
+      res.status(200).json({
+        data: {
+          leave: serializeLeave(result.leave),
+          conflicts: result.conflicts.map(serializeLeaveRosterConflict),
+        },
+      });
+    },
+
+    /** GET /clinics/:clinicId/leave/:leaveId/conflicts */
+    async listLeaveRosterConflicts(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const conflicts = await leaveService.getRosterConflicts(caller, clinicId, leaveId);
+      res.status(200).json({ data: conflicts.map(serializeLeaveRosterConflict) });
     },
 
     /**

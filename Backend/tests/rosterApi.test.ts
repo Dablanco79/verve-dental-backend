@@ -5,6 +5,7 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
+import { formatCalendarDate } from "../src/utils/calendarDate.js";
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
@@ -23,6 +24,14 @@ type RosterEntryDto = {
   status: string;
   notes: string | null;
   createdByUserId: string;
+};
+
+type RosterLeaveBlockDto = {
+  leaveId: string;
+  staffUserId: string;
+  staffEmail: string;
+  startDate: string;
+  endDate: string;
 };
 
 // Two shifts 24 hours apart in the near future — used across several tests.
@@ -46,6 +55,48 @@ function buildCreatePayload(overrides: Partial<{
     notes: null,
     ...overrides,
   };
+}
+
+async function createAndApproveLeave(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  requesterToken: string,
+  approverToken: string,
+  clinicId: string,
+  date: string,
+): Promise<string> {
+  const createResponse = await request(app)
+    .post(`/api/v1/clinics/${clinicId}/leave`)
+    .set("Authorization", `Bearer ${requesterToken}`)
+    .send({
+      leaveType: "personal",
+      startDate: date,
+      endDate: date,
+      reason: "Sensitive leave reason",
+    })
+    .expect(201);
+  const leaveId = (createResponse.body as ApiData<{ id: string }>).data.id;
+  await request(app)
+    .post(`/api/v1/clinics/${clinicId}/leave/${leaveId}/approve`)
+    .set("Authorization", `Bearer ${approverToken}`)
+    .send({ reviewNotes: "Approved for API coverage" })
+    .expect(200);
+  return leaveId;
+}
+
+async function getLeaveBlocks(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  clinicId: string,
+  token?: string,
+): Promise<request.Response> {
+  const pending = request(app)
+    .get(
+      `/api/v1/clinics/${clinicId}/roster/leave-blocks` +
+        `?from=${encodeURIComponent(SHIFT_START)}` +
+        `&to=${encodeURIComponent(SHIFT_END)}`,
+    );
+  return token
+    ? pending.set("Authorization", `Bearer ${token}`)
+    : pending;
 }
 
 describe("Roster API (Module 04)", () => {
@@ -277,6 +328,110 @@ describe("Roster API (Module 04)", () => {
     expect(res.status).toBe(200);
     // Only the staff member's own shift is returned, not the admin's.
     expect(body.data.every((e) => e.staffUserId === SEED_USER_IDS.clinicAStaff)).toBe(true);
+  });
+
+  describe("GET /roster/leave-blocks", () => {
+    const LEAVE_DATE = formatCalendarDate(
+      new Date(SHIFT_START),
+      "Australia/Melbourne",
+    );
+
+    it("requires authentication", async () => {
+      const app = await createTestApp();
+      await getLeaveBlocks(app, SEED_CLINIC_A_ID).then((response) => {
+        expect(response.status).toBe(401);
+      });
+    });
+
+    it("returns only roster-eligible staff to a manager and excludes sensitive fields", async () => {
+      const app = await createTestApp();
+      const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+      const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      const clinicBAdminToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+      const staffLeaveId = await createAndApproveLeave(
+        app,
+        staffToken,
+        managerToken,
+        SEED_CLINIC_A_ID,
+        LEAVE_DATE,
+      );
+      const managerLeaveId = await createAndApproveLeave(
+        app,
+        managerToken,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        LEAVE_DATE,
+      );
+      const clinicBLeaveId = await createAndApproveLeave(
+        app,
+        clinicBAdminToken,
+        clinicBAdminToken,
+        SEED_CLINIC_B_ID,
+        LEAVE_DATE,
+      );
+
+      const response = await getLeaveBlocks(
+        app,
+        SEED_CLINIC_A_ID,
+        managerToken,
+      );
+      expect(response.status).toBe(200);
+      const blocks = (response.body as ApiData<RosterLeaveBlockDto[]>).data;
+      expect(blocks.map((block) => block.leaveId)).toEqual(
+        expect.arrayContaining([staffLeaveId, managerLeaveId]),
+      );
+      expect(blocks.map((block) => block.leaveId)).not.toContain(clinicBLeaveId);
+      for (const block of blocks) {
+        expect(Object.keys(block).sort()).toEqual([
+          "endDate",
+          "leaveId",
+          "staffEmail",
+          "staffUserId",
+          "startDate",
+        ]);
+        expect(block).not.toHaveProperty("reason");
+        expect(block).not.toHaveProperty("leaveType");
+      }
+    });
+
+    it("allows Clinical Staff to receive only their own approved leave", async () => {
+      const app = await createTestApp();
+      const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+      const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+      const staffLeaveId = await createAndApproveLeave(
+        app,
+        staffToken,
+        managerToken,
+        SEED_CLINIC_A_ID,
+        LEAVE_DATE,
+      );
+      await createAndApproveLeave(
+        app,
+        managerToken,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        LEAVE_DATE,
+      );
+
+      const response = await getLeaveBlocks(
+        app,
+        SEED_CLINIC_A_ID,
+        staffToken,
+      );
+      expect(response.status).toBe(200);
+      const blocks = (response.body as ApiData<RosterLeaveBlockDto[]>).data;
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0]).toEqual(
+        expect.objectContaining({
+          leaveId: staffLeaveId,
+          staffUserId: SEED_USER_IDS.clinicAStaff,
+        }),
+      );
+    });
   });
 
   // ─── PATCH update ─────────────────────────────────────────────────────────────

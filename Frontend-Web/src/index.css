@@ -1,3 +1,41 @@
+.lv-approval-result {
+  margin-bottom: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-warning, #b7791f);
+  border-radius: 0.5rem;
+  background: #fffaf0;
+}
+
+.lv-conflict-count {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.lv-conflict-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.8rem;
+}
+
+.roster-leave-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid #7c3aed;
+  border-radius: 0.4rem;
+  background: #f5f3ff;
+  color: #4c1d95;
+  font-size: 0.78rem;
+}
+
+.roster-leave-block--compact {
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 0.2rem 0.3rem;
+  font-size: 0.7rem;
+}
 :root {
   --vds-colour-orange: #cf4520;
   --vds-colour-purple: #7602a3;

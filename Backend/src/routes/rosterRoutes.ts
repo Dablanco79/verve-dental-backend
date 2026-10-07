@@ -24,6 +24,7 @@ export function createRosterRouter(deps: AppDependencies): Router {
   const router = Router({ mergeParams: true });
   const rosterService = createRosterService(
     deps.rosterRepository,
+    deps.leaveRepository,
     deps.userRepository,
     // ── Module 06 — canonical clinic lookup ────────────────────────────────
     deps.clinicRepository,
@@ -62,6 +63,12 @@ export function createRosterRouter(deps: AppDependencies): Router {
     "/eligible-staff",
     requireRoles("owner_admin", "group_practice_manager"),
     asyncHandler((req, res) => handlers.listEligibleStaff(req, res)),
+  );
+
+  router.get(
+    "/leave-blocks",
+    requireRoles(...ROSTER_READ_ROLES),
+    asyncHandler((req, res) => handlers.listApprovedLeave(req, res)),
   );
 
   // Conflict pre-flight check — must be before /:entryId to avoid shadowing.
@@ -107,6 +114,7 @@ export function createPersonalRosterRouter(deps: AppDependencies): Router {
   const router = Router();
   const rosterService = createRosterService(
     deps.rosterRepository,
+    deps.leaveRepository,
     deps.userRepository,
     deps.clinicRepository,
     deps.clinicAssignmentsRepository,

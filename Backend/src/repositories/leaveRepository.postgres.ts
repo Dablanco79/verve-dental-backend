@@ -29,16 +29,20 @@
 
 import { AppError } from "../types/errors.js";
 import type {
+  ApproveLeaveResult,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveRosterConflict,
   LeaveRequestStatus,
   LeaveType,
   ListLeaveOptions,
   ListLeavePageOptions,
+  RosterLeaveBlock,
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 import type { DatabasePool } from "../db/pool.js";
+import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "../db/tenantContext.js";
 import type { LeaveRepository } from "./leaveRepository.js";
 
 // ── Row shape returned by node-postgres ──────────────────────────────────────
@@ -63,6 +67,24 @@ type LeaveRequestRow = {
   updated_at: Date;
 };
 
+type RosterConflictRow = {
+  id: string;
+  staff_user_id: string;
+  rostered_clinic_id: string;
+  rostered_clinic_name: string;
+  shift_start_at: Date;
+  shift_end_at: Date;
+  status: "scheduled" | "confirmed";
+};
+
+type RosterLeaveBlockRow = {
+  leave_id: string;
+  staff_user_id: string;
+  staff_email: string;
+  start_date: string;
+  end_date: string;
+};
+
 // ── Row → domain model mapper ─────────────────────────────────────────────────
 
 function toLeaveRequest(row: LeaveRequestRow): LeaveRequest {
@@ -82,6 +104,18 @@ function toLeaveRequest(row: LeaveRequestRow): LeaveRequest {
     reviewNotes: row.review_notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toRosterConflict(row: RosterConflictRow): LeaveRosterConflict {
+  return {
+    rosterEntryId: row.id,
+    staffUserId: row.staff_user_id,
+    rosteredClinicId: row.rostered_clinic_id,
+    rosteredClinicName: row.rostered_clinic_name,
+    shiftStartAt: row.shift_start_at,
+    shiftEndAt: row.shift_end_at,
+    status: row.status,
   };
 }
 
@@ -289,6 +323,171 @@ export function createPostgresLeaveRepository(
       );
 
       return rows.map(toLeaveRequest);
+    },
+
+    async findApprovedOverlapRange(
+      staffUserId: string,
+      firstDate: string,
+      lastDate: string,
+    ): Promise<LeaveRequest[]> {
+      const { rows } = await pool.query<LeaveRequestRow>(
+        `SELECT * FROM leave_requests
+         WHERE staff_user_id = $1
+           AND status = 'approved'
+           AND start_date <= $3::date
+           AND end_date   >= $2::date`,
+        [staffUserId, firstDate, lastDate],
+      );
+      return rows.map(toLeaveRequest);
+    },
+
+    async approveWithRosterConflicts(input): Promise<ApproveLeaveResult> {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT set_config('app.current_clinic_id', $1, true),
+                  set_config('app.owner_admin_mode',  'true', true),
+                  set_config('app.current_user_id',   '',     true)`,
+          [AUTH_BYPASS_CLINIC_ID],
+        );
+
+        // Universal workforce lock order: person advisory lock, then row lock.
+        await client.query(
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended('workforce-person:' || $1::text, 0)
+           )`,
+          [input.expectedStaffUserId],
+        );
+
+        const locked = await client.query<LeaveRequestRow>(
+          `SELECT * FROM leave_requests
+           WHERE id = $1
+             AND clinic_id = $2
+             AND staff_user_id = $3
+           FOR UPDATE`,
+          [input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        const request = locked.rows[0];
+        if (!request) {
+          throw new AppError(404, "NOT_FOUND", "Leave request not found");
+        }
+        if (request.status !== "pending") {
+          throw new AppError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            `Leave request is already '${request.status}' and cannot be approved`,
+          );
+        }
+
+        const conflictRows = await client.query<RosterConflictRow>(
+          `SELECT id, staff_user_id, rostered_clinic_id, rostered_clinic_name,
+                  shift_start_at, shift_end_at, status
+             FROM roster_entries
+            WHERE staff_user_id = $1
+              AND status IN ('scheduled', 'confirmed')
+              AND timezone($4, shift_start_at)::date <= $3::date
+              AND timezone($4, shift_end_at - interval '1 microsecond')::date >= $2::date
+            ORDER BY shift_start_at, id`,
+          [request.staff_user_id, request.start_date, request.end_date, input.timeZone],
+        );
+
+        const updated = await client.query<LeaveRequestRow>(
+          `UPDATE leave_requests
+              SET status = 'approved',
+                  reviewed_by_user_id = $2,
+                  reviewed_at = now(),
+                  review_notes = $3,
+                  updated_at = now()
+            WHERE id = $1 AND status = 'pending'
+            RETURNING *`,
+          [input.leaveId, input.reviewedByUserId, input.reviewNotes],
+        );
+        const leave = updated.rows[0];
+        if (!leave) {
+          throw new AppError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Leave request is no longer pending",
+          );
+        }
+
+        await client.query("COMMIT");
+        return {
+          leave: toLeaveRequest(leave),
+          conflicts: conflictRows.rows.map(toRosterConflict),
+        };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async listRosterConflicts(input): Promise<LeaveRosterConflict[]> {
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const leaveResult = await client.query<LeaveRequestRow>(
+            `SELECT * FROM leave_requests
+             WHERE id = $1
+               AND clinic_id = $2
+               AND staff_user_id = $3`,
+            [input.leaveId, input.clinicId, input.expectedStaffUserId],
+          );
+          const request = leaveResult.rows[0];
+          if (!request) throw new AppError(404, "NOT_FOUND", "Leave request not found");
+
+          const conflicts = await client.query<RosterConflictRow>(
+            `SELECT id, staff_user_id, rostered_clinic_id, rostered_clinic_name,
+                    shift_start_at, shift_end_at, status
+               FROM roster_entries
+              WHERE staff_user_id = $1
+                AND status IN ('scheduled', 'confirmed')
+                AND timezone($4, shift_start_at)::date <= $3::date
+                AND timezone($4, shift_end_at - interval '1 microsecond')::date >= $2::date
+              ORDER BY shift_start_at, id`,
+            [request.staff_user_id, request.start_date, request.end_date, input.timeZone],
+          );
+          return conflicts.rows.map(toRosterConflict);
+        },
+        true,
+      );
+    },
+
+    async listApprovedForStaff(
+      staffUserIds: string[],
+      firstDate: string,
+      lastDate: string,
+    ): Promise<RosterLeaveBlock[]> {
+      if (staffUserIds.length === 0) return [];
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const { rows } = await client.query<RosterLeaveBlockRow>(
+            `SELECT id AS leave_id, staff_user_id, staff_email,
+                    start_date, end_date
+               FROM leave_requests
+              WHERE staff_user_id = ANY($1::uuid[])
+                AND status = 'approved'
+                AND start_date <= $3::date
+                AND end_date >= $2::date
+              ORDER BY start_date, staff_user_id, id`,
+            [staffUserIds, firstDate, lastDate],
+          );
+          return rows.map((row) => ({
+            leaveId: row.leave_id,
+            staffUserId: row.staff_user_id,
+            staffEmail: row.staff_email,
+            startDate: row.start_date,
+            endDate: row.end_date,
+          }));
+        },
+        true,
+      );
     },
 
     // ── updateStatus ───────────────────────────────────────────────────────

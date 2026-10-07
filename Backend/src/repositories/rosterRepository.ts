@@ -32,6 +32,10 @@ export type ConflictCheckParams = {
    * Falls back to staffEmail when absent.
    */
   staffDisplayName?: string;
+  approvedLeaveWindow?: {
+    firstDate: string;
+    lastDate: string;
+  };
 };
 
 /** Extended variant used during updateEntry (needs staffUserId + self-exclusion). */
@@ -102,7 +106,13 @@ export interface RosterRepository {
   ): Promise<RosterEntry[]>;
 }
 
-export function createInMemoryRosterRepository(): RosterRepository {
+export function createInMemoryRosterRepository(
+  findApprovedLeave?: (
+    staffUserId: string,
+    firstDate: string,
+    lastDate: string,
+  ) => Promise<{ startDate: string; endDate: string }[]>,
+): RosterRepository {
   const entries: RosterEntry[] = [];
 
   // ── Internal helpers ──────────────────────────────────────────────────────
@@ -125,7 +135,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
   }
 
   return {
-    createEntry(input: CreateRosterEntryInput, conflictCheck?: ConflictCheckParams): Promise<RosterEntry> {
+    async createEntry(input: CreateRosterEntryInput, conflictCheck?: ConflictCheckParams): Promise<RosterEntry> {
       // Inline atomic conflict check for in-memory implementation.
       // Single-threaded JS means this is already concurrent-safe.
       if (conflictCheck) {
@@ -134,12 +144,25 @@ export function createInMemoryRosterRepository(): RosterRepository {
         );
         if (conflict) {
           const name = conflictCheck.staffDisplayName ?? input.staffEmail;
-          return Promise.reject(
-            new AppError(
-              409,
-              "ROSTER_CONFLICT",
-              `Roster conflict: ${name} is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The proposed shift overlaps this roster.`,
-            ),
+          throw new AppError(
+            409,
+            "ROSTER_CONFLICT",
+            `Roster conflict: ${name} is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The proposed shift overlaps this roster.`,
+          );
+        }
+      }
+      if (conflictCheck?.approvedLeaveWindow && findApprovedLeave) {
+        const leave = await findApprovedLeave(
+          input.staffUserId,
+          conflictCheck.approvedLeaveWindow.firstDate,
+          conflictCheck.approvedLeaveWindow.lastDate,
+        );
+        const first = leave[0];
+        if (first) {
+          throw new AppError(
+            409,
+            "APPROVED_LEAVE_CONFLICT",
+            `This staff member has approved leave from ${first.startDate} to ${first.endDate}.`,
           );
         }
       }
@@ -155,7 +178,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
       };
 
       entries.push(entry);
-      return Promise.resolve({ ...entry });
+      return { ...entry };
     },
 
     findEntryById(entryId: string): Promise<RosterEntry | null> {
@@ -263,7 +286,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
       return Promise.resolve({ items: page, total, limit, offset });
     },
 
-    updateEntry(
+    async updateEntry(
       entryId: string,
       input: UpdateRosterEntryInput,
       _changedBy: { userId: string; email: string },
@@ -283,12 +306,25 @@ export function createInMemoryRosterRepository(): RosterRepository {
           ),
         );
         if (conflict) {
-          return Promise.reject(
-            new AppError(
-              409,
-              "ROSTER_CONFLICT",
-              `Roster conflict: staff member is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The updated shift times overlap this roster.`,
-            ),
+          throw new AppError(
+            409,
+            "ROSTER_CONFLICT",
+            `Roster conflict: staff member is already rostered at ${conflict.rosteredClinicName} from ${fmt(conflict.shiftStartAt)}–${fmt(conflict.shiftEndAt)}. The updated shift times overlap this roster.`,
+          );
+        }
+      }
+      if (conflictCheck?.approvedLeaveWindow && findApprovedLeave) {
+        const leave = await findApprovedLeave(
+          conflictCheck.staffUserId,
+          conflictCheck.approvedLeaveWindow.firstDate,
+          conflictCheck.approvedLeaveWindow.lastDate,
+        );
+        const first = leave[0];
+        if (first) {
+          throw new AppError(
+            409,
+            "APPROVED_LEAVE_CONFLICT",
+            `This staff member has approved leave from ${first.startDate} to ${first.endDate}.`,
           );
         }
       }
@@ -297,7 +333,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
       const existing = entries[index];
 
       if (index === -1 || !existing) {
-        return Promise.reject(new Error(`Roster entry not found: ${entryId}`));
+        throw new Error(`Roster entry not found: ${entryId}`);
       }
       const updated: RosterEntry = {
         ...existing,
@@ -312,7 +348,7 @@ export function createInMemoryRosterRepository(): RosterRepository {
       };
 
       entries[index] = updated;
-      return Promise.resolve({ ...updated });
+      return { ...updated };
     },
 
     hasActiveShiftAtClinic(

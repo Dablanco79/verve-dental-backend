@@ -8,56 +8,15 @@ import type {
   UpdateRosterEntryInput,
 } from "../types/roster.js";
 import { AppError } from "../types/errors.js";
-
-// ─── Melbourne timezone helpers ───────────────────────────────────────────────
-
-const MELBOURNE_TZ = "Australia/Melbourne";
-
-/**
- * Returns the UTC [start, end] range spanning the full calendar day of
- * `utcDate` in Australia/Melbourne (handles both AEST +10:00 and AEDT +11:00).
- *
- * Node.js setHours(0,0,0,0) uses process-local time (UTC on servers), not
- * Melbourne time. This function derives the Melbourne UTC offset dynamically
- * using Intl.DateTimeFormat so the day window is always correct regardless of
- * where the server runs.
- *
- * Example: utcDate = 2026-09-21T22:00:00Z (= 08:00 AEST 22 Sep)
- *   → dayStart = 2026-09-21T14:00:00Z (= midnight AEST on 22 Sep)
- *   → dayEnd   = 2026-09-22T13:59:59.999Z (= 23:59:59.999 AEST on 22 Sep)
- */
-function melbourneDayWindow(utcDate: Date): { dayStart: Date; dayEnd: Date } {
-  // Step 1: Get the calendar date string "YYYY-MM-DD" in Melbourne timezone.
-  const localDateStr = new Intl.DateTimeFormat("sv", {
-    timeZone: MELBOURNE_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(utcDate);
-
-  // Step 2: Determine the UTC offset at approximately midnight of that local
-  // date. Melbourne DST transitions happen at 2:00 AM local, never at midnight,
-  // so using the offset near midnight is always correct for midnight itself.
-  const approxUtcMidnight = new Date(`${localDateStr}T00:00:00Z`);
-  const tzParts = new Intl.DateTimeFormat("en-AU", {
-    timeZone: MELBOURNE_TZ,
-    timeZoneName: "longOffset",
-  }).formatToParts(approxUtcMidnight);
-  const rawOffset = tzParts.find((p) => p.type === "timeZoneName")?.value ?? "GMT+10:00";
-  // "GMT+10:00" → "+10:00", "GMT+11:00" → "+11:00"
-  const isoOffset = rawOffset.slice(3);
-
-  const dayStart = new Date(`${localDateStr}T00:00:00.000${isoOffset}`);
-  // End = start of next local day minus 1ms (DST-safe: avoids 24h assumption)
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
-
-  return { dayStart, dayEnd };
-}
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
+import type { LeaveRepository } from "../repositories/leaveRepository.js";
+import type { RosterLeaveBlock } from "../types/payroll.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
+import { calendarDayWindow, coveredCalendarDateRange } from "../utils/calendarDate.js";
+import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
 
 // Narrow write-only audit dependency.
 type AuditWriter = {
@@ -95,12 +54,15 @@ export type ConflictCheckResult = {
   overlapping: RosterEntry[];
   /** Same calendar day, no time overlap — informational only (AMBER). */
   sameDay: RosterEntry[];
+  /** Person-wide approved leave covering the proposed Melbourne dates. */
+  approvedLeave: RosterLeaveBlock[];
 };
 
 export type RosterService = ReturnType<typeof createRosterService>;
 
 export function createRosterService(
   rosterRepository: RosterRepository,
+  leaveRepository: LeaveRepository,
   userRepository: UserRepository,
   /**
    * Module 06 — canonical clinic lookup.
@@ -283,6 +245,11 @@ export function createRosterService(
       }
 
       const rosteredClinicName = rosteredClinic.name;
+      const approvedLeaveWindow = coveredCalendarDateRange(
+        input.shiftStartAt,
+        input.shiftEndAt,
+        OPERATIONAL_TZ,
+      );
 
       // ── Cross-clinic conflict check (atomic, advisory-locked in Postgres) ──
       // The repository acquires a per-staff advisory lock, re-checks for
@@ -302,6 +269,7 @@ export function createRosterService(
           windowStart: input.shiftStartAt,
           windowEnd: input.shiftEndAt,
           staffDisplayName: staffUser.displayName ?? staffUser.email,
+          approvedLeaveWindow,
         },
       );
 
@@ -387,6 +355,9 @@ export function createRosterService(
       // self-conflict on the entry being edited.
       const timesChanged =
         input.shiftStartAt !== undefined || input.shiftEndAt !== undefined;
+      const approvedLeaveWindow = timesChanged
+        ? coveredCalendarDateRange(newStart, newEnd, OPERATIONAL_TZ)
+        : undefined;
 
       const updated = await rosterRepository.updateEntry(
         entryId,
@@ -398,6 +369,7 @@ export function createRosterService(
               windowStart: newStart,
               windowEnd: newEnd,
               excludeEntryId: entryId,
+              approvedLeaveWindow,
             }
           : undefined,
       );
@@ -565,18 +537,63 @@ export function createRosterService(
       // Same calendar day (full day window in Melbourne local time), excluding
       // overlaps already found. Uses timezone-aware calculation so that shifts
       // on different Melbourne calendar days are never falsely flagged.
-      const { dayStart, dayEnd } = melbourneDayWindow(proposedStart);
+      const { dayStart, dayEndExclusive } = calendarDayWindow(
+        proposedStart,
+        OPERATIONAL_TZ,
+      );
 
       const overlappingIds = new Set(overlapping.map((e) => e.id));
       const allOnDay = await rosterRepository.findOverlappingShifts(
         staffUserId,
         dayStart,
-        dayEnd,
+        dayEndExclusive,
         excludeEntryId,
       );
       const sameDay = allOnDay.filter((e) => !overlappingIds.has(e.id));
+      const leaveWindow = coveredCalendarDateRange(
+        proposedStart,
+        proposedEnd,
+        OPERATIONAL_TZ,
+      );
+      const approvedLeave = (
+        await leaveRepository.findApprovedOverlapRange(
+          staffUserId,
+          leaveWindow.firstDate,
+          leaveWindow.lastDate,
+        )
+      ).map((leave) => ({
+        leaveId: leave.id,
+        staffUserId: leave.staffUserId,
+        staffEmail: leave.staffEmail,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+      }));
 
-      return { overlapping, sameDay };
+      return { overlapping, sameDay, approvedLeave };
+    },
+
+    async getApprovedLeaveForRoster(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options: { from: Date; to: Date },
+    ): Promise<RosterLeaveBlock[]> {
+      const dateRange = coveredCalendarDateRange(options.from, options.to, OPERATIONAL_TZ);
+      const staffIds = new Set<string>();
+
+      if (await hasFullClinicReadAccess(caller, clinicId)) {
+        const assignments = await assignmentsRepository.listRosterEligible(clinicId);
+        assignments.forEach((assignment) => staffIds.add(assignment.userId));
+        const rosterEntries = await rosterRepository.listByClinic(clinicId, options);
+        rosterEntries.forEach((entry) => staffIds.add(entry.staffUserId));
+      } else {
+        staffIds.add(caller.id);
+      }
+
+      return leaveRepository.listApprovedForStaff(
+        [...staffIds],
+        dateRange.firstDate,
+        dateRange.lastDate,
+      );
     },
 
     /**

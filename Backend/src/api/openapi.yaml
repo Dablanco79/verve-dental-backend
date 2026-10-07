@@ -1149,7 +1149,7 @@ components:
           description: Inclusive end date (YYYY-MM-DD).
         totalDays:
           type: number
-          description: Decimal to support half-day requests (e.g. 0.5, 1.5).
+          description: Server-derived inclusive whole-day count.
         reason:
           type: string
           nullable: true
@@ -1176,7 +1176,8 @@ components:
 
     CreateLeaveRequestBody:
       type: object
-      required: [leaveType, startDate, endDate, totalDays]
+      additionalProperties: false
+      required: [leaveType, startDate, endDate]
       properties:
         leaveType:
           type: string
@@ -1189,13 +1190,24 @@ components:
           type: string
           format: date
           description: Inclusive end date (YYYY-MM-DD).
-        totalDays:
-          type: number
-          description: Must be > 0. Supports half-day values (e.g. 0.5).
         reason:
           type: string
           maxLength: 2000
           nullable: true
+
+    LeaveRosterConflict:
+      type: object
+      required: [rosterEntryId, staffUserId, rosteredClinicId, rosteredClinicName, shiftStartAt, shiftEndAt, status]
+      properties:
+        rosterEntryId: { type: string, format: uuid }
+        staffUserId: { type: string, format: uuid }
+        rosteredClinicId: { type: string, format: uuid }
+        rosteredClinicName: { type: string }
+        shiftStartAt: { type: string, format: date-time }
+        shiftEndAt: { type: string, format: date-time }
+        status:
+          type: string
+          enum: [scheduled, confirmed]
 
     # ── Timesheets ───────────────────────────────────────────────────────────────
 
@@ -4204,9 +4216,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Submits a new leave request for the authenticated user. Accessible to
-        all roles. Managers may also submit on behalf of staff (e.g. retrospective
-        sick leave). The service enforces clinic-match for `clinical_staff`.
+        Submits whole-day leave for the authenticated user. `totalDays` is
+        derived by the server from the inclusive start/end dates.
       parameters:
         - $ref: "#/components/parameters/clinicId"
       requestBody:
@@ -4241,9 +4252,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Approves a pending leave request. Automatically cancels any overlapping
-        scheduled/confirmed roster shifts for the staff member (roster guardrail).
-        Restricted to `owner_admin` and `group_practice_manager`.
+        Approves a pending leave request. Existing shifts remain unchanged;
+        person-wide cross-clinic conflicts are returned for manual resolution.
       parameters:
         - $ref: "#/components/parameters/clinicId"
         - $ref: "#/components/parameters/leaveId"
@@ -4268,7 +4278,15 @@ paths:
                 required: [data]
                 properties:
                   data:
-                    $ref: "#/components/schemas/LeaveRequest"
+                    type: object
+                    required: [leave, conflicts]
+                    properties:
+                      leave:
+                        $ref: "#/components/schemas/LeaveRequest"
+                      conflicts:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/LeaveRosterConflict"
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -4283,6 +4301,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/conflicts:
+    get:
+      summary: List current roster conflicts for approved leave
+      operationId: listLeaveRosterConflicts
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      responses:
+        "200":
+          description: Current scheduled/confirmed shifts requiring manual resolution.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LeaveRosterConflict"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/clinics/{clinicId}/leave/{leaveId}/reject:
     post:

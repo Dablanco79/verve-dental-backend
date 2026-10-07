@@ -38,6 +38,7 @@ const {
   mockCheckShiftConflicts,
   mockCreateShift,
   mockGetRosterAccessibleClinics,
+  mockListRosterApprovedLeave,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
@@ -47,6 +48,7 @@ const {
     mockCheckShiftConflicts: vi.fn(),
     mockCreateShift: vi.fn(),
     mockGetRosterAccessibleClinics: vi.fn(),
+    mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -69,6 +71,7 @@ vi.mock("../src/api/client.js", () => ({
     cancelShift: vi.fn(),
     checkShiftConflicts: mockCheckShiftConflicts,
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
+    listRosterApprovedLeave: mockListRosterApprovedLeave,
   }),
 }));
 
@@ -168,6 +171,7 @@ describe("RosterCalendarPage — conflict banner (overlapping shifts)", () => {
   beforeEach(() => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListRoster.mockResolvedValue([]);
+    mockListRosterApprovedLeave.mockResolvedValue([]);
     mockListUsers.mockResolvedValue([testStaff]);
     mockGetRosterAccessibleClinics.mockResolvedValue([
       { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
@@ -249,6 +253,28 @@ describe("RosterCalendarPage — conflict banner (overlapping shifts)", () => {
     const saveBtn = within(modal).getByRole("button", { name: /Add shift/i });
     expect(saveBtn).not.toBeDisabled();
   });
+
+  it("shows approved leave as blocking and disables Save", async () => {
+    const user = userEvent.setup();
+    mockCheckShiftConflicts.mockResolvedValue({
+      overlapping: [],
+      sameDay: [],
+      approvedLeave: [{
+        leaveId: "leave-1",
+        staffUserId: testStaff.id,
+        staffEmail: testStaff.email,
+        startDate: "2026-10-07",
+        endDate: "2026-10-07",
+      }],
+    });
+
+    renderPage();
+    await openAndFillModal(user);
+
+    expect(await screen.findByText(/Approved leave conflict/i)).toBeInTheDocument();
+    const modal = screen.getByRole("dialog");
+    expect(within(modal).getByRole("button", { name: /Add shift/i })).toBeDisabled();
+  });
 });
 
 // ── Clinic/Location dropdown in Add Shift modal ────────────────────────────────
@@ -266,6 +292,7 @@ describe("RosterCalendarPage — Clinic/Location dropdown in Add Shift modal", (
   beforeEach(() => {
     setAuthenticatedUser(authTestState, managerUser);
     mockListRoster.mockResolvedValue([]);
+    mockListRosterApprovedLeave.mockResolvedValue([]);
     mockCheckShiftConflicts.mockResolvedValue({ overlapping: [], sameDay: [] });
   });
 
