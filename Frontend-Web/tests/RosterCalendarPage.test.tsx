@@ -39,6 +39,7 @@ import {
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
+import { rosterShiftAccessibleName } from "./helpers/rosterTime.js";
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
@@ -698,9 +699,13 @@ describe("RosterCalendarPage — saving state resets between shifts", () => {
     const dayBtn = await screen.findByRole("button", { name: "Day" });
     await user.click(dayBtn);
 
-    // Open shift A (8:00–12:00)
+    // Open shift A using its Melbourne-time accessible name.
     const shiftABtn = await screen.findByRole("button", {
-      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+      name: rosterShiftAccessibleName(
+        "Alice Jones",
+        entryA.shiftStartAt,
+        entryA.shiftEndAt,
+      ),
     });
     await user.click(shiftABtn);
 
@@ -717,9 +722,13 @@ describe("RosterCalendarPage — saving state resets between shifts", () => {
       expect(screen.queryByRole("button", { name: /cancel shift/i })).toBeNull();
     });
 
-    // Immediately open shift B (13:00–17:00).
+    // Immediately open shift B using its Melbourne-time accessible name.
     const shiftBBtn = await screen.findByRole("button", {
-      name: /13:00.*17:00|Shift.*Alice Jones.*13:00/i,
+      name: rosterShiftAccessibleName(
+        "Alice Jones",
+        entryB.shiftStartAt,
+        entryB.shiftEndAt,
+      ),
     });
     await user.click(shiftBBtn);
 
@@ -741,7 +750,11 @@ describe("RosterCalendarPage — saving state resets between shifts", () => {
     await user.click(dayBtn);
 
     const shiftABtn = await screen.findByRole("button", {
-      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+      name: rosterShiftAccessibleName(
+        "Alice Jones",
+        entryA.shiftStartAt,
+        entryA.shiftEndAt,
+      ),
     });
     await user.click(shiftABtn);
 
@@ -769,7 +782,11 @@ describe("RosterCalendarPage — saving state resets between shifts", () => {
 
     // Open shift B
     const shiftBBtn = await screen.findByRole("button", {
-      name: /13:00.*17:00|Shift.*Alice Jones.*13:00/i,
+      name: rosterShiftAccessibleName(
+        "Alice Jones",
+        entryB.shiftStartAt,
+        entryB.shiftEndAt,
+      ),
     });
     await user.click(shiftBBtn);
 
@@ -787,7 +804,11 @@ describe("RosterCalendarPage — saving state resets between shifts", () => {
 
     // Open shift A — it must not inherit Saving… state.
     const shiftABtn = await screen.findByRole("button", {
-      name: /8:00.*12:00|Shift.*Alice Jones.*8:00/i,
+      name: rosterShiftAccessibleName(
+        "Alice Jones",
+        entryA.shiftStartAt,
+        entryA.shiftEndAt,
+      ),
     });
     await user.click(shiftABtn);
 

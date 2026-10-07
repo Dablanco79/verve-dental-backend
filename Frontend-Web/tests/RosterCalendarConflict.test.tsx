@@ -28,6 +28,7 @@ import {
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
+import { rosterShiftAccessibleName } from "./helpers/rosterTime.js";
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
@@ -386,14 +387,12 @@ async function openEditModal(
   await waitFor(() => {
     expect(mockGetRosterAccessibleClinics).toHaveBeenCalled();
   });
-  // Format the start time to match the aria-label
-  const startTimeStr = new Date(entryForEdit.shiftStartAt).toLocaleTimeString("en-AU", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
   const shiftBtn = await screen.findByRole("button", {
-    name: new RegExp(`Shift:.*${startTimeStr}`, "i"),
+    name: rosterShiftAccessibleName(
+      testStaff.displayName ?? testStaff.email,
+      entryForEdit.shiftStartAt,
+      entryForEdit.shiftEndAt,
+    ),
   });
   await user.click(shiftBtn);
 }
