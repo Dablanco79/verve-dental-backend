@@ -28,7 +28,11 @@ import {
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
-import { rosterShiftAccessibleName } from "./helpers/rosterTime.js";
+import {
+  currentRosterCalendarDate,
+  rosterFixtureInstant,
+  rosterShiftAccessibleName,
+} from "./helpers/rosterTime.js";
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
@@ -93,25 +97,22 @@ const testStaff: StaffUser = {
 };
 
 function buildConflictEntry(overrides: Partial<RosterEntry> = {}): RosterEntry {
-  const today = new Date();
-  const start = new Date(today);
-  start.setHours(8, 0, 0, 0);
-  const end = new Date(today);
-  end.setHours(17, 0, 0, 0);
+  const rosterDate = currentRosterCalendarDate();
+  const now = new Date();
   return {
     id: "conflict-entry-001",
     staffUserId: testStaff.id,
     staffEmail: testStaff.email,
     rosteredClinicId: TEST_CLINIC_ID,
     rosteredClinicName: TEST_CLINIC_NAME,
-    shiftStartAt: start.toISOString(),
-    shiftEndAt: end.toISOString(),
+    shiftStartAt: rosterFixtureInstant(rosterDate, "08:00"),
+    shiftEndAt: rosterFixtureInstant(rosterDate, "17:00"),
     shiftType: "standard",
     status: "scheduled",
     notes: null,
     createdByUserId: managerUser.id,
-    createdAt: today.toISOString(),
-    updatedAt: today.toISOString(),
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
     ...overrides,
   };
 }
@@ -144,12 +145,8 @@ async function openAndFillModal(user: ReturnType<typeof userEvent.setup>) {
   const staffSelect = screen.getByLabelText(/Staff member/i);
   await user.selectOptions(staffSelect, testStaff.id);
 
-  // Date — use today's date so buildIso produces a valid ISO string
-  const today = new Date();
-  const yyyy = today.getFullYear().toString();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  const dateValue = `${yyyy}-${mm}-${dd}`;
+  // Date — use the authoritative Melbourne roster date.
+  const dateValue = currentRosterCalendarDate();
 
   const dateInput = screen.getByLabelText(/^Date$/i);
   // For date inputs userEvent needs the value set directly via type or fill
@@ -398,6 +395,10 @@ async function openEditModal(
 }
 
 describe("RosterCalendarPage — Clinic/Location in Edit Shift modal", () => {
+  beforeEach(() => {
+    mockCheckShiftConflicts.mockClear();
+  });
+
   it("Edit Shift modal shows editable Clinic/Location dropdown with current clinic pre-selected", async () => {
     const user = userEvent.setup();
     const conflictEntry = buildConflictEntry();

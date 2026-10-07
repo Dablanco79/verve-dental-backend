@@ -39,7 +39,11 @@ import {
   setAuthenticatedUser,
   type AuthTestState,
 } from "./helpers/mockUseAuth.js";
-import { rosterShiftAccessibleName } from "./helpers/rosterTime.js";
+import {
+  currentRosterCalendarDate,
+  rosterFixtureInstant,
+  rosterShiftAccessibleName,
+} from "./helpers/rosterTime.js";
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────────
 
@@ -253,20 +257,16 @@ const unnamedStaff: StaffUser = {
 };
 
 function buildEntry(overrides: Partial<RosterEntry> = {}): RosterEntry {
-  // Use today so the entry falls in the calendar's current-week view.
-  const base = new Date();
-  const start = new Date(base);
-  start.setHours(8, 0, 0, 0);
-  const end = new Date(base);
-  end.setHours(17, 0, 0, 0);
+  // Use Melbourne today so the entry falls in the authoritative roster day.
+  const rosterDate = currentRosterCalendarDate();
   return {
     id: "entry-id-0001",
     staffUserId: namedStaff.id,
     staffEmail: namedStaff.email,
     rosteredClinicId: TEST_CLINIC_ID,
     rosteredClinicName: TEST_CLINIC_NAME,
-    shiftStartAt: start.toISOString(),
-    shiftEndAt: end.toISOString(),
+    shiftStartAt: rosterFixtureInstant(rosterDate, "08:00"),
+    shiftEndAt: rosterFixtureInstant(rosterDate, "17:00"),
     shiftType: "standard",
     status: "scheduled",
     notes: null,
@@ -286,8 +286,7 @@ function renderPage() {
 }
 
 function todayDateString(): string {
-  const today = new Date();
-  return `${today.getFullYear().toString()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return currentRosterCalendarDate();
 }
 
 // ── Pure helper unit tests ────────────────────────────────────────────────────
@@ -657,9 +656,12 @@ describe("RosterCalendarPage — preferred name in Month compact labels", () => 
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("RosterCalendarPage — saving state resets between shifts", () => {
-  const today = new Date();
+  const rosterDate = currentRosterCalendarDate();
   const mkTime = (h: number, m = 0) =>
-    new Date(today.getFullYear(), today.getMonth(), today.getDate(), h, m, 0).toISOString();
+    rosterFixtureInstant(
+      rosterDate,
+      `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+    );
 
   // Two distinct entries on today so both appear in Week/Day view.
   const entryA = buildEntry({
