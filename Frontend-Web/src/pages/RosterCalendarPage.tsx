@@ -6,6 +6,15 @@ import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
+import {
+  addCalendarDays,
+  addCalendarMonths,
+  calendarDateLabel,
+  calendarDateTimeToInstant,
+  formatCalendarDate,
+  formatCalendarTime,
+  startOfCalendarDate,
+} from "../utils/calendarDate.js";
 import { displayClinicName } from "../utils/clinicDisplay.js";
 
 // Slimmer staff type used for the roster-eligible staff selector.
@@ -31,6 +40,7 @@ import { canManageRoster } from "../utils/roles.js";
 import { staffDisplayName, staffLabelFromEmail } from "../utils/staffName.js";
 
 const apiClient = createApiClient(loadConfig());
+const ROSTER_TIME_ZONE = "Australia/Melbourne";
 
 // ── View mode ─────────────────────────────────────────────────────────────────
 
@@ -49,46 +59,32 @@ const VIEW_MODE_LABELS: Record<ViewMode, string> = {
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-function getWeekStart(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay(); // 0 = Sun, 1 = Mon … 6 = Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
+function getWeekStart(date: string): string {
+  const day = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  return addCalendarDays(date, day === 0 ? -6 : 1 - day);
 }
 
-function addDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
+function isOnRosterDate(isoString: string, calendarDate: string): boolean {
+  return formatCalendarDate(new Date(isoString), ROSTER_TIME_ZONE) === calendarDate;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-/** Compare a UTC ISO string's local calendar date against a local Date. */
-function isSameLocalDay(isoString: string, dayDate: Date): boolean {
-  const d = new Date(isoString);
-  return (
-    d.getFullYear() === dayDate.getFullYear() &&
-    d.getMonth() === dayDate.getMonth() &&
-    d.getDate() === dayDate.getDate()
-  );
-}
-
-function formatDayHeader(date: Date): { weekday: string; dayMonth: string } {
+function formatDayHeader(date: string): { weekday: string; dayMonth: string } {
   return {
-    weekday: date.toLocaleDateString("en-AU", { weekday: "short" }),
-    dayMonth: date.toLocaleDateString("en-AU", { day: "numeric", month: "short" }),
+    weekday: calendarDateLabel(date, ROSTER_TIME_ZONE, { weekday: "short" }),
+    dayMonth: calendarDateLabel(date, ROSTER_TIME_ZONE, {
+      day: "numeric",
+      month: "short",
+    }),
   };
 }
 
-function formatWeekRange(start: Date): string {
-  const end = addDays(start, 6);
-  const s = start.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
-  const e = end.toLocaleDateString("en-AU", {
+function formatWeekRange(start: string): string {
+  const end = addCalendarDays(start, 6);
+  const s = calendarDateLabel(start, ROSTER_TIME_ZONE, {
+    day: "numeric",
+    month: "short",
+  });
+  const e = calendarDateLabel(end, ROSTER_TIME_ZONE, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -97,30 +93,16 @@ function formatWeekRange(start: Date): string {
 }
 
 function formatTime(isoString: string): string {
-  return new Date(isoString).toLocaleTimeString("en-AU", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return formatCalendarTime(new Date(isoString), ROSTER_TIME_ZONE);
 }
 
-/** "YYYY-MM-DD" from a local Date */
-function toDateInput(date: Date): string {
-  return `${date.getFullYear().toString()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/** "HH:mm" from a UTC ISO string, displayed in local time */
+/** "HH:mm" from a UTC ISO string, displayed in the authoritative roster timezone. */
 function toTimeInput(isoString: string): string {
-  const d = new Date(isoString);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatCalendarTime(new Date(isoString), ROSTER_TIME_ZONE);
 }
 
-/**
- * Combine a local date "YYYY-MM-DD" + local time "HH:mm" into a UTC ISO string.
- * new Date("YYYY-MM-DDTHH:mm") parses as local time per the ECMAScript spec.
- */
 function buildIso(date: string, time: string): string {
-  return new Date(`${date}T${time}`).toISOString();
+  return calendarDateTimeToInstant(date, time, ROSTER_TIME_ZONE).toISOString();
 }
 
 /** Staff initials for compact month/overview cells */
@@ -196,7 +178,7 @@ function formFromEntry(entry: RosterEntry): ShiftFormState {
   return {
     clinicId: entry.rosteredClinicId,
     staffUserId: entry.staffUserId,
-    date: toDateInput(new Date(entry.shiftStartAt)),
+    date: formatCalendarDate(new Date(entry.shiftStartAt), ROSTER_TIME_ZONE),
     startTime: toTimeInput(entry.shiftStartAt),
     endTime: toTimeInput(entry.shiftEndAt),
     shiftType: entry.shiftType,
@@ -211,7 +193,9 @@ export function RosterCalendarPage() {
   const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
 
   const [viewMode, setViewMode] = useState<ViewMode>("month");
-  const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
+  const [anchorDate, setAnchorDate] = useState<string>(() =>
+    formatCalendarDate(new Date(), ROSTER_TIME_ZONE),
+  );
   const [entries, setEntries] = useState<RosterEntry[]>([]);
   const [leaveBlocks, setLeaveBlocks] = useState<RosterLeaveBlock[]>([]);
   const [staffList, setStaffList] = useState<EligibleStaff[]>([]);
@@ -247,8 +231,7 @@ export function RosterCalendarPage() {
     return found ? staffDisplayName(found) : staffLabelFromEmail(email);
   }
 
-  function approvedLeaveOn(day: Date): RosterLeaveBlock[] {
-    const date = toDateInput(day);
+  function approvedLeaveOn(date: string): RosterLeaveBlock[] {
     return leaveBlocks.filter(
       (leave) => leave.startDate <= date && leave.endDate >= date,
     );
@@ -300,19 +283,23 @@ export function RosterCalendarPage() {
       let to: string;
 
       if (viewMode === "day") {
-        const dayStart = new Date(anchorDate);
-        dayStart.setHours(0, 0, 0, 0);
-        from = dayStart.toISOString();
-        to = addDays(dayStart, 1).toISOString();
+        from = startOfCalendarDate(anchorDate, ROSTER_TIME_ZONE).toISOString();
+        to = startOfCalendarDate(
+          addCalendarDays(anchorDate, 1),
+          ROSTER_TIME_ZONE,
+        ).toISOString();
       } else if (viewMode === "week") {
         const ws = getWeekStart(anchorDate);
-        from = ws.toISOString();
-        to = addDays(ws, 7).toISOString();
+        from = startOfCalendarDate(ws, ROSTER_TIME_ZONE).toISOString();
+        to = startOfCalendarDate(
+          addCalendarDays(ws, 7),
+          ROSTER_TIME_ZONE,
+        ).toISOString();
       } else {
-        const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
-        const monthLastDay = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0);
-        from = monthStart.toISOString();
-        to = addDays(monthLastDay, 1).toISOString();
+        const monthStart = `${anchorDate.slice(0, 7)}-01`;
+        const nextMonthStart = addCalendarMonths(monthStart, 1);
+        from = startOfCalendarDate(monthStart, ROSTER_TIME_ZONE).toISOString();
+        to = startOfCalendarDate(nextMonthStart, ROSTER_TIME_ZONE).toISOString();
       }
 
       if (isAllClinicsScope && accessibleClinics.length > 0) {
@@ -443,23 +430,23 @@ export function RosterCalendarPage() {
 
   function goBack() {
     setAnchorDate((d) => {
-      if (viewMode === "day") return addDays(d, -1);
-      if (viewMode === "week") return addDays(d, -7);
-      return new Date(d.getFullYear(), d.getMonth() - 1, 1);
+      if (viewMode === "day") return addCalendarDays(d, -1);
+      if (viewMode === "week") return addCalendarDays(d, -7);
+      return addCalendarMonths(d, -1);
     });
   }
 
   function goForward() {
     setAnchorDate((d) => {
-      if (viewMode === "day") return addDays(d, 1);
-      if (viewMode === "week") return addDays(d, 7);
-      return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      if (viewMode === "day") return addCalendarDays(d, 1);
+      if (viewMode === "week") return addCalendarDays(d, 7);
+      return addCalendarMonths(d, 1);
     });
   }
 
   function getRangeLabel(): string {
     if (viewMode === "day") {
-      return anchorDate.toLocaleDateString("en-AU", {
+      return calendarDateLabel(anchorDate, ROSTER_TIME_ZONE, {
         weekday: "long",
         day: "numeric",
         month: "long",
@@ -470,7 +457,10 @@ export function RosterCalendarPage() {
       return formatWeekRange(getWeekStart(anchorDate));
     }
     // month
-    return anchorDate.toLocaleDateString("en-AU", { month: "long", year: "numeric" });
+    return calendarDateLabel(anchorDate, ROSTER_TIME_ZONE, {
+      month: "long",
+      year: "numeric",
+    });
   }
 
   function getNavAriaLabel(direction: "prev" | "next"): string {
@@ -482,12 +472,12 @@ export function RosterCalendarPage() {
 
   // ── Modal helpers ─────────────────────────────────────────────────────────────
 
-  function openCreate(dayDate: Date) {
+  function openCreate(dayDate: string) {
     const defaultClinicId = isAllClinicsScope
       ? (accessibleClinics[0]?.id ?? clinicId ?? "")
       : (clinicId ?? accessibleClinics[0]?.id ?? "");
     setEditingEntry(null);
-    setForm(blankForm(toDateInput(dayDate), defaultClinicId));
+    setForm(blankForm(dayDate, defaultClinicId));
     setFormError(null);
     setConflictResult(null);
     setShowModal(true);
@@ -580,17 +570,17 @@ export function RosterCalendarPage() {
 
   function renderWeekView() {
     const weekStart = getWeekStart(anchorDate);
-    const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    const days = Array.from({ length: 7 }, (_, i) => addCalendarDays(weekStart, i));
 
     return (
       <div className="roster-grid-wrapper">
         <div className="roster-grid">
           {days.map((dayDate) => {
-            const isToday = isSameLocalDay(new Date().toISOString(), dayDate);
+            const isToday = isOnRosterDate(new Date().toISOString(), dayDate);
             const { weekday, dayMonth } = formatDayHeader(dayDate);
 
             const dayEntries = entries
-              .filter((e) => isSameLocalDay(e.shiftStartAt, dayDate))
+              .filter((e) => isOnRosterDate(e.shiftStartAt, dayDate))
               .sort(
                 (a, b) =>
                   new Date(a.shiftStartAt).getTime() -
@@ -599,7 +589,7 @@ export function RosterCalendarPage() {
 
             return (
               <div
-                key={dayDate.toISOString()}
+                key={dayDate}
                 className={`roster-day${isToday ? " roster-day--today" : ""}`}
               >
                 <div className="roster-day__head">
@@ -670,11 +660,11 @@ export function RosterCalendarPage() {
   }
 
   function renderDayView() {
-    const isToday = isSameLocalDay(new Date().toISOString(), anchorDate);
+    const isToday = isOnRosterDate(new Date().toISOString(), anchorDate);
     const { dayMonth } = formatDayHeader(anchorDate);
 
     const dayEntries = entries
-      .filter((e) => isSameLocalDay(e.shiftStartAt, anchorDate))
+      .filter((e) => isOnRosterDate(e.shiftStartAt, anchorDate))
       .sort(
         (a, b) =>
           new Date(a.shiftStartAt).getTime() - new Date(b.shiftStartAt).getTime(),
@@ -751,13 +741,15 @@ export function RosterCalendarPage() {
   }
 
   function renderMonthView() {
-    const year = anchorDate.getFullYear();
-    const month = anchorDate.getMonth();
+    const month = anchorDate.slice(0, 7);
 
     // Build a 6-row (42-day) grid starting from the Monday on/before the 1st of the month
-    const monthStart = new Date(year, month, 1);
+    const monthStart = `${month}-01`;
     const gridStart = getWeekStart(monthStart);
-    const gridDays = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+    const gridDays = Array.from(
+      { length: 42 },
+      (_, i) => addCalendarDays(gridStart, i),
+    );
 
     const MAX_PER_CELL = 3;
 
@@ -773,12 +765,12 @@ export function RosterCalendarPage() {
 
           {/* Day cells */}
           {gridDays.map((dayDate) => {
-            const isInMonth = dayDate.getMonth() === month;
-            const isToday = isSameLocalDay(new Date().toISOString(), dayDate);
+            const isInMonth = dayDate.slice(0, 7) === month;
+            const isToday = isOnRosterDate(new Date().toISOString(), dayDate);
             const { dayMonth } = formatDayHeader(dayDate);
 
             const dayEntries = entries
-              .filter((e) => isSameLocalDay(e.shiftStartAt, dayDate))
+              .filter((e) => isOnRosterDate(e.shiftStartAt, dayDate))
               .sort(
                 (a, b) =>
                   new Date(a.shiftStartAt).getTime() -
@@ -790,7 +782,7 @@ export function RosterCalendarPage() {
 
             return (
               <div
-                key={dayDate.toISOString()}
+                key={dayDate}
                 className={[
                   "roster-month-cell",
                   isInMonth ? "" : "roster-month-cell--out",
@@ -799,7 +791,9 @@ export function RosterCalendarPage() {
                   .filter(Boolean)
                   .join(" ")}
               >
-                <span className="roster-month-cell__num">{dayDate.getDate()}</span>
+                <span className="roster-month-cell__num">
+                  {Number(dayDate.slice(8, 10))}
+                </span>
 
                 <div className="roster-month-cell__entries">
                   {dayLeave.map((leave) => renderLeaveBlock(leave, true))}
@@ -966,7 +960,7 @@ export function RosterCalendarPage() {
               type="button"
               className="roster-today-btn"
               onClick={() => {
-                setAnchorDate(new Date());
+                setAnchorDate(formatCalendarDate(new Date(), ROSTER_TIME_ZONE));
               }}
             >
               Today
@@ -1192,18 +1186,12 @@ export function RosterCalendarPage() {
                   <strong>⛔ Roster conflict detected</strong>
                   <ul className="roster-conflict-list">
                     {conflictResult.overlapping.map((e) => {
-                      const fmt = (iso: string) =>
-                        new Date(iso).toLocaleTimeString("en-AU", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: false,
-                        });
                       const staffName = resolveStaffName(e.staffUserId, e.staffEmail);
                       return (
                         <li key={e.id}>
                           {staffName} is already rostered at{" "}
                           <strong>{e.rosteredClinicName}</strong> from{" "}
-                          {fmt(e.shiftStartAt)}–{fmt(e.shiftEndAt)}.
+                          {formatTime(e.shiftStartAt)}–{formatTime(e.shiftEndAt)}.
                         </li>
                       );
                     })}
@@ -1217,17 +1205,11 @@ export function RosterCalendarPage() {
                   <strong>⚠ Same-day shift notice</strong>
                   <ul className="roster-conflict-list">
                     {conflictResult.sameDay.map((e) => {
-                      const fmt = (iso: string) =>
-                        new Date(iso).toLocaleTimeString("en-AU", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          hour12: false,
-                        });
                       return (
                         <li key={e.id}>
                           {resolveStaffName(e.staffUserId, e.staffEmail)} also has a shift at{" "}
                           <strong>{e.rosteredClinicName}</strong>{" "}
-                          {fmt(e.shiftStartAt)}–{fmt(e.shiftEndAt)} on this day. Times
+                          {formatTime(e.shiftStartAt)}–{formatTime(e.shiftEndAt)} on this day. Times
                           do not overlap.
                         </li>
                       );

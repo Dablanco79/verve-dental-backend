@@ -102,6 +102,85 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
     await user.click(screen.getByRole("button", { name: "Week" }));
     expect(await screen.findByLabelText(/Approved leave: Alice Jones/i)).toBeInTheDocument();
   });
+
+  it("uses Melbourne dates for a 12–16 October leave range and a 12 October UTC shift", async () => {
+    const previousTimeZone = process.env["TZ"];
+    process.env["TZ"] = "UTC";
+    try {
+      const user = userEvent.setup();
+      setAuthenticatedUser(authTestState, managerUser);
+      mockListUsers.mockResolvedValue([namedStaff]);
+      mockGetRosterAccessibleClinics.mockResolvedValue([
+        { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      ]);
+      mockListRosterApprovedLeave.mockResolvedValue([{
+        leaveId: "leave-october-12-16",
+        staffUserId: namedStaff.id,
+        staffEmail: namedStaff.email,
+        startDate: "2026-10-12",
+        endDate: "2026-10-16",
+      }]);
+      mockListRoster.mockResolvedValue([buildEntry({
+        id: "shift-october-12-utc",
+        shiftStartAt: "2026-10-12T21:00:00.000Z",
+        shiftEndAt: "2026-10-13T06:00:00.000Z",
+      })]);
+
+      const { container } = renderPage();
+      const monthCell = (date: string): HTMLElement => {
+        const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
+          .find((candidate) =>
+            candidate.querySelector(".roster-month-cell__num")?.textContent === date,
+          );
+        if (!cell) throw new Error(`Month cell ${date} not found`);
+        return cell;
+      };
+
+      await waitFor(() => {
+        expect(
+          within(monthCell("12")).getByLabelText(/Approved leave: Alice Jones/i),
+        ).toBeInTheDocument();
+      });
+      for (const date of ["12", "13", "14", "15", "16"]) {
+        expect(
+          within(monthCell(date)).getByLabelText(/Approved leave: Alice Jones/i),
+        ).toBeInTheDocument();
+      }
+      expect(
+        within(monthCell("12")).queryByRole("button", { name: /Shift: Alice Jones/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(monthCell("13")).getByRole("button", { name: /Shift: Alice Jones/i }),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Day" }));
+      for (let day = 7; day < 12; day += 1) {
+        await user.click(screen.getByRole("button", { name: "Next day" }));
+      }
+      expect(
+        await screen.findByLabelText(/Approved leave: Alice Jones/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /Alice Jones.*08:00/i }),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Next day" }));
+      expect(
+        await screen.findByLabelText(/Approved leave: Alice Jones/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Alice Jones.*08:00/i }),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Week" }));
+      expect(
+        await screen.findAllByLabelText(/Approved leave: Alice Jones/i),
+      ).toHaveLength(5);
+    } finally {
+      if (previousTimeZone === undefined) delete process.env["TZ"];
+      else process.env["TZ"] = previousTimeZone;
+    }
+  });
 });
 
 vi.mock("../src/auth/useAuth.js", () => ({
