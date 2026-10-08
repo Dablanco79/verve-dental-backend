@@ -52,6 +52,18 @@ export function formatCalendarDate(instant: Date, timeZone: string): string {
   }).format(instant);
 }
 
+export function normalizeCalendarDate(value: string, timeZone: string): string {
+  if (ISO_CALENDAR_DATE.test(value)) {
+    calendarOrdinal(value);
+    return value;
+  }
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) {
+    throw new RangeError(`Invalid calendar date or instant: ${value}`);
+  }
+  return formatCalendarDate(instant, timeZone);
+}
+
 export function formatCalendarTime(instant: Date, timeZone: string): string {
   if (Number.isNaN(instant.getTime())) throw new RangeError("Invalid instant");
   return new Intl.DateTimeFormat("en-AU", {

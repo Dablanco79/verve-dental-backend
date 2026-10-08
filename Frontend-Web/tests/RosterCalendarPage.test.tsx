@@ -122,8 +122,8 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         leaveId: "leave-october-12-16",
         staffUserId: namedStaff.id,
         staffEmail: namedStaff.email,
-        startDate: "2026-10-12",
-        endDate: "2026-10-16",
+        startDate: "2026-10-12T00:00:00.000Z",
+        endDate: "2026-10-16T00:00:00.000Z",
       }]);
       mockListRoster.mockResolvedValue([buildEntry({
         id: "shift-october-12-utc",
@@ -158,10 +158,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         within(monthCell("13")).getByRole("button", { name: /Shift: Alice Jones/i }),
       ).toBeInTheDocument();
 
-      await user.click(screen.getByRole("button", { name: "Day" }));
-      for (let day = 7; day < 12; day += 1) {
-        await user.click(screen.getByRole("button", { name: "Next day" }));
-      }
+      await navigateDayViewTo(user, "2026-10-12");
       expect(
         await screen.findByLabelText(/Approved leave: Alice Jones/i),
       ).toBeInTheDocument();
@@ -186,6 +183,67 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
       else process.env["TZ"] = previousTimeZone;
     }
   });
+
+  it.each([
+    {
+      label: "five-day 19–23 October range",
+      leaveId: "leave-october-19-23",
+      startDate: "2026-10-19T00:00:00.000Z",
+      endDate: "2026-10-23T00:00:00.000Z",
+      monthDates: ["19", "20", "21", "22", "23"],
+      expectedWeekBlocks: 5,
+    },
+    {
+      label: "single-day 20 October range",
+      leaveId: "leave-october-20",
+      startDate: "2026-10-20T00:00:00.000Z",
+      endDate: "2026-10-20T00:00:00.000Z",
+      monthDates: ["20"],
+      expectedWeekBlocks: 1,
+    },
+  ])(
+    "renders every inclusive leave date for the $label in Day, Week and Month",
+    async ({ leaveId, startDate, endDate, monthDates, expectedWeekBlocks }) => {
+      const user = userEvent.setup();
+      setAuthenticatedUser(authTestState, managerUser);
+      mockListRoster.mockResolvedValue([]);
+      mockListUsers.mockResolvedValue([namedStaff]);
+      mockGetRosterAccessibleClinics.mockResolvedValue([
+        { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      ]);
+      mockListRosterApprovedLeave.mockResolvedValue([{
+        leaveId,
+        staffUserId: namedStaff.id,
+        staffEmail: namedStaff.email,
+        startDate,
+        endDate,
+      }]);
+
+      const { container } = renderPage();
+      await waitFor(() => {
+        for (const date of monthDates) {
+          const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
+            .find((candidate) =>
+              candidate.querySelector(".roster-month-cell__num")?.textContent === date,
+            );
+          if (!cell) throw new Error(`Month cell ${date} not found`);
+          expect(
+            within(cell).getByLabelText(/Approved leave: Alice Jones/i),
+          ).toBeInTheDocument();
+        }
+      });
+
+      await navigateDayViewTo(user, startDate.slice(0, 10));
+      expect(
+        await screen.findByLabelText(/Approved leave: Alice Jones/i),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Week" }));
+      expect(
+        await screen.findAllByLabelText(/Approved leave: Alice Jones/i),
+      ).toHaveLength(expectedWeekBlocks);
+    },
+  );
 });
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -287,6 +345,23 @@ function renderPage() {
 
 function todayDateString(): string {
   return currentRosterCalendarDate();
+}
+
+async function navigateDayViewTo(
+  user: ReturnType<typeof userEvent.setup>,
+  targetDate: string,
+): Promise<void> {
+  await user.click(screen.getByRole("button", { name: "Day" }));
+  const millisecondsPerDay = 86_400_000;
+  const currentOrdinal =
+    Date.parse(`${currentRosterCalendarDate()}T00:00:00.000Z`) / millisecondsPerDay;
+  const targetOrdinal =
+    Date.parse(`${targetDate}T00:00:00.000Z`) / millisecondsPerDay;
+  const distance = targetOrdinal - currentOrdinal;
+  const buttonName = distance >= 0 ? "Next day" : "Previous day";
+  for (let step = 0; step < Math.abs(distance); step += 1) {
+    await user.click(screen.getByRole("button", { name: buttonName }));
+  }
 }
 
 // ── Pure helper unit tests ────────────────────────────────────────────────────

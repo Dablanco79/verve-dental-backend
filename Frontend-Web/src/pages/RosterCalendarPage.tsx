@@ -13,6 +13,7 @@ import {
   calendarDateTimeToInstant,
   formatCalendarDate,
   formatCalendarTime,
+  normalizeCalendarDate,
   startOfCalendarDate,
 } from "../utils/calendarDate.js";
 import { displayClinicName } from "../utils/clinicDisplay.js";
@@ -233,7 +234,9 @@ export function RosterCalendarPage() {
 
   function approvedLeaveOn(date: string): RosterLeaveBlock[] {
     return leaveBlocks.filter(
-      (leave) => leave.startDate <= date && leave.endDate >= date,
+      (leave) =>
+        normalizeCalendarDate(leave.startDate, ROSTER_TIME_ZONE) <= date &&
+        normalizeCalendarDate(leave.endDate, ROSTER_TIME_ZONE) >= date,
     );
   }
 
