@@ -6,15 +6,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LeavePage } from "../src/pages/LeavePage.js";
 import { createManagerUser, createStaffUser, TEST_CLINIC_ID, TEST_CLINIC_NAME } from "./helpers/auth.js";
 
-const { state, mockSubmit, mockApprove, mockListConflicts, mockCancelApprovedLeave } = vi.hoisted(() => ({
+const {
+  state,
+  mockSubmit,
+  mockApprove,
+  mockListConflicts,
+  mockCancelApprovedLeave,
+  mockRequestCancellation,
+  mockApproveCancellation,
+  mockDeclineCancellation,
+} = vi.hoisted(() => ({
   state: {
     user: null as ReturnType<typeof createManagerUser> | null,
     requests: [] as Array<Record<string, unknown>>,
+    cancellationRequests: [] as Array<Record<string, unknown>>,
   },
   mockSubmit: vi.fn(),
   mockApprove: vi.fn(),
   mockListConflicts: vi.fn(),
   mockCancelApprovedLeave: vi.fn(),
+  mockRequestCancellation: vi.fn(),
+  mockApproveCancellation: vi.fn(),
+  mockDeclineCancellation: vi.fn(),
 }));
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -33,6 +46,7 @@ vi.mock("../src/clinic/useOperationalClinic.js", () => ({
 vi.mock("../src/hooks/useLeave.js", () => ({
   useLeave: () => ({
     requests: state.requests,
+    cancellationRequests: state.cancellationRequests,
     isLoading: false,
     error: null,
     refetch: vi.fn(),
@@ -42,6 +56,9 @@ vi.mock("../src/hooks/useLeave.js", () => ({
     rejectLeave: vi.fn(),
     cancelApprovedLeave: mockCancelApprovedLeave,
     withdrawLeave: vi.fn(),
+    requestCancellation: mockRequestCancellation,
+    approveCancellationRequest: mockApproveCancellation,
+    declineCancellationRequest: mockDeclineCancellation,
   }),
 }));
 
@@ -76,10 +93,30 @@ function leaveRequest(status: "pending" | "approved" | "cancelled" = "pending") 
   };
 }
 
+function cancellationRequest(status: "pending" | "approved" | "declined" = "pending") {
+  return {
+    id: "cancel-request-1",
+    leaveRequestId: "leave-1",
+    clinicId: TEST_CLINIC_ID,
+    staffUserId: "staff-1",
+    requestedByUserId: "staff-1",
+    requestReason: "Plans changed",
+    status,
+    requestedAt: "2026-10-02T00:00:00Z",
+    reviewedByUserId: status === "pending" ? null : "manager-1",
+    reviewedAt: status === "pending" ? null : "2026-10-03T00:00:00Z",
+    reviewNotes: status === "declined" ? "Coverage unavailable" : null,
+    selfReviewExceptionUsed: false,
+    createdAt: "2026-10-02T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z",
+  };
+}
+
 describe("LeavePage pilot safety", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.requests = [];
+    state.cancellationRequests = [];
   });
 
   it("submits authoritative dates without client-authored totalDays", async () => {
@@ -189,5 +226,77 @@ describe("LeavePage pilot safety", () => {
     expect(screen.getByText("Cancelled")).toBeInTheDocument();
     expect(screen.getByText("Plans changed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Withdraw" })).not.toBeInTheDocument();
+  });
+
+  it("renders a five-day Melbourne calendar range without timezone drift", () => {
+    state.user = createStaffUser();
+    state.requests = [{
+      ...leaveRequest("approved"),
+      startDate: "2026-10-12",
+      endDate: "2026-10-16",
+      totalDays: 5,
+    }];
+    renderPage();
+
+    expect(screen.getByText("12 Oct 2026")).toBeInTheDocument();
+    expect(screen.getByText("16 Oct 2026")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("requires a reason when staff request cancellation of approved leave", async () => {
+    const user = userEvent.setup();
+    state.user = createStaffUser();
+    state.requests = [leaveRequest("approved")];
+    mockRequestCancellation.mockResolvedValue(cancellationRequest());
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Request Cancellation" }));
+    expect(screen.getByText(/Roster blocks remain until a manager approves/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Submit Cancellation Request" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("A cancellation reason is required.");
+
+    await user.type(screen.getByLabelText("Cancellation request reason"), "Plans changed");
+    await user.click(screen.getByRole("button", { name: "Submit Cancellation Request" }));
+    await waitFor(() => {
+      expect(mockRequestCancellation).toHaveBeenCalledWith("leave-1", {
+        requestReason: "Plans changed",
+      });
+    });
+  });
+
+  it("keeps approved status and directs managers to the pending cancellation queue", () => {
+    state.user = createManagerUser();
+    state.requests = [leaveRequest("approved")];
+    state.cancellationRequests = [cancellationRequest()];
+    renderPage();
+
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+    expect(screen.getByText("Pending Cancellation Requests")).toBeInTheDocument();
+    expect(screen.getByText(/Review it in the queue above/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel Approved Leave" })).not.toBeInTheDocument();
+  });
+
+  it("requires notes to decline a pending cancellation request", async () => {
+    const user = userEvent.setup();
+    state.user = createManagerUser();
+    state.requests = [leaveRequest("approved")];
+    state.cancellationRequests = [cancellationRequest()];
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Decline" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Review notes are required to decline a cancellation request.",
+    );
+    expect(mockDeclineCancellation).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Cancellation decline notes"), "Coverage unavailable");
+    await user.click(screen.getByRole("button", { name: "Confirm Decline" }));
+    await waitFor(() => {
+      expect(mockDeclineCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "cancel-request-1" }),
+        { reviewNotes: "Coverage unavailable" },
+      );
+    });
   });
 });

@@ -7,6 +7,7 @@ import { useLeave } from "../hooks/useLeave.js";
 import type {
   ApproveLeaveResult,
   CreateLeaveRequest,
+  LeaveCancellationRequest,
   LeaveFilters,
   LeaveRequest,
   LeaveRosterConflict,
@@ -240,14 +241,152 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
   );
 }
 
+// ── Manager: Pending cancellation request queue ──────────────────────────────
+
+function PendingCancellationQueue({
+  entries,
+  leaveRequests,
+  onApprove,
+  onDecline,
+}: {
+  entries: LeaveCancellationRequest[];
+  leaveRequests: LeaveRequest[];
+  onApprove: (request: LeaveCancellationRequest) => Promise<unknown>;
+  onDecline: (request: LeaveCancellationRequest, notes: string) => Promise<LeaveCancellationRequest>;
+}) {
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function approve(request: LeaveCancellationRequest): Promise<void> {
+    setBusyId(request.id);
+    setActionError(null);
+    try {
+      await onApprove(request);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Approval failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function decline(request: LeaveCancellationRequest): Promise<void> {
+    if (!reviewNotes.trim()) {
+      setActionError("Review notes are required to decline a cancellation request.");
+      return;
+    }
+    setBusyId(request.id);
+    setActionError(null);
+    try {
+      await onDecline(request, reviewNotes.trim());
+      setDecliningId(null);
+      setReviewNotes("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Decline failed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (entries.length === 0) {
+    return <p className="pr-table__empty">No cancellation requests pending review.</p>;
+  }
+
+  return (
+    <div className="pr-table-wrap">
+      <p>Roster blocks remain in place until a cancellation request is approved. No shifts are changed or restored.</p>
+      <table className="pr-table">
+        <thead>
+          <tr>
+            <th className="pr-table__th">Staff</th>
+            <th className="pr-table__th">Leave</th>
+            <th className="pr-table__th">Request Reason</th>
+            <th className="pr-table__th">Requested</th>
+            <th className="pr-table__th" />
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((request) => {
+            const leave = leaveRequests.find((item) => item.id === request.leaveRequestId);
+            return (
+              <Fragment key={request.id}>
+                <tr className="pr-table__row">
+                  <td className="pr-table__td">{leave?.staffEmail ?? request.staffUserId}</td>
+                  <td className="pr-table__td">
+                    {leave ? `${formatDate(leave.startDate)} – ${formatDate(leave.endDate)}` : "—"}
+                  </td>
+                  <td className="pr-table__td">{request.requestReason}</td>
+                  <td className="pr-table__td">{formatDate(request.requestedAt)}</td>
+                  <td className="pr-table__td pr-table__td--actions">
+                    <div className="pr-row-actions">
+                      <button
+                        type="button"
+                        className="pr-action-btn pr-action-btn--approve"
+                        disabled={busyId !== null}
+                        onClick={() => { void approve(request); }}
+                      >
+                        {busyId === request.id ? "Saving…" : "Approve"}
+                      </button>
+                      <button
+                        type="button"
+                        className="pr-action-btn pr-action-btn--reject"
+                        disabled={busyId !== null}
+                        onClick={() => {
+                          setDecliningId(decliningId === request.id ? null : request.id);
+                          setReviewNotes("");
+                          setActionError(null);
+                        }}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {decliningId === request.id ? (
+                  <tr className="pr-table__row pr-table__row--expanded">
+                    <td colSpan={5} className="pr-table__td">
+                      <div className="pr-inline-form">
+                        <textarea
+                          className="pr-inline-form__input"
+                          aria-label="Cancellation decline notes"
+                          placeholder="Review notes (required)…"
+                          value={reviewNotes}
+                          onChange={(event) => { setReviewNotes(event.target.value); }}
+                          disabled={busyId !== null}
+                        />
+                        <button
+                          type="button"
+                          className="pr-action-btn pr-action-btn--reject"
+                          onClick={() => { void decline(request); }}
+                          disabled={busyId !== null}
+                        >
+                          Confirm Decline
+                        </button>
+                      </div>
+                      {actionError ? <p className="pr-inline-form__error" role="alert">{actionError}</p> : null}
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Manager: All-requests read-only table ────────────────────────────────────
 
 function AllLeaveTable({
   entries,
+  cancellationRequests,
   onReviewConflicts,
   onCancelApprovedLeave,
 }: {
   entries: LeaveRequest[];
+  cancellationRequests: LeaveCancellationRequest[];
   onReviewConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
   onCancelApprovedLeave: (leaveId: string, cancellationReason: string) => Promise<LeaveRequest>;
 }) {
@@ -379,19 +518,25 @@ function AllLeaveTable({
                         <span className="lv-conflict-count">None</span>
                       )
                     ) : null}
-                    <button
-                      type="button"
-                      className="pr-action-btn pr-action-btn--reject"
-                      disabled={isCancelling}
-                      onClick={() => {
-                        setCancellingId(req.id === cancellingId ? null : req.id);
-                        setCancellationReason("");
-                        setCancellationError(null);
-                        setCancelledMessage(null);
-                      }}
-                    >
-                      Cancel Approved Leave
-                    </button>
+                    {cancellationRequests.some(
+                      (request) => request.leaveRequestId === req.id && request.status === "pending",
+                    ) ? (
+                      <p>A cancellation request is pending. Review it in the queue above.</p>
+                    ) : (
+                      <button
+                        type="button"
+                        className="pr-action-btn pr-action-btn--reject"
+                        disabled={isCancelling}
+                        onClick={() => {
+                          setCancellingId(req.id === cancellingId ? null : req.id);
+                          setCancellationReason("");
+                          setCancellationError(null);
+                          setCancelledMessage(null);
+                        }}
+                      >
+                        Cancel Approved Leave
+                      </button>
+                    )}
                   </>
                 ) : "—"}
               </td>
@@ -629,12 +774,26 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
 
 type MyLeaveTableProps = {
   entries: LeaveRequest[];
+  cancellationRequests: LeaveCancellationRequest[];
   onWithdraw: (id: string) => Promise<LeaveRequest>;
+  onRequestCancellation: (
+    leaveId: string,
+    reason: string,
+  ) => Promise<LeaveCancellationRequest>;
 };
 
-function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
+function MyLeaveTable({
+  entries,
+  cancellationRequests,
+  onWithdraw,
+  onRequestCancellation,
+}: MyLeaveTableProps) {
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const [requestingCancellationId, setRequestingCancellationId] = useState<string | null>(null);
+  const [requestReason, setRequestReason] = useState("");
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
+  const [isRequestingCancellation, setIsRequestingCancellation] = useState(false);
 
   async function handleWithdraw(id: string): Promise<void> {
     setWithdrawingId(id);
@@ -645,6 +804,26 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
       setWithdrawError(err instanceof Error ? err.message : "Withdrawal failed.");
     } finally {
       setWithdrawingId(null);
+    }
+  }
+
+  async function requestCancellation(leaveId: string): Promise<void> {
+    if (!requestReason.trim()) {
+      setCancellationError("A cancellation reason is required.");
+      return;
+    }
+    setIsRequestingCancellation(true);
+    setCancellationError(null);
+    try {
+      await onRequestCancellation(leaveId, requestReason.trim());
+      setRequestingCancellationId(null);
+      setRequestReason("");
+    } catch (error) {
+      setCancellationError(
+        error instanceof Error ? error.message : "Unable to request cancellation.",
+      );
+    } finally {
+      setIsRequestingCancellation(false);
     }
   }
 
@@ -677,8 +856,17 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
             </tr>
           </thead>
           <tbody>
-            {entries.map((req) => (
-              <tr key={req.id} className="pr-table__row">
+            {entries.map((req) => {
+              const relatedRequests = cancellationRequests.filter(
+                (request) => request.leaveRequestId === req.id,
+              );
+              const pendingCancellation = relatedRequests.find(
+                (request) => request.status === "pending",
+              );
+              const latestCancellation = pendingCancellation ?? relatedRequests.at(-1);
+              return (
+              <Fragment key={req.id}>
+              <tr className="pr-table__row">
                 <td className="pr-table__td">
                   <LeaveTypeBadge type={req.leaveType} />
                 </td>
@@ -693,7 +881,11 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
                   <LeaveStatusBadge status={req.status} />
                 </td>
                 <td className="pr-table__td">
-                  {req.status === "cancelled"
+                  {latestCancellation
+                    ? latestCancellation.status === "pending"
+                      ? "Cancellation pending — approved leave and roster blocks remain in place."
+                      : `Cancellation ${latestCancellation.status}: ${latestCancellation.reviewNotes ?? "No review notes."}`
+                    : req.status === "cancelled"
                     ? req.cancellationReason ?? "—"
                     : req.reviewNotes ?? "—"}
                 </td>
@@ -707,10 +899,60 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
                     >
                       {withdrawingId === req.id ? "Withdrawing…" : "Withdraw"}
                     </button>
-                  ) : null}
+                  ) : req.status === "approved" && !pendingCancellation ? (
+                    <button
+                      type="button"
+                      className="pr-action-btn pr-action-btn--reject"
+                      onClick={() => {
+                        setRequestingCancellationId(
+                          requestingCancellationId === req.id ? null : req.id,
+                        );
+                        setRequestReason("");
+                        setCancellationError(null);
+                      }}
+                    >
+                      Request Cancellation
+                    </button>
+                  ) : pendingCancellation ? <span>Pending manager review</span> : null}
                 </td>
               </tr>
-            ))}
+              {requestingCancellationId === req.id ? (
+                <tr className="pr-table__row pr-table__row--expanded">
+                  <td colSpan={7} className="pr-table__td">
+                    <div className="pr-inline-form">
+                      <div>
+                        <strong>Request cancellation of approved leave</strong>
+                        <p>
+                          No shifts will be changed or restored. Roster blocks remain until
+                          a manager approves this request.
+                        </p>
+                      </div>
+                      <textarea
+                        className="pr-inline-form__input"
+                        aria-label="Cancellation request reason"
+                        placeholder="Cancellation reason (required)…"
+                        value={requestReason}
+                        onChange={(event) => { setRequestReason(event.target.value); }}
+                        disabled={isRequestingCancellation}
+                      />
+                      <button
+                        type="button"
+                        className="pr-action-btn pr-action-btn--reject"
+                        disabled={isRequestingCancellation}
+                        onClick={() => { void requestCancellation(req.id); }}
+                      >
+                        {isRequestingCancellation ? "Submitting…" : "Submit Cancellation Request"}
+                      </button>
+                    </div>
+                    {cancellationError ? (
+                      <p className="pr-inline-form__error" role="alert">{cancellationError}</p>
+                    ) : null}
+                  </td>
+                </tr>
+              ) : null}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -733,6 +975,7 @@ export function LeavePage() {
 
   const {
     requests,
+    cancellationRequests,
     isLoading,
     error,
     refetch,
@@ -742,6 +985,9 @@ export function LeavePage() {
     rejectLeave,
     cancelApprovedLeave,
     withdrawLeave,
+    requestCancellation,
+    approveCancellationRequest,
+    declineCancellationRequest,
   } = useLeave(clinicId, user?.role, filters);
 
   if (!user) return null;
@@ -761,6 +1007,9 @@ export function LeavePage() {
   }
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
+  const pendingCancellationRequests = cancellationRequests.filter(
+    (request) => request.status === "pending",
+  );
 
   const subtitleText = isManager
     ? `${String(pendingRequests.length)} pending approval`
@@ -817,11 +1066,30 @@ export function LeavePage() {
               />
             </div>
 
+            <div className="pr-section">
+              <h3 className="pr-section__title">
+                Pending Cancellation Requests
+                {pendingCancellationRequests.length > 0 ? (
+                  <span className="pr-section__count pr-section__count--warn">
+                    {pendingCancellationRequests.length}
+                  </span>
+                ) : null}
+              </h3>
+              <PendingCancellationQueue
+                entries={pendingCancellationRequests}
+                leaveRequests={requests}
+                onApprove={async (request) => approveCancellationRequest(request, {})}
+                onDecline={async (request, notes) =>
+                  declineCancellationRequest(request, { reviewNotes: notes })}
+              />
+            </div>
+
             {/* ── Manager: All requests (last 90 days) ── */}
             <div className="pr-section">
               <h3 className="pr-section__title">All Requests (Last 90 Days)</h3>
               <AllLeaveTable
                 entries={requests}
+                cancellationRequests={cancellationRequests}
                 onReviewConflicts={listRosterConflicts}
                 onCancelApprovedLeave={async (id, cancellationReason) => {
                   return cancelApprovedLeave(id, { cancellationReason });
@@ -840,7 +1108,13 @@ export function LeavePage() {
             {/* ── Staff: My leave history ── */}
             <div className="pr-section">
               <h3 className="pr-section__title">My Requests (Last 90 Days)</h3>
-              <MyLeaveTable entries={requests} onWithdraw={withdrawLeave} />
+              <MyLeaveTable
+                entries={requests}
+                cancellationRequests={cancellationRequests}
+                onWithdraw={withdrawLeave}
+                onRequestCancellation={async (leaveId, requestReason) =>
+                  requestCancellation(leaveId, { requestReason })}
+              />
             </div>
           </>
         )}

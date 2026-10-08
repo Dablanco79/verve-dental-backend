@@ -309,8 +309,58 @@ export type LeaveRequest = {
   cancelledAt: Date | null;
   /** Mandatory reason supplied when approved leave is cancelled. */
   cancellationReason: string | null;
+  /** Durable evidence that the sole-owner self-review exception was used. */
+  cancellationSelfReviewExceptionUsed: boolean;
   createdAt: Date;
   updatedAt: Date;
+};
+
+export const LEAVE_CANCELLATION_REQUEST_STATUSES = [
+  "pending",
+  "approved",
+  "declined",
+] as const;
+export type LeaveCancellationRequestStatus =
+  (typeof LEAVE_CANCELLATION_REQUEST_STATUSES)[number];
+
+export type LeaveCancellationRequest = {
+  id: string;
+  leaveRequestId: string;
+  clinicId: string;
+  staffUserId: string;
+  requestedByUserId: string;
+  requestReason: string;
+  status: LeaveCancellationRequestStatus;
+  requestedAt: Date;
+  reviewedByUserId: string | null;
+  reviewedAt: Date | null;
+  reviewNotes: string | null;
+  selfReviewExceptionUsed: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type CreateLeaveCancellationRequestInput = {
+  leaveRequestId: string;
+  clinicId: string;
+  staffUserId: string;
+  requestedByUserId: string;
+  requestReason: string;
+};
+
+export type ReviewLeaveCancellationRequestInput = {
+  requestId: string;
+  leaveId: string;
+  clinicId: string;
+  expectedStaffUserId: string;
+  reviewedByUserId: string;
+  reviewNotes: string | null;
+  selfReviewExceptionUsed: boolean;
+};
+
+export type ApproveLeaveCancellationResult = {
+  request: LeaveCancellationRequest;
+  leave: LeaveRequest;
 };
 
 /** Existing roster shift left unchanged when leave is approved. */
@@ -436,6 +486,7 @@ export type CreateLeaveRequestInput = Omit<
   | "cancelledByUserId"
   | "cancelledAt"
   | "cancellationReason"
+  | "cancellationSelfReviewExceptionUsed"
   | "createdAt"
   | "updatedAt"
 >;
@@ -456,6 +507,7 @@ export type CancelApprovedLeaveInput = {
   expectedStaffUserId: string;
   cancelledByUserId: string;
   cancellationReason: string;
+  selfReviewExceptionUsed?: boolean;
 };
 
 // ── List / filter options ─────────────────────────────────────────────────────
@@ -484,6 +536,10 @@ export type ListLeaveOptions = {
   to?: string;
   leaveType?: LeaveType;
   status?: LeaveRequestStatus;
+};
+
+export type ListLeaveCancellationRequestOptions = {
+  status?: LeaveCancellationRequestStatus;
 };
 
 // ── Pagination option extensions ──────────────────────────────────────────────

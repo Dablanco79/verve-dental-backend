@@ -16,10 +16,11 @@ import { z } from "zod";
 
 import type { LeaveService } from "../services/leaveService.js";
 import type { TimesheetService } from "../services/timesheetService.js";
-import type { LeaveRequest, LeaveRosterConflict, TimesheetEntry } from "../types/payroll.js";
+import type { LeaveCancellationRequest, LeaveRequest, LeaveRosterConflict, TimesheetEntry } from "../types/payroll.js";
 import {
   ATTENDANCE_STATUSES,
   LEAVE_REQUEST_STATUSES,
+  LEAVE_CANCELLATION_REQUEST_STATUSES,
   LEAVE_TYPES,
   PAYROLL_TYPES,
   TIMESHEET_STATUSES,
@@ -110,6 +111,26 @@ function serializeLeave(r: LeaveRequest) {
     cancelledByUserId: r.cancelledByUserId,
     cancelledAt: r.cancelledAt?.toISOString() ?? null,
     cancellationReason: r.cancellationReason,
+    cancellationSelfReviewExceptionUsed: r.cancellationSelfReviewExceptionUsed,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+  };
+}
+
+function serializeLeaveCancellationRequest(r: LeaveCancellationRequest) {
+  return {
+    id: r.id,
+    leaveRequestId: r.leaveRequestId,
+    clinicId: r.clinicId,
+    staffUserId: r.staffUserId,
+    requestedByUserId: r.requestedByUserId,
+    requestReason: r.requestReason,
+    status: r.status,
+    requestedAt: r.requestedAt.toISOString(),
+    reviewedByUserId: r.reviewedByUserId,
+    reviewedAt: r.reviewedAt?.toISOString() ?? null,
+    reviewNotes: r.reviewNotes,
+    selfReviewExceptionUsed: r.selfReviewExceptionUsed,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -209,6 +230,18 @@ const cancelApprovedLeaveSchema = z
   })
   .strict();
 
+const createCancellationRequestSchema = z.object({
+  requestReason: z.string().trim().min(1, "A cancellation reason is required").max(2000),
+}).strict();
+
+const declineCancellationRequestSchema = z.object({
+  reviewNotes: z.string().trim().min(1, "Review notes are required").max(2000),
+}).strict();
+
+const listCancellationRequestsQuerySchema = z.object({
+  status: z.enum(LEAVE_CANCELLATION_REQUEST_STATUSES).optional(),
+}).strict();
+
 // Supports filtering by date window, leave type, and status.
 // from/to are YYYY-MM-DD (not full timestamps) to avoid timezone ambiguity.
 const listLeaveQuerySchema = z
@@ -243,6 +276,53 @@ const listLeaveQuerySchema = z
 
 export function createLeaveHandlers(leaveService: LeaveService) {
   return {
+    async listCancellationRequests(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = listCancellationRequestsQuerySchema.safeParse(req.query);
+      if (!parsed.success) throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      const requests = await leaveService.listCancellationRequests(caller, clinicId, parsed.data);
+      res.status(200).json({ data: requests.map(serializeLeaveCancellationRequest) });
+    },
+
+    async createCancellationRequest(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const body = parseBody(createCancellationRequestSchema, req.body);
+      const request = await leaveService.createCancellationRequest(
+        caller, clinicId, leaveId, body.requestReason,
+      );
+      res.status(201).json({ data: serializeLeaveCancellationRequest(request) });
+    },
+
+    async approveCancellationRequest(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const requestId = requireUuidParam(req, "requestId");
+      const body = parseBody(approveLeaveSchema, req.body);
+      const result = await leaveService.approveCancellationRequest(
+        caller, clinicId, leaveId, requestId, body.reviewNotes ?? null,
+      );
+      res.status(200).json({ data: {
+        request: serializeLeaveCancellationRequest(result.request),
+        leave: serializeLeave(result.leave),
+      } });
+    },
+
+    async declineCancellationRequest(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const requestId = requireUuidParam(req, "requestId");
+      const body = parseBody(declineCancellationRequestSchema, req.body);
+      const request = await leaveService.declineCancellationRequest(
+        caller, clinicId, leaveId, requestId, body.reviewNotes,
+      );
+      res.status(200).json({ data: serializeLeaveCancellationRequest(request) });
+    },
+
     /**
      * POST /clinics/:clinicId/leave
      * Staff submits a leave request for their home clinic.

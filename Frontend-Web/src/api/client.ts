@@ -82,15 +82,21 @@ import type {
 } from "../types/analytics.js";
 import type {
   ApproveLeaveRequest,
+  ApproveLeaveCancellationRequest,
+  ApproveLeaveCancellationResult,
   ApproveLeaveResult,
   ApproveTimesheetRequest,
   CancelApprovedLeaveRequest,
   ClockInRequest,
   ClockOutRequest,
   CreateLeaveRequest,
+  CreateLeaveCancellationRequest,
   CreateManualTimesheetRequest,
+  DeclineLeaveCancellationRequest,
   ExportTimesheetParams,
   LeaveFilters,
+  LeaveCancellationRequest,
+  LeaveCancellationRequestFilters,
   LeaveRequest,
   LeaveRosterConflict,
   RejectLeaveRequest,
@@ -1823,6 +1829,62 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function listLeaveCancellationRequests(
+    clinicId: string,
+    filters: LeaveCancellationRequestFilters = {},
+  ): Promise<LeaveCancellationRequest[]> {
+    const query = new URLSearchParams();
+    if (filters.status) query.set("status", filters.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<LeaveCancellationRequest[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/cancellation-requests${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createLeaveCancellationRequest(
+    clinicId: string,
+    leaveId: string,
+    body: CreateLeaveCancellationRequest,
+  ): Promise<LeaveCancellationRequest> {
+    return request<LeaveCancellationRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/cancellation-requests`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function approveLeaveCancellationRequest(
+    clinicId: string,
+    leaveId: string,
+    requestId: string,
+    body: ApproveLeaveCancellationRequest = {},
+  ): Promise<ApproveLeaveCancellationResult> {
+    return request<ApproveLeaveCancellationResult>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/cancellation-requests/${requestId}/approve`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
+  async function declineLeaveCancellationRequest(
+    clinicId: string,
+    leaveId: string,
+    requestId: string,
+    body: DeclineLeaveCancellationRequest,
+  ): Promise<LeaveCancellationRequest> {
+    return request<LeaveCancellationRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/cancellation-requests/${requestId}/decline`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   // ── Suppliers ────────────────────────────────────────────────────────────────
 
   async function listSuppliers(params?: ListSuppliersParams): Promise<Supplier[]> {
@@ -2907,6 +2969,10 @@ export function createApiClient(config: AppConfig) {
     rejectLeave,
     cancelApprovedLeave,
     withdrawLeave,
+    listLeaveCancellationRequests,
+    createLeaveCancellationRequest,
+    approveLeaveCancellationRequest,
+    declineLeaveCancellationRequest,
     listSuppliers,
     getSupplier,
     createSupplier,

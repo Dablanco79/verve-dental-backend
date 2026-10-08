@@ -1,16 +1,22 @@
 import { randomUUID } from "node:crypto";
+import { AppError } from "../types/errors.js";
 
 import type {
   ApproveLeaveResult,
+  ApproveLeaveCancellationResult,
   CancelApprovedLeaveInput,
+  CreateLeaveCancellationRequestInput,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveCancellationRequest,
   LeaveRosterConflict,
   ListLeaveOptions,
+  ListLeaveCancellationRequestOptions,
   ListLeavePageOptions,
   RosterLeaveBlock,
   UpdateLeaveStatusInput,
+  ReviewLeaveCancellationRequestInput,
 } from "../types/payroll.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +51,16 @@ export interface LeaveRepository {
     timeZone: string;
   }): Promise<ApproveLeaveResult>;
   cancelApprovedLeave(input: CancelApprovedLeaveInput): Promise<LeaveRequest>;
+  createCancellationRequest(input: CreateLeaveCancellationRequestInput): Promise<LeaveCancellationRequest>;
+  listCancellationRequestsByStaff(staffUserId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
+  listCancellationRequestsByClinic(clinicId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
+  findCancellationRequestById(input: {
+    requestId: string;
+    leaveId: string;
+    clinicId: string;
+  }): Promise<LeaveCancellationRequest | null>;
+  approveCancellationRequest(input: ReviewLeaveCancellationRequestInput): Promise<ApproveLeaveCancellationResult>;
+  declineCancellationRequest(input: ReviewLeaveCancellationRequestInput): Promise<LeaveCancellationRequest>;
   listRosterConflicts(input: {
     leaveId: string;
     clinicId: string;
@@ -71,6 +87,7 @@ export function createInMemoryLeaveRepository(
   ) => Promise<LeaveRosterConflict[]>,
 ): LeaveRepository {
   const records: LeaveRequest[] = [];
+  const cancellationRecords: LeaveCancellationRequest[] = [];
 
   return {
     create(input: CreateLeaveRequestInput): Promise<LeaveRequest> {
@@ -85,6 +102,7 @@ export function createInMemoryLeaveRepository(
         cancelledByUserId: null,
         cancelledAt: null,
         cancellationReason: null,
+        cancellationSelfReviewExceptionUsed: false,
         createdAt: now,
         updatedAt: now,
       };
@@ -235,16 +253,127 @@ export function createInMemoryLeaveRepository(
           new Error(`Leave request is '${request.status}' and cannot be cancelled`),
         );
       }
+      if (cancellationRecords.some((item) =>
+        item.leaveRequestId === input.leaveId && item.status === "pending")) {
+        return Promise.reject(new AppError(
+          409,
+          "PENDING_CANCELLATION_REQUEST",
+          "This leave request already has a pending cancellation request",
+        ));
+      }
       const cancelled: LeaveRequest = {
         ...request,
         status: "cancelled",
         cancelledByUserId: input.cancelledByUserId,
         cancelledAt: new Date(),
         cancellationReason: input.cancellationReason,
+        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed ?? false,
         updatedAt: new Date(),
       };
       records[records.indexOf(request)] = cancelled;
       return Promise.resolve({ ...cancelled });
+    },
+
+    createCancellationRequest(input): Promise<LeaveCancellationRequest> {
+      const leave = records.find((item) =>
+        item.id === input.leaveRequestId &&
+        item.clinicId === input.clinicId &&
+        item.staffUserId === input.staffUserId);
+      if (!leave) return Promise.reject(new AppError(404, "NOT_FOUND", "Leave request not found"));
+      if (leave.status !== "approved") {
+        return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Only approved leave can be cancelled"));
+      }
+      if (cancellationRecords.some((item) =>
+        item.leaveRequestId === input.leaveRequestId && item.status === "pending")) {
+        return Promise.reject(new AppError(409, "DUPLICATE_PENDING_CANCELLATION", "A cancellation request is already pending"));
+      }
+      const now = new Date();
+      const record: LeaveCancellationRequest = {
+        id: randomUUID(),
+        ...input,
+        status: "pending",
+        requestedAt: now,
+        reviewedByUserId: null,
+        reviewedAt: null,
+        reviewNotes: null,
+        selfReviewExceptionUsed: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      cancellationRecords.push(record);
+      return Promise.resolve({ ...record });
+    },
+
+    listCancellationRequestsByStaff(staffUserId, options) {
+      return Promise.resolve(cancellationRecords
+        .filter((item) => item.staffUserId === staffUserId && (!options?.status || item.status === options.status))
+        .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
+        .map((item) => ({ ...item })));
+    },
+
+    listCancellationRequestsByClinic(clinicId, options) {
+      return Promise.resolve(cancellationRecords
+        .filter((item) => item.clinicId === clinicId && (!options?.status || item.status === options.status))
+        .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
+        .map((item) => ({ ...item })));
+    },
+
+    findCancellationRequestById(input) {
+      const item = cancellationRecords.find((record) =>
+        record.id === input.requestId &&
+        record.leaveRequestId === input.leaveId &&
+        record.clinicId === input.clinicId);
+      return Promise.resolve(item ? { ...item } : null);
+    },
+
+    approveCancellationRequest(input) {
+      const child = cancellationRecords.find((item) =>
+        item.id === input.requestId && item.leaveRequestId === input.leaveId &&
+        item.clinicId === input.clinicId && item.staffUserId === input.expectedStaffUserId);
+      const leave = records.find((item) => item.id === input.leaveId);
+      if (!child || !leave) return Promise.reject(new AppError(404, "NOT_FOUND", "Cancellation request not found"));
+      if (child.status !== "pending" || leave.status !== "approved") {
+        return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
+      }
+      const now = new Date();
+      Object.assign(child, {
+        status: "approved",
+        reviewedByUserId: input.reviewedByUserId,
+        reviewedAt: now,
+        reviewNotes: input.reviewNotes,
+        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        updatedAt: now,
+      });
+      Object.assign(leave, {
+        status: "cancelled",
+        cancelledByUserId: input.reviewedByUserId,
+        cancelledAt: now,
+        cancellationReason: child.requestReason,
+        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        updatedAt: now,
+      });
+      return Promise.resolve({ request: { ...child }, leave: { ...leave } });
+    },
+
+    declineCancellationRequest(input) {
+      const child = cancellationRecords.find((item) =>
+        item.id === input.requestId && item.leaveRequestId === input.leaveId &&
+        item.clinicId === input.clinicId && item.staffUserId === input.expectedStaffUserId);
+      const leave = records.find((item) => item.id === input.leaveId);
+      if (!child || !leave) return Promise.reject(new AppError(404, "NOT_FOUND", "Cancellation request not found"));
+      if (child.status !== "pending" || leave.status !== "approved") {
+        return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
+      }
+      const now = new Date();
+      Object.assign(child, {
+        status: "declined",
+        reviewedByUserId: input.reviewedByUserId,
+        reviewedAt: now,
+        reviewNotes: input.reviewNotes,
+        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        updatedAt: now,
+      });
+      return Promise.resolve({ ...child });
     },
 
     async listRosterConflicts(input): Promise<LeaveRosterConflict[]> {

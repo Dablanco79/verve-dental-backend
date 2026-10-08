@@ -2,14 +2,18 @@ import type { AuthenticatedUser } from "../types/auth.js";
 import { AppError } from "../types/errors.js";
 import type {
   ApproveLeaveResult,
+  ApproveLeaveCancellationResult,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveCancellationRequest,
+  ListLeaveCancellationRequestOptions,
   LeaveRosterConflict,
   ListLeaveOptions,
   ListLeavePageOptions,
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
+import type { UserRepository } from "../repositories/userRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
 import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
@@ -44,8 +48,22 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 
 export function createLeaveService(
   leaveRepository: LeaveRepository,
+  userRepository: UserRepository,
   auditWriter?: AuditWriter,
 ) {
+  async function selfReviewException(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    request: { staffUserId: string; requestedByUserId?: string },
+  ): Promise<boolean> {
+    if (caller.id !== request.staffUserId && caller.id !== request.requestedByUserId) return false;
+    if (caller.role !== "owner_admin" ||
+        !(await userRepository.canUseSoleOwnerAdminLeaveReviewException(clinicId, caller.id))) {
+      throw new AppError(403, "SELF_REVIEW_FORBIDDEN", "You cannot review your own cancellation request");
+    }
+    return true;
+  }
+
   return {
     /**
      * Staff member submits a leave request for their home clinic.
@@ -248,6 +266,7 @@ export function createLeaveService(
           `Leave request is '${request.status}' and cannot be cancelled`,
         );
       }
+      const exceptionUsed = await selfReviewException(caller, clinicId, request);
 
       const cancelled = await leaveRepository.cancelApprovedLeave({
         leaveId,
@@ -255,6 +274,7 @@ export function createLeaveService(
         expectedStaffUserId: request.staffUserId,
         cancelledByUserId: caller.id,
         cancellationReason: reason,
+        selfReviewExceptionUsed: exceptionUsed,
       });
 
       auditWriter?.recordEvent({
@@ -270,12 +290,140 @@ export function createLeaveService(
           endDate: request.endDate,
           leaveType: request.leaveType,
           cancellationReason: reason,
+          selfReviewExceptionUsed: exceptionUsed,
         },
       }).catch((err: unknown) => {
         console.error("[Audit Failure Guard]:", err);
       });
 
       return cancelled;
+    },
+
+    async createCancellationRequest(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+      requestReason: string,
+    ): Promise<LeaveCancellationRequest> {
+      const reason = requestReason.trim();
+      if (!reason) {
+        throw new AppError(400, "CANCELLATION_REASON_REQUIRED", "A cancellation reason is required");
+      }
+      const leave = await leaveRepository.findById(leaveId);
+      if (!leave || leave.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Leave request not found");
+      }
+      if (leave.staffUserId !== caller.id) {
+        throw new AppError(403, "FORBIDDEN", "You can only request cancellation of your own leave");
+      }
+      if (leave.status !== "approved") {
+        throw new AppError(409, "INVALID_STATUS_TRANSITION", "Only approved leave can be cancelled");
+      }
+      const request = await leaveRepository.createCancellationRequest({
+        leaveRequestId: leaveId,
+        clinicId,
+        staffUserId: caller.id,
+        requestedByUserId: caller.id,
+        requestReason: reason,
+      });
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "leave_request",
+        entityId: leaveId,
+        action: "cancellation_requested",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: { leaveId, staffUserId: caller.id, requestReason: reason },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+      return request;
+    },
+
+    async listCancellationRequests(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListLeaveCancellationRequestOptions,
+    ): Promise<LeaveCancellationRequest[]> {
+      if (caller.role === "clinical_staff") {
+        if (caller.homeClinicId !== clinicId) throw new AppError(403, "FORBIDDEN", "Clinic access denied");
+        return leaveRepository.listCancellationRequestsByStaff(caller.id, options);
+      }
+      assertReviewAccess(caller, clinicId);
+      return leaveRepository.listCancellationRequestsByClinic(clinicId, options);
+    },
+
+    async approveCancellationRequest(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+      requestId: string,
+      reviewNotes: string | null,
+    ): Promise<ApproveLeaveCancellationResult> {
+      assertReviewAccess(caller, clinicId);
+      const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
+      if (!request) {
+        throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
+      }
+      if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      const result = await leaveRepository.approveCancellationRequest({
+        requestId, leaveId, clinicId,
+        expectedStaffUserId: request.staffUserId,
+        reviewedByUserId: caller.id,
+        reviewNotes,
+        selfReviewExceptionUsed: exceptionUsed,
+      });
+      for (const action of ["cancellation_request_approved", "cancelled"]) {
+        auditWriter?.recordEvent({
+          clinicId,
+          entityType: "leave_request",
+          entityId: leaveId,
+          action,
+          actorId: caller.id,
+          actorEmail: caller.email,
+          metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, selfReviewExceptionUsed: exceptionUsed },
+        }).catch((err: unknown) => {
+          console.error("[Audit Failure Guard]:", err);
+        });
+      }
+      return result;
+    },
+
+    async declineCancellationRequest(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+      requestId: string,
+      reviewNotes: string,
+    ): Promise<LeaveCancellationRequest> {
+      assertReviewAccess(caller, clinicId);
+      if (!reviewNotes.trim()) throw new AppError(400, "REVIEW_NOTES_REQUIRED", "Review notes are required");
+      const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
+      if (!request) {
+        throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
+      }
+      if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      const declined = await leaveRepository.declineCancellationRequest({
+        requestId, leaveId, clinicId,
+        expectedStaffUserId: request.staffUserId,
+        reviewedByUserId: caller.id,
+        reviewNotes: reviewNotes.trim(),
+        selfReviewExceptionUsed: exceptionUsed,
+      });
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "leave_request",
+        entityId: leaveId,
+        action: "cancellation_request_declined",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, reviewNotes: reviewNotes.trim(), selfReviewExceptionUsed: exceptionUsed },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+      return declined;
     },
 
     /**

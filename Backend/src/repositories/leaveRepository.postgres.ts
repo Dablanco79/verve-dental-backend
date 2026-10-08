@@ -30,10 +30,14 @@
 import { AppError } from "../types/errors.js";
 import type {
   ApproveLeaveResult,
+  ApproveLeaveCancellationResult,
   CancelApprovedLeaveInput,
+  CreateLeaveCancellationRequestInput,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
+  LeaveCancellationRequest,
+  LeaveCancellationRequestStatus,
   LeaveRosterConflict,
   LeaveRequestStatus,
   LeaveType,
@@ -43,6 +47,7 @@ import type {
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 import type { DatabasePool } from "../db/pool.js";
+import type { PoolClient } from "pg";
 import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "../db/tenantContext.js";
 import type { LeaveRepository } from "./leaveRepository.js";
 
@@ -67,6 +72,24 @@ type LeaveRequestRow = {
   cancelled_by_user_id: string | null;
   cancelled_at: Date | null;
   cancellation_reason: string | null;
+  cancellation_self_review_exception_used: boolean;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type LeaveCancellationRequestRow = {
+  id: string;
+  leave_request_id: string;
+  clinic_id: string;
+  staff_user_id: string;
+  requested_by_user_id: string;
+  request_reason: string;
+  status: string;
+  requested_at: Date;
+  reviewed_by_user_id: string | null;
+  reviewed_at: Date | null;
+  review_notes: string | null;
+  self_review_exception_used: boolean;
   created_at: Date;
   updated_at: Date;
 };
@@ -109,9 +132,94 @@ function toLeaveRequest(row: LeaveRequestRow): LeaveRequest {
     cancelledByUserId: row.cancelled_by_user_id,
     cancelledAt: row.cancelled_at,
     cancellationReason: row.cancellation_reason,
+    cancellationSelfReviewExceptionUsed: row.cancellation_self_review_exception_used,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function toCancellationRequest(row: LeaveCancellationRequestRow): LeaveCancellationRequest {
+  return {
+    id: row.id,
+    leaveRequestId: row.leave_request_id,
+    clinicId: row.clinic_id,
+    staffUserId: row.staff_user_id,
+    requestedByUserId: row.requested_by_user_id,
+    requestReason: row.request_reason,
+    status: row.status as LeaveCancellationRequestStatus,
+    requestedAt: row.requested_at,
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: row.reviewed_at,
+    reviewNotes: row.review_notes,
+    selfReviewExceptionUsed: row.self_review_exception_used,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function assertSoleOwnerAdminReviewException(
+  client: PoolClient,
+  clinicId: string,
+  actorId: string,
+  exceptionUsed: boolean,
+): Promise<void> {
+  if (!exceptionUsed) return;
+  const { rows } = await client.query<{ allowed: boolean }>(
+    `WITH target_organisation AS (
+       SELECT organisation_id
+         FROM clinics
+        WHERE id = $1
+          AND organisation_id IS NOT NULL
+     )
+     SELECT
+       EXISTS (
+         SELECT 1
+           FROM users actor
+           JOIN clinics actor_clinic ON actor_clinic.id = actor.home_clinic_id
+           JOIN target_organisation target
+             ON target.organisation_id = actor_clinic.organisation_id
+          WHERE actor.id = $2
+            AND actor.is_active = true
+            AND actor.role = 'owner_admin'
+       )
+       AND NOT EXISTS (
+         SELECT 1
+           FROM users u
+           CROSS JOIN target_organisation target
+          WHERE u.id <> $2
+            AND u.is_active = true
+            AND (
+              (
+                u.role = 'owner_admin'
+                AND EXISTS (
+                  SELECT 1
+                    FROM clinics owner_clinic
+                   WHERE owner_clinic.id = u.home_clinic_id
+                     AND owner_clinic.organisation_id = target.organisation_id
+                )
+              )
+              OR (
+                u.role = 'group_practice_manager'
+                AND u.home_clinic_id = $1
+                AND EXISTS (
+                  SELECT 1 FROM user_permission_grants g
+                   WHERE g.user_id = u.id
+                     AND g.clinic_id = $1
+                     AND g.revoked_at IS NULL
+                     AND g.permission = 'module:leave'
+                )
+              )
+            )
+       ) AS allowed`,
+    [clinicId, actorId],
+  );
+  if (!(rows[0]?.allowed ?? false)) {
+    throw new AppError(
+      403,
+      "SELF_REVIEW_FORBIDDEN",
+      "You cannot review your own cancellation request",
+    );
+  }
 }
 
 function toRosterConflict(row: RosterConflictRow): LeaveRosterConflict {
@@ -471,16 +579,38 @@ export function createPostgresLeaveRepository(
           );
         }
 
+        const pending = await client.query(
+          `SELECT id FROM leave_cancellation_requests
+            WHERE leave_request_id = $1 AND status = 'pending'
+            FOR UPDATE`,
+          [input.leaveId],
+        );
+        if ((pending.rowCount ?? 0) > 0) {
+          throw new AppError(
+            409,
+            "PENDING_CANCELLATION_REQUEST",
+            "This leave request has a pending cancellation request",
+          );
+        }
+
+        await assertSoleOwnerAdminReviewException(
+          client,
+          input.clinicId,
+          input.cancelledByUserId,
+          input.selfReviewExceptionUsed ?? false,
+        );
+
         const updated = await client.query<LeaveRequestRow>(
           `UPDATE leave_requests
               SET status = 'cancelled',
                   cancelled_by_user_id = $2,
                   cancelled_at = now(),
                   cancellation_reason = $3,
+                  cancellation_self_review_exception_used = $4,
                   updated_at = now()
             WHERE id = $1 AND status = 'approved'
             RETURNING *`,
-          [input.leaveId, input.cancelledByUserId, input.cancellationReason],
+          [input.leaveId, input.cancelledByUserId, input.cancellationReason, input.selfReviewExceptionUsed ?? false],
         );
         const leave = updated.rows[0];
         if (!leave) {
@@ -499,6 +629,177 @@ export function createPostgresLeaveRepository(
       } finally {
         client.release();
       }
+    },
+
+    async createCancellationRequest(input: CreateLeaveCancellationRequestInput): Promise<LeaveCancellationRequest> {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT set_config('app.current_clinic_id', $1, true),
+                  set_config('app.owner_admin_mode', 'false', true),
+                  set_config('app.current_user_id', $2, true)`,
+          [input.clinicId, input.requestedByUserId],
+        );
+        await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('workforce-person:' || $1::text, 0))`, [input.staffUserId]);
+        const parent = await client.query<LeaveRequestRow>(
+          `SELECT * FROM leave_requests WHERE id = $1 AND clinic_id = $2 AND staff_user_id = $3 FOR UPDATE`,
+          [input.leaveRequestId, input.clinicId, input.staffUserId],
+        );
+        if (!parent.rows[0]) throw new AppError(404, "NOT_FOUND", "Leave request not found");
+        if (parent.rows[0].status !== "approved") {
+          throw new AppError(409, "INVALID_STATUS_TRANSITION", "Only approved leave can be cancelled");
+        }
+        await client.query(
+          `SELECT id FROM leave_cancellation_requests WHERE leave_request_id = $1 AND status = 'pending' FOR UPDATE`,
+          [input.leaveRequestId],
+        );
+        const inserted = await client.query<LeaveCancellationRequestRow>(
+          `INSERT INTO leave_cancellation_requests
+             (leave_request_id, clinic_id, staff_user_id, requested_by_user_id, request_reason)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [input.leaveRequestId, input.clinicId, input.staffUserId, input.requestedByUserId, input.requestReason],
+        ).catch((error: unknown) => {
+          if (typeof error === "object" && error !== null && "code" in error && error.code === "23505") {
+            throw new AppError(409, "DUPLICATE_PENDING_CANCELLATION", "A cancellation request is already pending");
+          }
+          throw error;
+        });
+        const row = inserted.rows[0];
+        if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create cancellation request");
+        await client.query("COMMIT");
+        return toCancellationRequest(row);
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async listCancellationRequestsByStaff(staffUserId, options) {
+      const params: unknown[] = [staffUserId];
+      const status = options?.status ? " AND status = $2" : "";
+      if (options?.status) params.push(options.status);
+      const { rows } = await pool.query<LeaveCancellationRequestRow>(
+        `SELECT * FROM leave_cancellation_requests WHERE staff_user_id = $1${status} ORDER BY requested_at DESC`,
+        params,
+      );
+      return rows.map(toCancellationRequest);
+    },
+
+    async listCancellationRequestsByClinic(clinicId, options) {
+      return withTenantContext(pool, AUTH_BYPASS_CLINIC_ID, async (client) => {
+        const params: unknown[] = [clinicId];
+        const status = options?.status ? " AND status = $2" : "";
+        if (options?.status) params.push(options.status);
+        const { rows } = await client.query<LeaveCancellationRequestRow>(
+          `SELECT * FROM leave_cancellation_requests WHERE clinic_id = $1${status} ORDER BY requested_at DESC`,
+          params,
+        );
+        return rows.map(toCancellationRequest);
+      }, true);
+    },
+
+    async findCancellationRequestById(input) {
+      return withTenantContext(pool, AUTH_BYPASS_CLINIC_ID, async (client) => {
+        const { rows } = await client.query<LeaveCancellationRequestRow>(
+          `SELECT * FROM leave_cancellation_requests
+            WHERE id = $1 AND leave_request_id = $2 AND clinic_id = $3`,
+          [input.requestId, input.leaveId, input.clinicId],
+        );
+        return rows[0] ? toCancellationRequest(rows[0]) : null;
+      }, true);
+    },
+
+    async approveCancellationRequest(input): Promise<ApproveLeaveCancellationResult> {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT set_config('app.current_clinic_id', $1, true), set_config('app.owner_admin_mode', 'true', true), set_config('app.current_user_id', '', true)`,
+          [AUTH_BYPASS_CLINIC_ID],
+        );
+        await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('workforce-person:' || $1::text, 0))`, [input.expectedStaffUserId]);
+        const parent = await client.query<LeaveRequestRow>(
+          `SELECT * FROM leave_requests WHERE id = $1 AND clinic_id = $2 AND staff_user_id = $3 FOR UPDATE`,
+          [input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        const child = await client.query<LeaveCancellationRequestRow>(
+          `SELECT * FROM leave_cancellation_requests WHERE id = $1 AND leave_request_id = $2 AND clinic_id = $3 AND staff_user_id = $4 FOR UPDATE`,
+          [input.requestId, input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        if (!parent.rows[0] || !child.rows[0]) throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
+        if (parent.rows[0].status !== "approved" || child.rows[0].status !== "pending") {
+          throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+        }
+        await assertSoleOwnerAdminReviewException(
+          client,
+          input.clinicId,
+          input.reviewedByUserId,
+          input.selfReviewExceptionUsed,
+        );
+        const updatedChild = await client.query<LeaveCancellationRequestRow>(
+          `UPDATE leave_cancellation_requests SET status = 'approved', reviewed_by_user_id = $2, reviewed_at = now(),
+             review_notes = $3, self_review_exception_used = $4, updated_at = now()
+           WHERE id = $1 AND status = 'pending' RETURNING *`,
+          [input.requestId, input.reviewedByUserId, input.reviewNotes, input.selfReviewExceptionUsed],
+        );
+        const updatedParent = await client.query<LeaveRequestRow>(
+          `UPDATE leave_requests SET status = 'cancelled', cancelled_by_user_id = $2, cancelled_at = now(),
+             cancellation_reason = $3, cancellation_self_review_exception_used = $4, updated_at = now()
+           WHERE id = $1 AND status = 'approved' RETURNING *`,
+          [input.leaveId, input.reviewedByUserId, child.rows[0].request_reason, input.selfReviewExceptionUsed],
+        );
+        if (!updatedChild.rows[0] || !updatedParent.rows[0]) throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+        await client.query("COMMIT");
+        return { request: toCancellationRequest(updatedChild.rows[0]), leave: toLeaveRequest(updatedParent.rows[0]) };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally { client.release(); }
+    },
+
+    async declineCancellationRequest(input) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT set_config('app.current_clinic_id', $1, true), set_config('app.owner_admin_mode', 'true', true), set_config('app.current_user_id', '', true)`,
+          [AUTH_BYPASS_CLINIC_ID],
+        );
+        await client.query(`SELECT pg_advisory_xact_lock(hashtextextended('workforce-person:' || $1::text, 0))`, [input.expectedStaffUserId]);
+        const parent = await client.query<LeaveRequestRow>(
+          `SELECT * FROM leave_requests WHERE id = $1 AND clinic_id = $2 AND staff_user_id = $3 FOR UPDATE`,
+          [input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        const child = await client.query<LeaveCancellationRequestRow>(
+          `SELECT * FROM leave_cancellation_requests WHERE id = $1 AND leave_request_id = $2 AND clinic_id = $3 AND staff_user_id = $4 FOR UPDATE`,
+          [input.requestId, input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        if (!parent.rows[0] || !child.rows[0]) throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
+        if (parent.rows[0].status !== "approved" || child.rows[0].status !== "pending") {
+          throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+        }
+        await assertSoleOwnerAdminReviewException(
+          client,
+          input.clinicId,
+          input.reviewedByUserId,
+          input.selfReviewExceptionUsed,
+        );
+        const updated = await client.query<LeaveCancellationRequestRow>(
+          `UPDATE leave_cancellation_requests SET status = 'declined', reviewed_by_user_id = $2, reviewed_at = now(),
+             review_notes = $3, self_review_exception_used = $4, updated_at = now()
+           WHERE id = $1 AND status = 'pending' RETURNING *`,
+          [input.requestId, input.reviewedByUserId, input.reviewNotes, input.selfReviewExceptionUsed],
+        );
+        if (!updated.rows[0]) throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
+        await client.query("COMMIT");
+        return toCancellationRequest(updated.rows[0]);
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally { client.release(); }
     },
 
     async listRosterConflicts(input): Promise<LeaveRosterConflict[]> {

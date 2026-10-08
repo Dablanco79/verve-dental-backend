@@ -89,6 +89,9 @@ function createMinimalUserRepo(
     async updatePassword() { /* no-op */ },
     updateUser(): never { throw new Error("not implemented in test stub"); },
     async setUserMfaEnrollment() { /* no-op */ },
+    canUseSoleOwnerAdminLeaveReviewException(): Promise<boolean> {
+      return Promise.resolve(false);
+    },
   };
 }
 

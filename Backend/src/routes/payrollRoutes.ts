@@ -78,6 +78,12 @@ export function createLeaveRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.listMyLeave(req, res)),
   );
 
+  router.get(
+    "/cancellation-requests",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.listCancellationRequests(req, res)),
+  );
+
   // ── Clinic-wide list (manager) & new request (all roles) ───────────────────
   router.get(
     "/",
@@ -94,6 +100,24 @@ export function createLeaveRouter(deps: AppDependencies): Router {
   // ── Per-request action endpoints ────────────────────────────────────────────
   // The service layer enforces ownership (withdraw) and manager RBAC
   // (approve/reject/cancel) as a second line of defence.
+
+  router.post(
+    "/:leaveId/cancellation-requests",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.createCancellationRequest(req, res)),
+  );
+
+  router.post(
+    "/:leaveId/cancellation-requests/:requestId/approve",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.approveCancellationRequest(req, res)),
+  );
+
+  router.post(
+    "/:leaveId/cancellation-requests/:requestId/decline",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.declineCancellationRequest(req, res)),
+  );
 
   router.post(
     "/:leaveId/approve",

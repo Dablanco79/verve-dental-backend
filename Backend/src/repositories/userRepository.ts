@@ -59,6 +59,7 @@ export interface UserRepository {
    * Called only after the user submits a valid first code during enrollment.
    */
   setUserMfaEnrollment(userId: string, totpSecret: string): Promise<void>;
+  canUseSoleOwnerAdminLeaveReviewException(clinicId: string, actorId: string): Promise<boolean>;
 }
 
 export const SEED_CLINIC_A_ID = "11111111-1111-4111-8111-111111111111";
@@ -256,6 +257,17 @@ export async function createInMemoryUserRepository(
         user.mfaEnabled = true;
       }
       return Promise.resolve();
+    },
+
+    canUseSoleOwnerAdminLeaveReviewException(clinicId: string, actorId: string): Promise<boolean> {
+      const actor = users.find((user) => user.id === actorId);
+      if (!actor?.isActive || actor.role !== "owner_admin") return Promise.resolve(false);
+      const otherReviewer = users.some((user) =>
+        user.id !== actorId &&
+        user.isActive &&
+        (user.role === "owner_admin" ||
+          (user.role === "group_practice_manager" && user.homeClinicId === clinicId)));
+      return Promise.resolve(!otherReviewer);
     },
   };
 }

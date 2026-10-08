@@ -4,10 +4,15 @@ import { createApiClient } from "../api/client.js";
 import { loadConfig } from "../config/index.js";
 import type { UserRole } from "../types/index.js";
 import type {
+  ApproveLeaveCancellationRequest,
+  ApproveLeaveCancellationResult,
   ApproveLeaveRequest,
   ApproveLeaveResult,
   CancelApprovedLeaveRequest,
+  CreateLeaveCancellationRequest,
   CreateLeaveRequest,
+  DeclineLeaveCancellationRequest,
+  LeaveCancellationRequest,
   LeaveFilters,
   LeaveRequest,
   LeaveRosterConflict,
@@ -24,6 +29,7 @@ export type UseLeaveResult = {
    *   - Staff see only their own requests (via `listMyLeave`).
    */
   requests: LeaveRequest[];
+  cancellationRequests: LeaveCancellationRequest[];
   isLoading: boolean;
   error: string | null;
   /** Re-run the last fetch immediately. */
@@ -56,6 +62,18 @@ export type UseLeaveResult = {
    * `owner_admin` may also withdraw on behalf of a staff member.
    */
   withdrawLeave: (leaveId: string) => Promise<LeaveRequest>;
+  requestCancellation: (
+    leaveId: string,
+    payload: CreateLeaveCancellationRequest,
+  ) => Promise<LeaveCancellationRequest>;
+  approveCancellationRequest: (
+    request: LeaveCancellationRequest,
+    payload?: ApproveLeaveCancellationRequest,
+  ) => Promise<ApproveLeaveCancellationResult>;
+  declineCancellationRequest: (
+    request: LeaveCancellationRequest,
+    payload: DeclineLeaveCancellationRequest,
+  ) => Promise<LeaveCancellationRequest>;
 };
 
 /**
@@ -78,6 +96,7 @@ export function useLeave(
   filters: LeaveFilters = {},
 ): UseLeaveResult {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [cancellationRequests, setCancellationRequests] = useState<LeaveCancellationRequest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -91,17 +110,22 @@ export function useLeave(
     setError(null);
 
     // Dual-view dispatch: managers see all clinic requests; staff see their own.
-    const request = canManagePayroll(role)
+    const leaveRequest = canManagePayroll(role)
       ? apiClient.listLeave(clinicId, filters)
       : apiClient.listMyLeave(clinicId, filters);
 
-    void request
-      .then((result) => {
-        setRequests(result);
+    void Promise.all([
+      leaveRequest,
+      apiClient.listLeaveCancellationRequests(clinicId),
+    ])
+      .then(([leaveResult, cancellationResult]) => {
+        setRequests(leaveResult);
+        setCancellationRequests(cancellationResult);
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Unable to load leave requests");
         setRequests([]);
+        setCancellationRequests([]);
       })
       .finally(() => {
         setIsLoading(false);
@@ -189,8 +213,64 @@ export function useLeave(
     [clinicId, role, fetch],
   );
 
+  const requestCancellation = useCallback(
+    async (
+      leaveId: string,
+      payload: CreateLeaveCancellationRequest,
+    ): Promise<LeaveCancellationRequest> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      const created = await apiClient.createLeaveCancellationRequest(clinicId, leaveId, payload);
+      fetch();
+      return created;
+    },
+    [clinicId, fetch],
+  );
+
+  const approveCancellationRequest = useCallback(
+    async (
+      cancellationRequest: LeaveCancellationRequest,
+      payload: ApproveLeaveCancellationRequest = {},
+    ): Promise<ApproveLeaveCancellationResult> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to approve cancellation requests");
+      }
+      const updated = await apiClient.approveLeaveCancellationRequest(
+        clinicId,
+        cancellationRequest.leaveRequestId,
+        cancellationRequest.id,
+        payload,
+      );
+      fetch();
+      return updated;
+    },
+    [clinicId, role, fetch],
+  );
+
+  const declineCancellationRequest = useCallback(
+    async (
+      cancellationRequest: LeaveCancellationRequest,
+      payload: DeclineLeaveCancellationRequest,
+    ): Promise<LeaveCancellationRequest> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to decline cancellation requests");
+      }
+      const updated = await apiClient.declineLeaveCancellationRequest(
+        clinicId,
+        cancellationRequest.leaveRequestId,
+        cancellationRequest.id,
+        payload,
+      );
+      fetch();
+      return updated;
+    },
+    [clinicId, role, fetch],
+  );
+
   return {
     requests,
+    cancellationRequests,
     isLoading,
     error,
     refetch: fetch,
@@ -200,5 +280,8 @@ export function useLeave(
     rejectLeave,
     cancelApprovedLeave,
     withdrawLeave,
+    requestCancellation,
+    approveCancellationRequest,
+    declineCancellationRequest,
   };
 }

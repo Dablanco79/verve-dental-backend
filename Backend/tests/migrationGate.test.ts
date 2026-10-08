@@ -378,9 +378,11 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("056_approved_leave_cancellation is the last migration", () => {
+  it("057_leave_cancellation_requests is registered after 056", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("056_approved_leave_cancellation");
+    expect(ids[ids.length - 1]).toBe("057_leave_cancellation_requests");
+    expect(ids.indexOf("057_leave_cancellation_requests"))
+      .toBe(ids.indexOf("056_approved_leave_cancellation") + 1);
   });
 
   it("detects stocktake migrations as pending on a pre-stocktake database", async () => {

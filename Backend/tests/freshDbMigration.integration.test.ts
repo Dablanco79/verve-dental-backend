@@ -6,7 +6,8 @@
  * 049_clinic_preferred_name, 050_fix_timesheet_roster_unique,
  * 051_geofence_columns, 052_module_permissions_backfill,
  * 053_timesheet_staff_notes, 054_staff_pay_rates, and
- * 055_leave_pilot_safety and 056_approved_leave_cancellation.
+ * 055_leave_pilot_safety, 056_approved_leave_cancellation, and
+ * 057_leave_cancellation_requests.
  *
  * TWO GATING VARIABLES:
  *
@@ -30,6 +31,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import pg from "pg";
 import { jest } from "@jest/globals";
 import { runBootstrapMigrations, BOOTSTRAP_MIGRATIONS } from "../src/db/migrate.js";
@@ -127,7 +129,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 056_approved_leave_cancellation", async () => {
+  it("last migration recorded is 057_leave_cancellation_requests", async () => {
     if (SKIP_FRESH) return;
 
     // Migrations run in a single transaction so applied_at timestamps are
@@ -135,7 +137,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("056_approved_leave_cancellation");
+    expect(rows[0]?.id).toBe("057_leave_cancellation_requests");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
@@ -328,6 +330,87 @@ describe("Migration 056 — approved leave cancellation", () => {
       "leave_requests_cancellation_metadata_complete",
       "leave_requests_cancellation_reason_nonblank",
     ]);
+  });
+});
+
+describe("Migration 057 — leave cancellation requests", () => {
+  it("creates the request table, pending uniqueness, and durable exception column", async () => {
+    if (SKIP_ALL) return;
+    const table = await anyPool().query<{ name: string | null }>(
+      "SELECT to_regclass('leave_cancellation_requests')::text AS name",
+    );
+    expect(table.rows[0]?.name).toBe("leave_cancellation_requests");
+    const index = await anyPool().query<{ name: string | null }>(
+      "SELECT to_regclass('leave_cancellation_requests_one_pending_per_leave')::text AS name",
+    );
+    expect(index.rows[0]?.name).toBe("leave_cancellation_requests_one_pending_per_leave");
+    const column = await anyPool().query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM information_schema.columns
+        WHERE table_name = 'leave_requests'
+          AND column_name = 'cancellation_self_review_exception_used'`,
+    );
+    expect(Number(column.rows[0]?.count)).toBe(1);
+  });
+
+  it("down migration refuses rollback and preserves cancellation history", async () => {
+    if (SKIP_ALL) return;
+    const leaveId = randomUUID();
+    const cancellationId = randomUUID();
+    const db = anyPool();
+    await db.query(
+      `INSERT INTO leave_requests
+         (id, staff_user_id, staff_email, clinic_id, leave_type,
+          start_date, end_date, total_days, status, reviewed_by_user_id, reviewed_at)
+       VALUES ($1, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'staff@clinic-a.au',
+               '11111111-1111-4111-8111-111111111111', 'annual',
+               '2038-01-10', '2038-01-10', 1, 'approved',
+               'dddddddd-dddd-4ddd-8ddd-dddddddddddd', now())`,
+      [leaveId],
+    );
+    await db.query(
+      `INSERT INTO leave_cancellation_requests
+         (id, leave_request_id, clinic_id, staff_user_id, requested_by_user_id, request_reason)
+       VALUES ($1, $2, '11111111-1111-4111-8111-111111111111',
+               'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+               'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Preserve this history')`,
+      [cancellationId, leaveId],
+    );
+
+    try {
+      const downSql = readFileSync(
+        new URL("../migrations/057_leave_cancellation_requests.down.sql", import.meta.url),
+        "utf8",
+      );
+      await expect(db.query(downSql)).rejects.toThrow(
+        "Migration 057 rollback refused",
+      );
+      const preserved = await db.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM leave_cancellation_requests WHERE id = $1",
+        [cancellationId],
+      );
+      expect(preserved.rows[0]?.count).toBe("1");
+
+      await db.query("DELETE FROM leave_cancellation_requests WHERE id = $1", [cancellationId]);
+      await db.query(
+        `UPDATE leave_requests
+            SET cancellation_self_review_exception_used = true
+          WHERE id = $1`,
+        [leaveId],
+      );
+      await expect(db.query(downSql)).rejects.toThrow(
+        "leave_requests contains sole-review exception history",
+      );
+      const parentHistory = await db.query<{ preserved: boolean }>(
+        `SELECT cancellation_self_review_exception_used AS preserved
+           FROM leave_requests
+          WHERE id = $1`,
+        [leaveId],
+      );
+      expect(parentHistory.rows[0]?.preserved).toBe(true);
+    } finally {
+      await db.query("DELETE FROM leave_cancellation_requests WHERE id = $1", [cancellationId]);
+      await db.query("DELETE FROM leave_requests WHERE id = $1", [leaveId]);
+    }
   });
 });
 

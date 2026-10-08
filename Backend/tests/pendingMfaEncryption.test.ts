@@ -70,6 +70,7 @@ function makeMockUserRepo(initial: UserRecord = makeMockUser()): UserRepository 
       record = { ...record, totpSecret, mfaEnabled: true };
       return Promise.resolve();
     },
+    canUseSoleOwnerAdminLeaveReviewException: () => Promise.resolve(false),
   };
 }
 

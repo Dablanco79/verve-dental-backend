@@ -295,5 +295,65 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
         true, // ownerAdmin
       );
     },
+
+    async canUseSoleOwnerAdminLeaveReviewException(clinicId: string, actorId: string): Promise<boolean> {
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const { rows } = await client.query<{ allowed: boolean }>(
+            `WITH target_organisation AS (
+               SELECT organisation_id
+                 FROM clinics
+                WHERE id = $1
+                  AND organisation_id IS NOT NULL
+             )
+             SELECT
+               EXISTS (
+                 SELECT 1
+                   FROM users actor
+                   JOIN clinics actor_clinic ON actor_clinic.id = actor.home_clinic_id
+                   JOIN target_organisation target
+                     ON target.organisation_id = actor_clinic.organisation_id
+                  WHERE actor.id = $2
+                    AND actor.is_active = true
+                    AND actor.role = 'owner_admin'
+               )
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM users u
+                   CROSS JOIN target_organisation target
+                  WHERE u.id <> $2
+                    AND u.is_active = true
+                    AND (
+                      (
+                        u.role = 'owner_admin'
+                        AND EXISTS (
+                          SELECT 1
+                            FROM clinics owner_clinic
+                           WHERE owner_clinic.id = u.home_clinic_id
+                             AND owner_clinic.organisation_id = target.organisation_id
+                        )
+                      )
+                      OR (
+                        u.role = 'group_practice_manager'
+                        AND u.home_clinic_id = $1
+                        AND EXISTS (
+                          SELECT 1 FROM user_permission_grants g
+                           WHERE g.user_id = u.id
+                             AND g.clinic_id = $1
+                             AND g.revoked_at IS NULL
+                             AND g.permission = 'module:leave'
+                        )
+                      )
+                    )
+               ) AS allowed`,
+            [clinicId, actorId],
+          );
+          return rows[0]?.allowed ?? false;
+        },
+        true,
+      );
+    },
   };
 }

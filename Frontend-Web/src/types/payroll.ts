@@ -165,6 +165,14 @@ export const LEAVE_REQUEST_STATUSES = [
 ] as const;
 export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number];
 
+export const LEAVE_CANCELLATION_REQUEST_STATUSES = [
+  "pending",
+  "approved",
+  "declined",
+] as const;
+export type LeaveCancellationRequestStatus =
+  (typeof LEAVE_CANCELLATION_REQUEST_STATUSES)[number];
+
 // ── Domain shapes (API response) ──────────────────────────────────────────────
 
 /**
@@ -290,6 +298,28 @@ export type LeaveRequest = {
   updatedAt: string;
 };
 
+export type LeaveCancellationRequest = {
+  id: string;
+  leaveRequestId: string;
+  clinicId: string;
+  staffUserId: string;
+  requestedByUserId: string;
+  requestReason: string;
+  status: LeaveCancellationRequestStatus;
+  requestedAt: string;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  reviewNotes: string | null;
+  selfReviewExceptionUsed: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApproveLeaveCancellationResult = {
+  request: LeaveCancellationRequest;
+  leave: LeaveRequest;
+};
+
 export type LeaveRosterConflict = {
   rosterEntryId: string;
   staffUserId: string;
@@ -412,6 +442,18 @@ export type CancelApprovedLeaveRequest = {
   cancellationReason: string;
 };
 
+export type CreateLeaveCancellationRequest = {
+  requestReason: string;
+};
+
+export type ApproveLeaveCancellationRequest = {
+  reviewNotes?: string | null;
+};
+
+export type DeclineLeaveCancellationRequest = {
+  reviewNotes: string;
+};
+
 // ── Query filter shapes ───────────────────────────────────────────────────────
 
 /** Query parameters accepted by GET /clinics/:clinicId/timesheets */
@@ -440,6 +482,10 @@ export type LeaveFilters = {
   to?: string;
   leaveType?: LeaveType;
   status?: LeaveRequestStatus;
+};
+
+export type LeaveCancellationRequestFilters = {
+  status?: LeaveCancellationRequestStatus;
 };
 
 // ── Display helpers ───────────────────────────────────────────────────────────

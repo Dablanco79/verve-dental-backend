@@ -558,7 +558,7 @@ export async function createAppDependencies(
     clinicAssignmentsRepository,
     clinicRepository,
   );
-  const leaveService = createLeaveService(leaveRepository, analyticsRepository);
+  const leaveService = createLeaveService(leaveRepository, userRepository, analyticsRepository);
   const billingService = createBillingService(billingRepository, analyticsRepository);
   const analyticsService = createAnalyticsService(
     analyticsRepository,

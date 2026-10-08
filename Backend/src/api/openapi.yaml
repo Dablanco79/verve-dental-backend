@@ -1178,6 +1178,8 @@ components:
         cancellationReason:
           type: string
           nullable: true
+        cancellationSelfReviewExceptionUsed:
+          type: boolean
         createdAt:
           type: string
           format: date-time
@@ -1205,6 +1207,25 @@ components:
           type: string
           maxLength: 2000
           nullable: true
+
+    LeaveCancellationRequest:
+      type: object
+      required: [id, leaveRequestId, clinicId, staffUserId, requestedByUserId, requestReason, status, requestedAt, selfReviewExceptionUsed, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        leaveRequestId: { type: string, format: uuid }
+        clinicId: { type: string, format: uuid }
+        staffUserId: { type: string, format: uuid }
+        requestedByUserId: { type: string, format: uuid }
+        requestReason: { type: string }
+        status: { type: string, enum: [pending, approved, declined] }
+        requestedAt: { type: string, format: date-time }
+        reviewedByUserId: { type: string, format: uuid, nullable: true }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        reviewNotes: { type: string, nullable: true }
+        selfReviewExceptionUsed: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
 
     LeaveRosterConflict:
       type: object
@@ -4387,6 +4408,109 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/leave/cancellation-requests:
+    get:
+      summary: List leave cancellation requests
+      operationId: listLeaveCancellationRequests
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, declined] }
+      responses:
+        "200":
+          description: Role-scoped cancellation requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/cancellation-requests:
+    post:
+      summary: Request cancellation of own approved leave
+      operationId: createLeaveCancellationRequest
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: The staff identity is derived from the authenticated caller and parent leave request.
+              required: [requestReason]
+              properties:
+                requestReason: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Cancellation request created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/cancellation-requests/{requestId}/approve:
+    post:
+      summary: Approve a leave cancellation request
+      operationId: approveLeaveCancellationRequest
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reviewNotes: { type: string, nullable: true, maxLength: 2000 }
+      responses:
+        "200": { description: Cancellation approved and leave cancelled atomically. }
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/cancellation-requests/{requestId}/decline:
+    post:
+      summary: Decline a leave cancellation request
+      operationId: declineLeaveCancellationRequest
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reviewNotes]
+              properties:
+                reviewNotes: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "200": { description: Cancellation request declined; leave remains approved. }
 
   /api/v1/clinics/{clinicId}/leave/{leaveId}/cancel:
     post:
