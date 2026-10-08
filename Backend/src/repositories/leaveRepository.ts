@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ApproveLeaveResult,
+  CancelApprovedLeaveInput,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
@@ -43,6 +44,7 @@ export interface LeaveRepository {
     reviewNotes: string | null;
     timeZone: string;
   }): Promise<ApproveLeaveResult>;
+  cancelApprovedLeave(input: CancelApprovedLeaveInput): Promise<LeaveRequest>;
   listRosterConflicts(input: {
     leaveId: string;
     clinicId: string;
@@ -80,6 +82,9 @@ export function createInMemoryLeaveRepository(
         reviewedByUserId: null,
         reviewedAt: null,
         reviewNotes: null,
+        cancelledByUserId: null,
+        cancelledAt: null,
+        cancellationReason: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -213,6 +218,33 @@ export function createInMemoryLeaveRepository(
       };
       records[records.indexOf(request)] = leave;
       return { leave, conflicts };
+    },
+
+    cancelApprovedLeave(input): Promise<LeaveRequest> {
+      const request = records.find(
+        (record) =>
+          record.id === input.leaveId &&
+          record.clinicId === input.clinicId &&
+          record.staffUserId === input.expectedStaffUserId,
+      );
+      if (!request) {
+        return Promise.reject(new Error(`Leave request not found: ${input.leaveId}`));
+      }
+      if (request.status !== "approved") {
+        return Promise.reject(
+          new Error(`Leave request is '${request.status}' and cannot be cancelled`),
+        );
+      }
+      const cancelled: LeaveRequest = {
+        ...request,
+        status: "cancelled",
+        cancelledByUserId: input.cancelledByUserId,
+        cancelledAt: new Date(),
+        cancellationReason: input.cancellationReason,
+        updatedAt: new Date(),
+      };
+      records[records.indexOf(request)] = cancelled;
+      return Promise.resolve({ ...cancelled });
     },
 
     async listRosterConflicts(input): Promise<LeaveRosterConflict[]> {

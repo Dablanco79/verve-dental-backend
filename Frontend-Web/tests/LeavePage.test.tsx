@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LeavePage } from "../src/pages/LeavePage.js";
 import { createManagerUser, createStaffUser, TEST_CLINIC_ID, TEST_CLINIC_NAME } from "./helpers/auth.js";
 
-const { state, mockSubmit, mockApprove, mockListConflicts } = vi.hoisted(() => ({
+const { state, mockSubmit, mockApprove, mockListConflicts, mockCancelApprovedLeave } = vi.hoisted(() => ({
   state: {
     user: null as ReturnType<typeof createManagerUser> | null,
     requests: [] as Array<Record<string, unknown>>,
@@ -14,6 +14,7 @@ const { state, mockSubmit, mockApprove, mockListConflicts } = vi.hoisted(() => (
   mockSubmit: vi.fn(),
   mockApprove: vi.fn(),
   mockListConflicts: vi.fn(),
+  mockCancelApprovedLeave: vi.fn(),
 }));
 
 vi.mock("../src/auth/useAuth.js", () => ({
@@ -39,6 +40,7 @@ vi.mock("../src/hooks/useLeave.js", () => ({
     approveLeave: mockApprove,
     listRosterConflicts: mockListConflicts,
     rejectLeave: vi.fn(),
+    cancelApprovedLeave: mockCancelApprovedLeave,
     withdrawLeave: vi.fn(),
   }),
 }));
@@ -51,7 +53,7 @@ function renderPage() {
   );
 }
 
-function leaveRequest(status: "pending" | "approved" = "pending") {
+function leaveRequest(status: "pending" | "approved" | "cancelled" = "pending") {
   return {
     id: "leave-1",
     staffUserId: "staff-1",
@@ -63,9 +65,12 @@ function leaveRequest(status: "pending" | "approved" = "pending") {
     totalDays: 3,
     reason: "Holiday",
     status,
-    reviewedByUserId: status === "approved" ? "manager-1" : null,
-    reviewedAt: status === "approved" ? "2026-10-01T00:00:00Z" : null,
-    reviewNotes: null,
+    reviewedByUserId: status === "pending" ? null : "manager-1",
+    reviewedAt: status === "pending" ? null : "2026-10-01T00:00:00Z",
+    reviewNotes: status === "pending" ? null : "Approved",
+    cancelledByUserId: status === "cancelled" ? "manager-1" : null,
+    cancelledAt: status === "cancelled" ? "2026-10-02T00:00:00Z" : null,
+    cancellationReason: status === "cancelled" ? "Plans changed" : null,
     createdAt: "2026-10-01T00:00:00Z",
     updatedAt: "2026-10-01T00:00:00Z",
   };
@@ -145,5 +150,44 @@ describe("LeavePage pilot safety", () => {
     await user.click(screen.getByRole("button", { name: "Review conflicts" }));
     expect(await screen.findByText("1 unresolved")).toBeInTheDocument();
     expect(screen.getAllByText(new RegExp(TEST_CLINIC_NAME))).toHaveLength(2);
+  });
+
+  it("requires a reason and confirms approved leave cancellation without implying shift restoration", async () => {
+    const user = userEvent.setup();
+    state.user = createManagerUser();
+    state.requests = [leaveRequest("approved")];
+    mockCancelApprovedLeave.mockResolvedValue(leaveRequest("cancelled"));
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Cancel Approved Leave" }));
+    expect(screen.getByText(/does not create, restore, move or change any shifts/i))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A cancellation reason is required.",
+    );
+    expect(mockCancelApprovedLeave).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Cancellation reason"), "Employee changed plans");
+    await user.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    await waitFor(() => {
+      expect(mockCancelApprovedLeave).toHaveBeenCalledWith("leave-1", {
+        cancellationReason: "Employee changed plans",
+      });
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /no shifts were created, restored, moved or changed/i,
+    );
+  });
+
+  it("shows cancelled status and reason in staff leave history", () => {
+    state.user = createStaffUser();
+    state.requests = [leaveRequest("cancelled")];
+    renderPage();
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText("Plans changed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Withdraw" })).not.toBeInTheDocument();
   });
 });

@@ -93,7 +93,7 @@ export function createLeaveRouter(deps: AppDependencies): Router {
 
   // ── Per-request action endpoints ────────────────────────────────────────────
   // The service layer enforces ownership (withdraw) and manager RBAC
-  // (approve/reject) as a second line of defence.
+  // (approve/reject/cancel) as a second line of defence.
 
   router.post(
     "/:leaveId/approve",
@@ -111,6 +111,12 @@ export function createLeaveRouter(deps: AppDependencies): Router {
     "/:leaveId/reject",
     requireRoles(...PAYROLL_MANAGER_ROLES),
     asyncHandler((req, res) => handlers.rejectLeaveRequest(req, res)),
+  );
+
+  router.post(
+    "/:leaveId/cancel",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.cancelApprovedLeaveRequest(req, res)),
   );
 
   // Staff withdraw their own request; managers can also withdraw via owner_admin.

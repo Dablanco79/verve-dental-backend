@@ -6,6 +6,14 @@
   background: #fffaf0;
 }
 
+.lv-cancellation-result {
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+}
+
 .lv-conflict-count {
   display: block;
   margin-top: 0.25rem;
@@ -3660,6 +3668,7 @@ body {
 .lv-badge--approved  { background: #d1fae5; color: #065f46; }
 .lv-badge--rejected  { background: #fee2e2; color: #9b1c1c; }
 .lv-badge--withdrawn { background: #f3f4f6; color: #374151; }
+.lv-badge--cancelled { background: #f3f4f6; color: #374151; }
 
 /* LeaveType */
 .lv-badge--annual        { background: #dbeafe; color: #1e40af; }

@@ -1155,7 +1155,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [pending, approved, rejected, withdrawn]
+          enum: [pending, approved, rejected, withdrawn, cancelled]
         reviewedByUserId:
           type: string
           format: uuid
@@ -1165,6 +1165,17 @@ components:
           format: date-time
           nullable: true
         reviewNotes:
+          type: string
+          nullable: true
+        cancelledByUserId:
+          type: string
+          format: uuid
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancellationReason:
           type: string
           nullable: true
         createdAt:
@@ -4376,6 +4387,59 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/cancel:
+    post:
+      summary: Cancel approved leave
+      operationId: cancelApprovedLeaveRequest
+      tags: [Leave]
+      security:
+        - bearerAuth: []
+      description: >
+        Cancels previously approved leave without changing any roster shifts.
+        Restricted to authorised managers and Owner/Admin users. Original
+        approval metadata is preserved.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [cancellationReason]
+              properties:
+                cancellationReason:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "200":
+          description: Approved leave cancelled; roster shifts remain unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/LeaveRequest"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Leave request is not approved or was already cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/clinics/{clinicId}/leave/{leaveId}/withdraw:
     post:

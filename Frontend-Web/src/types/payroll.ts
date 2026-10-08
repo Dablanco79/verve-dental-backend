@@ -161,6 +161,7 @@ export const LEAVE_REQUEST_STATUSES = [
   "approved",
   "rejected",
   "withdrawn",
+  "cancelled",
 ] as const;
 export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number];
 
@@ -282,6 +283,9 @@ export type LeaveRequest = {
   reviewedAt: string | null;
   /** Manager's notes on approval or rejection. */
   reviewNotes: string | null;
+  cancelledByUserId: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -403,6 +407,11 @@ export type RejectLeaveRequest = {
   reviewNotes: string;
 };
 
+/** POST /clinics/:clinicId/leave/:leaveId/cancel */
+export type CancelApprovedLeaveRequest = {
+  cancellationReason: string;
+};
+
 // ── Query filter shapes ───────────────────────────────────────────────────────
 
 /** Query parameters accepted by GET /clinics/:clinicId/timesheets */
@@ -472,4 +481,5 @@ export const LEAVE_REQUEST_STATUS_LABELS: Record<LeaveRequestStatus, string> = {
   approved: "Approved",
   rejected: "Rejected",
   withdrawn: "Withdrawn",
+  cancelled: "Cancelled",
 };

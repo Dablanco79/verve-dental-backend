@@ -106,14 +106,15 @@ export type LeaveType = (typeof LEAVE_TYPES)[number];
 
 /**
  * Leave request lifecycle.
- * 'withdrawn' (not 'cancelled') — the employee withdraws their own request.
- * Admin cancellation of an approved leave is a future feature handled separately.
+ * 'withdrawn' — the employee withdraws their own pending request.
+ * 'cancelled' — an authorised manager cancels previously approved leave.
  */
 export const LEAVE_REQUEST_STATUSES = [
   "pending",
   "approved",
   "rejected",
   "withdrawn",
+  "cancelled",
 ] as const;
 
 export type LeaveRequestStatus = (typeof LEAVE_REQUEST_STATUSES)[number];
@@ -303,6 +304,11 @@ export type LeaveRequest = {
   reviewedAt: Date | null;
   /** Manager's notes on approval or rejection. */
   reviewNotes: string | null;
+  /** Manager who cancelled previously approved leave; null otherwise. */
+  cancelledByUserId: string | null;
+  cancelledAt: Date | null;
+  /** Mandatory reason supplied when approved leave is cancelled. */
+  cancellationReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -427,6 +433,9 @@ export type CreateLeaveRequestInput = Omit<
   | "reviewedByUserId"
   | "reviewedAt"
   | "reviewNotes"
+  | "cancelledByUserId"
+  | "cancelledAt"
+  | "cancellationReason"
   | "createdAt"
   | "updatedAt"
 >;
@@ -439,6 +448,14 @@ export type UpdateLeaveStatusInput = {
   status: LeaveRequestStatus;
   reviewedByUserId: string;
   reviewNotes: string | null;
+};
+
+export type CancelApprovedLeaveInput = {
+  leaveId: string;
+  clinicId: string;
+  expectedStaffUserId: string;
+  cancelledByUserId: string;
+  cancellationReason: string;
 };
 
 // ── List / filter options ─────────────────────────────────────────────────────

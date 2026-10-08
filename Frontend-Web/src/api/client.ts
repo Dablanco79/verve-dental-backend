@@ -84,6 +84,7 @@ import type {
   ApproveLeaveRequest,
   ApproveLeaveResult,
   ApproveTimesheetRequest,
+  CancelApprovedLeaveRequest,
   ClockInRequest,
   ClockOutRequest,
   CreateLeaveRequest,
@@ -1797,6 +1798,19 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function cancelApprovedLeave(
+    clinicId: string,
+    leaveId: string,
+    body: CancelApprovedLeaveRequest,
+  ): Promise<LeaveRequest> {
+    return request<LeaveRequest>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/${leaveId}/cancel`,
+      { method: "POST", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function withdrawLeave(
     clinicId: string,
     leaveId: string,
@@ -2891,6 +2905,7 @@ export function createApiClient(config: AppConfig) {
     approveLeave,
     listLeaveRosterConflicts,
     rejectLeave,
+    cancelApprovedLeave,
     withdrawLeave,
     listSuppliers,
     getSupplier,

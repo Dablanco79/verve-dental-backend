@@ -13,7 +13,17 @@ const SHIFT_START = "2027-01-14T21:00:00.000Z"; // 08:00 Melbourne
 const SHIFT_END = "2027-01-15T06:00:00.000Z";   // 17:00 Melbourne
 
 type Tokens = { staff: string; manager: string; owner: string };
-type LeaveData = { id: string; status: string; totalDays: number };
+type LeaveData = {
+  id: string;
+  status: string;
+  totalDays: number;
+  reviewedByUserId?: string | null;
+  reviewedAt?: string | null;
+  reviewNotes?: string | null;
+  cancelledByUserId?: string | null;
+  cancelledAt?: string | null;
+  cancellationReason?: string | null;
+};
 type ShiftData = { id: string; status: string };
 type ApprovalData = {
   leave: LeaveData;
@@ -82,6 +92,18 @@ function approve(
     .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/approve`)
     .set("Authorization", `Bearer ${token}`)
     .send({});
+}
+
+function cancelApprovedLeave(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  token: string,
+  leaveId: string,
+  cancellationReason: string = "Leave no longer required",
+) {
+  return request(app)
+    .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/cancel`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({ cancellationReason });
 }
 
 describe("Leave → roster pilot safety", () => {
@@ -196,6 +218,120 @@ describe("Leave → roster pilot safety", () => {
       .set("Authorization", `Bearer ${withdrawnAuth.staff}`)
       .expect(200);
     await createShift(withdrawnApp, withdrawnAuth.owner).expect(201);
+  });
+
+  it("cancels approved leave, preserves approval history and removes roster blocking", async () => {
+    const app = await createTestApp();
+    const auth = await tokens(app);
+    const shift = await createShift(app, auth.owner).expect(201);
+    const leaveResponse = await createLeave(app, auth.staff).expect(201);
+    const leaveId = (data(leaveResponse) as LeaveData).id;
+    const approval = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/approve`)
+      .set("Authorization", `Bearer ${auth.manager}`)
+      .send({ reviewNotes: "Original approval note" })
+      .expect(200);
+    const approved = (data(approval) as ApprovalData).leave;
+
+    const cancellation = await cancelApprovedLeave(
+      app,
+      auth.manager,
+      leaveId,
+      "Employee changed plans",
+    ).expect(200);
+    const cancelled = data(cancellation) as LeaveData;
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      reviewedByUserId: approved.reviewedByUserId,
+      reviewedAt: approved.reviewedAt,
+      reviewNotes: "Original approval note",
+      cancelledByUserId: SEED_USER_IDS.clinicAManager,
+      cancellationReason: "Employee changed plans",
+    });
+    expect(cancelled.cancelledAt).toEqual(expect.any(String));
+
+    const persistedShift = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${(data(shift) as ShiftData).id}`)
+      .set("Authorization", `Bearer ${auth.owner}`)
+      .expect(200);
+    expect(data(persistedShift)).toMatchObject({
+      id: (data(shift) as ShiftData).id,
+      status: "scheduled",
+    });
+
+    const leaveBlocks = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/leave-blocks`)
+      .query({ from: SHIFT_START, to: SHIFT_END })
+      .set("Authorization", `Bearer ${auth.owner}`)
+      .expect(200);
+    expect(data(leaveBlocks)).toEqual([]);
+
+    await createShift(
+      app,
+      auth.owner,
+      SEED_CLINIC_B_ID,
+      "2027-01-15T07:00:00.000Z",
+      "2027-01-15T08:00:00.000Z",
+    ).expect(201);
+
+    const staffHistory = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/me`)
+      .set("Authorization", `Bearer ${auth.staff}`)
+      .expect(200);
+    expect(data(staffHistory)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: leaveId,
+        status: "cancelled",
+        cancellationReason: "Employee changed plans",
+      }),
+    ]));
+  });
+
+  it("requires a cancellation reason and rejects invalid or duplicate transitions", async () => {
+    const app = await createTestApp();
+    const auth = await tokens(app);
+    const pending = await createLeave(app, auth.staff).expect(201);
+    const leaveId = (data(pending) as LeaveData).id;
+
+    const pendingCancel = await cancelApprovedLeave(app, auth.manager, leaveId).expect(409);
+    expect(errorCode(pendingCancel)).toBe("INVALID_STATUS_TRANSITION");
+
+    await approve(app, auth.manager, leaveId).expect(200);
+    const blankReason = await cancelApprovedLeave(app, auth.manager, leaveId, "   ").expect(400);
+    expect(errorCode(blankReason)).toBe("VALIDATION_ERROR");
+
+    await cancelApprovedLeave(app, auth.manager, leaveId).expect(200);
+    const duplicate = await cancelApprovedLeave(app, auth.manager, leaveId).expect(409);
+    expect(errorCode(duplicate)).toBe("INVALID_STATUS_TRANSITION");
+
+    const rejectedResponse = await createLeave(app, auth.staff, {
+      startDate: "2027-01-20",
+      endDate: "2027-01-20",
+    }).expect(201);
+    const rejectedId = (data(rejectedResponse) as LeaveData).id;
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${rejectedId}/reject`)
+      .set("Authorization", `Bearer ${auth.manager}`)
+      .send({ reviewNotes: "Not approved" })
+      .expect(200);
+    await cancelApprovedLeave(app, auth.manager, rejectedId).expect(409);
+  });
+
+  it("enforces manager role and home-clinic scope for cancellation", async () => {
+    const app = await createTestApp();
+    const auth = await tokens(app);
+    const pending = await createLeave(app, auth.staff).expect(201);
+    const leaveId = (data(pending) as LeaveData).id;
+    await approve(app, auth.manager, leaveId).expect(200);
+
+    await cancelApprovedLeave(app, auth.staff, leaveId).expect(403);
+
+    const wrongClinic = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/leave/${leaveId}/cancel`)
+      .set("Authorization", `Bearer ${auth.manager}`)
+      .send({ cancellationReason: "Out of scope" })
+      .expect(403);
+    expect(errorCode(wrongClinic)).toBe("TENANT_ACCESS_DENIED");
   });
 
   it("uses Melbourne calendar dates at DST boundaries and respects midnight-exclusive ends", async () => {

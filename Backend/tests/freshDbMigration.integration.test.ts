@@ -6,7 +6,7 @@
  * 049_clinic_preferred_name, 050_fix_timesheet_roster_unique,
  * 051_geofence_columns, 052_module_permissions_backfill,
  * 053_timesheet_staff_notes, 054_staff_pay_rates, and
- * 055_leave_pilot_safety.
+ * 055_leave_pilot_safety and 056_approved_leave_cancellation.
  *
  * TWO GATING VARIABLES:
  *
@@ -127,7 +127,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 055_leave_pilot_safety", async () => {
+  it("last migration recorded is 056_approved_leave_cancellation", async () => {
     if (SKIP_FRESH) return;
 
     // Migrations run in a single transaction so applied_at timestamps are
@@ -135,7 +135,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("055_leave_pilot_safety");
+    expect(rows[0]?.id).toBe("056_approved_leave_cancellation");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
@@ -282,6 +282,52 @@ describe("Migration 055 — leave pilot safety", () => {
   it("rejects integer-but-inconsistent total_days, rolls back, and preserves the invalid row", async () => {
     if (SKIP_ALL) return;
     await expectLeavePilotMigrationToRejectWithoutRewrite(2);
+  });
+});
+
+describe("Migration 056 — approved leave cancellation", () => {
+  it("adds the cancelled status and durable cancellation metadata", async () => {
+    if (SKIP_ALL) return;
+
+    const enumValues = await anyPool().query<{ enumlabel: string }>(
+      `SELECT enumlabel
+         FROM pg_enum
+        WHERE enumtypid = 'leave_request_status'::regtype
+        ORDER BY enumsortorder`,
+    );
+    expect(enumValues.rows.map((row) => row.enumlabel)).toContain("cancelled");
+
+    const columns = await anyPool().query<{ column_name: string }>(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'leave_requests'
+          AND column_name IN (
+            'cancelled_by_user_id',
+            'cancelled_at',
+            'cancellation_reason'
+          )`,
+    );
+    expect(columns.rows.map((row) => row.column_name).sort()).toEqual([
+      "cancellation_reason",
+      "cancelled_at",
+      "cancelled_by_user_id",
+    ]);
+
+    const constraint = await anyPool().query<{ conname: string }>(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'leave_requests'::regclass
+          AND conname IN (
+            'leave_requests_cancellation_reason_nonblank',
+            'leave_requests_cancellation_metadata_complete'
+          )
+        ORDER BY conname`,
+    );
+    expect(constraint.rows.map((row) => row.conname)).toEqual([
+      "leave_requests_cancellation_metadata_complete",
+      "leave_requests_cancellation_reason_nonblank",
+    ]);
   });
 });
 

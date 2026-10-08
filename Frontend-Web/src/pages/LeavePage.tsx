@@ -245,13 +245,20 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
 function AllLeaveTable({
   entries,
   onReviewConflicts,
+  onCancelApprovedLeave,
 }: {
   entries: LeaveRequest[];
   onReviewConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
+  onCancelApprovedLeave: (leaveId: string, cancellationReason: string) => Promise<LeaveRequest>;
 }) {
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<Record<string, LeaveRosterConflict[]>>({});
   const [conflictError, setConflictError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
+  const [cancelledMessage, setCancelledMessage] = useState<string | null>(null);
 
   async function reviewConflicts(leaveId: string): Promise<void> {
     setReviewingId(leaveId);
@@ -266,6 +273,35 @@ function AllLeaveTable({
     }
   }
 
+  async function cancelApprovedLeave(leaveId: string): Promise<void> {
+    const reason = cancellationReason.trim();
+    if (!reason) {
+      setCancellationError("A cancellation reason is required.");
+      return;
+    }
+    setIsCancelling(true);
+    setCancellationError(null);
+    try {
+      await onCancelApprovedLeave(leaveId, reason);
+      setConflicts((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([currentLeaveId]) => currentLeaveId !== leaveId),
+        ),
+      );
+      setCancellingId(null);
+      setCancellationReason("");
+      setCancelledMessage(
+        "Approved leave was cancelled. Leave blocks are removed when the roster is refreshed; no shifts were created, restored, moved or changed.",
+      );
+    } catch (error) {
+      setCancellationError(
+        error instanceof Error ? error.message : "Unable to cancel approved leave.",
+      );
+    } finally {
+      setIsCancelling(false);
+    }
+  }
+
   if (entries.length === 0) {
     return (
       <p className="pr-table__empty">No leave requests found for the last 90 days.</p>
@@ -274,6 +310,9 @@ function AllLeaveTable({
 
   return (
     <div className="pr-table-wrap">
+      {cancelledMessage ? (
+        <p className="lv-cancellation-result" role="status">{cancelledMessage}</p>
+      ) : null}
       <table className="pr-table">
         <thead>
           <tr>
@@ -283,13 +322,14 @@ function AllLeaveTable({
             <th className="pr-table__th">To</th>
             <th className="pr-table__th">Days</th>
             <th className="pr-table__th">Status</th>
-            <th className="pr-table__th">Review Notes</th>
-            <th className="pr-table__th">Roster Conflicts</th>
+            <th className="pr-table__th">Decision Details</th>
+            <th className="pr-table__th">Roster / Actions</th>
           </tr>
         </thead>
         <tbody>
           {entries.map((req) => (
-            <tr key={req.id} className="pr-table__row">
+            <Fragment key={req.id}>
+            <tr className="pr-table__row">
               <td className="pr-table__td">{req.staffEmail}</td>
               <td className="pr-table__td">
                 <LeaveTypeBadge type={req.leaveType} />
@@ -304,7 +344,11 @@ function AllLeaveTable({
               <td className="pr-table__td">
                 <LeaveStatusBadge status={req.status} />
               </td>
-              <td className="pr-table__td">{req.reviewNotes ?? "—"}</td>
+              <td className="pr-table__td">
+                {req.status === "cancelled"
+                  ? req.cancellationReason ?? "—"
+                  : req.reviewNotes ?? "—"}
+              </td>
               <td className="pr-table__td">
                 {req.status === "approved" ? (
                   <>
@@ -335,10 +379,73 @@ function AllLeaveTable({
                         <span className="lv-conflict-count">None</span>
                       )
                     ) : null}
+                    <button
+                      type="button"
+                      className="pr-action-btn pr-action-btn--reject"
+                      disabled={isCancelling}
+                      onClick={() => {
+                        setCancellingId(req.id === cancellingId ? null : req.id);
+                        setCancellationReason("");
+                        setCancellationError(null);
+                        setCancelledMessage(null);
+                      }}
+                    >
+                      Cancel Approved Leave
+                    </button>
                   </>
                 ) : "—"}
               </td>
             </tr>
+            {cancellingId === req.id ? (
+              <tr className="pr-table__row pr-table__row--expanded">
+                <td colSpan={8} className="pr-table__td">
+                  <div className="pr-inline-form pr-inline-form--rejection">
+                    <div>
+                      <strong>Cancel approved leave?</strong>
+                      <p>
+                        This removes approved leave blocks after roster refresh. It does not
+                        create, restore, move or change any shifts.
+                      </p>
+                    </div>
+                    <textarea
+                      className="pr-inline-form__input"
+                      aria-label="Cancellation reason"
+                      placeholder="Cancellation reason (required)…"
+                      value={cancellationReason}
+                      onChange={(event) => { setCancellationReason(event.target.value); }}
+                      disabled={isCancelling}
+                      maxLength={2000}
+                    />
+                    <button
+                      type="button"
+                      className="pr-action-btn pr-action-btn--reject"
+                      onClick={() => { void cancelApprovedLeave(req.id); }}
+                      disabled={isCancelling}
+                    >
+                      {isCancelling ? "Cancelling…" : "Confirm Cancellation"}
+                    </button>
+                    <button
+                      type="button"
+                      className="pr-inline-form__cancel"
+                      onClick={() => {
+                        setCancellingId(null);
+                        setCancellationReason("");
+                        setCancellationError(null);
+                      }}
+                      disabled={isCancelling}
+                    >
+                      Keep Approved Leave
+                    </button>
+                  </div>
+                  {cancellationError ? (
+                    <p className="pr-inline-form__error" role="alert">
+                      {cancellationError}
+                    </p>
+                  ) : null}
+                </td>
+              </tr>
+            ) : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -565,7 +672,7 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
               <th className="pr-table__th">To</th>
               <th className="pr-table__th">Days</th>
               <th className="pr-table__th">Status</th>
-              <th className="pr-table__th">Review Notes</th>
+              <th className="pr-table__th">Decision Details</th>
               <th className="pr-table__th" />
             </tr>
           </thead>
@@ -585,7 +692,11 @@ function MyLeaveTable({ entries, onWithdraw }: MyLeaveTableProps) {
                 <td className="pr-table__td">
                   <LeaveStatusBadge status={req.status} />
                 </td>
-                <td className="pr-table__td">{req.reviewNotes ?? "—"}</td>
+                <td className="pr-table__td">
+                  {req.status === "cancelled"
+                    ? req.cancellationReason ?? "—"
+                    : req.reviewNotes ?? "—"}
+                </td>
                 <td className="pr-table__td pr-table__td--actions">
                   {req.status === "pending" ? (
                     <button
@@ -629,6 +740,7 @@ export function LeavePage() {
     approveLeave,
     listRosterConflicts,
     rejectLeave,
+    cancelApprovedLeave,
     withdrawLeave,
   } = useLeave(clinicId, user?.role, filters);
 
@@ -711,6 +823,9 @@ export function LeavePage() {
               <AllLeaveTable
                 entries={requests}
                 onReviewConflicts={listRosterConflicts}
+                onCancelApprovedLeave={async (id, cancellationReason) => {
+                  return cancelApprovedLeave(id, { cancellationReason });
+                }}
               />
             </div>
           </>

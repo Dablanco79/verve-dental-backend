@@ -303,6 +303,54 @@ describe("Audit trail — leave request approval", () => {
       staffUserId: SEED_USER_IDS.clinicAStaff,
     });
   });
+
+  it("writes a cancellation audit event while preserving the approved request history", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const createRes = await request(app)
+      .post(LEAVE(SEED_CLINIC_A_ID))
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({
+        leaveType: "annual",
+        startDate: "2034-08-14",
+        endDate: "2034-08-15",
+        reason: "Audit cancellation",
+      });
+    expect(createRes.status).toBe(201);
+    const leaveRequest = (createRes.body as ApiData<LeaveRequestDto>).data;
+
+    await request(app)
+      .post(`${LEAVE(SEED_CLINIC_A_ID)}/${leaveRequest.id}/approve`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ reviewNotes: "Approved first" })
+      .expect(200);
+
+    await request(app)
+      .post(`${LEAVE(SEED_CLINIC_A_ID)}/${leaveRequest.id}/cancel`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ cancellationReason: "Plans changed" })
+      .expect(200);
+
+    const auditRes = await request(app)
+      .get(AUDIT(SEED_CLINIC_A_ID, "leave_request"))
+      .set("Authorization", `Bearer ${managerToken}`)
+      .expect(200);
+    const page = (auditRes.body as ApiData<AuditEventsPage>).data;
+    const match = page.events.find(
+      (event) =>
+        event.entityType === "leave_request" &&
+        event.action === "cancelled" &&
+        event.entityId === leaveRequest.id,
+    );
+    expect(match).toBeDefined();
+    expect(match?.actorId).toBe(SEED_USER_IDS.clinicAManager);
+    expect(match?.metadata).toMatchObject({
+      cancellationReason: "Plans changed",
+      staffUserId: SEED_USER_IDS.clinicAStaff,
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -219,6 +219,65 @@ export function createLeaveService(
       return rejected;
     },
 
+    /** Authorised manager cancels previously approved leave without changing roster shifts. */
+    async cancelApprovedLeaveRequest(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+      cancellationReason: string,
+    ): Promise<LeaveRequest> {
+      assertReviewAccess(caller, clinicId);
+
+      const reason = cancellationReason.trim();
+      if (!reason) {
+        throw new AppError(
+          400,
+          "CANCELLATION_REASON_REQUIRED",
+          "A reason for cancelling approved leave is required",
+        );
+      }
+
+      const request = await leaveRepository.findById(leaveId);
+      if (!request || request.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Leave request not found");
+      }
+      if (request.status !== "approved") {
+        throw new AppError(
+          409,
+          "INVALID_STATUS_TRANSITION",
+          `Leave request is '${request.status}' and cannot be cancelled`,
+        );
+      }
+
+      const cancelled = await leaveRepository.cancelApprovedLeave({
+        leaveId,
+        clinicId,
+        expectedStaffUserId: request.staffUserId,
+        cancelledByUserId: caller.id,
+        cancellationReason: reason,
+      });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "leave_request",
+        entityId: leaveId,
+        action: "cancelled",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          staffUserId: request.staffUserId,
+          startDate: request.startDate,
+          endDate: request.endDate,
+          leaveType: request.leaveType,
+          cancellationReason: reason,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return cancelled;
+    },
+
     /**
      * Staff member withdraws their own pending leave request.
      * A withdrawn request can never be re-submitted — the staff member must

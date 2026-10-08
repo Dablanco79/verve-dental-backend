@@ -30,6 +30,7 @@
 import { AppError } from "../types/errors.js";
 import type {
   ApproveLeaveResult,
+  CancelApprovedLeaveInput,
   CreateLeaveRequestInput,
   LeavePage,
   LeaveRequest,
@@ -63,6 +64,9 @@ type LeaveRequestRow = {
   reviewed_by_user_id: string | null;
   reviewed_at: Date | null;
   review_notes: string | null;
+  cancelled_by_user_id: string | null;
+  cancelled_at: Date | null;
+  cancellation_reason: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -102,6 +106,9 @@ function toLeaveRequest(row: LeaveRequestRow): LeaveRequest {
     reviewedByUserId: row.reviewed_by_user_id,
     reviewedAt: row.reviewed_at,
     reviewNotes: row.review_notes,
+    cancelledByUserId: row.cancelled_by_user_id,
+    cancelledAt: row.cancelled_at,
+    cancellationReason: row.cancellation_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -417,6 +424,75 @@ export function createPostgresLeaveRepository(
           leave: toLeaveRequest(leave),
           conflicts: conflictRows.rows.map(toRosterConflict),
         };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async cancelApprovedLeave(input: CancelApprovedLeaveInput): Promise<LeaveRequest> {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT set_config('app.current_clinic_id', $1, true),
+                  set_config('app.owner_admin_mode',  'true', true),
+                  set_config('app.current_user_id',   '',     true)`,
+          [AUTH_BYPASS_CLINIC_ID],
+        );
+
+        // Universal workforce lock order: person advisory lock, then row lock.
+        await client.query(
+          `SELECT pg_advisory_xact_lock(
+             hashtextextended('workforce-person:' || $1::text, 0)
+           )`,
+          [input.expectedStaffUserId],
+        );
+
+        const locked = await client.query<LeaveRequestRow>(
+          `SELECT * FROM leave_requests
+           WHERE id = $1
+             AND clinic_id = $2
+             AND staff_user_id = $3
+           FOR UPDATE`,
+          [input.leaveId, input.clinicId, input.expectedStaffUserId],
+        );
+        const request = locked.rows[0];
+        if (!request) {
+          throw new AppError(404, "NOT_FOUND", "Leave request not found");
+        }
+        if (request.status !== "approved") {
+          throw new AppError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            `Leave request is '${request.status}' and cannot be cancelled`,
+          );
+        }
+
+        const updated = await client.query<LeaveRequestRow>(
+          `UPDATE leave_requests
+              SET status = 'cancelled',
+                  cancelled_by_user_id = $2,
+                  cancelled_at = now(),
+                  cancellation_reason = $3,
+                  updated_at = now()
+            WHERE id = $1 AND status = 'approved'
+            RETURNING *`,
+          [input.leaveId, input.cancelledByUserId, input.cancellationReason],
+        );
+        const leave = updated.rows[0];
+        if (!leave) {
+          throw new AppError(
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Leave request is no longer approved",
+          );
+        }
+
+        await client.query("COMMIT");
+        return toLeaveRequest(leave);
       } catch (error) {
         await client.query("ROLLBACK").catch(() => undefined);
         throw error;

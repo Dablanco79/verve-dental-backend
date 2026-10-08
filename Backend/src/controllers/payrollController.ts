@@ -107,6 +107,9 @@ function serializeLeave(r: LeaveRequest) {
     reviewedByUserId: r.reviewedByUserId,
     reviewedAt: r.reviewedAt?.toISOString() ?? null,
     reviewNotes: r.reviewNotes,
+    cancelledByUserId: r.cancelledByUserId,
+    cancelledAt: r.cancelledAt?.toISOString() ?? null,
+    cancellationReason: r.cancellationReason,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
@@ -192,6 +195,16 @@ const rejectLeaveSchema = z
       .string()
       .trim()
       .min(1, "A review note explaining the rejection is required")
+      .max(2000),
+  })
+  .strict();
+
+const cancelApprovedLeaveSchema = z
+  .object({
+    cancellationReason: z
+      .string()
+      .trim()
+      .min(1, "A reason for cancelling approved leave is required")
       .max(2000),
   })
   .strict();
@@ -352,6 +365,23 @@ export function createLeaveHandlers(leaveService: LeaveService) {
         clinicId,
         leaveId,
         body.reviewNotes,
+      );
+
+      res.status(200).json({ data: serializeLeave(request) });
+    },
+
+    /** POST /clinics/:clinicId/leave/:leaveId/cancel */
+    async cancelApprovedLeaveRequest(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const body = parseBody(cancelApprovedLeaveSchema, req.body);
+
+      const request = await leaveService.cancelApprovedLeaveRequest(
+        caller,
+        clinicId,
+        leaveId,
+        body.cancellationReason,
       );
 
       res.status(200).json({ data: serializeLeave(request) });

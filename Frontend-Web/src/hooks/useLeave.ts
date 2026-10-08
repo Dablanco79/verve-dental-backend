@@ -6,6 +6,7 @@ import type { UserRole } from "../types/index.js";
 import type {
   ApproveLeaveRequest,
   ApproveLeaveResult,
+  CancelApprovedLeaveRequest,
   CreateLeaveRequest,
   LeaveFilters,
   LeaveRequest,
@@ -44,6 +45,11 @@ export type UseLeaveResult = {
    * `reviewNotes` is required so the staff member understands the reason.
    */
   rejectLeave: (leaveId: string, payload: RejectLeaveRequest) => Promise<LeaveRequest>;
+  /** Cancel previously approved leave (manager/admin only). */
+  cancelApprovedLeave: (
+    leaveId: string,
+    payload: CancelApprovedLeaveRequest,
+  ) => Promise<LeaveRequest>;
   /**
    * Withdraw a pending leave request.
    * Staff may withdraw their own requests; the backend enforces ownership.
@@ -167,6 +173,22 @@ export function useLeave(
     [clinicId, fetch],
   );
 
+  const cancelApprovedLeave = useCallback(
+    async (
+      leaveId: string,
+      payload: CancelApprovedLeaveRequest,
+    ): Promise<LeaveRequest> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to cancel approved leave");
+      }
+      const updated = await apiClient.cancelApprovedLeave(clinicId, leaveId, payload);
+      fetch();
+      return updated;
+    },
+    [clinicId, role, fetch],
+  );
+
   return {
     requests,
     isLoading,
@@ -176,6 +198,7 @@ export function useLeave(
     approveLeave,
     listRosterConflicts,
     rejectLeave,
+    cancelApprovedLeave,
     withdrawLeave,
   };
 }

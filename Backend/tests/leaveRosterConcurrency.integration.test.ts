@@ -152,4 +152,90 @@ describe("Leave/roster person-lock concurrency (Postgres)", () => {
 
     expect(result.conflicts.map((conflict) => conflict.rosterEntryId)).toEqual([targetShiftId]);
   });
+
+  it("serializes approved-leave cancellation with concurrent roster creation", async () => {
+    const leaveId = randomUUID();
+    leaveIds.push(leaveId);
+    const date = "2035-03-15";
+    await pool.query(
+      `INSERT INTO leave_requests
+         (id, staff_user_id, staff_email, clinic_id, leave_type,
+          start_date, end_date, total_days, status, reviewed_by_user_id, reviewed_at)
+       VALUES ($1, $2, 'staff@clinic-a.au', $3, 'annual', $4, $4, 1,
+               'approved', $5, now())`,
+      [
+        leaveId,
+        SEED_USER_IDS.clinicAStaff,
+        SEED_CLINIC_A_ID,
+        date,
+        SEED_USER_IDS.clinicAManager,
+      ],
+    );
+
+    const leaveRepo = createPostgresLeaveRepository(pool);
+    const rosterRepo = createPostgresRosterRepository(pool);
+    const shiftPromise = rosterRepo.createEntry(
+      {
+        staffUserId: SEED_USER_IDS.clinicAStaff,
+        staffEmail: "staff@clinic-a.au",
+        rosteredClinicId: SEED_CLINIC_A_ID,
+        rosteredClinicName: "Clinic A",
+        shiftStartAt: new Date("2035-03-14T21:00:00.000Z"),
+        shiftEndAt: new Date("2035-03-15T06:00:00.000Z"),
+        shiftType: "standard",
+        notes: null,
+        createdByUserId: SEED_USER_IDS.clinicAAdmin,
+        createdByEmail: "admin@clinic-a.au",
+      },
+      {
+        windowStart: new Date("2035-03-14T21:00:00.000Z"),
+        windowEnd: new Date("2035-03-15T06:00:00.000Z"),
+        approvedLeaveWindow: { firstDate: date, lastDate: date },
+      },
+    );
+    const cancellationPromise = leaveRepo.cancelApprovedLeave({
+      leaveId,
+      clinicId: SEED_CLINIC_A_ID,
+      expectedStaffUserId: SEED_USER_IDS.clinicAStaff,
+      cancelledByUserId: SEED_USER_IDS.clinicAManager,
+      cancellationReason: "Concurrent safety test",
+    });
+
+    const [shiftResult, cancellationResult] = await Promise.allSettled([
+      shiftPromise,
+      cancellationPromise,
+    ]);
+    expect(cancellationResult.status).toBe("fulfilled");
+    if (cancellationResult.status !== "fulfilled") return;
+    expect(cancellationResult.value.status).toBe("cancelled");
+
+    if (shiftResult.status === "fulfilled") {
+      rosterIds.push(shiftResult.value.id);
+      expect(shiftResult.value.status).toBe("scheduled");
+    } else {
+      expect(shiftResult.reason).toBeInstanceOf(AppError);
+      expect((shiftResult.reason as AppError).code).toBe("APPROVED_LEAVE_CONFLICT");
+    }
+
+    const persisted = await pool.query<{
+      status: string;
+      reviewed_by_user_id: string;
+      reviewed_at: Date | null;
+      cancelled_by_user_id: string;
+      cancellation_reason: string;
+    }>(
+      `SELECT status, reviewed_by_user_id, reviewed_at,
+              cancelled_by_user_id, cancellation_reason
+         FROM leave_requests
+        WHERE id = $1`,
+      [leaveId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      status: "cancelled",
+      reviewed_by_user_id: SEED_USER_IDS.clinicAManager,
+      cancelled_by_user_id: SEED_USER_IDS.clinicAManager,
+      cancellation_reason: "Concurrent safety test",
+    });
+    expect(persisted.rows[0]?.reviewed_at).not.toBeNull();
+  });
 });

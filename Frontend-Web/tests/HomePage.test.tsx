@@ -308,6 +308,9 @@ const pendingLeave: LeaveRequest = {
   reviewedByUserId: null,
   reviewedAt: null,
   reviewNotes: null,
+  cancelledByUserId: null,
+  cancelledAt: null,
+  cancellationReason: null,
   createdAt: "2026-06-26T00:00:00.000Z",
   updatedAt: "2026-06-26T00:00:00.000Z",
 };
