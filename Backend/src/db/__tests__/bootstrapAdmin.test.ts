@@ -17,6 +17,8 @@ import {
   bootstrapFirstAdmin,
   resolveBootstrapInput,
   BOOTSTRAP_BCRYPT_ROUNDS,
+  BOOTSTRAP_PASSWORD_MIN_LENGTH,
+  BOOTSTRAP_PASSWORD_MAX_LENGTH,
 } from "../bootstrapAdmin.js";
 import type { DatabasePool } from "../pool.js";
 import type { Logger } from "../../utils/logger.js";
@@ -27,10 +29,11 @@ type QueryCall = { sql: string; params: unknown[] };
 
 /**
  * Creates a mock PoolClient whose query() resolves based on SQL content.
- * All queries succeed; the COUNT query returns the supplied userCount.
+ * Queries succeed unless `failOnSql` matches; the COUNT query returns the
+ * supplied userCount.
  * Every call is recorded in the `queries` array for later assertions.
  */
-function makeMockClient(userCount: number) {
+function makeMockClient(userCount: number, failOnSql?: string) {
   const queries: QueryCall[] = [];
 
   const query = jest.fn().mockImplementation((...args: unknown[]) => {
@@ -38,6 +41,9 @@ function makeMockClient(userCount: number) {
     const params = Array.isArray(args[1]) ? (args[1] as unknown[]) : [];
     queries.push({ sql, params });
 
+    if (failOnSql && sql.includes(failOnSql)) {
+      return Promise.reject(new Error(`Simulated query failure: ${failOnSql}`));
+    }
     if (sql.includes("COUNT(*)")) {
       return Promise.resolve({ rows: [{ count: String(userCount) }], rowCount: 1 });
     }
@@ -82,13 +88,13 @@ describe("resolveBootstrapInput", () => {
   it("returns valid BootstrapInput from complete env vars", () => {
     const env = {
       BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
-      BOOTSTRAP_ADMIN_PASSWORD: "secret",
+      BOOTSTRAP_ADMIN_PASSWORD: "SecurePass12!",
       BOOTSTRAP_CLINIC_NAME: "Test Clinic",
       BOOTSTRAP_CLINIC_TIMEZONE: "Australia/Perth",
     };
     expect(resolveBootstrapInput(env)).toEqual({
       adminEmail: "admin@example.com",
-      adminPassword: "secret",
+      adminPassword: "SecurePass12!",
       clinicName: "Test Clinic",
       clinicTimezone: "Australia/Perth",
     });
@@ -97,7 +103,7 @@ describe("resolveBootstrapInput", () => {
   it("defaults clinicTimezone to Australia/Melbourne when not provided", () => {
     const env = {
       BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
-      BOOTSTRAP_ADMIN_PASSWORD: "secret",
+      BOOTSTRAP_ADMIN_PASSWORD: "SecurePass12!",
       BOOTSTRAP_CLINIC_NAME: "Test Clinic",
     };
     expect(resolveBootstrapInput(env).clinicTimezone).toBe("Australia/Melbourne");
@@ -106,7 +112,7 @@ describe("resolveBootstrapInput", () => {
   it("trims whitespace from adminEmail", () => {
     const env = {
       BOOTSTRAP_ADMIN_EMAIL: "  admin@example.com  ",
-      BOOTSTRAP_ADMIN_PASSWORD: "secret",
+      BOOTSTRAP_ADMIN_PASSWORD: "SecurePass12!",
       BOOTSTRAP_CLINIC_NAME: "Test Clinic",
     };
     expect(resolveBootstrapInput(env).adminEmail).toBe("admin@example.com");
@@ -115,7 +121,7 @@ describe("resolveBootstrapInput", () => {
   it("trims whitespace from clinicName", () => {
     const env = {
       BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
-      BOOTSTRAP_ADMIN_PASSWORD: "secret",
+      BOOTSTRAP_ADMIN_PASSWORD: "SecurePass12!",
       BOOTSTRAP_CLINIC_NAME: "  Clinic Name  ",
     };
     expect(resolveBootstrapInput(env).clinicName).toBe("Clinic Name");
@@ -140,7 +146,7 @@ describe("resolveBootstrapInput", () => {
   it("throws when BOOTSTRAP_CLINIC_NAME is missing", () => {
     const env = {
       BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
-      BOOTSTRAP_ADMIN_PASSWORD: "secret",
+      BOOTSTRAP_ADMIN_PASSWORD: "SecurePass12!",
     };
     expect(() => resolveBootstrapInput(env)).toThrow("BOOTSTRAP_CLINIC_NAME");
   });
@@ -158,6 +164,18 @@ describe("resolveBootstrapInput", () => {
       BOOTSTRAP_CLINIC_NAME: "Clinic",
     };
     expect(resolveBootstrapInput(env).adminPassword).toBe("my-P@ssw0rd!");
+  });
+
+  it("rejects a password shorter than the bootstrap minimum", () => {
+    const env = {
+      BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
+      BOOTSTRAP_ADMIN_PASSWORD: "TooShort1!",
+      BOOTSTRAP_CLINIC_NAME: "Clinic",
+    };
+
+    expect(() => resolveBootstrapInput(env)).toThrow(
+      `between ${String(BOOTSTRAP_PASSWORD_MIN_LENGTH)} and ${String(BOOTSTRAP_PASSWORD_MAX_LENGTH)}`,
+    );
   });
 });
 
@@ -277,7 +295,29 @@ describe("bootstrapFirstAdmin", () => {
       expect(clinicId).toBe(homeClinicId);
     });
 
-    it("wraps both INSERTs in a single transaction (one pool.connect call)", async () => {
+    it("creates the admin's home-clinic assignment with roster and operational access", async () => {
+      await bootstrapFirstAdmin(pool, silentLogger, VALID_INPUT, 1);
+
+      const userInsert = client.queries.find((q) =>
+        q.sql.includes("INSERT INTO users"),
+      );
+      const clinicInsert = client.queries.find((q) =>
+        q.sql.includes("INSERT INTO clinics"),
+      );
+      const assignmentInsert = client.queries.find((q) =>
+        q.sql.includes("INSERT INTO user_clinic_assignments"),
+      );
+
+      expect(assignmentInsert).toBeDefined();
+      expect(assignmentInsert?.params).toEqual([
+        userInsert?.params[0],
+        clinicInsert?.params[0],
+      ]);
+      expect(assignmentInsert?.sql).toContain("can_roster, can_operate");
+      expect(assignmentInsert?.sql).toContain("true, true");
+    });
+
+    it("wraps all three INSERTs in a single transaction (one pool.connect call)", async () => {
       await bootstrapFirstAdmin(pool, silentLogger, VALID_INPUT, 1);
       const connectMock = (pool as unknown as { connect: jest.Mock }).connect;
       expect(connectMock).toHaveBeenCalledTimes(1);
@@ -285,6 +325,22 @@ describe("bootstrapFirstAdmin", () => {
   });
 
   describe("password security", () => {
+    it("rejects an invalid password before connecting to the database", async () => {
+      const client = makeMockClient(0);
+      const pool = makeMockPool(client);
+      const input = { ...VALID_INPUT, adminPassword: "TooShort1!" };
+
+      await expect(
+        bootstrapFirstAdmin(pool, silentLogger, input, 1),
+      ).rejects.toThrow(
+        `between ${String(BOOTSTRAP_PASSWORD_MIN_LENGTH)} and ${String(BOOTSTRAP_PASSWORD_MAX_LENGTH)}`,
+      );
+
+      const connectMock = (pool as unknown as { connect: jest.Mock }).connect;
+      expect(connectMock).not.toHaveBeenCalled();
+      expect(client.queries).toHaveLength(0);
+    });
+
     it("does not pass the plaintext password to any SQL query", async () => {
       const client = makeMockClient(0);
       const pool = makeMockPool(client);
@@ -335,6 +391,22 @@ describe("bootstrapFirstAdmin", () => {
       ];
       const logSnapshot = JSON.stringify(allLogArgs);
       expect(logSnapshot).not.toContain(VALID_INPUT.adminPassword);
+    });
+  });
+
+  describe("transaction rollback", () => {
+    it("rolls back clinic and user creation when assignment creation fails", async () => {
+      const client = makeMockClient(0, "INSERT INTO user_clinic_assignments");
+      const pool = makeMockPool(client);
+
+      await expect(
+        bootstrapFirstAdmin(pool, silentLogger, VALID_INPUT, 1),
+      ).rejects.toThrow("Simulated query failure");
+
+      expect(client.queries.some((q) => q.sql.includes("INSERT INTO clinics"))).toBe(true);
+      expect(client.queries.some((q) => q.sql.includes("INSERT INTO users"))).toBe(true);
+      expect(client.queries.some((q) => q.sql === "ROLLBACK")).toBe(true);
+      expect(client.queries.some((q) => q.sql === "COMMIT")).toBe(false);
     });
   });
 });
