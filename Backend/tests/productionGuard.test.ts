@@ -218,6 +218,52 @@ describe("CORS hardening — staging rejects wildcard origin", () => {
 
     expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
   });
+
+  it("rejects a non-local HTTP origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN: "http://staging.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/HTTPS/i);
+  });
+
+  it("rejects a mixed HTTPS and HTTP origin list", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN:
+        "https://staging.vervedental.com.au,http://admin.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/HTTPS/i);
+  });
+
+  it.each([
+    ["malformed URL", "not-a-url"],
+    ["credentials", "https://user:password@staging.vervedental.com.au"],
+    ["non-root path", "https://staging.vervedental.com.au/app"],
+    ["query string", "https://staging.vervedental.com.au?source=test"],
+    ["fragment", "https://staging.vervedental.com.au#app"],
+  ])("rejects %s in an origin entry", (_caseName, corsOrigin) => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN: corsOrigin,
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(
+      /HTTPS origins?/i,
+    );
+  });
+
+  it("accepts multiple explicit HTTPS origins", () => {
+    const config = makeConfig({
+      NODE_ENV: "staging",
+      CORS_ORIGIN:
+        "https://staging.vervedental.com.au,https://admin-staging.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
 });
 
 describe("CORS hardening — production rejects wildcard origin", () => {
@@ -258,6 +304,63 @@ describe("CORS hardening — production rejects wildcard origin", () => {
     });
 
     expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+
+  it("accepts a canonical HTTPS origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "https://app.example.com",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+
+  it("rejects a trailing slash because it is not the canonical URL origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "https://app.example.com/",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(
+      /HTTPS origins?/i,
+    );
+  });
+
+  it("accepts a canonical HTTPS origin with a non-default port", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "https://app.example.com:8443",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).not.toThrow();
+  });
+
+  it("rejects a non-local HTTP origin", () => {
+    const config = makeConfig({
+      NODE_ENV: "production",
+      CORS_ORIGIN: "http://app.vervedental.com.au",
+    });
+
+    expect(() => { assertDeployedCorsOrigin(config); }).toThrow(/HTTPS/i);
+  });
+
+  it("rejects credentials, paths, queries, and fragments", () => {
+    const invalidOrigins = [
+      "https://user:password@app.vervedental.com.au",
+      "https://app.vervedental.com.au/login",
+      "https://app.vervedental.com.au?source=test",
+      "https://app.vervedental.com.au#app",
+    ];
+
+    for (const corsOrigin of invalidOrigins) {
+      const config = makeConfig({
+        NODE_ENV: "production",
+        CORS_ORIGIN: corsOrigin,
+      });
+      expect(() => { assertDeployedCorsOrigin(config); }).toThrow(
+        /HTTPS origins?/i,
+      );
+    }
   });
 });
 

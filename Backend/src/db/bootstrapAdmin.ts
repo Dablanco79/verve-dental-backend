@@ -1,7 +1,8 @@
 /**
  * Production-safe first-admin bootstrap.
  *
- * Creates the first clinic and owner_admin user in an empty database.
+ * Creates the first clinic, owner_admin user, and home-clinic assignment in an
+ * empty database.
  * Invoked by the `npm run bootstrap:admin` CLI command via runBootstrapAdmin.ts.
  *
  * SAFETY CONSTRAINTS
@@ -10,8 +11,8 @@
  * • All inputs come from environment variables — nothing is hardcoded.
  * • Password is hashed with bcrypt at cost 12 before storage.
  * • The password and its hash are never logged.
- * • Clinic and user creation run inside a single transaction — partial state
- *   is impossible even if the process is interrupted mid-way.
+ * • Clinic, user, and assignment creation run inside a single transaction —
+ *   partial state is impossible even if the process is interrupted mid-way.
  * • Uses owner_admin RLS context via withTenantContext — the same pattern
  *   used by the migration seed tooling.
  * • Demo seeding is not affected; this path is independent of seed.ts.
@@ -35,6 +36,8 @@ import type { DatabasePool } from "./pool.js";
 import type { Logger } from "../utils/logger.js";
 
 export const BOOTSTRAP_BCRYPT_ROUNDS = 12;
+export const BOOTSTRAP_PASSWORD_MIN_LENGTH = 12;
+export const BOOTSTRAP_PASSWORD_MAX_LENGTH = 128;
 
 export type BootstrapInput = {
   adminEmail: string;
@@ -42,6 +45,19 @@ export type BootstrapInput = {
   clinicName: string;
   clinicTimezone: string;
 };
+
+function assertBootstrapPasswordPolicy(password: string): void {
+  if (
+    password.length < BOOTSTRAP_PASSWORD_MIN_LENGTH ||
+    password.length > BOOTSTRAP_PASSWORD_MAX_LENGTH
+  ) {
+    throw new Error(
+      `Bootstrap failed: BOOTSTRAP_ADMIN_PASSWORD must be between ` +
+        `${String(BOOTSTRAP_PASSWORD_MIN_LENGTH)} and ` +
+        `${String(BOOTSTRAP_PASSWORD_MAX_LENGTH)} characters`,
+    );
+  }
+}
 
 /**
  * Reads and validates bootstrap-specific environment variables.
@@ -73,15 +89,18 @@ export function resolveBootstrapInput(
     );
   }
 
+  assertBootstrapPasswordPolicy(adminPassword);
+
   return { adminEmail, adminPassword, clinicName, clinicTimezone };
 }
 
 /**
- * Creates the first clinic and owner_admin user in an empty database.
+ * Creates the first clinic, owner_admin user, and home-clinic assignment in an
+ * empty database.
  *
- * Both INSERTs run inside a single transaction (via withTenantContext).
- * If either INSERT fails, the transaction rolls back automatically —
- * partial state cannot persist.
+ * All three INSERTs run inside a single transaction (via withTenantContext).
+ * If any INSERT fails, the transaction rolls back automatically and partial
+ * state cannot persist.
  *
  * @param pool         Active pg.Pool connected to the target database.
  * @param logger       Pino logger instance.
@@ -94,6 +113,10 @@ export async function bootstrapFirstAdmin(
   input: BootstrapInput,
   bcryptRounds = BOOTSTRAP_BCRYPT_ROUNDS,
 ): Promise<void> {
+  // Validate before opening a database connection so direct callers cannot
+  // bypass resolveBootstrapInput() and cause writes with an invalid password.
+  assertBootstrapPasswordPolicy(input.adminPassword);
+
   await withTenantContext(
     pool,
     AUTH_BYPASS_CLINIC_ID,
@@ -143,6 +166,17 @@ export async function bootstrapFirstAdmin(
             payroll_track, mfa_enabled, is_active)
          VALUES ($1, $2, $3, 'owner_admin', $4, $5, 'hourly', false, true)`,
         [userId, normalizedEmail, passwordHash, clinicId, input.clinicName],
+      );
+
+      // Match the membership convention used by normal user creation and the
+      // migration 047 backfill: every user's home clinic grants both roster
+      // eligibility and operational access.
+      await client.query(
+        `INSERT INTO user_clinic_assignments
+           (user_id, clinic_id, can_roster, can_operate, assigned_at)
+         VALUES ($1, $2, true, true, now())
+         ON CONFLICT (user_id, clinic_id) DO NOTHING`,
+        [userId, clinicId],
       );
 
       logger.info(

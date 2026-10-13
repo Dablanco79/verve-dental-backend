@@ -139,6 +139,8 @@ export type EnvConfig = z.infer<typeof envSchema>;
  *   • Wildcard (*) is rejected — it is incompatible with cookie-based auth
  *     and is a misconfiguration signal.
  *   • Empty origin list is rejected.
+ *   • Every entry must be an explicit HTTPS origin with no credentials, path,
+ *     query string, or fragment.
  *   • Localhost-only origins are rejected — they indicate a missing deployment
  *     configuration rather than a valid deployed setup.
  *
@@ -153,19 +155,48 @@ export function assertDeployedCorsOrigin(config: EnvConfig): void {
   }
 
   const origins = config.CORS_ORIGIN.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
+    .map((origin) => origin.trim());
 
-  if (origins.length === 0 || origins.includes("*")) {
+  if (origins.some((origin) => origin === "" || origin === "*")) {
     throw new Error(
       `CORS_ORIGIN must not be wildcard (*) or empty when NODE_ENV=${config.NODE_ENV} — ` +
         "set it to your deployed frontend HTTPS URL(s)",
     );
   }
 
-  const onlyLocalOrigins = origins.every(
+  const parsedOrigins = origins.map((origin) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(
+        `CORS_ORIGIN entries must be valid HTTPS origins when NODE_ENV=${config.NODE_ENV}`,
+      );
+    }
+
+    const isExplicitHttpsOrigin =
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      origin === parsed.origin &&
+      /^https:\/\/[^/?#]+\/?$/i.test(origin) &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === "";
+
+    if (!isExplicitHttpsOrigin) {
+      throw new Error(
+        `CORS_ORIGIN entries must be explicit HTTPS origins without credentials, ` +
+          `paths, query strings, or fragments when NODE_ENV=${config.NODE_ENV}`,
+      );
+    }
+
+    return parsed;
+  });
+
+  const onlyLocalOrigins = parsedOrigins.every(
     (origin) =>
-      origin.includes("localhost") || origin.includes("127.0.0.1"),
+      origin.hostname === "localhost" || origin.hostname === "127.0.0.1",
   );
 
   if (onlyLocalOrigins) {
