@@ -1,7 +1,7 @@
 name: Integration Tests
 
 # Runs alongside the main CI workflow but provides real infrastructure.
-# PostgreSQL and Redis service containers are spun up automatically by GitHub
+# PostgreSQL and Valkey service containers are spun up automatically by GitHub
 # Actions; the test suite uses DATABASE_URL and REDIS_URL to exercise real RLS
 # enforcement (rlsIsolation.test.ts) and the Redis session store
 # (redisIntegration.test.ts).  All other tests remain infrastructure-agnostic
@@ -20,7 +20,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: postgres:18-bookworm
         env:
           POSTGRES_USER: verve
           POSTGRES_PASSWORD: verve_test
@@ -34,11 +34,11 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:7
+        image: valkey/valkey:8
         ports:
           - 6379:6379
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "valkey-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
