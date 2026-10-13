@@ -7,8 +7,8 @@
  *   3. /auth/refresh succeeds via cookie only (no body token path).
  *   4. /auth/refresh returns 400 when no cookie is present.
  *   5. /auth/logout clears the refresh cookie via cookie only.
- *   6. Cookie has SameSite=None in production mode (cross-origin deployment fix).
- *   7. Cookie has SameSite=Strict in non-production mode.
+ *   6. Cookies use Secure + SameSite=None in staging and production.
+ *   7. Cookies use SameSite=Strict without Secure in development and test.
  *
  * All tests use isolated in-memory repositories (no DATABASE_URL / REDIS_URL).
  */
@@ -350,20 +350,22 @@ describe("Logout — cookie-only", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. SameSite=None in production — regression for MISSING_REFRESH_TOKEN P1
+// 5. SameSite=None in deployed environments — MISSING_REFRESH_TOKEN regression
 //
 // Root cause: SameSite=Strict prevents cookies from being sent when the
 // frontend and backend are on different *.onrender.com origins (cross-site per
-// the Public Suffix List).  In production the attribute must be "none" so the
-// browser includes the cookie on cross-site POST /auth/refresh requests.
+// the Public Suffix List). In staging and production the attribute must be
+// "none" so the browser includes the cookie on cross-site refresh requests.
 //
 // These tests verify `createAuthHandlers` directly so they do not require a
 // running database — only the config and a mock Express Response are needed.
 // ---------------------------------------------------------------------------
 
-describe("Cookie SameSite — production vs. non-production (P1 regression)", () => {
+describe("Cookie SameSite — deployed vs. local environments (P1 regression)", () => {
   /** Minimal config stub — only the fields used by createAuthHandlers. */
-  function stubConfig(nodeEnv: "production" | "test" | "development"): EnvConfig {
+  function stubConfig(
+    nodeEnv: "production" | "staging" | "test" | "development",
+  ): EnvConfig {
     return {
       NODE_ENV: nodeEnv,
       JWT_REFRESH_EXPIRES_IN: "7d",
@@ -397,7 +399,9 @@ describe("Cookie SameSite — production vs. non-production (P1 regression)", ()
   }
 
   /** Invoke the login handler with a minimal mock req/res and capture cookie calls. */
-  async function captureLoginCookies(nodeEnv: "production" | "test" | "development") {
+  async function captureLoginCookies(
+    nodeEnv: "production" | "staging" | "test" | "development",
+  ) {
     const cookieCalls: Array<[string, string, Record<string, unknown>]> = [];
     const config = stubConfig(nodeEnv);
 
@@ -439,11 +443,19 @@ describe("Cookie SameSite — production vs. non-production (P1 regression)", ()
     expect(refreshCookieOpts?.secure).toBe(true);
   });
 
+  it("sets SameSite=None and Secure=true on the refresh cookie in staging mode", async () => {
+    const calls = await captureLoginCookies("staging");
+    const refreshCookieOpts = calls.find(([name]) => name === "refreshToken")?.[2];
+    expect(refreshCookieOpts?.sameSite).toBe("none");
+    expect(refreshCookieOpts?.secure).toBe(true);
+  });
+
   it("sets SameSite=Strict on the refresh cookie in test (non-production) mode", async () => {
     const calls = await captureLoginCookies("test");
     const refreshCookieOpts = calls.find(([name]) => name === "refreshToken")?.[2];
     expect(refreshCookieOpts).toBeDefined();
     expect(refreshCookieOpts?.sameSite).toBe("strict");
+    expect(refreshCookieOpts?.secure).toBe(false);
   });
 
   it("sets SameSite=Strict on the refresh cookie in development mode", async () => {
@@ -451,6 +463,7 @@ describe("Cookie SameSite — production vs. non-production (P1 regression)", ()
     const refreshCookieOpts = calls.find(([name]) => name === "refreshToken")?.[2];
     expect(refreshCookieOpts).toBeDefined();
     expect(refreshCookieOpts?.sameSite).toBe("strict");
+    expect(refreshCookieOpts?.secure).toBe(false);
   });
 
   it("integration: test-mode login Set-Cookie header contains SameSite=Strict", async () => {
@@ -528,7 +541,7 @@ describe("Expired and invalid refresh tokens — secure failure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. Production-mode Set-Cookie HTTP integration tests (Security Review)
+// 7. Deployed-mode Set-Cookie HTTP integration tests (Security Review)
 //
 // Verifies the full Set-Cookie header string produced by the real Express
 // app when NODE_ENV=production:
@@ -548,12 +561,22 @@ describe("Expired and invalid refresh tokens — secure failure", () => {
 const PROD_FRONTEND_ORIGIN = "https://verve-dental-frontend.onrender.com";
 
 /**
- * Builds a full Express app with production-mode config but in-memory deps.
+ * Builds a full Express app with deployed-mode config but in-memory deps.
  * Uses the same technique as createStagingOriginTestApp in originGuard.test.ts:
  * load deps under test config (no DATABASE_URL required), then override
  * NODE_ENV and CORS_ORIGIN on the config passed to createApp().
  */
-async function createProductionCookieTestApp(): Promise<import("express").Express> {
+type DeployedNodeEnv = "staging" | "production";
+
+const STAGING_FRONTEND_ORIGIN = "https://verve-dental-staging.onrender.com";
+
+function frontendOriginFor(nodeEnv: DeployedNodeEnv): string {
+  return nodeEnv === "staging" ? STAGING_FRONTEND_ORIGIN : PROD_FRONTEND_ORIGIN;
+}
+
+async function createDeployedCookieTestApp(
+  nodeEnv: DeployedNodeEnv = "production",
+): Promise<import("express").Express> {
   process.env.NODE_ENV = "test";
   process.env.JWT_ACCESS_SECRET = TEST_JWT_ACCESS_SECRET;
   process.env.JWT_REFRESH_SECRET = TEST_JWT_REFRESH_SECRET;
@@ -566,18 +589,18 @@ async function createProductionCookieTestApp(): Promise<import("express").Expres
   const logger = createLogger({ LOG_LEVEL: "silent" });
   const deps = await createAppDependencies(testConfig, logger);
 
-  const productionConfig: EnvConfig = {
+  const deployedConfig: EnvConfig = {
     ...testConfig,
-    NODE_ENV: "production",
-    CORS_ORIGIN: PROD_FRONTEND_ORIGIN,
+    NODE_ENV: nodeEnv,
+    CORS_ORIGIN: frontendOriginFor(nodeEnv),
   };
 
-  return createApp(productionConfig, logger, deps);
+  return createApp(deployedConfig, logger, deps);
 }
 
 describe("Production-mode Set-Cookie attributes (security review)", () => {
   it("login Set-Cookie contains HttpOnly in production mode", async () => {
-    const app = await createProductionCookieTestApp();
+    const app = await createDeployedCookieTestApp();
 
     const res = await request(app)
       .post("/api/v1/auth/login")
@@ -591,7 +614,7 @@ describe("Production-mode Set-Cookie attributes (security review)", () => {
   });
 
   it("login Set-Cookie contains Secure in production mode", async () => {
-    const app = await createProductionCookieTestApp();
+    const app = await createDeployedCookieTestApp();
 
     const res = await request(app)
       .post("/api/v1/auth/login")
@@ -604,7 +627,7 @@ describe("Production-mode Set-Cookie attributes (security review)", () => {
   });
 
   it("login Set-Cookie contains SameSite=None in production mode", async () => {
-    const app = await createProductionCookieTestApp();
+    const app = await createDeployedCookieTestApp();
 
     const res = await request(app)
       .post("/api/v1/auth/login")
@@ -618,7 +641,7 @@ describe("Production-mode Set-Cookie attributes (security review)", () => {
   });
 
   it("login Set-Cookie Path is scoped to /api/v1/auth in production mode", async () => {
-    const app = await createProductionCookieTestApp();
+    const app = await createDeployedCookieTestApp();
 
     const res = await request(app)
       .post("/api/v1/auth/login")
@@ -631,7 +654,7 @@ describe("Production-mode Set-Cookie attributes (security review)", () => {
   });
 
   it("logout Set-Cookie clears cookie with matching SameSite=None and Secure in production mode", async () => {
-    const app = await createProductionCookieTestApp();
+    const app = await createDeployedCookieTestApp();
 
     // Log in first to obtain a valid cookie for the logout call.
     const loginRes = await request(app)
@@ -664,3 +687,67 @@ describe("Production-mode Set-Cookie attributes (security review)", () => {
     expect(lower).toContain("path=/api/v1/auth");
   });
 });
+
+describe.each(["staging", "production"] as const)(
+  "%s cookie lifecycle and credentialed CORS",
+  (nodeEnv) => {
+    it("keeps login, refresh rotation, and logout clearing attributes consistent", async () => {
+      const app = await createDeployedCookieTestApp(nodeEnv);
+      const origin = frontendOriginFor(nodeEnv);
+
+      const loginRes = await request(app)
+        .post("/api/v1/auth/login")
+        .set("Origin", origin)
+        .send({ email: "staff@clinic-a.au", password: "password123" });
+
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.headers["access-control-allow-origin"]).toBe(origin);
+      expect(loginRes.headers["access-control-allow-credentials"]).toBe("true");
+
+      const loginCookie = findRefreshCookie(loginRes);
+      expect(loginCookie).toBeDefined();
+      const loginCookieLower = (loginCookie as string).toLowerCase();
+      expect(loginCookieLower).toContain("httponly");
+      expect(loginCookieLower).toContain("secure");
+      expect(loginCookieLower).toContain("samesite=none");
+      expect(loginCookieLower).toContain("path=/api/v1/auth");
+
+      const refreshRes = await request(app)
+        .post("/api/v1/auth/refresh")
+        .set("Origin", origin)
+        .set("Cookie", cookieNameValue(loginCookie as string))
+        .send();
+
+      expect(refreshRes.status).toBe(200);
+      const rotatedCookie = findRefreshCookie(refreshRes);
+      expect(rotatedCookie).toBeDefined();
+      expect(cookieNameValue(rotatedCookie as string)).not.toBe(
+        cookieNameValue(loginCookie as string),
+      );
+      const rotatedCookieLower = (rotatedCookie as string).toLowerCase();
+      expect(rotatedCookieLower).toContain("httponly");
+      expect(rotatedCookieLower).toContain("secure");
+      expect(rotatedCookieLower).toContain("samesite=none");
+      expect(rotatedCookieLower).toContain("path=/api/v1/auth");
+
+      const logoutRes = await request(app)
+        .post("/api/v1/auth/logout")
+        .set("Origin", origin)
+        .set("Cookie", cookieNameValue(rotatedCookie as string))
+        .send();
+
+      expect(logoutRes.status).toBe(204);
+      const clearedCookie = findRefreshCookie(logoutRes);
+      expect(clearedCookie).toBeDefined();
+      const clearedCookieLower = (clearedCookie as string).toLowerCase();
+      expect(
+        clearedCookieLower.includes("expires=") ||
+          clearedCookieLower.includes("max-age=0"),
+      ).toBe(true);
+      expect(clearedCookieLower).toContain("httponly");
+      expect(clearedCookieLower).toContain("secure");
+      expect(clearedCookieLower).toContain("samesite=none");
+      expect(clearedCookieLower).toContain("path=/api/v1/auth");
+    });
+  },
+);

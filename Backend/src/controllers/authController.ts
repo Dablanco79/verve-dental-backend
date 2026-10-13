@@ -1,4 +1,4 @@
-import type { Request, Response } from "express";
+import type { CookieOptions, Request, Response } from "express";
 import { z } from "zod";
 
 import type { EnvConfig } from "../config/index.js";
@@ -30,15 +30,13 @@ const REFRESH_COOKIE_NAME = "refreshToken";
 /**
  * SameSite policy for the refresh-token cookie.
  *
- * "none" (+ Secure) is required in production because the frontend and backend
- * are deployed on different *.onrender.com subdomains.  onrender.com appears on
- * the Public Suffix List, so the browser treats each subdomain as a distinct
- * "site".  SameSite=Strict (or Lax) cookies are silently dropped on cross-site
- * subresource requests — including the POST /auth/refresh fetch — which is
- * exactly the MISSING_REFRESH_TOKEN failure observed in production.
+ * "none" (+ Secure) is required in deployed environments because the frontend
+ * and backend are deployed on different *.onrender.com subdomains. onrender.com
+ * appears on the Public Suffix List, so the browser treats each subdomain as a
+ * distinct "site". SameSite=Strict (or Lax) cookies are silently dropped on
+ * cross-site subresource requests — including POST /auth/refresh.
  *
- * SameSite=None requires Secure=true.  The secure flag below is already set to
- * true in production, so the combination is always valid.
+ * SameSite=None requires Secure=true, so staging and production use both.
  *
  * In development the Vite proxy rewrites /api/* to the local backend, so every
  * request is same-origin from the browser's perspective.  SameSite=Strict is
@@ -70,31 +68,30 @@ function auditContext(req: Request) {
 
 export function createAuthHandlers(authService: AuthService, config: EnvConfig) {
   const cookieMaxAge = parseTtlMs(config.JWT_REFRESH_EXPIRES_IN);
-  const isProduction = config.NODE_ENV === "production";
+  const isDeployedEnvironment =
+    config.NODE_ENV === "staging" || config.NODE_ENV === "production";
 
-  // Cross-site deployments (production) require SameSite=None so the browser
-  // includes the cookie on POST /auth/refresh requests from the frontend origin.
-  // Same-site deployments (development, test) keep SameSite=Strict.
-  const sameSite: CookieSameSite = isProduction ? "none" : "strict";
+  // Cross-site deployments require SameSite=None so the browser includes the
+  // cookie on refresh/logout requests from the frontend origin. Local
+  // development and tests remain same-site and keep the tighter Strict policy.
+  const sameSite: CookieSameSite = isDeployedEnvironment ? "none" : "strict";
+  const refreshCookieOptions: CookieOptions = {
+    httpOnly: true,
+    secure: isDeployedEnvironment,
+    sameSite,
+    path: "/api/v1/auth",
+  };
 
   function setRefreshCookie(res: Response, token: string): void {
     res.cookie(REFRESH_COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite,
-      // Scoped to auth endpoints — covers /auth/refresh and /auth/logout.
-      path: "/api/v1/auth",
+      ...refreshCookieOptions,
       maxAge: cookieMaxAge,
     });
   }
 
   function clearRefreshCookie(res: Response): void {
-    res.clearCookie(REFRESH_COOKIE_NAME, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite,
-      path: "/api/v1/auth",
-    });
+    // Express requires matching cookie attributes to clear the browser cookie.
+    res.clearCookie(REFRESH_COOKIE_NAME, refreshCookieOptions);
   }
 
   return {
