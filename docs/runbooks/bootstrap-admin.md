@@ -8,9 +8,9 @@
 
 ## Purpose
 
-Creates the first clinic and `owner_admin` user in a freshly-deployed production
-database.  This is a **one-time operator action** — it is not part of normal
-application startup and should not be re-run once users exist.
+Creates the first clinic, `owner_admin` user, and home-clinic assignment in a
+freshly migrated database. This is a **one-time, separate CLI process**. It is
+not part of application startup and must not be re-run once users exist.
 
 The bootstrap is intentionally separate from demo seeding (`seed.ts`), which is
 disabled in production.  No demo data, hardcoded passwords, or test accounts are
@@ -22,8 +22,8 @@ created.
 
 | Control | Behaviour |
 |---------|-----------|
-| **Idempotency guard** | Script aborts immediately if `COUNT(*) > 0` on the `users` table. |
-| **Single transaction** | Clinic and user INSERTs are wrapped in one transaction; a failure rolls both back. |
+| **Existing-user guard** | Inside owner-admin RLS context, the script aborts if any user exists. |
+| **Single transaction** | Clinic, user, and `user_clinic_assignments` INSERTs are one transaction; any failure rolls back all three. |
 | **Password never logged** | The plaintext password and bcrypt hash are not written to any log line. |
 | **bcrypt cost 12** | Password stored with `bcrypt.hash(password, 12)` — same cost as change-password flow. |
 | **RLS bypass scoped** | Uses `owner_admin` RLS context (nil UUID) — identical to migration seed tooling; no policies are weakened. |
@@ -34,7 +34,9 @@ created.
 
 ## Prerequisites
 
-1. Migrations have been applied (`npm run migrate`).
+1. Migrations have been applied using the standalone procedure in
+   [Backend migration documentation](../../Backend/migrations/README.md), and a
+   repeat run has exited successfully with zero pending migrations.
 2. The server's standard `.env` file (or environment) is present with all required
    variables:
 
@@ -47,7 +49,8 @@ created.
    NODE_ENV=production
    ```
 
-3. You have the credentials you want to set for the first admin.
+3. Dependencies, including `tsx`, are installed from the lockfile.
+4. You have the credentials you want to set for the first admin.
 
 ---
 
@@ -64,44 +67,41 @@ script.  Do **not** commit them to source control or .env files.
 | `BOOTSTRAP_CLINIC_TIMEZONE` | No | IANA timezone string (default: `Australia/Melbourne`) |
 
 **Password requirements:** Use a strong, unique password of at least 12 characters.
-Change it after first login if desired.  MFA enrollment is required on first login
-regardless.
+The implementation accepts 12–128 characters and hashes the password with
+bcrypt cost 12. MFA enrollment is mandatory for `owner_admin`.
 
 ---
 
 ## Steps
 
-### 1 — Verify database is empty
+### 1 — Verify the target and RLS context
 
-Connect to the production database and confirm the `users` table is empty:
+Confirm that the CLI has the intended `DATABASE_URL` without printing it.
+Verification queries must use the application database role and an approved
+owner-admin RLS transaction context. A raw count without context can be filtered
+by forced RLS and must not be treated as proof that the database is empty.
 
-```sql
-SELECT COUNT(*) FROM users;
--- Expected: 0
-```
-
-If the count is non-zero, do not proceed.  Use the admin interface instead.
+If an RLS-aware count finds any user, do not proceed. The implementation repeats
+this check inside the bootstrap transaction and refuses to run when users exist.
 
 ### 2 — Set environment variables
 
-Export the bootstrap variables in your shell session (never write them to a file
-that could be committed or leaked):
-
-```sh
-export BOOTSTRAP_ADMIN_EMAIL="owner@yourpractice.com.au"
-export BOOTSTRAP_ADMIN_PASSWORD="<choose a strong password>"
-export BOOTSTRAP_CLINIC_NAME="Verve Dental"
-export BOOTSTRAP_CLINIC_TIMEZONE="Australia/Melbourne"
-```
+Supply the four bootstrap variables to the separate CLI process through an
+approved one-off job secret configuration or the operator's current process
+environment. Do not place them in source control, persist them in the normal
+application service, echo them, or include their values in logs. Confirm
+variable presence without displaying values.
 
 ### 3 — Run the bootstrap command
 
-```sh
-cd Backend
-npm run bootstrap:admin
+```powershell
+# Run from the repository root.
+npm.cmd run bootstrap:admin --workspace=@verve/backend
 ```
 
-Expected output (fields will contain real UUIDs):
+The script name is defined as `bootstrap:admin` in `Backend/package.json`.
+Require process exit code `0`; logs alone are insufficient. Expected output
+includes:
 
 ```
 {"level":"info","clinicId":"<uuid>","clinicName":"Verve Dental","timezone":"Australia/Melbourne","msg":"Bootstrap: clinic created"}
@@ -109,43 +109,67 @@ Expected output (fields will contain real UUIDs):
 {"level":"info","msg":"Bootstrap complete. Login with the configured credentials and enroll MFA immediately."}
 ```
 
-### 4 — Verify the account was created
+### 4 — Validate the atomic result and RLS
 
-```sql
-SELECT id, email, role, home_clinic_id, mfa_enabled, is_active
-FROM users
-WHERE role = 'owner_admin';
-```
+Using the application role and approved RLS contexts, verify:
 
-Also confirm the clinic row:
+- Exactly the intended clinic and active `owner_admin` exist.
+- The user has the intended `home_clinic_id`.
+- A matching `user_clinic_assignments` row exists with `can_roster=true` and
+  `can_operate=true`.
+- Owner-admin context can see the records.
+- Ordinary clinic context cannot read data belonging to another clinic.
+- A controlled repeat attempt is refused because a user now exists.
 
-```sql
-SELECT id, name, timezone, subscription_tier FROM clinics;
-```
+If the command fails, verify that none of the clinic, user, or assignment rows
+persisted. Any partial result is a release blocker.
 
 ### 5 — Log in and enroll MFA immediately
 
 1. Navigate to the login page.
 2. Log in with the email and password set above.
 3. The application will prompt for **MFA enrollment** before issuing an access token.
-4. Complete TOTP enrollment with an authenticator app (e.g. Authy, Google Authenticator).
-5. Store the recovery codes securely.
+4. Complete setup and confirmation through `POST /api/v1/auth/mfa/setup` and
+   `POST /api/v1/auth/mfa/confirm`.
+5. Log in again and complete `POST /api/v1/auth/mfa/verify`.
+6. Confirm authenticated API access.
+7. Confirm refresh rotates the refresh cookie and keeps the session active.
+8. Reload the browser and confirm the authenticated session is restored.
+9. Log out, confirm the cookie is cleared, reload, and confirm the session is
+   no longer authenticated.
 
 **Do not leave MFA unenrolled.**  `owner_admin` and `group_practice_manager` accounts
 require MFA before session tokens are issued.
 
 ### 6 — Unset credentials from the shell
 
-After the script completes, clear the bootstrap variables from your shell:
+After the script completes, remove the variables from the one-off job or current
+PowerShell process. Never print their values.
 
-```sh
-unset BOOTSTRAP_ADMIN_EMAIL
-unset BOOTSTRAP_ADMIN_PASSWORD
-unset BOOTSTRAP_CLINIC_NAME
-unset BOOTSTRAP_CLINIC_TIMEZONE
+```powershell
+Remove-Item Env:BOOTSTRAP_ADMIN_EMAIL,Env:BOOTSTRAP_ADMIN_PASSWORD,Env:BOOTSTRAP_CLINIC_NAME,Env:BOOTSTRAP_CLINIC_TIMEZONE -ErrorAction SilentlyContinue
+
+'BOOTSTRAP_ADMIN_EMAIL','BOOTSTRAP_ADMIN_PASSWORD','BOOTSTRAP_CLINIC_NAME','BOOTSTRAP_CLINIC_TIMEZONE' |
+  ForEach-Object {
+    [pscustomobject]@{ Name = $_; Present = Test-Path "Env:$_" }
+  }
 ```
 
+Every entry must report `Present=False`. If variables were supplied through a
+hosting dashboard or one-off job definition, remove the variable names there
+and verify absence without displaying values. Do not leave bootstrap credentials
+on the normal API service.
+
 ---
+
+## Startup empty-users warning
+
+The deployed startup path currently counts users without first establishing an
+RLS context. Because `users` is protected by forced RLS, the warning
+`Users table is empty` may be an RLS-filtered result even when hosted login
+works. This is a source-based **hypothesis**, not proof of the hosted cause and
+not proof that the database is empty. Validate it with the actual hosted
+application role and RLS settings.
 
 ## Error reference
 

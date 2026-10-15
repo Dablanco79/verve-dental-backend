@@ -2,8 +2,15 @@
 
 **Service:** Verve Operational Suite — Full Stack  
 **Severity:** P1 — Critical (data recovery scenario)  
-**Last reviewed:** 2026-06-20  
+**Last reviewed:** 2026-10-13
 **Release:** Post Sprint O.2
+
+> **Infrastructure review 2026-10-13:** Provider backup features, retention,
+> restore controls, plan tier, RPO, and RTO are unverified. Historical provider
+> examples below are planning context only and must not be executed or treated
+> as evidence until reconciled with current provider documentation and a
+> successful isolated restore drill. The authoritative release sequence is
+> [Release Promotion](./release-promotion.md).
 
 ---
 
@@ -38,24 +45,14 @@ All business-critical data lives exclusively in **PostgreSQL**.
 
 ### 1.2 Current backup mechanism
 
-Verve's PostgreSQL database is hosted on **Render** as a managed PostgreSQL service. Render performs automated daily snapshots of the database volume.
+No backup automation or provider configuration is defined in this repository.
+The actual Production plan, backup schedule, retention, encryption, restore
+interface, point-in-time recovery, and regional isolation have not been
+verified. Do not promise any of these capabilities from this runbook.
 
-> **No backup scripts exist in this repository.** Backup capability is entirely delegated to the Render managed-database service.
-
-| Property | Free / Starter plan | Standard plan and above |
-|----------|---------------------|------------------------|
-| Backup type | Daily snapshot (full) | Daily snapshot + Point-in-Time Recovery (PITR) |
-| Backup frequency | Once every 24 hours | Once every 24 hours (continuous WAL for PITR) |
-| Retention period | **7 days** | **30 days** |
-| Manual backup trigger | Not available via dashboard | Not available via self-service |
-| Backup location | Render-managed object storage (AWS S3-backed) | Same |
-| Encryption at rest | Yes (Render-managed keys) | Yes |
-| Cross-region replication | **Not enabled** | Not enabled by default |
-| Self-service restore | Dashboard only | Dashboard only |
-
-**Source:** [Render PostgreSQL documentation](https://render.com/docs/postgresql#backups)
-
-> **Important:** Render free-tier PostgreSQL databases are **suspended after 90 days of inactivity** and **deleted after 6 months**. Confirm the current plan tier in the Render dashboard before relying on backup retention figures above.
+Before a release that changes schema or data, an authorised operator must check
+the current provider/account configuration, record dated evidence, and prove
+the selected recovery method in a non-production restore drill.
 
 ---
 
@@ -65,13 +62,13 @@ Redis on Render (or Upstash/Railway equivalent) stores **only refresh tokens** �
 
 ---
 
-### 1.4 Migrations as schema backup
+### 1.4 Migrations are not a data backup
 
-The application schema is **fully reproducible** from source code. The `schema_migrations` table tracks which of the 16 embedded migrations (`003_users_schema` through `018_supplier_catalogue_schema`) have been applied. Running `npm run migrate` against a fresh empty database recreates the full schema deterministically.
-
-> **Sprint O.2 note:** Migrations `017_suppliers_schema` and `018_supplier_catalogue_schema` were added in Sprint O. Any restore verification that checks for 15 migrations will give a false-pass result. Always verify for 16.
-
-This means **schema recovery does not require backup restoration** — only data recovery does.
+`Backend/src/db/migrate.ts` defines the current embedded migration sequence and
+`schema_migrations` records applied IDs. Do not hard-code a migration count or
+final ID in recovery checks. The standalone migration command can construct the
+current schema on a clean database, but it cannot recover business data,
+secrets, or provider configuration and is not a substitute for a tested backup.
 
 ---
 
@@ -86,35 +83,25 @@ This means **schema recovery does not require backup restoration** — only data
 
 ### 2.2 Current RPO
 
-| Scenario | RPO |
-|----------|-----|
-| Render free/starter plan (daily backups, 7-day retention) | **Up to 24 hours** of data loss |
-| Render standard plan with PITR enabled | **Up to ~5 minutes** of data loss |
-| Redis (refresh tokens only) | **Data loss fully acceptable** — users re-authenticate |
-
-**Current realistic RPO: 24 hours** (assuming free/starter plan without PITR).
+Unverified. The repository contains no evidence of the active backup schedule,
+retention, or point-in-time recovery capability. Redis loss invalidates sessions
+but does not define the PostgreSQL RPO.
 
 ### 2.3 Current RTO
 
-| Component | Time estimate | Notes |
-|-----------|--------------|-------|
-| Render PostgreSQL restore (from snapshot) | 15–45 min | Depends on DB size; performed via Render dashboard |
-| Render service redeploy | 3–8 min | `npm run build` + startup |
-| Environment variable audit & correction | 5–30 min | Depends on secret manager access |
-| Migration reapplication (if restored to clean DB) | 1–3 min | `npm run migrate` |
-| DNS propagation (if service URL changes) | 0–60 min | Render service URLs are stable unless re-created |
-| Frontend redeploy | 3–5 min | Static build; Render auto-deploys from `main` |
-| Smoke testing & verification | 15–30 min | Follow Section 7 checklist |
+Unverified. Measure it through an end-to-end restore drill; do not publish
+component or total recovery times based on provider assumptions.
 
-**Current realistic RTO: 45–120 minutes** (single-region; Render-managed restore).
-
-### 2.4 Target objectives (recommended)
+### 2.4 Targets
 
 | Tier | Target RPO | Target RTO | Enables |
 |------|-----------|-----------|---------|
 | Internal pilot (current) | 24 hours | 2 hours | Acceptable for internal team testing |
 | Early commercial (near-term) | 1 hour | 30 min | Requires Render Standard + PITR |
 | Production SLA (future) | 15 min | 15 min | Requires PITR + automated failover + runbook drills |
+
+These are proposals, not achieved objectives. They require stakeholder approval,
+verified provider capabilities, and measured restore evidence.
 
 ---
 
@@ -124,11 +111,21 @@ This means **schema recovery does not require backup restoration** — only data
 
 ### 3.1 Prerequisites
 
-- Access to the **Render dashboard** with Owner or Admin role on the Verve project.
-- The `DATABASE_URL` environment variable from the **current** service (for verification before cutover).
-- A recent list of any pending/unapplied schema changes.
+- Authorised provider access and an independently stored, approved secrets source.
+- Dated evidence of the provider's actual backup and restore capabilities.
+- A recovery point selected against the incident timeline.
+- A new, isolated restore target; never overwrite live data for a test.
+- Pre-restore row counts, migration IDs, RLS expectations, and acceptance plan.
+- A schema-compatibility decision for the application SHA to be deployed.
 
-### 3.2 Restore from Render snapshot (dashboard method)
+### 3.2 Restore using the verified provider procedure
+
+The repository cannot verify which restore controls the active provider plan
+offers. The following historical dashboard outline is not authority to perform
+a restore. Before using it, reconcile every step with current provider
+documentation and a previously successful drill. Record the operator, source
+recovery point, isolated target, times, and result. Do not change Production
+connection settings until validation and approval are complete.
 
 ```
 Step 1 — Identify the target restore point
@@ -166,80 +163,85 @@ export RESTORED_DATABASE_URL="postgresql://<restored-host>/<dbname>"
 # 1. Confirm schema migrations match expected state
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
-# Expected: All 16 migrations listed (003_users_schema through 018_supplier_catalogue_schema)
+# Expected: IDs match the reviewed release source and pre-restore evidence
 
 # 2. Confirm migration count exactly
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT COUNT(*) AS migration_count FROM schema_migrations;"
-# Expected: 16
-
-# 3. Confirm clinic data is present
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, name, created_at FROM clinics ORDER BY created_at LIMIT 10;"
-
-# 4. Confirm user accounts are present
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, email, role, home_clinic_id FROM users ORDER BY created_at LIMIT 10;"
-
-# 5. Confirm row counts for key tables are plausible
-#    NOTE: correct table names are clinic_inventory_items and roster_entries
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT
-     (SELECT COUNT(*) FROM clinics)                  AS clinics,
-     (SELECT COUNT(*) FROM users)                    AS users,
-     (SELECT COUNT(*) FROM clinic_inventory_items)   AS inventory_items,
-     (SELECT COUNT(*) FROM roster_entries)           AS roster_entries,
-     (SELECT COUNT(*) FROM timesheet_entries)        AS timesheet_entries,
-     (SELECT COUNT(*) FROM suppliers)                AS suppliers,
-     (SELECT COUNT(*) FROM supplier_catalogue)       AS supplier_catalogue,
-     (SELECT COUNT(*) FROM audit_events)             AS audit_events;"
-
-# 6. Confirm RLS policies are present
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'public' ORDER BY tablename;"
-# Expected: tenant_isolation policies on all 14 tenant-scoped tables
-
-# 7. Confirm the RLS helper functions exist
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT proname FROM pg_proc WHERE proname IN ('app_current_clinic_id', 'app_is_owner_admin');"
-# Expected: 2 rows
+# Expected: count matches the reviewed release source and pre-restore evidence
 ```
+
+Validate business tables as the application database role. For every scoped
+query, start a transaction and set the source-verified transaction-local
+`app.current_clinic_id`, `app.owner_admin_mode`, and `app.current_user_id`
+values using the pattern in `Backend/src/db/tenantContext.ts`; roll back after
+the check. Use owner-admin mode only for approved cross-clinic inventory, then
+repeat representative checks under non-owner clinic contexts.
+
+An unscoped zero count may be caused by forced RLS and is not proof of data
+loss. Policy counts, helper-function presence, and catalog flags are useful
+schema evidence but are not proof that isolation works.
+
+Using a user without owner-admin or cross-clinic privileges, verify allowed
+reads and writes in that user's clinic, then attempt equivalent operations
+against another clinic with known data. Require denial or an empty
+tenant-scoped result, as appropriate, and confirm no cross-clinic write
+occurred.
 
 If all checks pass, proceed to cutover. If checks fail, **stop** — escalate before proceeding.
 
 ### 3.4 Cutover to restored database
 
 ```bash
-# In the Render dashboard:
-# 1. Navigate to: Services → verve-dental-api → Environment
+# Before changing configuration, record and confirm:
+#   TARGET_ENVIRONMENT = <intended Staging, Production, or isolated drill target>
+#   TARGET_API_SERVICE = <provider service name/ID>
+#   TARGET_API_BASE_URL = <HTTPS API origin for that environment>
+#
+# In the provider dashboard:
+# 1. Navigate to: Services → <TARGET_API_SERVICE> → Environment
 # 2. Update DATABASE_URL to point to the restored instance:
 #      postgresql://<restored-host>/<dbname>?sslmode=require
 # 3. Save changes
 # 4. Trigger a manual redeploy of the backend service
 # 5. Watch deploy logs for:
-#      ✓ "Bootstrap migrations: all X migrations already applied"
+#      ✓ "Migration check: 0 pending"
+#      ✓ "No pending migrations — schema is up to date"
 #      ✓ "Server listening on 0.0.0.0:<PORT>"
 
-# 6. Verify readiness
-curl -s https://verve-dental-api.onrender.com/api/v1/ready | jq '.status, .checks.database'
+# 6. Reconfirm TARGET_API_BASE_URL identifies TARGET_ENVIRONMENT, then verify:
+curl -s <TARGET_API_BASE_URL>/api/v1/ready | jq '.status, .checks.database'
 # Expected: "ok"  { "status": "ok", "latencyMs": <n> }
 ```
 
-### 3.5 Decommission the old instance
+### 3.5 Abort or cut back before decommissioning
 
-Only after confirming the application is healthy on the restored database:
+If validation fails after an application was pointed at the restore target:
 
-```
-1. In Render dashboard: Navigate to the OLD PostgreSQL instance
-2. Verify it has no active connections:
-   psql "$OLD_DATABASE_URL" -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '<dbname>';"
-3. Take a final manual export for archival:
-   pg_dump "$OLD_DATABASE_URL" --format=custom --file=verve-pre-restore-archive-YYYYMMDD.dump
-4. Store the .dump file in a secure location (encrypted storage, not git)
-5. Delete the old Render PostgreSQL instance
-```
+1. Stop application writes before changing database configuration.
+2. Determine whether the original database, restored database, or both accepted
+   writes after the switch.
+3. Use timestamps, audit evidence, and application-role RLS-aware checks to
+   assess divergence.
+4. Require an explicit incident-owner decision naming the authoritative
+   database and addressing reconciliation, conflicts, duplicates, and accepted
+   data loss.
+5. Only then point `<TARGET_API_SERVICE>` at the approved database and redeploy
+   the last schema-compatible full SHA.
+6. Confirm `<TARGET_API_BASE_URL>` identifies the intended environment before
+   repeating liveness, readiness, authentication and workflow acceptance.
 
-### 3.6 Restore from pg_dump (manual backup)
+Preserve both databases until the authoritative-data decision, reconciliation,
+incident review, and retention approval are complete.
+
+### 3.6 Retention and later decommissioning
+
+Database deletion is not a routine validation, cutback, or drill-cleanup step.
+Consider decommissioning only through a separate approved change after the
+authoritative database is documented, reconciliation is complete, retention
+requirements are satisfied, and recovery evidence has been preserved.
+
+### 3.7 Restore from pg_dump (manual backup)
 
 If a manual `pg_dump` export exists:
 
@@ -252,10 +254,14 @@ pg_restore \
   --no-owner \
   --role=<app-user> \
   verve-backup-YYYYMMDD.dump
+```
 
-# After restore, re-apply any migrations that post-date the dump:
-export DATABASE_URL="postgresql://<restored-url>"
-npm run migrate --workspace=@verve/backend
+After the restore, use a Windows PowerShell process with `DATABASE_URL`
+supplied through the approved secret mechanism:
+
+```powershell
+# Run from the repository root; do not print DATABASE_URL.
+npm.cmd run migrate --workspace=@verve/backend
 ```
 
 ---
@@ -267,19 +273,20 @@ npm run migrate --workspace=@verve/backend
 ### 4.1 Recovery procedure
 
 ```bash
-# Step 1 — If Redis is down, verify the application is still accepting new logins
-curl -s https://verve-dental-api.onrender.com/api/v1/ready | jq '.checks.redis'
-# "degraded" is acceptable for short periods
+# First confirm TARGET_API_BASE_URL identifies the intended environment.
+# Step 1 — If Redis is down, inspect readiness:
+curl -s <TARGET_API_BASE_URL>/api/v1/ready | jq '.checks.redis'
+# A degraded readiness result is not authentication acceptance.
 
 # Step 2 — Resume/restart Redis from the Render (or Upstash) dashboard
 # No data restore is needed — the store is intentionally ephemeral
 
 # Step 3 — Verify Redis reconnects automatically (ioredis retries on reconnect)
-curl -s https://verve-dental-api.onrender.com/api/v1/ready | jq '.checks.redis'
+curl -s <TARGET_API_BASE_URL>/api/v1/ready | jq '.checks.redis'
 # Expected: { "status": "ok", "latencyMs": <n> }
 
-# Step 4 — Notify users that they will need to log in again
-# (Active refresh tokens issued before the Redis outage are invalidated)
+# Step 4 — Verify fresh login, refresh rotation, logout and browser reload.
+# Notify users that sessions issued before cache loss may require re-login.
 ```
 
 ### 4.2 What is lost
@@ -298,14 +305,9 @@ curl -s https://verve-dental-api.onrender.com/api/v1/ready | jq '.checks.redis'
 ### 5.1 Backend redeployment (Render)
 
 ```bash
-# Option A — Trigger redeploy via Render dashboard
-# Services → verve-dental-api → Manual Deploy → Deploy latest commit
-
-# Option B — Push to main branch (auto-deploy if configured)
-git push origin main
-
-# Option C — Render CLI
-render deploys create --service <backend-service-id>
+# Production auto-deploy remains OFF.
+# Manually deploy the immutable full SHA that passed Staging acceptance.
+# Verify the full SHA in the service's deploy metadata.
 
 # Monitor startup phases in Render deploy logs:
 # Phase 1: "Env validation passed"
@@ -316,13 +318,12 @@ render deploys create --service <backend-service-id>
 ### 5.2 Frontend redeployment (Render)
 
 ```bash
-# Option A — Render dashboard
-# Services → verve-dental-frontend → Manual Deploy → Deploy latest commit
+# Production auto-deploy remains OFF.
+# Manually deploy the same immutable full SHA tested in Staging.
+# Verify the full SHA in the service's deploy metadata.
 
-# Option B — Push to main branch
-git push origin main
-
-# Verify: open https://verve-dental-frontend.onrender.com
+# Confirm TARGET_FRONTEND_URL belongs to the intended environment, then open it.
+# Verify: open <TARGET_FRONTEND_URL>
 # The frontend is a static build (Vite); no state is lost on redeploy
 ```
 
@@ -330,16 +331,14 @@ git push origin main
 
 If restoring to a completely empty PostgreSQL database (e.g., after spinning up a new instance):
 
-```bash
-# Ensure DATABASE_URL points to the new empty database
-export DATABASE_URL="postgresql://<user>:<pass>@<host>:5432/<dbname>?sslmode=require"
+```powershell
+# From the repository root, with DATABASE_URL supplied through the approved
+# secret mechanism and confirmed to identify the intended empty target:
+npm.cmd run migrate --workspace=@verve/backend
 
-# Apply all 16 bootstrap migrations (003_users_schema through 018_supplier_catalogue_schema)
-npm run migrate --workspace=@verve/backend
-
-# Confirm all 16 migrations applied
-psql "$DATABASE_URL" -c "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
-# Expected: 16 rows
+# Require exit code 0, then run it again and confirm zero pending migrations.
+psql $env:DATABASE_URL -c "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
+# Expected IDs must match the reviewed release source.
 ```
 
 ---
@@ -365,7 +364,7 @@ psql "$DATABASE_URL" -c "SELECT id, applied_at FROM schema_migrations ORDER BY a
 | `JWT_REFRESH_EXPIRES_IN` | `7d` | Default; can be kept in config |
 | `MFA_ENCRYPTION_KEY` | Secrets manager / secure vault | 64-char hex; losing this breaks TOTP decrypt |
 | `CORS_ORIGIN` | Render env / deploy config | Must match frontend URL exactly |
-| `MIGRATE_ON_STARTUP` | Set to `true` only for migration deploys | Leave unset (false) otherwise |
+| `MIGRATE_ON_STARTUP` | `false` | Migrations run only through the separate CLI process |
 
 ### 6.2 Regenerating lost secrets
 
@@ -384,7 +383,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 | Variable | Value | Notes |
 |----------|-------|-------|
-| `VITE_API_BASE_URL` | `https://verve-dental-api.onrender.com` | Update if backend URL changes |
+| `VITE_API_BASE_URL` | `<TARGET_API_BASE_URL>` | Confirm it belongs to the intended environment before building or testing |
 
 ---
 
@@ -407,14 +406,15 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 - [ ] Identify target snapshot (most recent before incident)
 - [ ] Restore to a **new** database instance (do not overwrite live until verified)
 - [ ] Wait for new instance to reach "Available" state
-- [ ] Run Section 3.3 verification queries against restored instance
-- [ ] Confirm row counts match expectations (clinics, users, inventory, roster, suppliers, supplier_catalogue)
-- [ ] Confirm all **16** schema migrations are present in `schema_migrations` (003 through 018)
-- [ ] Confirm RLS policies are present (`pg_policies`) — at least 20 policies expected
-- [ ] Confirm `app_current_clinic_id` and `app_is_owner_admin` functions present
+- [ ] Run Section 3.3 validation against the restored instance as the application role with source-verified transaction-local RLS contexts
+- [ ] Confirm scoped business data matches expectations; do not treat an unscoped zero count as proof of data loss
+- [ ] Confirm `schema_migrations` IDs match the reviewed release source
+- [ ] Treat RLS policy/helper inspection as supplemental schema evidence
+- [ ] Behaviourally verify allowed same-clinic reads/writes and denied cross-clinic reads/writes with a user lacking cross-clinic privileges
 - [ ] Update `DATABASE_URL` in Render backend service environment
 - [ ] Trigger backend redeploy
 - [ ] Confirm backend readiness: `GET /api/v1/ready` returns `200 ok`
+- [ ] Separately verify login, mandatory MFA, refresh rotation, browser reload, logout, and post-logout reload
 
 ### Redis recovery
 
@@ -425,6 +425,7 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 
 ### Backend deployment
 
+- [ ] Confirm `TARGET_ENVIRONMENT`, `TARGET_API_SERVICE`, `TARGET_API_BASE_URL`, and `TARGET_FRONTEND_URL` before changing configuration or running acceptance
 - [ ] Confirm `NODE_ENV=production` is set
 - [ ] Confirm `DATABASE_URL` points to recovered database
 - [ ] Confirm `REDIS_URL` is set and reachable
@@ -434,6 +435,16 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 - [ ] Trigger redeploy and confirm healthy startup in deploy logs
 - [ ] Verify `GET /api/v1/health` → `200 ok`
 - [ ] Verify `GET /api/v1/ready` → `200 ok` with all checks green
+- [ ] Treat liveness/readiness as infrastructure checks, not authentication acceptance
+
+For an isolated restore-validation service, follow
+[Restore Drill](./restore-drill.md) B.1: use drill-only JWT secrets, an isolated
+cache, explicit drill API/frontend origins and CORS, and no Production refresh
+storage. Review outbound integrations in the exact release SHA. Current source
+includes Anthropic OCR; disable it or isolate it with restricted non-Production
+credentials and egress controls. The original `MFA_ENCRYPTION_KEY` may be
+required to test restored MFA data and must remain handled as a Production
+secret—never printed or committed.
 
 ### Frontend deployment
 
@@ -447,6 +458,7 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 - [ ] Log in with a known admin account — confirm JWT is issued
 - [ ] Confirm clinic data is visible (inventory, roster, etc.)
 - [ ] Confirm supplier list is visible (`GET /api/v1/suppliers`)
+- [ ] Confirm procurement workflows respond as expected
 - [ ] Confirm forecast endpoints respond (`GET /api/v1/forecast/materials`)
 - [ ] Confirm MFA-enrolled users can complete TOTP challenge (requires original `MFA_ENCRYPTION_KEY`)
 - [ ] Confirm token refresh works (re-use session after 15 min)
@@ -463,6 +475,11 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 ---
 
 ## 8. Gap Analysis
+
+The provider-specific entries in Sections 8 and 9 are historical risk
+hypotheses. Until current provider settings and a restore drill supply evidence,
+read statements about snapshots, retention, plan features, RPO, RTO, and
+regional design as unverified conditions—not current facts.
 
 ### 8.1 Missing backup protections
 
@@ -485,7 +502,7 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 | `DATABASE_URL` must be manually updated after restore | **MEDIUM** | No automation rotates the app's database URL when a restore creates a new instance. Human error risk during an already stressful incident. |
 | No automated failover or standby replica | **HIGH** | There is no read replica or hot standby. A primary DB failure means full service outage until the restore completes. |
 | Environment variable recovery is entirely manual | **MEDIUM** | There is no documented out-of-band secrets backup. If the Render dashboard is unavailable, secrets cannot be recovered. |
-| Migration state must be manually verified post-restore | **LOW** | `npm run migrate` is idempotent and safe, but requires a human to run it after restore to a clean instance. |
+| Migration state must be manually verified post-restore | **LOW** | The standalone migration CLI is repeatable, but requires a successful exit and second zero-pending run. |
 
 ### 8.3 Recovery risks
 
@@ -515,9 +532,13 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 | Cross-region / offsite resilience | 5% | 0 | 0.0 |
 | **TOTAL** | **100%** | — | **34 / 100** |
 
-**Current backup maturity score: 34 / 100**
+**Current backup maturity is unverified.** The historical score below was not
+based on a completed restore drill and must not be used as release evidence.
 
 #### Score rationale
+
+The following bullets are the rationale for the historical score, not verified
+current-state claims:
 
 - **Backup existence (5/10):** Render daily snapshots exist but are never tested, have no offsite copy, and rely entirely on a single provider.
 - **Backup testability (1/10):** No restore drill has ever been performed. No automated verification. A corrupt backup would only be discovered during an actual incident.
@@ -531,9 +552,10 @@ Use this checklist end-to-end for a complete disaster recovery exercise.
 
 ### 9.2 Internal pilot readiness
 
-**Verdict: CONDITIONALLY READY**
+**Verdict: NOT PROVEN**
 
-The current state is acceptable for an **internal team pilot** (≤20 users, non-patient-facing) with the following conditions:
+The current state is **not approved** for an internal pilot. The following
+conditions are necessary but do not automatically grant approval:
 
 - [ ] Confirm the Render PostgreSQL plan is at minimum **Starter** (not free tier) to avoid auto-suspension.
 - [ ] Perform at least **one manual restore drill** before pilot launch — see [restore-drill.md](./restore-drill.md) Part B.
@@ -587,4 +609,6 @@ The following must be resolved before commercial launch with clinic customers:
 
 ---
 
-*This document was originally produced as part of Sprint K — Backup & Restore Validation. Updated in Sprint K.1 to reflect Sprint O.2 schema additions (16 migrations, suppliers tables) and correct verification query table names.*
+*Originally produced for Sprint K and reviewed on 2026-10-13. Migration
+expectations must be derived from the immutable release source, not this
+document.*

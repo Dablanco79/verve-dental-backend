@@ -45,51 +45,90 @@ The files in `Backend/migrations/` are **reference and rollback documentation on
 4. Write or update tests in `Backend/tests/migrationGate.test.ts` to confirm the new entry is registered.
 5. Run the full validation suite before opening a pull request:
 
-```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run build
+```powershell
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd run test
+npm.cmd run build
 ```
 
 ---
 
 ## Current migration sequence
 
-| Bootstrap ID | Description |
-|---|---|
-| 003–005a | Users, inventory foundation |
-| 006–011 | Roster, payroll, leave |
-| 012–015 | Clinics, billing, analytics, RLS |
-| 016–020 | TOTP, user permissions |
-| 021–033 | Supplier OCR, organisations, procurement |
-| 034–036 | Master products, product matching |
-| 037 | `037_stocktake_schema` — stocktake sessions and lines |
-| 038 | `038_stocktake_line_snapshot` — product snapshot columns |
+`Backend/src/db/migrate.ts` is the source of truth for the current ordered
+sequence. Do not copy a fixed migration count or final ID into an operational
+check: both become stale when a migration is added.
 
 ---
 
-## MIGRATE_ON_STARTUP
+## Deployed-environment procedure
 
-This environment variable controls whether pending migrations are applied at startup in staging and production.
+Keep `MIGRATE_ON_STARTUP=false` in Staging and Production. Normal application
+startup calls the runner in gate mode: it checks the schema and refuses to start
+if migrations are pending, but it does not apply them.
 
-| Value | Behaviour |
-|---|---|
-| `false` (default) | Startup proceeds without running migrations. If pending migrations exist, startup is **blocked** with a clear error message. |
-| `true` | Pending migrations are applied before the application accepts traffic. |
+Migrations are applied by a separate, deliberate CLI process from the exact
+release source:
 
-### Normal operation
+```powershell
+# Run from the repository root.
+npm.cmd run migrate --workspace=@verve/backend
+```
 
-`MIGRATE_ON_STARTUP` must remain `false` in production at all times **except during a controlled migration deployment**.
+The equivalent command from `Backend` is `npm.cmd run migrate`.
 
-### Deploying a schema migration to production
+### Prerequisites
 
-1. Deploy the updated backend code (containing the new `BOOTSTRAP_MIGRATIONS` entry).
-2. Set `MIGRATE_ON_STARTUP=true` in the Render environment.
-3. Trigger a manual redeploy.
-4. Confirm in Render logs that each migration ID appears with `"Migration applied: <id>"`.
-5. Set `MIGRATE_ON_STARTUP=false` and redeploy again to return to normal startup mode.
+- Node.js 20 or newer.
+- A lockfile-based workspace install that includes development dependencies
+  (`tsx` executes `Backend/src/db/runMigrate.ts`). A compiled backend build is
+  not required for this command, although the release build must be validated
+  separately.
+- `DATABASE_URL` for the intended database and the correct `DATABASE_SSL`
+  policy.
+- Configuration accepted by `Backend/src/config/index.ts`, including
+  `NODE_ENV`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`,
+  `MFA_ENCRYPTION_KEY`, and, in a deployed environment, an explicit HTTPS
+  `CORS_ORIGIN`.
+- `MIGRATE_ON_STARTUP=false`. The standalone CLI explicitly opts into applying
+  migrations; changing the application startup setting is unnecessary.
 
-### Down migrations
+Supply configuration to this one-off CLI process through the approved secret
+store or operator environment. Do not print connection strings or secrets.
 
-Down SQL files are **never executed automatically**. If a rollback is required, apply the `.down.sql` file manually against the database under controlled conditions, then remove the corresponding entry from `BOOTSTRAP_MIGRATIONS` and redeploy.
+### Execution and verification
+
+1. Record the immutable full release SHA and review every pending migration.
+2. Confirm the backup and restore prerequisites in
+   `docs/runbooks/backup-restore.md`.
+3. Run the standalone command once.
+4. Require process exit code `0`. Logs alone are not proof of success.
+5. Run the same command a second time against the same database.
+6. Require exit code `0` again and confirm the output includes
+   `Migration check: 0 pending` and
+   `No pending migrations — schema is up to date`.
+
+On the first run, expected progress includes `Migration applied: <id>` for each
+pending migration and `All N migration(s) applied successfully`. The CLI then
+logs `All migrations applied successfully`.
+
+Any non-zero exit, missing final success, unexpected pending ID, or database
+error is a stop condition. Do not start or promote the application until the
+failure has been investigated and a repeat execution confirms zero pending
+migrations.
+
+> **Hosted-data safety:** Never run
+> `npm.cmd run test:db:setup --workspace=@verve/backend` against Staging or
+> Production. It is test setup and seeds demo data.
+
+### Rollback
+
+Application rollback does not remove migrations already recorded in
+`schema_migrations`. Reference `.down.sql` files are never automatic and must
+not be treated as a routine rollback mechanism. Before reverting application
+code, review whether the older application is compatible with the current
+schema and data. If it is not, stop and use an approved, tested database
+recovery plan.
+
+See `docs/runbooks/release-promotion.md` for the end-to-end release sequence.
