@@ -88,7 +88,7 @@ psql "$DATABASE_URL" -c "SELECT 1;"
 redis-cli -u "$REDIS_URL" PING
 ```
 
-### 4. Check the readiness endpoint on the new instance
+### 4. Check liveness and readiness
 
 If the process started but is not receiving traffic:
 
@@ -97,20 +97,26 @@ If the process started but is not receiving traffic:
 curl -v https://<new-instance-url>/api/v1/ready
 ```
 
-- `200 ok`: Process is ready — check load balancer / DNS configuration
-- `503 unavailable`: DB + Redis both failing
-- `200 degraded`: One dependency is down
+- `/api/v1/health` is liveness only.
+- `/api/v1/ready` reports PostgreSQL as critical and Redis as noncritical.
+- A readiness response, including a degraded response, does not prove login,
+  refresh-token persistence, logout, or clinic workflows work. These are
+  separate release-acceptance checks.
 
 ### 5. Check migration state
 
-If migrations are enabled (`MIGRATE_ON_STARTUP=true`), a failed migration blocks startup.
+Keep `MIGRATE_ON_STARTUP=false`. Normal deployed startup checks migration state
+and blocks if migrations are pending.
 
-```bash
-# Run migrations manually (in a one-off job against the target DB):
-npm run migrate
+```powershell
+# Run from the repository root in a separate CLI process.
+npm.cmd run migrate --workspace=@verve/backend
 
-# Review migration log output for errors
+# Require exit code 0, then repeat and confirm zero pending migrations.
 ```
+
+See [Backend migrations](../../Backend/migrations/README.md). Never run
+`test:db:setup` against hosted Staging or Production.
 
 ---
 
@@ -156,36 +162,29 @@ kill -9 <pid>
 
 ## Rollback procedure
 
-### Render
+1. Stop promotion and record the failing and last-known-good full SHAs.
+2. Determine whether database migrations ran.
+3. If the schema did not change, manually deploy the verified full
+   last-known-good SHA with auto-deploy still off.
+4. If migrations ran, review the older application's compatibility with the
+   current schema and data before deploying it.
+5. Application rollback is unsafe if the older code depends on removed or
+   renamed columns, incompatible constraints or types, or pre-migration data
+   semantics.
+6. Do not automatically run reference down migrations and do not force-push
+   tags. If compatibility is not demonstrated, use the approved backup/restore
+   plan and obtain the required database/release approval.
 
-```bash
-# Via CLI (if deployed)
-render deploys rollback --service <service-id>
-
-# Via Dashboard: Services → <service> → Deploys → select previous deploy → "Rollback"
-```
-
-### Railway
-
-```bash
-railway rollback
-```
-
-### Manual (any platform)
-
-```bash
-# Tag the last known-good image and redeploy:
-git tag -f stable-rollback <last-good-commit-sha>
-git push origin stable-rollback --force
-
-# Then trigger a deploy from that tag in your PaaS dashboard
-```
+Application rollback leaves `schema_migrations` and all migrated data in place.
+See [Release Promotion](./release-promotion.md) and
+[Backup & Restore](./backup-restore.md).
 
 ---
 
 ## Post-incident verification
 
-After the deploy succeeds (or a rollback completes):
+After the deploy succeeds or an approved rollback completes, perform liveness,
+readiness, and release acceptance:
 
 ```bash
 # 1. Liveness
@@ -202,21 +201,28 @@ curl -s -X POST https://<host>/api/v1/auth/login \
   -d '{"email":"<smoke-test-user>","password":"<password>"}' | jq .data.requiresMfa
 ```
 
+Also verify MFA where required, refresh rotation, browser-reload persistence,
+logout cookie clearing, post-logout reload, tenant isolation, and critical
+clinic workflows.
+
 ---
 
 ## Prevention checklist
 
 Before deploying to staging or production:
 
-- [ ] `npm run lint` passes with no errors
-- [ ] `npm run typecheck` passes
-- [ ] `npm run build` succeeds
-- [ ] `npm test` passes (including coverage thresholds)
+- [ ] `npm.cmd run lint` passes with no errors
+- [ ] `npm.cmd run typecheck` passes
+- [ ] `npm.cmd run build` succeeds
+- [ ] `npm.cmd test` passes
 - [ ] All required env vars are set in the target environment
 - [ ] `DATABASE_URL` connectivity has been verified from the target host
 - [ ] `REDIS_URL` connectivity has been verified from the target host
 - [ ] Pending database migrations have been reviewed and are reversible
-- [ ] `MIGRATE_ON_STARTUP=true` is set if new migrations are included
+- [ ] `MIGRATE_ON_STARTUP=false` remains set
+- [ ] Standalone migration process exited successfully and repeated with zero pending migrations
+- [ ] Backup availability and restore capability were verified, not assumed
+- [ ] The immutable full SHA is recorded for every applicable service
 
 ---
 

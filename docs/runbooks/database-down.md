@@ -82,7 +82,7 @@ The second means the process started in degraded mode (development only).
 ### A — Missing or incorrect `DATABASE_URL`
 
 1. Set `DATABASE_URL` in your PaaS environment / Vault / SSM Parameter Store.
-2. Format: `postgresql://user:password@host:5432/dbname?sslmode=require`
+2. Format: `postgresql://user:password@host:5432/dbname?sslmode=verify-full`
 3. Redeploy / restart the dyno or container.
 4. Verify: `GET /api/v1/ready` returns `200` with `checks.database.status: "ok"`.
 
@@ -111,11 +111,11 @@ pg_isready -h localhost -p 5432
 ### D — SSL/TLS handshake failure
 
 ```bash
-# Set DATABASE_SSL=false for local testing, or DATABASE_SSL=true to force
+# DATABASE_SSL=false is permitted only for deliberate local/test connections.
 # Check the sslmode parameter in DATABASE_URL:
-#   sslmode=require     → DATABASE_SSL=auto works
-#   sslmode=disable     → set DATABASE_SSL=false
-#   sslmode=verify-full → ensure the CA cert chain is accessible
+#   deployed remote     → sslmode=verify-full is mandatory
+#   local/test disable  → sslmode=disable with DATABASE_SSL=false
+#   verify-full failure → ensure the CA cert chain and hostname are valid
 ```
 
 ### E — Connection pool exhausted

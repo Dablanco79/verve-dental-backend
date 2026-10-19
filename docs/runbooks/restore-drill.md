@@ -5,8 +5,15 @@
 **Sprint:** K.1 — Restore Drill & Recovery Verification  
 **Release:** Post Sprint O.2  
 **Created:** 2026-06-20  
-**Last reviewed:** 2026-06-20  
-**Status:** ACTIVE — Internal Pilot Pre-Launch
+**Last reviewed:** 2026-10-13
+**Status:** DRAFT — provider procedure and restore capability unverified
+
+> The plan tier, backup existence, schedule, retention, restore interface,
+> duration, RPO, RTO, PITR, and regional isolation have not been verified.
+> Historical provider-specific statements and estimates below are not release
+> evidence and must not be treated as executable instructions until reconciled
+> with current provider documentation. Update this runbook with dated evidence
+> during the first isolated drill. Production readiness remains unproven.
 
 ---
 
@@ -25,6 +32,10 @@
 ---
 
 ## Part A — Document Review Findings
+
+Part A records the historical 2026-06-20 review. Several listed documentation
+defects were corrected on 2026-10-13; it is not a current defect register. The
+open issue is to validate the revised procedures in a hosted drill.
 
 ### A.1 Documents reviewed
 
@@ -57,7 +68,7 @@
 | **Incorrect table name: `roster_shifts`** | `backup-restore.md` §3.3 row-count query | The query selects `FROM roster_shifts` — the correct table name is `roster_entries`. |
 | **No concrete Render service IDs documented** | `backup-restore.md` §3.4, §5 | Steps refer to `verve-dental-api` and `verve-dental-frontend` as placeholder names but do not confirm the actual Render service IDs/names. If these differ in the dashboard, operators will be confused. |
 | **"Secure location" for pg_dump archive is undefined** | `backup-restore.md` §3.5 | Instructs operator to "Store the .dump file in a secure location" but provides no definition of what that location is (S3 bucket, encrypted local drive, password manager attachment). |
-| **`MIGRATE_ON_STARTUP` advice is incomplete** | `backup-restore.md` §3.4 | States to watch for "Bootstrap migrations: X/X applied" in logs but does not mention that migrations are gated in production unless `MIGRATE_ON_STARTUP=true` — an operator restoring to a new clean instance may be confused when the app refuses to start. |
+| **Migration execution needed correction** | `backup-restore.md` §3.4 | Keep `MIGRATE_ON_STARTUP=false`; apply migrations through the separate standalone CLI process and require a successful repeat with zero pending migrations. |
 
 ---
 
@@ -154,8 +165,12 @@ MANUAL OPERATOR ACTION REQUIRED
 □ Record current production DATABASE_URL (before any changes):
     PRODUCTION_DATABASE_URL = <copy from Render env dashboard>
 □ Confirm this URL is stored securely outside the drill process
+□ Confirm the intended environment and record:
+    PRODUCTION_API_BASE_URL = <current Production API origin>
+    DRILL_API_BASE_URL      = <isolated drill API origin>
+    DRILL_FRONTEND_ORIGIN   = <isolated drill frontend HTTPS origin>
 □ Confirm the production backend service is healthy:
-    curl https://verve-dental-api.onrender.com/api/v1/ready
+    curl <PRODUCTION_API_BASE_URL>/api/v1/ready
     Expected: { "status": "ok" }
 □ Confirm rollback path: if drill restore fails, production DATABASE_URL
   is NOT changed — production continues uninterrupted
@@ -164,47 +179,64 @@ MANUAL OPERATOR ACTION REQUIRED
 #### B.1.4 Verify secrets availability
 
 ```
-□ Confirm MFA_ENCRYPTION_KEY is accessible (do not reveal value — confirm existence)
-□ Confirm JWT_ACCESS_SECRET is accessible
-□ Confirm JWT_REFRESH_SECRET is accessible
+□ Confirm the original Production MFA_ENCRYPTION_KEY is accessible only if
+  restored MFA data must be decrypted (confirm existence; never print it)
+□ Generate or retrieve separate drill-only JWT access and refresh secrets
+□ Confirm an isolated drill cache/session store is available
+□ Confirm the drill will never use Production refresh-token storage
 □ Confirm a test admin account exists with known credentials for post-restore smoke test
 □ ABORT if any secret cannot be located
 ```
 
+The original `MFA_ENCRYPTION_KEY` may be required to decrypt restored TOTP
+secrets. Treat it as a Production secret even during a drill: inject it only
+through the approved secret mechanism, never print or commit it, and remove it
+from the drill service after testing.
+
 #### B.1.5 Verify migration state
 
 ```
-□ Confirm expected migration count: 16 migrations
-    IDs: 003_users_schema through 018_supplier_catalogue_schema
+□ Derive the expected ordered migration IDs from the exact release SHA
 □ Confirm the most recently applied migration in production:
     MANUAL OPERATOR ACTION REQUIRED
     psql "$PRODUCTION_DATABASE_URL" -c \
       "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at DESC LIMIT 3;"
-    Expected last: 018_supplier_catalogue_schema
-□ Note: if production has migrations beyond 018, the expected count increases accordingly
+    Expected IDs: derive from the exact reviewed release SHA
 ```
 
 #### B.1.6 Verify environment variables
 
 ```
-□ List all required production environment variables:
+□ Configure the isolated drill service environment:
     NODE_ENV                = production
     PORT                    = (Render-injected — do not override)
     HOST                    = 0.0.0.0
-    DATABASE_URL            = postgresql://<host>/<db>?sslmode=require
+    DATABASE_URL            = <isolated restored database URL>
     DATABASE_SSL            = auto
-    REDIS_URL               = rediss://:<pass>@<host>:<port>
+    REDIS_URL               = <isolated drill cache URL>
     REDIS_TLS               = auto
-    JWT_ACCESS_SECRET       = <≥32 chars>
-    JWT_REFRESH_SECRET      = <≥32 chars>
+    JWT_ACCESS_SECRET       = <separate drill-only secret, ≥32 chars>
+    JWT_REFRESH_SECRET      = <separate drill-only secret, ≥32 chars>
     JWT_ACCESS_EXPIRES_IN   = 15m
     JWT_REFRESH_EXPIRES_IN  = 7d
-    MFA_ENCRYPTION_KEY      = <64-char hex>
-    CORS_ORIGIN             = https://verve-dental-frontend.onrender.com
-    MIGRATE_ON_STARTUP      = (unset for normal operation)
+    MFA_ENCRYPTION_KEY      = <original key only when MFA restore testing requires it>
+    CORS_ORIGIN             = <DRILL_FRONTEND_ORIGIN>
+    MIGRATE_ON_STARTUP      = false
 □ Confirm each variable is accessible in the Render dashboard
 □ Record which variables will need updating if drill connects a test service
+□ Confirm DRILL_API_BASE_URL and CORS_ORIGIN identify only the drill environment
 ```
+
+#### B.1.7 Isolate outbound integrations
+
+Review the exact release SHA for every outbound integration before starting a
+drill. Current source includes Anthropic OCR through `ANTHROPIC_API_KEY`.
+Disable provider egress and OCR acceptance activity where possible. If startup
+requires a provider credential, use a dedicated restricted non-Production
+credential and ensure requests cannot affect Production accounts, billing,
+webhooks, email, supplier systems, or other external destinations. Never copy a
+Production integration credential into the drill environment. Stop if an
+integration cannot be safely disabled or isolated.
 
 ---
 
@@ -259,7 +291,9 @@ Step 3 — Extract the restored database URL
 - The restored database is a full volume snapshot — all tables, indexes, sequences, functions, and RLS policies are included.
 - RLS policies and helper functions (`app_current_clinic_id`, `app_is_owner_admin`) are part of the schema and will be present in the restore.
 - ENUM types are included in the restore — no re-creation is needed.
-- Advisory lock mechanism for migrations is not persistent — safe to re-run `npm run migrate` against the restored instance.
+- Keep `MIGRATE_ON_STARTUP=false`. From repository root, run
+  `npm.cmd run migrate --workspace=@verve/backend` as a separate CLI process,
+  require exit code 0, then repeat and confirm zero pending migrations.
 
 #### B.2.4 Recovery decision points
 
@@ -270,7 +304,7 @@ At each decision point below, STOP and assess before continuing:
 | Snapshot is older than 48 hours | BACKUP_SNAPSHOT_AGE > 48h | Escalate — assess data loss impact before proceeding |
 | Restore takes >60 minutes | Duration exceeds expected window | Contact Render Support |
 | Restored instance fails to reach "Available" | Status stuck or shows "Error" | Contact Render Support — do NOT switch production DATABASE_URL |
-| Migration count after restore is not 16 | schema_migrations count ≠ 16 | STOP — investigate before switching traffic |
+| Migration IDs differ from release source | Missing, extra, or unexpected IDs | STOP — investigate before switching traffic |
 | RLS policies missing from restored DB | pg_policies count = 0 | STOP — restore may be from a pre-RLS snapshot |
 | Row counts are implausibly low | Any table has 0 rows unexpectedly | STOP — snapshot may be corrupt or from wrong point in time |
 
@@ -285,55 +319,44 @@ Execute all validation queries against `RESTORED_DATABASE_URL` — **not** the p
 ```bash
 # MANUAL OPERATOR ACTION REQUIRED
 
-# 1. Confirm all 16 migrations are present
+# 1. Confirm applied IDs match the exact reviewed release source
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT id, applied_at FROM schema_migrations ORDER BY applied_at;"
-# Expected: 16 rows, from 003_users_schema through 018_supplier_catalogue_schema
+# Expected: exact ordered IDs recorded in the pre-drill plan
 
-# 2. Confirm migration count exactly
+# 2. Record the migration count; do not use a hard-coded repository-wide count
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT COUNT(*) AS migration_count FROM schema_migrations;"
-# Expected: 16
+# Expected: count derived from the exact release source
 
-# 3. Confirm the most recently applied migration
+# 3. Confirm the final applied migration matches the release source
 psql "$RESTORED_DATABASE_URL" -c \
   "SELECT id FROM schema_migrations ORDER BY applied_at DESC LIMIT 1;"
-# Expected: 018_supplier_catalogue_schema
+# Expected: final ID recorded in the pre-drill plan
 ```
 
 #### B.3.2 Data integrity validation
 
-```bash
-# MANUAL OPERATOR ACTION REQUIRED
+Run business-table checks as the application database role, not a superuser or
+table owner that bypasses RLS. For every scoped check:
 
-# 4. Confirm row counts across all key tables
-psql "$RESTORED_DATABASE_URL" -c "
-  SELECT
-    (SELECT COUNT(*) FROM clinics)                  AS clinics,
-    (SELECT COUNT(*) FROM users)                    AS users,
-    (SELECT COUNT(*) FROM clinic_inventory_items)   AS inventory_items,
-    (SELECT COUNT(*) FROM inventory_adjustments)    AS inventory_adjustments,
-    (SELECT COUNT(*) FROM roster_entries)           AS roster_entries,
-    (SELECT COUNT(*) FROM timesheet_entries)        AS timesheet_entries,
-    (SELECT COUNT(*) FROM invoices)                 AS invoices,
-    (SELECT COUNT(*) FROM audit_events)             AS audit_events,
-    (SELECT COUNT(*) FROM suppliers)                AS suppliers,
-    (SELECT COUNT(*) FROM supplier_catalogue)       AS supplier_catalogue,
-    (SELECT COUNT(*) FROM master_catalog_items)     AS master_catalog_items;
-"
-# Compare against known-good counts from pre-restore state
-# STOP if any table shows 0 unexpectedly
+1. Start a transaction.
+2. Set the source-verified transaction-local variables using the same pattern as
+   `Backend/src/db/tenantContext.ts`:
+   `app.current_clinic_id`, `app.owner_admin_mode`, and
+   `app.current_user_id`.
+3. Run the query inside that transaction.
+4. Roll back so the context cannot leak to a pooled or reused connection.
 
-# 5. Confirm clinic data
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, name, is_active FROM clinics ORDER BY created_at LIMIT 10;"
-# Expected: at least one active clinic
+Use owner-admin context only for the approved cross-clinic inventory of restored
+data. Then repeat representative checks with `owner_admin_mode=false` for each
+expected clinic. Compare clinics, users, assignments, inventory, adjustments,
+roster, timesheets, invoices, audit events, suppliers, catalogue, and master
+catalogue data with dated pre-restore evidence.
 
-# 6. Confirm user accounts
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, email, role, home_clinic_id, mfa_enabled FROM users ORDER BY created_at LIMIT 10;"
-# Expected: at least one owner_admin or group_practice_manager
-```
+An unscoped query returning zero rows can be a forced-RLS result and is not
+proof of data loss. Stop on an unexpected result, but first confirm the
+application role and transaction-local context before diagnosing missing data.
 
 #### B.3.3 RLS and security validation
 
@@ -362,23 +385,26 @@ psql "$RESTORED_DATABASE_URL" -c \
 # Expected: rowsecurity=true, forcerowsecurity=true for all four
 ```
 
+Policy/function counts and catalog flags prove only that RLS objects exist; they
+do not prove effective isolation. Using the drill application:
+
+1. Authenticate as a user without owner-admin or cross-clinic privileges.
+2. Confirm that user can access expected data in its authorised clinic.
+3. Attempt equivalent reads and writes against a different clinic with known
+   data.
+4. Require denial or an empty tenant-scoped result, as appropriate, and confirm
+   no cross-clinic write occurred.
+5. Repeat representative checks for users, inventory, roster, invoices and
+   other critical tenant-scoped workflows.
+
 #### B.3.4 Supplier data validation
 
-```bash
-# MANUAL OPERATOR ACTION REQUIRED
-
-# 10. Confirm supplier records
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT id, supplier_name, supplier_code, active FROM suppliers ORDER BY created_at LIMIT 10;"
-
-# 11. Confirm supplier catalogue entries
-psql "$RESTORED_DATABASE_URL" -c \
-  "SELECT sc.id, s.supplier_name, mci.name AS product_name, sc.unit_cost_cents, sc.active
-   FROM supplier_catalogue sc
-   JOIN suppliers s ON s.id = sc.supplier_id
-   JOIN master_catalog_items mci ON mci.id = sc.master_catalog_item_id
-   ORDER BY sc.created_at LIMIT 10;"
-```
+Validate supplier and catalogue data through the application role and the same
+source-verified transaction-local RLS procedure in B.3.2. Compare representative
+supplier, catalogue, relationship and clinic-specific pricing records with
+pre-restore evidence. Where a table is global rather than tenant-scoped, record
+that source-verified expectation explicitly instead of assuming an unscoped
+query tests tenant isolation.
 
 #### B.3.5 Application startup validation
 
@@ -389,25 +415,34 @@ If connecting the restored database to a **test/drill backend service** (not pro
 
 # In the drill backend service environment, set:
 #   DATABASE_URL = $RESTORED_DATABASE_URL
-#   MFA_ENCRYPTION_KEY = <same key as production>
-#   JWT_ACCESS_SECRET = <same key as production>
-#   JWT_REFRESH_SECRET = <same key as production>
+#   REDIS_URL = <isolated drill cache; never Production refresh-token storage>
+#   JWT_ACCESS_SECRET = <separate drill-only secret>
+#   JWT_REFRESH_SECRET = <separate drill-only secret>
+#   MFA_ENCRYPTION_KEY = <original Production key only if restored MFA must be decrypted>
+#   CORS_ORIGIN = <DRILL_FRONTEND_ORIGIN>
 #   NODE_ENV = production
-#   MIGRATE_ON_STARTUP = false  (migrations should already be at 16/16)
+#   MIGRATE_ON_STARTUP = false
 
 # Trigger a manual deploy of the drill backend service.
 # Watch deploy logs for:
 #   ✓ "Env validation passed"
-#   ✓ "Bootstrap migrations: all 16 migrations already applied"
+#   ✓ "Migration check: 0 pending"
+#   ✓ "No pending migrations — schema is up to date"
 #   ✓ "Server listening on 0.0.0.0:<PORT>"
 
-# Verify health:
-curl -s https://<drill-backend-url>/api/v1/health | jq .status
+# Confirm DRILL_API_BASE_URL identifies the isolated drill service, then verify:
+curl -s <DRILL_API_BASE_URL>/api/v1/health | jq .status
 # Expected: "ok"
 
-curl -s https://<drill-backend-url>/api/v1/ready | jq '.status, .checks'
-# Expected: "ok" with all checks green
+curl -s <DRILL_API_BASE_URL>/api/v1/ready | jq '.status, .checks'
+# Readiness is necessary but does not prove authentication or refresh works.
 ```
+
+Before authentication tests, reconfirm the browser origin equals
+`DRILL_FRONTEND_ORIGIN`, CORS does not allow a Production frontend, and the
+drill API points only to the restored database and isolated cache. Remove the
+original `MFA_ENCRYPTION_KEY` from the drill environment immediately after MFA
+validation.
 
 ---
 
@@ -419,9 +454,9 @@ Stop the drill and initiate rollback if any of the following occur:
 
 | Abort Criterion | Action |
 |----------------|--------|
-| Production `DATABASE_URL` was inadvertently changed | Immediately revert to `PRODUCTION_DATABASE_URL` recorded in B.1.3 |
+| Production `DATABASE_URL` was inadvertently changed | Stop writes and begin the authoritative-database decision below; do not immediately switch |
 | Restore instance fails to reach "Available" after 60 minutes | Contact Render Support; do not change any production settings |
-| Migration count ≠ 16 on restored instance | Do not route any traffic to the restored instance |
+| Migration IDs differ from the exact release source | Do not route any traffic to the restored instance |
 | RLS policies absent from restored instance | Do not route any traffic; restore is from pre-security-hardening snapshot |
 | Any production service outage detected during drill | Suspend drill; investigate production health first |
 
@@ -430,20 +465,25 @@ Stop the drill and initiate rollback if any of the following occur:
 ```
 MANUAL OPERATOR ACTION REQUIRED
 
-If DATABASE_URL was changed during the drill and needs to be reverted:
+If any service may have sent writes to the restored database:
 
-1. Navigate to: Render dashboard → Services → verve-dental-api → Environment
-2. Update DATABASE_URL back to: PRODUCTION_DATABASE_URL (recorded in B.1.3)
-3. Save and trigger a manual redeploy
-4. Confirm health:
-   curl -s https://verve-dental-api.onrender.com/api/v1/ready | jq '.status'
-   Expected: "ok"
+1. Stop application writes before changing database configuration.
+2. Confirm the intended environment, API service and both database identities
+   without printing connection strings.
+3. Determine whether the original database, restored database, or both accepted
+   writes after the switch. Use timestamps, audit evidence and application-role,
+   RLS-aware checks.
+4. Record an explicit incident-owner decision naming the authoritative database
+   and addressing reconciliation, duplicate/conflicting writes, and accepted
+   data loss.
+5. Only then point `<TARGET_API_SERVICE>` at the approved authoritative
+   database and redeploy the last schema-compatible full SHA.
+6. Confirm `<TARGET_API_BASE_URL>` identifies the intended environment before
+   running liveness, readiness, authentication and workflow acceptance.
 
-If the drill restore instance itself needs to be removed:
-1. Navigate to: Render dashboard → PostgreSQL → verve-db-drill-YYYYMMDD
-2. Click Settings → Delete Database
-3. Confirm deletion
-4. Note: this action is irreversible — only delete after confirming production is healthy
+Preserve both databases until the authoritative-data decision, reconciliation,
+incident review and retention approval are complete. Database deletion is not a
+routine validation or drill-cleanup step.
 ```
 
 #### B.4.3 Communication process
@@ -473,16 +513,19 @@ If the drill restore instance itself needs to be removed:
 | 2 | Frontend loads | Browser | Login page renders without JS console errors |
 | 3 | Health endpoint healthy | `GET /api/v1/health` | `{ "status": "ok" }` |
 | 4 | Readiness endpoint healthy | `GET /api/v1/ready` | `{ "status": "ok" }` with all checks green |
-| 5 | No startup migration failures | Deploy logs | No `"Migration Gate"` error; `"all 16 migrations already applied"` |
+| 5 | No startup migration failures | Deploy logs | No `"Migration Gate"` error; zero pending migrations |
 | 6 | CORS headers correct | Browser DevTools → Network | No CORS errors on API calls |
 
 ---
 
 ### C.2 Database
 
+For items 8–16, use the application role and transaction-local RLS procedure in
+B.3.2. Never score an unscoped zero count as proof of missing data.
+
 | # | Check | Method | Pass Criteria |
 |---|-------|--------|---------------|
-| 7 | Migrations current (all 16 applied) | `psql` query on `schema_migrations` | `COUNT(*) = 16`; last entry = `018_supplier_catalogue_schema` |
+| 7 | Migrations current | `psql` query on `schema_migrations` | IDs exactly match the reviewed release source |
 | 8 | Clinics present | `psql` query | At least 1 active clinic row |
 | 9 | Users present | `psql` query | At least 1 active user with role `owner_admin` |
 | 10 | Inventory items present | `psql` query on `clinic_inventory_items` | Row count matches pre-restore expectation |
@@ -503,9 +546,11 @@ If the drill restore instance itself needs to be removed:
 | 18 | MFA enrollment remains functional | Login with MFA-enrolled account | TOTP challenge presented; valid code accepted |
 | 19 | RLS protection intact | `psql` query on `pg_policies` | ≥20 policies present; `rowsecurity=true`, `forcerowsecurity=true` on tenant tables |
 | 20 | RLS helper functions present | `psql` query on `pg_proc` | Both `app_current_clinic_id` and `app_is_owner_admin` exist |
-| 21 | JWT validation functioning | Use access token from step 17 to call `GET /api/v1/ready` | `200` with valid auth |
+| 21 | JWT validation functioning | Use the access token on an authenticated endpoint | Request succeeds for the expected user |
 | 22 | Token refresh functioning | `POST /api/v1/auth/refresh` with refresh cookie | New `accessToken` returned |
-| 23 | Cross-clinic isolation | Attempt to access data from Clinic B using Clinic A credentials | `403` or empty result |
+| 22a | Browser reload persistence | Reload an authenticated browser session | Session is restored through valid access state or refresh |
+| 23 | Cross-clinic isolation | Attempt representative reads and writes in Clinic B using a Clinic A user without cross-clinic privileges | Read is denied or tenant-empty; write is denied and no row is created or changed |
+| 23a | Logout and reload | Log out, then reload the browser | Cookie cleared and session remains unauthenticated |
 
 ---
 
@@ -579,7 +624,7 @@ If the drill restore instance itself needs to be removed:
 | Property | Detail |
 |----------|--------|
 | **Purpose** | PostgreSQL connection string granting the application full read/write access to the database. Contains hostname, port, username, password, and database name. |
-| **Format** | `postgresql://user:password@host:5432/dbname?sslmode=require` |
+| **Format** | `postgresql://user:password@host:5432/dbname?sslmode=verify-full` |
 | **Impact if lost** | **MEDIUM** — recoverable. The connection string can be retrieved from the Render dashboard ("Connect" tab on the PostgreSQL instance). However, if the Render account is inaccessible, the string cannot be retrieved and the application cannot start. |
 | **Recovery method** | Log in to Render dashboard → PostgreSQL instance → "Connect" → copy External Database URL. If the Render account is inaccessible, contact Render Support with proof of ownership. |
 | **Backup recommendation** | Copy the DATABASE_URL to the same secrets manager as the JWT/MFA keys. Note that this value **rotates** every time a new database instance is created (e.g., after a restore). Always update the secrets manager entry after any restore operation. |
@@ -623,17 +668,16 @@ If the drill restore instance itself needs to be removed:
 
 ---
 
-### E.2 Current state (as of Sprint K.1)
+### E.2 Current state (reviewed 2026-10-13)
 
 | Component | Current RPO | Current RTO | Notes |
 |-----------|------------|------------|-------|
-| PostgreSQL (free/starter plan) | **24 hours** | **45–120 minutes** | Daily snapshots only; manual dashboard restore |
-| PostgreSQL (standard plan + PITR) | **~5 minutes** | **45–90 minutes** | PITR not currently enabled |
-| Redis | **Acceptable loss** | **5–15 minutes** | Ephemeral — users re-authenticate |
-| Backend application | N/A | **3–8 minutes** | Render auto-deploy from `main` |
-| Frontend application | N/A | **3–5 minutes** | Static build; Render auto-deploy |
-| Environment variables/secrets | N/A | **5–30 minutes** | Manual Render dashboard access required |
-| Full end-to-end recovery | **24 hours** | **60–180 minutes** | Combined across all components |
+| PostgreSQL | **Unverified** | **Unverified** | Confirm provider configuration and measure a restore |
+| Redis | Session data is ephemeral | **Unverified** | Loss requires authentication acceptance and likely re-login |
+| Backend application | N/A | **Unverified** | Production auto-deploy must remain off |
+| Frontend application | N/A | **Unverified** | Production auto-deploy must remain off |
+| Environment variables/secrets | N/A | **Unverified** | Confirm approved recovery access |
+| Full end-to-end recovery | **Unverified** | **Unverified** | Requires a completed drill |
 
 ---
 
@@ -649,8 +693,8 @@ If the drill restore instance itself needs to be removed:
 | Secrets backup | **Before pilot launch** | MFA_ENCRYPTION_KEY + JWT secrets must be in a second location |
 | Render plan | **Minimum Starter** | Avoid free-tier auto-suspension |
 
-**Pilot RPO status: ACHIEVABLE** — 24-hour RPO is met by current daily snapshots.  
-**Pilot RTO status: ACHIEVABLE** — 2-hour RTO is within the current 45–120 minute window.
+**Pilot RPO status: UNVERIFIED.**
+**Pilot RTO status: UNVERIFIED.**
 
 ---
 
@@ -677,8 +721,8 @@ If the drill restore instance itself needs to be removed:
 
 | Tier | RPO | RTO | Status |
 |------|-----|-----|--------|
-| **Current state** | 24 hours | 60–180 minutes | Baseline |
-| **Internal pilot target** | 24 hours | 2 hours | **ACHIEVABLE with pilot conditions** |
+| **Current state** | Unverified | Unverified | No completed drill |
+| **Internal pilot target** | 24 hours | 2 hours | Target only; achievement unverified |
 | **Commercial launch target** | 1 hour | 30 minutes | NOT YET MET |
 | **Future production SLA** | 15 minutes | 15 minutes | Requires HA architecture |
 
@@ -806,7 +850,7 @@ PRE-DRILL CHECKS (B.1)
   □ Production DATABASE_URL recorded for rollback
   □ Production backend confirmed healthy before drill
   □ Secrets accessible: MFA_ENCRYPTION_KEY, JWT secrets
-  □ Expected migration count confirmed: 16
+  □ Expected migration IDs derived from the exact release SHA
 
 ────────────────────────────────────────────────────────────────
 RESTORE PROCESS (B.2)
@@ -820,7 +864,7 @@ RESTORE PROCESS (B.2)
 SCHEMA VALIDATION (B.3.1)
 ────────────────────────────────────────────────────────────────
 
-  □ Migration count confirmed: ______ / 16 expected
+  □ Applied migration IDs exactly match the release source
   □ Last migration confirmed: ______________________________
   □ Pass / FAIL: ________________
 
@@ -939,8 +983,9 @@ APPROVAL
 | Database is not on free tier (auto-suspension risk) | ⬜ VERIFY | Check Render plan in dashboard |
 | Backup retention is at least 7 days | ⬜ VERIFY | Confirm via Render plan details |
 
-**Backup Availability: PARTIALLY READY**  
-Render daily snapshots exist but have never been verified as restorable. Free-tier risk must be confirmed resolved before pilot.
+**Backup Availability: NOT VERIFIED**
+Snapshot existence, plan behavior, retention, and restorability must all be
+confirmed before pilot.
 
 ---
 
@@ -1016,8 +1061,9 @@ All application recovery verification is pending the restore drill.
 | Sign-off template exists | ✅ READY | Part G of this document |
 | Pilot team briefed on RPO/RTO | ⬜ PENDING | Brief required before pilot launch |
 
-**Operational Documentation: READY**  
-All documentation artifacts are complete. Pilot team briefing is the only remaining action.
+**Operational Documentation: PARTIALLY READY**
+The files exist, but provider procedures and recovery claims remain unverified
+until a successful drill and release review.
 
 ---
 
@@ -1030,7 +1076,7 @@ All documentation artifacts are complete. Pilot team briefing is the only remain
 | Secrets Recovery | **PARTIALLY READY** | Procedures documented; physical storage unconfirmed |
 | Infrastructure Recovery | **PARTIALLY READY** | Rollback documented; Render access controls unconfirmed |
 | Application Recovery | **NOT READY** | All verification pending drill completion |
-| Operational Documentation | **READY** | All runbooks and checklists complete |
+| Operational Documentation | **PARTIALLY READY** | Files exist; provider procedure remains unverified |
 
 ---
 
@@ -1039,14 +1085,16 @@ All documentation artifacts are complete. Pilot team briefing is the only remain
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   OVERALL PILOT RECOMMENDATION:  GO WITH CONDITIONS        │
+│   OVERALL PILOT RECOMMENDATION:  NO GO — GATES OPEN        │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Verve is not yet GO for internal pilot from a recovery readiness perspective.**
 
-The documentation, procedures, and checklists are complete and of high quality. However, the following conditions **must be satisfied** before the pilot go/no-go decision is confirmed:
+The procedures still contain provider assumptions that require live
+verification. The following conditions **must be satisfied** before the pilot
+go/no-go decision is confirmed:
 
 | # | Condition | Owner | Deadline |
 |---|-----------|-------|----------|
@@ -1055,9 +1103,10 @@ The documentation, procedures, and checklists are complete and of high quality. 
 | 3 | Store `MFA_ENCRYPTION_KEY` in a second location accessible to ≥2 people | Account Owner | Before pilot launch |
 | 4 | Store JWT secrets in a second location | Lead Engineer | Before pilot launch |
 | 5 | Add a second Render Owner/Admin to the account | Account Owner | Before pilot launch |
-| 6 | Brief pilot team on 24-hour RPO limitation | Lead Engineer | Before pilot launch |
+| 6 | Brief pilot team on the approved RPO target and verified capability | Lead Engineer | Before pilot launch |
 
-Once all 6 conditions are satisfied and a PASS or PASS WITH RISKS restore drill is recorded, the recommendation upgrades to **GO**.
+No automatic upgrade to **GO** is implied. After the gates are satisfied, an
+authorised release review must assess the evidence and record a new decision.
 
 ---
 
@@ -1078,7 +1127,7 @@ Once all 6 conditions are satisfied and a PASS or PASS WITH RISKS restore drill 
 | ID | Risk | Impact | Mitigation | Owner |
 |----|------|--------|-----------|-------|
 | HR-01 | **Single Render account owner** — If the account owner is unavailable (illness, departure), no recovery operations can proceed. | Full recovery blocked | Add second Render Owner; store account credentials in shared password manager | Account Owner |
-| HR-02 | **Migration count stale in backup-restore.md** — The document says "15 migrations" but Sprint O added 017 and 018, making the correct count 16. Post-restore verification using the old count gives false confidence. | Silent supplier data loss undetected | Update `backup-restore.md` to correct migration count to 16 | Lead Engineer |
+| HR-02 | **Migration expectations can become stale** — fixed counts and final IDs become invalid when migrations are added. | Incomplete schema accepted | Derive exact IDs from the immutable release SHA for each drill | Lead Engineer |
 | HR-03 | **No cross-region or offsite backup** — Render stores snapshots in the same AWS region as the primary database. A regional AWS outage destroys both the primary database and all its snapshots simultaneously. | Total irrecoverable data loss | Add scheduled `pg_dump` export to independent object storage (S3 / Cloudflare R2) as a commercial requirement | Lead Engineer |
 | HR-04 | **No automated failover or standby** — Any failure of the primary PostgreSQL instance requires full manual restore (45–120 minutes). There is no read replica or hot standby to absorb traffic. | Full service outage during restore | Accept for pilot; upgrade to Render HA or add read replica before commercial launch | Lead Engineer |
 
@@ -1092,7 +1141,7 @@ Once all 6 conditions are satisfied and a PASS or PASS WITH RISKS restore drill 
 | MR-02 | **DATABASE_URL must be manually updated after every restore** — A forgotten update leaves the application connected to the old (possibly deleted) database. | Application connects to wrong or deleted database | Add a checklist step explicitly confirming DATABASE_URL update; automate with render.yaml in future | Lead Engineer |
 | MR-03 | **No render.yaml / Infrastructure-as-Code** — If the Render account or services are lost, recreating the full environment requires manual dashboard configuration with no repeatable playbook. | Extended RTO; potential misconfiguration | Create `render.yaml` before commercial launch (P1) | Lead Engineer |
 | MR-04 | **Secrets exist only in Render dashboard** — If Render is unavailable (outage, maintenance), secrets cannot be retrieved and a new deployment cannot be configured. | Cannot deploy application during Render outage | Store all secrets independently in a password manager or AWS Secrets Manager | Lead Engineer |
-| MR-05 | **Incorrect table names in backup-restore.md** — Verification queries reference `inventory_items` (should be `clinic_inventory_items`) and `roster_shifts` (should be `roster_entries`). A panicked operator running these queries during an incident will get errors or confusion. | Delayed verification during actual incident | Fix queries in `backup-restore.md` (documented in Section A.3) | Lead Engineer |
+| MR-05 | **Recovery queries can drift from the schema**. | Delayed or false verification | Validate every query against the exact release source before each drill | Lead Engineer |
 
 ---
 
@@ -1102,7 +1151,7 @@ Once all 6 conditions are satisfied and a PASS or PASS WITH RISKS restore drill 
 |----|------|--------|-----------|-------|
 | LR-01 | **Redis has no persistence** — Intentional design. All refresh tokens are lost on Redis restart. | All users must re-authenticate | Accept; documented in redis-down.md; notify users | Lead Engineer |
 | LR-02 | **Migration advisory lock may delay cold starts if two instances scale simultaneously** — `pg_advisory_xact_lock` serializes concurrent migrations but adds latency. | Delayed startup on concurrent scale events | Accept; idempotent migrations make this safe | Lead Engineer |
-| LR-03 | **`payroll_records` table referenced in backup-restore.md but not in schema** — The existing runbook queries for `payroll_records` (SELECT COUNT(*)) but the actual table is `timesheet_entries`. | Operator confusion during verification | Fix backup-restore.md query | Lead Engineer |
+| LR-03 | **Recovery checklist maintenance is manual.** | Operator confusion after schema changes | Revalidate table and endpoint names for each release | Lead Engineer |
 | LR-04 | **Free tier cold start latency** — If the backend web service is on the free plan, the first request after 15 minutes of inactivity takes 30–60 seconds. Clinic staff will perceive this as a slow or broken system. | Poor first impression during pilot | Upgrade web service from free to Starter ($7/month) | Account Owner |
 
 ---

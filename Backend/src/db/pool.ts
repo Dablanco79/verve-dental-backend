@@ -6,7 +6,7 @@ export type DatabasePool = pg.Pool;
 
 function parseDatabaseSslMode(
   databaseUrl: string,
-): "disable" | "require" | "verify" | null {
+): "disable" | "require" | "verify-ca" | "verify-full" | null {
   try {
     const url = new URL(databaseUrl);
     const sslmode = url.searchParams.get("sslmode")?.toLowerCase();
@@ -20,9 +20,7 @@ function parseDatabaseSslMode(
       sslmode === "verify-ca" ||
       sslmode === "verify-full"
     ) {
-      return sslmode === "verify-full" || sslmode === "verify-ca"
-        ? "verify"
-        : "require";
+      return sslmode;
     }
   } catch {
     return null;
@@ -40,9 +38,49 @@ function isLocalDatabaseHost(databaseUrl: string): boolean {
   }
 }
 
+function isDeployedRemoteDatabase(config: EnvConfig): boolean {
+  return (
+    Boolean(config.DATABASE_URL) &&
+    (config.NODE_ENV === "production" || config.NODE_ENV === "staging") &&
+    !isLocalDatabaseHost(config.DATABASE_URL as string)
+  );
+}
+
 /**
- * Resolves PostgreSQL SSL settings for cloud hosts (Render, Railway, AWS RDS, etc.).
- * `DATABASE_SSL=auto` (default) enables SSL for remote hosts and when `sslmode=require` is present.
+ * node-postgres parses SSL query parameters after the explicit Pool options,
+ * allowing connection-string values to replace the resolved `ssl` object.
+ * Deployed URLs retain sslmode for validation, but it is removed before Pool
+ * construction so `{ rejectUnauthorized: true }` remains authoritative.
+ */
+export function databaseConnectionStringForPool(config: EnvConfig): string {
+  if (!config.DATABASE_URL || !isDeployedRemoteDatabase(config)) {
+    return config.DATABASE_URL as string;
+  }
+
+  const url = new URL(config.DATABASE_URL);
+  const overridingParameters = [
+    "ssl",
+    "sslcert",
+    "sslkey",
+    "sslrootcert",
+    "uselibpqcompat",
+  ].filter((parameter) => url.searchParams.has(parameter));
+
+  if (overridingParameters.length > 0) {
+    throw new Error(
+      `Deployed remote PostgreSQL DATABASE_URL contains unsupported TLS parameter(s): ${overridingParameters.join(
+        ", ",
+      )}. Configure trust through the runtime certificate store instead.`,
+    );
+  }
+
+  url.searchParams.delete("sslmode");
+  return url.toString();
+}
+
+/**
+ * Resolves PostgreSQL SSL settings. Deployed remote connections require
+ * `sslmode=verify-full`; development and test retain deliberate local options.
  */
 export function resolvePostgresSsl(
   config: EnvConfig,
@@ -51,11 +89,27 @@ export function resolvePostgresSsl(
     return undefined;
   }
 
+  const sslModeFromUrl = parseDatabaseSslMode(config.DATABASE_URL);
+  const isLocalHost = isLocalDatabaseHost(config.DATABASE_URL);
+  const isDeployedRemote = isDeployedRemoteDatabase(config);
+
+  if (isDeployedRemote) {
+    if (config.DATABASE_SSL === "false" || sslModeFromUrl === "disable") {
+      throw new Error(
+        "Deployed remote PostgreSQL connections cannot disable TLS certificate verification",
+      );
+    }
+    if (sslModeFromUrl !== "verify-full") {
+      throw new Error(
+        "Deployed remote PostgreSQL DATABASE_URL must use sslmode=verify-full",
+      );
+    }
+    return { rejectUnauthorized: true };
+  }
+
   if (config.DATABASE_SSL === "false") {
     return undefined;
   }
-
-  const sslModeFromUrl = parseDatabaseSslMode(config.DATABASE_URL);
 
   if (sslModeFromUrl === "disable") {
     return undefined;
@@ -64,16 +118,18 @@ export function resolvePostgresSsl(
   const shouldUseSsl =
     config.DATABASE_SSL === "true" ||
     sslModeFromUrl === "require" ||
-    sslModeFromUrl === "verify" ||
+    sslModeFromUrl === "verify-ca" ||
+    sslModeFromUrl === "verify-full" ||
     ((config.NODE_ENV === "production" || config.NODE_ENV === "staging") &&
-      !isLocalDatabaseHost(config.DATABASE_URL));
+      !isLocalHost);
 
   if (!shouldUseSsl) {
     return undefined;
   }
 
   return {
-    rejectUnauthorized: sslModeFromUrl === "verify",
+    rejectUnauthorized:
+      sslModeFromUrl === "verify-ca" || sslModeFromUrl === "verify-full",
   };
 }
 
@@ -82,9 +138,12 @@ export function createDatabasePool(config: EnvConfig): DatabasePool | null {
     return null;
   }
 
+  const ssl = resolvePostgresSsl(config);
+  const connectionString = databaseConnectionStringForPool(config);
+
   return new pg.Pool({
-    connectionString: config.DATABASE_URL,
-    ssl: resolvePostgresSsl(config),
+    connectionString,
+    ssl,
     max: config.NODE_ENV === "production" ? 20 : 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
