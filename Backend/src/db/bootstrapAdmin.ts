@@ -38,6 +38,7 @@ import type { Logger } from "../utils/logger.js";
 export const BOOTSTRAP_BCRYPT_ROUNDS = 12;
 export const BOOTSTRAP_PASSWORD_MIN_LENGTH = 12;
 export const BOOTSTRAP_PASSWORD_MAX_LENGTH = 128;
+export const BOOTSTRAP_ADVISORY_LOCK_KEY = 5_432_002n;
 
 export type BootstrapInput = {
   adminEmail: string;
@@ -45,6 +46,27 @@ export type BootstrapInput = {
   clinicName: string;
   clinicTimezone: string;
 };
+
+/**
+ * Counts all users through the same owner-admin RLS context used by bootstrap.
+ * This is used by deployed startup diagnostics; an unscoped count is
+ * indistinguishable from an empty table once FORCE RLS is enabled.
+ */
+export async function countUsersWithOwnerAdminContext(
+  pool: DatabasePool,
+): Promise<number> {
+  return withTenantContext(
+    pool,
+    AUTH_BYPASS_CLINIC_ID,
+    async (client) => {
+      const { rows } = await client.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM users",
+      );
+      return parseInt(rows[0]?.count ?? "0", 10);
+    },
+    true,
+  );
+}
 
 function assertBootstrapPasswordPolicy(password: string): void {
   if (
@@ -121,6 +143,13 @@ export async function bootstrapFirstAdmin(
     pool,
     AUTH_BYPASS_CLINIC_ID,
     async (client) => {
+      // Serialize the empty-database check and all first-admin writes. Under
+      // READ COMMITTED, two unlocked COUNT-then-INSERT transactions can both
+      // observe zero users and create separate owner administrators.
+      await client.query("SELECT pg_advisory_xact_lock($1)", [
+        BOOTSTRAP_ADVISORY_LOCK_KEY,
+      ]);
+
       // ── Guard: abort if any user already exists ──────────────────────────────
       const { rows: countRows } = await client.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM users",

@@ -35,7 +35,7 @@ if (!pool) {
 try {
   await runBootstrapMigrations(pool, logger, {
     nodeEnv: config.NODE_ENV,
-    migrateOnStartup: true,
+    mode: "apply",
   });
   logger.info("All migrations applied successfully");
 } finally {

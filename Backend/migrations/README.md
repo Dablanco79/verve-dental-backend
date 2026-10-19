@@ -8,7 +8,11 @@ Verve uses an **inline bootstrap migration runner** defined in:
 Backend/src/db/migrate.ts   →   BOOTSTRAP_MIGRATIONS array
 ```
 
-At startup, `runBootstrapMigrations()` iterates this array and applies any entry whose `id` is not yet recorded in the `schema_migrations` table. Each entry contains the full SQL inline. Migrations execute inside a single transaction protected by a PostgreSQL advisory lock, so concurrent Render instances cannot race each other.
+`runBootstrapMigrations()` compares this array with `schema_migrations`.
+Development/test setup and the standalone migration CLI may apply missing
+entries. Staging and Production application startup is structurally check-only
+and refuses pending or unknown IDs. Apply mode executes inside a single
+transaction protected by a PostgreSQL advisory lock.
 
 The runner is invoked by the normal application startup path in `src/bootstrap/dependencies.ts`.
 
@@ -41,7 +45,10 @@ The files in `Backend/migrations/` are **reference and rollback documentation on
 }
 ```
 
-3. Choose the `id` using the **next available bootstrap migration number**, not the SQL filename number (the two numbering sequences are independent).
+3. Choose the `id` only after checking active workstreams as well as the
+   current branch. Never reuse a number already assigned on a branch awaiting
+   integration. Migration `058_leave_coverage_groups` belongs to the Workforce
+   workstream, so this branch uses `059_force_workflow_table_rls`.
 4. Write or update tests in `Backend/tests/migrationGate.test.ts` to confirm the new entry is registered.
 5. Run the full validation suite before opening a pull request:
 
@@ -59,6 +66,11 @@ npm.cmd run build
 `Backend/src/db/migrate.ts` is the source of truth for the current ordered
 sequence. Do not copy a fixed migration count or final ID into an operational
 check: both become stale when a migration is added.
+
+Existing migration SQL is append-only. `Backend/tests/migrationImmutability.test.ts`
+records reviewed source hashes and fails if an existing body is edited. That
+source-level control does not prove live-schema equivalence and does not replace
+catalog checks, behavioral tests, or restore drills.
 
 ---
 

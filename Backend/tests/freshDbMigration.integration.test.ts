@@ -7,7 +7,8 @@
  * 051_geofence_columns, 052_module_permissions_backfill,
  * 053_timesheet_staff_notes, 054_staff_pay_rates, and
  * 055_leave_pilot_safety, 056_approved_leave_cancellation, and
- * 057_leave_cancellation_requests.
+ * 057_leave_cancellation_requests, plus infrastructure hardening migration
+ * 059_force_workflow_table_rls. Migration 058 belongs to Workforce.
  *
  * TWO GATING VARIABLES:
  *
@@ -115,7 +116,7 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     await expect(
       runBootstrapMigrations(freshPool as never, minLogger, {
         nodeEnv: "test",
-        migrateOnStartup: true,
+        mode: "apply",
       }),
     ).resolves.toBeUndefined();
   }, 120_000);
@@ -129,15 +130,16 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(Number(rows[0]?.count)).toBe(BOOTSTRAP_MIGRATIONS.length);
   });
 
-  it("last migration recorded is 057_leave_cancellation_requests", async () => {
+  it("records the coordinated 059 workflow-table RLS migration", async () => {
     if (SKIP_FRESH) return;
 
-    // Migrations run in a single transaction so applied_at timestamps are
-    // identical. Order by ID (zero-padded, lexicographic = numeric order).
-    const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
-      "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
+    const { rows } = await (freshPool as pg.Pool).query<{ present: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM schema_migrations
+          WHERE id = '059_force_workflow_table_rls'
+       ) AS present`,
     );
-    expect(rows[0]?.id).toBe("057_leave_cancellation_requests");
+    expect(rows[0]?.present).toBe(true);
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
@@ -412,6 +414,166 @@ describe("Migration 057 — leave cancellation requests", () => {
       await db.query("DELETE FROM leave_requests WHERE id = $1", [leaveId]);
     }
   });
+});
+
+describe("Migration 059 — workflow table owner RLS hardening", () => {
+  const hardenedTables = [
+    "purchasing_drafts",
+    "stocktake_lines",
+    "stocktake_sessions",
+  ];
+
+  it("FORCEs RLS and installs owner-admin-or-clinic policies", async () => {
+    if (SKIP_ALL) return;
+
+    const flags = await anyPool().query<{
+      table_name: string;
+      enabled: boolean;
+      forced: boolean;
+    }>(
+      `SELECT c.relname AS table_name,
+              c.relrowsecurity AS enabled,
+              c.relforcerowsecurity AS forced
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relname = ANY($1::text[])
+        ORDER BY c.relname`,
+      [hardenedTables],
+    );
+    expect(flags.rows).toEqual(
+      hardenedTables.map((table) => ({
+        table_name: table,
+        enabled: true,
+        forced: true,
+      })),
+    );
+
+    const policies = await anyPool().query<{
+      tablename: string;
+      qual: string | null;
+      with_check: string | null;
+    }>(
+      `SELECT tablename, qual, with_check
+         FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = ANY($1::text[])
+        ORDER BY tablename`,
+      [hardenedTables],
+    );
+    expect(policies.rows).toHaveLength(3);
+    for (const policy of policies.rows) {
+      expect(policy.qual).toMatch(/app_is_owner_admin\(\)/);
+      expect(policy.qual).toMatch(/app_current_clinic_id\(\)/);
+      expect(policy.with_check).toMatch(/app_is_owner_admin\(\)/);
+      expect(policy.with_check).toMatch(/app_current_clinic_id\(\)/);
+    }
+  });
+
+  it("enforces clinic isolation against the actual non-superuser table owner", async () => {
+    if (SKIP_ALL) return;
+
+    const client = await anyPool().connect();
+    const roleName = `rls_owner_${randomUUID().replaceAll("-", "")}`;
+    const sessionId = randomUUID();
+    const lineId = randomUUID();
+    const draftId = randomUUID();
+
+    try {
+      await client.query("BEGIN");
+
+      const clinics = await client.query<{ id: string }>(
+        "SELECT id FROM clinics ORDER BY id LIMIT 2",
+      );
+      if (clinics.rows.length < 2) {
+        throw new Error("Migration 059 owner test requires two seeded clinics");
+      }
+      const clinicA = clinics.rows[0]?.id as string;
+      const clinicB = clinics.rows[1]?.id as string;
+      const user = await client.query<{ id: string }>(
+        "SELECT id FROM users ORDER BY id LIMIT 1",
+      );
+      const inventory = await client.query<{
+        id: string;
+        master_catalog_item_id: string;
+      }>(
+        `SELECT id, master_catalog_item_id
+           FROM clinic_inventory_items
+          WHERE clinic_id = $1
+          LIMIT 1`,
+        [clinicA],
+      );
+      if (!user.rows[0] || !inventory.rows[0]) {
+        throw new Error("Migration 059 owner test requires seeded user and inventory data");
+      }
+
+      await client.query(
+        `INSERT INTO stocktake_sessions
+           (id, clinic_id, name, status, created_by_user_id, created_by_email)
+         VALUES ($1, $2, 'RLS owner test', 'draft', $3, 'rls-owner@test.invalid')`,
+        [sessionId, clinicA, user.rows[0].id],
+      );
+      await client.query(
+        `INSERT INTO stocktake_lines
+           (id, session_id, clinic_id, clinic_inventory_item_id,
+            master_catalog_item_id, expected_quantity, unit_cost_cents,
+            product_name, category, stock_unit)
+         VALUES ($1, $2, $3, $4, $5, 0, 0, 'RLS owner test', 'test', 'item')`,
+        [
+          lineId,
+          sessionId,
+          clinicA,
+          inventory.rows[0].id,
+          inventory.rows[0].master_catalog_item_id,
+        ],
+      );
+      await client.query(
+        `INSERT INTO purchasing_drafts
+           (id, clinic_id, draft_reference, created_by_user_id)
+         VALUES ($1, $2, $3, $4)`,
+        [draftId, clinicA, `RLS-${draftId}`, user.rows[0].id],
+      );
+
+      await client.query(`CREATE ROLE "${roleName}" NOSUPERUSER NOBYPASSRLS NOLOGIN`);
+      for (const table of hardenedTables) {
+        await client.query(`ALTER TABLE ${table} OWNER TO "${roleName}"`);
+      }
+      await client.query(`SET LOCAL ROLE "${roleName}"`);
+      await client.query(
+        `SELECT
+           set_config('app.current_clinic_id', $1, true),
+           set_config('app.owner_admin_mode', 'false', true)`,
+        [clinicB],
+      );
+
+      const fixtureIds: Array<[string, string]> = [
+        ["stocktake_sessions", sessionId],
+        ["stocktake_lines", lineId],
+        ["purchasing_drafts", draftId],
+      ];
+      for (const [table, id] of fixtureIds) {
+        const denied = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM ${table} WHERE id = $1`,
+          [id],
+        );
+        expect(denied.rows[0]?.count).toBe("0");
+      }
+
+      await client.query(
+        "SELECT set_config('app.owner_admin_mode', 'true', true)",
+      );
+      for (const [table, id] of fixtureIds) {
+        const allowed = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM ${table} WHERE id = $1`,
+          [id],
+        );
+        expect(allowed.rows[0]?.count).toBe("1");
+      }
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  }, 30_000);
 });
 
 describe("Migration 047 — user_clinic_assignments schema", () => {

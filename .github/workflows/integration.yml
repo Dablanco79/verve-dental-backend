@@ -53,6 +53,7 @@ jobs:
       # step below and is never touched by test:db:setup, ensuring it stays blank
       # until the migration gate test itself runs.
       FRESH_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_fresh
+      BOOTSTRAP_CONCURRENCY_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_bootstrap_concurrency
       REDIS_URL: redis://localhost:6379
       NODE_ENV: test
       JWT_ACCESS_SECRET: integration-test-access-secret-minimum-32-chars-long
@@ -62,6 +63,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -70,6 +73,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: "P0 — Embedded migration history is append-only against the PR base"
+        if: github.event_name == 'pull_request'
+        run: >-
+          npm run check:migrations:append-only --workspace=@verve/backend --
+          --base-ref "${{ github.event.pull_request.base.sha }}"
 
       - name: Apply migrations and seed demo data
         run: npm run test:db:setup --workspace=@verve/backend
@@ -90,6 +99,65 @@ jobs:
         run: |
           PGPASSWORD=verve_test psql -h localhost -U verve -d verve_test \
             -c "CREATE DATABASE verve_test_fresh OWNER verve;"
+          PGPASSWORD=verve_test psql -h localhost -U verve -d verve_test \
+            -c "CREATE DATABASE verve_test_bootstrap_concurrency OWNER verve;"
+
+      - name: Start disposable TLS-enabled PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          tls_dir="${RUNNER_TEMP}/renqor-postgres-tls"
+          mkdir -p "${tls_dir}"
+
+          openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+            -subj "/CN=RENQOR Integration Root CA" \
+            -keyout "${tls_dir}/ca.key" \
+            -out "${tls_dir}/ca.crt"
+          openssl req -new -newkey rsa:2048 -nodes -sha256 \
+            -subj "/CN=renqor-tls.test" \
+            -addext "subjectAltName=DNS:renqor-tls.test" \
+            -keyout "${tls_dir}/server.key" \
+            -out "${tls_dir}/server.csr"
+          openssl x509 -req -sha256 -days 1 \
+            -in "${tls_dir}/server.csr" \
+            -CA "${tls_dir}/ca.crt" \
+            -CAkey "${tls_dir}/ca.key" \
+            -CAcreateserial \
+            -copy_extensions copy \
+            -out "${tls_dir}/server.crt"
+
+          cat > "${tls_dir}/Dockerfile" <<'EOF'
+          FROM postgres:18-bookworm
+          COPY server.crt server.key /tls/
+          RUN chown postgres:postgres /tls/server.crt /tls/server.key \
+              && chmod 0600 /tls/server.key \
+              && chmod 0644 /tls/server.crt
+          EOF
+
+          docker build --tag renqor-postgres-tls "${tls_dir}"
+          docker run --detach --rm \
+            --name renqor-postgres-tls \
+            --publish 55432:5432 \
+            --env POSTGRES_USER=tls_test \
+            --env POSTGRES_PASSWORD=tls_test \
+            --env POSTGRES_DB=renqor_tls \
+            renqor-postgres-tls \
+            -c ssl=on \
+            -c ssl_cert_file=/tls/server.crt \
+            -c ssl_key_file=/tls/server.key
+
+          until pg_isready -h localhost -p 55432 -U tls_test -d renqor_tls; do
+            if ! docker inspect --format '{{.State.Running}}' renqor-postgres-tls |
+              grep -qx true; then
+              docker logs renqor-postgres-tls
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "127.0.0.1 renqor-tls.test" | sudo tee -a /etc/hosts >/dev/null
+          echo "TLS_DATABASE_URL=postgresql://tls_test:tls_test@renqor-tls.test:55432/renqor_tls?sslmode=verify-full" >> "${GITHUB_ENV}"
+          echo "TLS_CA_CERT_PATH=${tls_dir}/ca.crt" >> "${GITHUB_ENV}"
 
       # ── P0 explicit gates ─────────────────────────────────────────────────────
       # Each named step is a hard gate: if the targeted suite fails, registers
@@ -119,6 +187,15 @@ jobs:
       - name: "P0 — Roster concurrency gate (advisory lock: simultaneous overlapping creations → exactly one ROSTER_CONFLICT)"
         run: npm test --workspace=@verve/backend -- --testPathPattern=rosterConcurrency --forceExit
 
+      - name: "P0 — Bootstrap concurrency gate (advisory lock: simultaneous first admins → exactly one commit)"
+        run: npm test --workspace=@verve/backend -- --testPathPattern=bootstrapConcurrency --runInBand --forceExit
+
+      - name: "P0 — Workflow table-owner FORCE-RLS behavioural gate"
+        run: npm run test:workflowrls-integration --workspace=@verve/backend
+
+      - name: "P0 — PostgreSQL certificate and hostname verification gate"
+        run: npm run test:database-tls-integration --workspace=@verve/backend
+
       # ── Preferred name RLS gate ───────────────────────────────────────────────
       # Proves that the LEFT JOIN clinics in roster queries safely returns
       # preferred_name even for cross-clinic entries, because clinics has NO RLS
@@ -129,3 +206,7 @@ jobs:
 
       - name: Run full test suite with real infrastructure
         run: npm run test --workspace=@verve/backend -- --forceExit
+
+      - name: Stop disposable TLS PostgreSQL
+        if: always()
+        run: docker rm --force renqor-postgres-tls >/dev/null 2>&1 || true

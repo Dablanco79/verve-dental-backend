@@ -624,7 +624,7 @@ B.3.2. Never score an unscoped zero count as proof of missing data.
 | Property | Detail |
 |----------|--------|
 | **Purpose** | PostgreSQL connection string granting the application full read/write access to the database. Contains hostname, port, username, password, and database name. |
-| **Format** | `postgresql://user:password@host:5432/dbname?sslmode=require` |
+| **Format** | `postgresql://user:password@host:5432/dbname?sslmode=verify-full` |
 | **Impact if lost** | **MEDIUM** — recoverable. The connection string can be retrieved from the Render dashboard ("Connect" tab on the PostgreSQL instance). However, if the Render account is inaccessible, the string cannot be retrieved and the application cannot start. |
 | **Recovery method** | Log in to Render dashboard → PostgreSQL instance → "Connect" → copy External Database URL. If the Render account is inaccessible, contact Render Support with proof of ownership. |
 | **Backup recommendation** | Copy the DATABASE_URL to the same secrets manager as the JWT/MFA keys. Note that this value **rotates** every time a new database instance is created (e.g., after a restore). Always update the secrets manager entry after any restore operation. |

@@ -3465,6 +3465,60 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         );
     `,
   },
+  {
+    /**
+     * FORCE RLS for workflow tables that were originally created with ENABLE
+     * only. Migration number 058 is intentionally reserved by the separate
+     * Workforce workstream; this independent hardening therefore uses 059.
+     *
+     * The deployed application role owns these tables. Without FORCE, a table
+     * owner bypasses RLS entirely even though relrowsecurity is enabled.
+     */
+    id: "059_force_workflow_table_rls",
+    sql: `
+      ALTER TABLE stocktake_sessions ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE stocktake_sessions FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS tenant_isolation_stocktake_sessions ON stocktake_sessions;
+      CREATE POLICY tenant_isolation_stocktake_sessions ON stocktake_sessions
+        FOR ALL
+        USING (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        )
+        WITH CHECK (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        );
+
+      ALTER TABLE stocktake_lines ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE stocktake_lines FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS tenant_isolation_stocktake_lines ON stocktake_lines;
+      CREATE POLICY tenant_isolation_stocktake_lines ON stocktake_lines
+        FOR ALL
+        USING (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        )
+        WITH CHECK (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        );
+
+      ALTER TABLE purchasing_drafts ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE purchasing_drafts FORCE ROW LEVEL SECURITY;
+      DROP POLICY IF EXISTS purchasing_drafts_clinic_isolation ON purchasing_drafts;
+      CREATE POLICY purchasing_drafts_clinic_isolation ON purchasing_drafts
+        FOR ALL
+        USING (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        )
+        WITH CHECK (
+          app_is_owner_admin()
+          OR clinic_id = app_current_clinic_id()
+        );
+    `,
+  },
 ];
 
 /**
@@ -3481,11 +3535,10 @@ export type MigrationRunOptions = {
    */
   nodeEnv?: string;
   /**
-   * When true, pending migrations are applied even in staging/production.
-   * Set via MIGRATE_ON_STARTUP=true or by running `npm run migrate`.
-   * Ignored in development/test (migrations always apply there).
+   * Normal application startup is always check-only in staging/production.
+   * Only the standalone migration CLI and test setup pass "apply".
    */
-  migrateOnStartup?: boolean;
+  mode?: "startup" | "apply";
 };
 
 export async function runBootstrapMigrations(
@@ -3493,46 +3546,59 @@ export async function runBootstrapMigrations(
   logger: Logger,
   options: MigrationRunOptions = {},
 ): Promise<void> {
-  const { nodeEnv = "development", migrateOnStartup = false } = options;
+  const { nodeEnv = "development", mode = "startup" } = options;
   const isRestrictedEnv = nodeEnv === "staging" || nodeEnv === "production";
+  const mayApply = mode === "apply" || !isRestrictedEnv;
+  const checkOnly = isRestrictedEnv && mode === "startup";
 
-  // In staging/production with MIGRATE_ON_STARTUP disabled, log a clear
-  // one-line status so operators can confirm the intended startup mode from
-  // deployment logs without searching for silence.
-  if (isRestrictedEnv && !migrateOnStartup) {
+  if (checkOnly) {
     logger.info(
       { env: nodeEnv },
-      "Migrations disabled at startup (MIGRATE_ON_STARTUP is not set to true). " +
-        "Set MIGRATE_ON_STARTUP=true or run `npm run migrate` to apply pending migrations.",
+      "Migrations are check-only during deployed application startup. " +
+        "Run `npm run migrate` as a standalone command to apply pending migrations.",
     );
   }
 
-  // Check-out a dedicated connection so the transaction and the advisory lock
-  // are both scoped to the same physical session.  pg_advisory_xact_lock is
-  // automatically released when the transaction commits or rolls back, so two
-  // app instances scaling up concurrently on Render will serialize here without
-  // executing migrations twice or corrupting schema_migrations.
+  // Apply mode uses one dedicated transaction and advisory lock. Restricted
+  // startup uses a read-only transaction and never creates or changes schema.
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query(checkOnly ? "BEGIN TRANSACTION READ ONLY" : "BEGIN");
 
-    // Acquire transaction-level advisory lock — blocks until the lock is free.
-    await client.query("SELECT pg_advisory_xact_lock($1)", [
-      MIGRATION_ADVISORY_LOCK_KEY,
-    ]);
+    if (mayApply) {
+      await client.query("SELECT pg_advisory_xact_lock($1)", [
+        MIGRATION_ADVISORY_LOCK_KEY,
+      ]);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          id         text        PRIMARY KEY,
+          applied_at timestamptz NOT NULL DEFAULT now()
+        )
+      `);
+    }
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS schema_migrations (
-        id         text        PRIMARY KEY,
-        applied_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-
-    // Fetch all already-applied migration IDs in a single round-trip.
-    const { rows: appliedRows } = await client.query<{ id: string }>(
-      "SELECT id FROM schema_migrations",
+    const { rows: tableRows } = await client.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.schema_migrations')::text AS table_name",
     );
+    const migrationTableExists = Boolean(tableRows[0]?.table_name);
+    const appliedRows = migrationTableExists
+      ? (
+          await client.query<{ id: string }>(
+            "SELECT id FROM schema_migrations",
+          )
+        ).rows
+      : [];
+
     const applied = new Set(appliedRows.map((r) => r.id));
+    const knownIds = new Set(BOOTSTRAP_MIGRATIONS.map((migration) => migration.id));
+    const unknownAppliedIds = [...applied].filter((id) => !knownIds.has(id)).sort();
+    if (unknownAppliedIds.length > 0) {
+      throw new Error(
+        `[Migration Integrity] Unknown applied migration ID(s): ${unknownAppliedIds.join(", ")}. ` +
+          "Refusing to continue until the database ledger is reconciled with the reviewed release source.",
+      );
+    }
+
     const pending = BOOTSTRAP_MIGRATIONS.filter((m) => !applied.has(m.id));
 
     logger.info(
@@ -3546,17 +3612,15 @@ export async function runBootstrapMigrations(
     );
 
     // ── Migration gate ────────────────────────────────────────────────────────
-    // In staging and production, block startup when pending migrations exist
-    // unless the operator has explicitly opted in via MIGRATE_ON_STARTUP=true
-    // or by running `npm run migrate`.  This prevents unreviewed DDL from
-    // being silently applied during a normal deployment.
-    if (pending.length > 0 && isRestrictedEnv && !migrateOnStartup) {
+    // Restricted application startup is structurally check-only. The
+    // standalone CLI must be used to apply reviewed DDL.
+    if (pending.length > 0 && checkOnly) {
       const pendingIds = pending.map((m) => m.id).join(", ");
       throw new Error(
         `[Migration Gate] ${String(pending.length)} pending migration(s) detected in ${nodeEnv}. ` +
           `Startup blocked to prevent unreviewed DDL changes. ` +
           `Pending: ${pendingIds}. ` +
-          `Run 'npm run migrate' to apply intentionally, or set MIGRATE_ON_STARTUP=true.`,
+          `Run 'npm run migrate' as a standalone command to apply intentionally.`,
       );
     }
 
@@ -3567,21 +3631,23 @@ export async function runBootstrapMigrations(
       );
     } else {
       logger.info(
-        { env: nodeEnv, pendingCount: pending.length, migrateOnStartup },
+        { env: nodeEnv, pendingCount: pending.length, mode },
         `Applying ${String(pending.length)} pending migration(s)`,
       );
     }
 
-    for (const migration of pending) {
-      logger.info(
-        { migrationId: migration.id },
-        `Applying migration: ${migration.id}`,
-      );
-      await client.query(migration.sql);
-      await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [
-        migration.id,
-      ]);
-      logger.info({ migrationId: migration.id }, `Migration applied: ${migration.id}`);
+    if (mayApply) {
+      for (const migration of pending) {
+        logger.info(
+          { migrationId: migration.id },
+          `Applying migration: ${migration.id}`,
+        );
+        await client.query(migration.sql);
+        await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [
+          migration.id,
+        ]);
+        logger.info({ migrationId: migration.id }, `Migration applied: ${migration.id}`);
+      }
     }
 
     if (pending.length > 0) {

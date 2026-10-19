@@ -201,7 +201,7 @@ If all checks pass, proceed to cutover. If checks fail, **stop** — escalate be
 # In the provider dashboard:
 # 1. Navigate to: Services → <TARGET_API_SERVICE> → Environment
 # 2. Update DATABASE_URL to point to the restored instance:
-#      postgresql://<restored-host>/<dbname>?sslmode=require
+#      postgresql://<restored-host>/<dbname>?sslmode=verify-full
 # 3. Save changes
 # 4. Trigger a manual redeploy of the backend service
 # 5. Watch deploy logs for:

@@ -7,8 +7,9 @@
  *   ✓ test         — auto-applies pending migrations (no gate)
  *   ✓ staging      — blocks startup when pending migrations exist (default)
  *   ✓ production   — blocks startup when pending migrations exist (default)
- *   ✓ staging      — applies when migrateOnStartup is true (explicit mode)
- *   ✓ production   — applies when migrateOnStartup is true (explicit mode)
+ *   ✓ staging      — normal startup remains check-only
+ *   ✓ production   — normal startup remains check-only
+ *   ✓ standalone   — explicit apply mode runs pending migrations
  *   ✓ staging      — allows startup when no pending migrations exist
  *
  * All tests are network-free: they use minimal mock pool/client objects and
@@ -53,6 +54,12 @@ function makeMockLogger(): Logger {
 function makeMockPool(appliedIds: string[] = []) {
   const mockClient = {
     query: jest.fn((sql: string) => {
+      if (typeof sql === "string" && sql.includes("to_regclass")) {
+        return Promise.resolve({
+          rows: [{ table_name: "schema_migrations" }],
+          rowCount: 1,
+        });
+      }
       if (
         typeof sql === "string" &&
         sql.trim() === "SELECT id FROM schema_migrations"
@@ -135,14 +142,14 @@ describe("Migration gate — test environment", () => {
 // ---------------------------------------------------------------------------
 
 describe("Migration gate — staging blocks on pending migrations", () => {
-  it("throws when pending migrations exist in staging (migrateOnStartup not set)", async () => {
+  it("throws when pending migrations exist during staging startup", async () => {
     const { pool } = makeMockPool([]);
     const logger = makeMockLogger();
 
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/Migration Gate/);
   });
@@ -154,7 +161,7 @@ describe("Migration gate — staging blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/staging/i);
   });
@@ -168,7 +175,7 @@ describe("Migration gate — staging blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(new RegExp(firstPendingId));
   });
@@ -180,7 +187,7 @@ describe("Migration gate — staging blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/npm run migrate/i);
   });
@@ -192,7 +199,7 @@ describe("Migration gate — staging blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow();
 
@@ -205,14 +212,14 @@ describe("Migration gate — staging blocks on pending migrations", () => {
 // ---------------------------------------------------------------------------
 
 describe("Migration gate — production blocks on pending migrations", () => {
-  it("throws when pending migrations exist in production (migrateOnStartup not set)", async () => {
+  it("throws when pending migrations exist during production startup", async () => {
     const { pool } = makeMockPool([]);
     const logger = makeMockLogger();
 
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "production",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/Migration Gate/);
   });
@@ -224,7 +231,7 @@ describe("Migration gate — production blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "production",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/production/i);
   });
@@ -236,61 +243,71 @@ describe("Migration gate — production blocks on pending migrations", () => {
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "production",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow();
 
     expect(queriesSeen(client)).not.toContain("COMMIT");
   });
-});
 
-// ---------------------------------------------------------------------------
-// Staging — applies when migrateOnStartup = true (explicit mode)
-// ---------------------------------------------------------------------------
-
-describe("Migration gate — staging with explicit migration mode", () => {
-  it("applies pending migrations in staging when migrateOnStartup is true", async () => {
-    const { pool, client } = makeMockPool([]);
-    const logger = makeMockLogger();
-
-    await expect(
-      runBootstrapMigrations(pool, logger, {
-        nodeEnv: "staging",
-        migrateOnStartup: true,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(queriesSeen(client)).toContain("COMMIT");
-  });
-
-  it("logs each applied migration in staging explicit mode", async () => {
-    const { pool } = makeMockPool([]);
-    const logger = makeMockLogger();
-
-    await runBootstrapMigrations(pool, logger, {
-      nodeEnv: "staging",
-      migrateOnStartup: true,
-    });
-
-    // At least one "Bootstrap migration applied" info log should fire.
-    const infoCalls = (logger.info as ReturnType<typeof jest.fn>).mock.calls;
-    expect(infoCalls.length).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Production — applies when migrateOnStartup = true (explicit mode)
-// ---------------------------------------------------------------------------
-
-describe("Migration gate — production with explicit migration mode", () => {
-  it("applies pending migrations in production when migrateOnStartup is true", async () => {
+  it("does not create migration metadata or take the apply lock during startup", async () => {
     const { pool, client } = makeMockPool([]);
     const logger = makeMockLogger();
 
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "production",
-        migrateOnStartup: true,
+        mode: "startup",
+      }),
+    ).rejects.toThrow(/Migration Gate/);
+
+    const queries = queriesSeen(client).join("\n");
+    expect(queries).toContain("BEGIN TRANSACTION READ ONLY");
+    expect(queries).not.toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
+    expect(queries).not.toContain("pg_advisory_xact_lock");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restricted startup is check-only; standalone mode applies
+// ---------------------------------------------------------------------------
+
+describe("Migration execution mode separation", () => {
+  it("does not apply pending migrations during staging startup", async () => {
+    const { pool, client } = makeMockPool([]);
+    const logger = makeMockLogger();
+
+    await expect(
+      runBootstrapMigrations(pool, logger, {
+        nodeEnv: "staging",
+        mode: "startup",
+      }),
+    ).rejects.toThrow(/Migration Gate/);
+
+    expect(queriesSeen(client)).not.toContain(BOOTSTRAP_MIGRATIONS[0]?.sql);
+  });
+
+  it("applies pending migrations in staging only in standalone apply mode", async () => {
+    const { pool, client } = makeMockPool([]);
+    const logger = makeMockLogger();
+
+    await runBootstrapMigrations(pool, logger, {
+      nodeEnv: "staging",
+      mode: "apply",
+    });
+
+    expect(queriesSeen(client)).toContain(BOOTSTRAP_MIGRATIONS[0]?.sql);
+    expect(queriesSeen(client)).toContain("COMMIT");
+  });
+
+  it("applies pending migrations in production only in standalone apply mode", async () => {
+    const { pool, client } = makeMockPool([]);
+    const logger = makeMockLogger();
+
+    await expect(
+      runBootstrapMigrations(pool, logger, {
+        nodeEnv: "production",
+        mode: "apply",
       }),
     ).resolves.toBeUndefined();
 
@@ -310,7 +327,7 @@ describe("Migration gate — no pending migrations allows staging/production sta
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "staging",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).resolves.toBeUndefined();
 
@@ -324,7 +341,7 @@ describe("Migration gate — no pending migrations allows staging/production sta
     await expect(
       runBootstrapMigrations(pool, logger, {
         nodeEnv: "production",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).resolves.toBeUndefined();
 
@@ -337,7 +354,7 @@ describe("Migration gate — no pending migrations allows staging/production sta
 
     await runBootstrapMigrations(pool, logger, {
       nodeEnv: "production",
-      migrateOnStartup: false,
+      mode: "startup",
     });
 
     // No "Migration applied:" info logs should fire.
@@ -346,6 +363,20 @@ describe("Migration gate — no pending migrations allows staging/production sta
       JSON.stringify(args).includes("Migration applied:"),
     );
     expect(migrationLogs).toHaveLength(0);
+  });
+});
+
+describe("Migration ledger integrity", () => {
+  it("rejects unknown applied migration IDs", async () => {
+    const { pool } = makeMockPool([...allAppliedIds(), "999_unreviewed_manual_entry"]);
+    const logger = makeMockLogger();
+
+    await expect(
+      runBootstrapMigrations(pool, logger, {
+        nodeEnv: "production",
+        mode: "startup",
+      }),
+    ).rejects.toThrow(/Unknown applied migration ID.*999_unreviewed_manual_entry/);
   });
 });
 
@@ -378,11 +409,32 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("057_leave_cancellation_requests is registered after 056", () => {
+  it("057 is followed by the coordinated 059 RLS hardening migration", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("057_leave_cancellation_requests");
+    expect(ids[ids.length - 1]).toBe("059_force_workflow_table_rls");
     expect(ids.indexOf("057_leave_cancellation_requests"))
       .toBe(ids.indexOf("056_approved_leave_cancellation") + 1);
+    expect(ids).not.toContain("058_leave_coverage_groups");
+    expect(ids.indexOf("059_force_workflow_table_rls"))
+      .toBe(ids.indexOf("057_leave_cancellation_requests") + 1);
+  });
+
+  it("059 FORCEs all three workflow tables with owner-admin and clinic predicates", () => {
+    const migration = BOOTSTRAP_MIGRATIONS.find(
+      (candidate) => candidate.id === "059_force_workflow_table_rls",
+    );
+    expect(migration).toBeDefined();
+    for (const table of [
+      "stocktake_sessions",
+      "stocktake_lines",
+      "purchasing_drafts",
+    ]) {
+      expect(migration?.sql).toContain(
+        `ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`,
+      );
+    }
+    expect(migration?.sql.match(/app_is_owner_admin\(\)/g)).toHaveLength(6);
+    expect(migration?.sql.match(/app_current_clinic_id\(\)/g)).toHaveLength(6);
   });
 
   it("detects stocktake migrations as pending on a pre-stocktake database", async () => {
@@ -399,13 +451,13 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
       runBootstrapMigrations(pool, logger, { nodeEnv: "development" }),
     ).resolves.toBeUndefined();
 
-    // In production without migrateOnStartup, gate must block.
+    // Production startup remains check-only and must block.
     const { pool: prodPool } = makeMockPool(preStocktakeIds);
     const prodLogger = makeMockLogger();
     await expect(
       runBootstrapMigrations(prodPool, prodLogger, {
         nodeEnv: "production",
-        migrateOnStartup: false,
+        mode: "startup",
       }),
     ).rejects.toThrow(/037_stocktake_schema/);
   });
@@ -479,13 +531,15 @@ describe("Migration failure — blocks startup on SQL error", () => {
     const logger = makeMockLogger();
 
     // Simulate the first migration SQL call failing after the setup queries.
-    let callCount = 0;
     (client.query as ReturnType<typeof jest.fn>).mockImplementation((sql: unknown) => {
-      callCount++;
-      // Let BEGIN, advisory lock, CREATE TABLE, and SELECT pass (calls 1-4).
-      // Fail on the 5th call (first migration SQL body).
-      if (callCount === 5) {
+      if (sql === BOOTSTRAP_MIGRATIONS[0]?.sql) {
         return Promise.reject(new Error("simulated SQL failure"));
+      }
+      if (typeof sql === "string" && sql.includes("to_regclass")) {
+        return Promise.resolve({
+          rows: [{ table_name: "schema_migrations" }],
+          rowCount: 1,
+        });
       }
       if (typeof sql === "string" && sql.trim() === "SELECT id FROM schema_migrations") {
         return Promise.resolve({ rows: [], rowCount: 0 });
@@ -509,20 +563,20 @@ describe("Migration failure — blocks startup on SQL error", () => {
 // ---------------------------------------------------------------------------
 
 describe("Migration logging — startup observability", () => {
-  it("logs a disabled message in production when MIGRATE_ON_STARTUP is false", async () => {
+  it("logs that production application startup is check-only", async () => {
     const { pool } = makeMockPool(allAppliedIds());
     const logger = makeMockLogger();
 
     await runBootstrapMigrations(pool, logger, {
       nodeEnv: "production",
-      migrateOnStartup: false,
+      mode: "startup",
     });
 
     const allInfoMessages = (logger.info as ReturnType<typeof jest.fn>).mock.calls
       .map((c) => JSON.stringify(c))
       .join(" ");
 
-    expect(allInfoMessages).toMatch(/MIGRATE_ON_STARTUP/);
+    expect(allInfoMessages).toMatch(/check-only.*standalone/i);
   });
 
   it("logs the pending count when migrations are about to run", async () => {
@@ -531,7 +585,7 @@ describe("Migration logging — startup observability", () => {
 
     await runBootstrapMigrations(pool, logger, {
       nodeEnv: "staging",
-      migrateOnStartup: true,
+      mode: "apply",
     });
 
     const allInfoMessages = (logger.info as ReturnType<typeof jest.fn>).mock.calls
@@ -547,7 +601,7 @@ describe("Migration logging — startup observability", () => {
 
     await runBootstrapMigrations(pool, logger, {
       nodeEnv: "production",
-      migrateOnStartup: true,
+      mode: "apply",
     });
 
     const allInfoMessages = (logger.info as ReturnType<typeof jest.fn>).mock.calls

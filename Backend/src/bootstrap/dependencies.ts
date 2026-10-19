@@ -1,6 +1,7 @@
 import type { EnvConfig } from "../config/index.js";
 import { runBootstrapMigrations } from "../db/migrate.js";
 import { createDatabasePool } from "../db/pool.js";
+import { countUsersWithOwnerAdminContext } from "../db/bootstrapAdmin.js";
 import {
   seedClinics,
   seedDemoSuppliers,
@@ -231,6 +232,12 @@ export async function createAppDependencies(
         `REDIS_URL is required in ${config.NODE_ENV} — refusing to start without Redis for session storage`,
       );
     }
+    if (config.MIGRATE_ON_STARTUP) {
+      throw new Error(
+        `MIGRATE_ON_STARTUP=true is not permitted during ${config.NODE_ENV} application startup. ` +
+          "Run the standalone migration command instead.",
+      );
+    }
   }
 
   const databasePool = createDatabasePool(config);
@@ -300,7 +307,7 @@ export async function createAppDependencies(
 
     await runBootstrapMigrations(connectedPool, logger, {
       nodeEnv: config.NODE_ENV,
-      migrateOnStartup: config.MIGRATE_ON_STARTUP,
+      mode: "startup",
     });
 
     // Bootstrap seed order — sequence is load-bearing:
@@ -331,10 +338,7 @@ export async function createAppDependencies(
     } else {
       // Warn operators when the users table is empty so they know they must
       // create an initial admin account through proper onboarding — not seeding.
-      const { rows } = await connectedPool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM users",
-      );
-      const userCount = parseInt(rows[0]?.count ?? "0", 10);
+      const userCount = await countUsersWithOwnerAdminContext(connectedPool);
       if (userCount === 0) {
         logger.warn(
           { env: config.NODE_ENV },

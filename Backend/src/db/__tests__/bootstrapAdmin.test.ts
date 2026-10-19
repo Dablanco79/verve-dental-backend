@@ -15,7 +15,9 @@ import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
 import {
   bootstrapFirstAdmin,
+  countUsersWithOwnerAdminContext,
   resolveBootstrapInput,
+  BOOTSTRAP_ADVISORY_LOCK_KEY,
   BOOTSTRAP_BCRYPT_ROUNDS,
   BOOTSTRAP_PASSWORD_MIN_LENGTH,
   BOOTSTRAP_PASSWORD_MAX_LENGTH,
@@ -222,6 +224,27 @@ describe("bootstrapFirstAdmin", () => {
       );
       expect(insertCalls).toHaveLength(0);
     });
+
+    it("acquires the bootstrap advisory lock before counting users", async () => {
+      const client = makeMockClient(1);
+      const pool = makeMockPool(client);
+
+      await expect(
+        bootstrapFirstAdmin(pool, silentLogger, VALID_INPUT, 1),
+      ).rejects.toThrow("Bootstrap refused");
+
+      const lockIndex = client.queries.findIndex((query) =>
+        query.sql.includes("pg_advisory_xact_lock"),
+      );
+      const countIndex = client.queries.findIndex((query) =>
+        query.sql.includes("COUNT(*)"),
+      );
+      expect(lockIndex).toBeGreaterThanOrEqual(0);
+      expect(lockIndex).toBeLessThan(countIndex);
+      expect(client.queries[lockIndex]?.params).toEqual([
+        BOOTSTRAP_ADVISORY_LOCK_KEY,
+      ]);
+    });
   });
 
   describe("happy path: empty database", () => {
@@ -408,5 +431,24 @@ describe("bootstrapFirstAdmin", () => {
       expect(client.queries.some((q) => q.sql === "ROLLBACK")).toBe(true);
       expect(client.queries.some((q) => q.sql === "COMMIT")).toBe(false);
     });
+  });
+});
+
+describe("countUsersWithOwnerAdminContext", () => {
+  it("counts users only after establishing transaction-local owner-admin context", async () => {
+    const client = makeMockClient(4);
+    const pool = makeMockPool(client);
+
+    await expect(countUsersWithOwnerAdminContext(pool)).resolves.toBe(4);
+
+    const contextIndex = client.queries.findIndex((query) =>
+      query.sql.includes("app.owner_admin_mode"),
+    );
+    const countIndex = client.queries.findIndex((query) =>
+      query.sql.includes("COUNT(*)"),
+    );
+    expect(contextIndex).toBeGreaterThanOrEqual(0);
+    expect(contextIndex).toBeLessThan(countIndex);
+    expect(client.queries[contextIndex]?.params[1]).toBe("true");
   });
 });

@@ -164,12 +164,10 @@ on the normal API service.
 
 ## Startup empty-users warning
 
-The deployed startup path currently counts users without first establishing an
-RLS context. Because `users` is protected by forced RLS, the warning
-`Users table is empty` may be an RLS-filtered result even when hosted login
-works. This is a source-based **hypothesis**, not proof of the hosted cause and
-not proof that the database is empty. Validate it with the actual hosted
-application role and RLS settings.
+The deployed startup path counts users inside the same transaction-local
+owner-admin RLS context used by bootstrap verification. A zero count is
+therefore an all-user count, not an unscoped RLS-filtered result. Treat an
+unexpected empty-users warning as a provisioning stop condition.
 
 ## Error reference
 

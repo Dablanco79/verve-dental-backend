@@ -35,7 +35,7 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     JWT_ACCESS_EXPIRES_IN: "15m",
       JWT_REFRESH_EXPIRES_IN: "7d",
       SESSION_MAX_AGE_SECONDS: 43200,
-    DATABASE_URL: "postgres://user:pass@db.example.com/verve",
+    DATABASE_URL: "postgres://user:pass@db.example.com/verve?sslmode=verify-full",
     DATABASE_SSL: "auto",
     REDIS_URL: "redis://cache.example.com:6379",
     REDIS_TLS: "auto",
@@ -88,6 +88,16 @@ describe("Production startup guard — missing REDIS_URL", () => {
 
     await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
       /session/i,
+    );
+  });
+});
+
+describe("Production startup guard — migrations are standalone only", () => {
+  it("rejects MIGRATE_ON_STARTUP=true before creating infrastructure clients", async () => {
+    const config = makeConfig({ MIGRATE_ON_STARTUP: true });
+
+    await expect(createAppDependencies(config, silentLogger)).rejects.toThrow(
+      /MIGRATE_ON_STARTUP=true.*not permitted.*standalone/i,
     );
   });
 });

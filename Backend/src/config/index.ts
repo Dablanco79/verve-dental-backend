@@ -29,7 +29,7 @@ const envSchema = z.object({
    */
   SESSION_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(43200),
   DATABASE_URL: z.string().url().optional(),
-  // auto: enable SSL for remote hosts / sslmode=require URLs; true/false to force.
+  // Deployed remote URLs require sslmode=verify-full; local/test remains configurable.
   DATABASE_SSL: z.enum(["auto", "true", "false"]).default("auto"),
   REDIS_URL: z.string().url().optional(),
   // auto: enable TLS when REDIS_URL uses rediss://; true/false to force.
@@ -44,15 +44,11 @@ const envSchema = z.object({
     .string()
     .min(64, "MFA_ENCRYPTION_KEY must be at least 64 hex characters (32 bytes)"),
   /**
-   * Migration startup gate.
+   * Legacy startup-migration flag.
    *
-   * In staging and production, runBootstrapMigrations() blocks startup when
-   * pending migrations exist unless this is explicitly set to "true".
-   *
-   * Development and test ignore this flag — migrations always run automatically.
-   *
-   * Set via environment variable:   MIGRATE_ON_STARTUP=true
-   * Or run the explicit migration command:   npm run migrate
+   * Staging and production application startup is always check-only. A true
+   * value is rejected so stale hosted configuration cannot silently apply DDL.
+   * Use the explicit standalone `npm run migrate` command to apply migrations.
    */
   MIGRATE_ON_STARTUP: z
     .string()
