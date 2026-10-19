@@ -7,6 +7,9 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@jest/globals";
 
@@ -15,11 +18,13 @@ const TLS_CA_CERT_PATH = process.env["TLS_CA_CERT_PATH"];
 const describeWithTlsDatabase =
   TLS_DATABASE_URL && TLS_CA_CERT_PATH ? describe : describe.skip;
 
-const tsxCli = fileURLToPath(
-  new URL("../../node_modules/tsx/dist/cli.mjs", import.meta.url),
-);
+const requireFromBackendTest = createRequire(import.meta.url);
+const tsxCli = requireFromBackendTest.resolve("tsx/cli");
 const probe = fileURLToPath(
   new URL("./helpers/databaseTlsProbe.ts", import.meta.url),
+);
+const backendWorkingDirectory = fileURLToPath(
+  new URL("../", import.meta.url),
 );
 
 function runProbe(
@@ -47,12 +52,35 @@ function runProbe(
   }
 
   return spawnSync(process.execPath, [tsxCli, probe], {
-    cwd: process.cwd(),
+    cwd: backendWorkingDirectory,
     env,
     encoding: "utf8",
     timeout: 20_000,
   });
 }
+
+describe("PostgreSQL TLS probe subprocess launcher", () => {
+  it("resolves the declared tsx dependency and launches from the Backend workspace", () => {
+    expect(isAbsolute(tsxCli)).toBe(true);
+    expect(existsSync(tsxCli)).toBe(true);
+    expect(isAbsolute(probe)).toBe(true);
+    expect(existsSync(probe)).toBe(true);
+    expect(existsSync(join(backendWorkingDirectory, "package.json"))).toBe(true);
+
+    const env = { ...process.env };
+    delete env["DATABASE_URL"];
+    const result = spawnSync(process.execPath, [tsxCli, probe], {
+      cwd: backendWorkingDirectory,
+      env,
+      encoding: "utf8",
+      timeout: 20_000,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("TLS_PROBE_CONFIG_MISSING\n");
+  });
+});
 
 describeWithTlsDatabase("PostgreSQL TLS certificate verification", () => {
   it("connects when the certificate is trusted and matches the hostname", () => {
