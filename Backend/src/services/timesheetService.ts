@@ -152,6 +152,31 @@ const COL_CLOCK_IN    = `Clock In (${OPERATIONAL_TZ})`;
 const COL_CLOCK_OUT   = `Clock Out (${OPERATIONAL_TZ})`;
 const COL_APPROVED_AT = `Approved At (${OPERATIONAL_TZ})`;
 
+const DETAIL_HEADERS = [
+  "Staff Name",
+  "Staff Email",
+  "Clinic / Location",
+  "Date",
+  COL_CLOCK_IN,
+  COL_CLOCK_OUT,
+  "Break (min)",
+  "Worked Hours",
+  "Duration",
+  "Payroll Type",
+  "Timesheet Status",
+  "Attendance",
+  "Approval Notes",
+  "Approved By",
+  COL_APPROVED_AT,
+  "Commission Note",
+  "Clock In Location",
+  "Clock In Distance (m)",
+  "Clock In Note",
+  "Clock Out Location",
+  "Clock Out Distance (m)",
+  "Clock Out Note",
+] as const;
+
 // Helper: human-readable geofence status for the XLSX export.
 function geofenceStatusLabel(loc: GeofenceLocation | null): string {
   if (!loc) return "Not recorded";
@@ -230,7 +255,9 @@ async function buildTimesheetXlsx(
     return row;
   });
 
-  const detailSheet = XLSX.utils.json_to_sheet(rows);
+  const detailSheet = XLSX.utils.json_to_sheet(rows, {
+    header: [...DETAIL_HEADERS],
+  });
 
   // Column widths for readability
   detailSheet["!cols"] = [
@@ -1242,11 +1269,18 @@ export function createTimesheetService(
         staffEmail: options?.staffEmail,
       });
 
+      const eligibleEntries = entries.filter(
+        (entry) =>
+          entry.timesheetStatus === "approved" &&
+          (entry.payrollType === "hourly_auto" ||
+            entry.payrollType === "hourly_manual"),
+      );
+
       // Resolve approver emails for the "Approved By" column.
       // Collect distinct approvedByUserIds first to minimise DB round-trips.
       const uniqueApproverIds = [
         ...new Set(
-          entries
+          eligibleEntries
             .map((e) => e.approvedByUserId)
             .filter((id): id is string => id !== null),
         ),
@@ -1268,7 +1302,7 @@ export function createTimesheetService(
       // "null null" or "Daniel null".  Falls back to "" for pre-Sprint-1 rows.
       // StaffEmail remains the reliable identifier regardless of name availability.
       const uniqueStaffIds = [
-        ...new Set(entries.map((e) => e.staffUserId)),
+        ...new Set(eligibleEntries.map((e) => e.staffUserId)),
       ];
       const staffNameMap: StaffNameMap = new Map();
       await Promise.all(
@@ -1283,7 +1317,13 @@ export function createTimesheetService(
         }),
       );
 
-      const buffer = await buildTimesheetXlsx(entries, approverMap, staffNameMap, options?.from, options?.to);
+      const buffer = await buildTimesheetXlsx(
+        eligibleEntries,
+        approverMap,
+        staffNameMap,
+        options?.from,
+        options?.to,
+      );
 
       // Filename: timesheets_YYYY-MM-DD_to_YYYY-MM-DD.xlsx
       // Falls back to just timesheets_export.xlsx when no date range given.
@@ -1294,7 +1334,7 @@ export function createTimesheetService(
           ? `timesheets_${fromStr}_to_${toStr}.xlsx`
           : "timesheets_export.xlsx";
 
-      return { buffer, filename, rowCount: entries.length };
+      return { buffer, filename, rowCount: eligibleEntries.length };
     },
 
     // ── Roster-completion hook ─────────────────────────────────────────────────

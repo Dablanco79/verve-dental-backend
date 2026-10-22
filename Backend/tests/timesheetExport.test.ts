@@ -32,37 +32,97 @@
  * isolated.  Postgres-specific index/RLS coverage is identified for GitHub CI.
  */
 
+import { jest } from "@jest/globals";
 import request from "supertest";
 
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
+import type { ClinicRepository } from "../src/repositories/clinicRepository.js";
+import type { RosterRepository } from "../src/repositories/rosterRepository.js";
+import type { TimesheetRepository } from "../src/repositories/timesheetRepository.js";
+import type { UserClinicAssignmentsRepository } from "../src/repositories/userClinicAssignmentsRepository.js";
+import type { UserRepository } from "../src/repositories/userRepository.js";
 import {
   SEED_CLINIC_A_ID,
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
+import { createTimesheetService } from "../src/services/timesheetService.js";
+import type { AuthenticatedUser, UserRecord } from "../src/types/auth.js";
+import type { TimesheetEntry, TimesheetStatus } from "../src/types/payroll.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Clock in as staff so there is at least one timesheet entry to export. */
+/** Clock in as staff and return the newly created hourly_auto entry. */
 async function seedClockIn(
   app: Awaited<ReturnType<typeof createTestApp>>,
   staffToken: string,
   clinicId: string,
   shiftStartAt: string,
   shiftEndAt: string,
-): Promise<void> {
+  clockInLocation?: {
+    lat: number;
+    lng: number;
+    accuracyMetres: number;
+    targetClinicId: string;
+  },
+): Promise<{ id: string }> {
   // shiftDate is no longer sent — the backend derives it from shiftStartAt in
   // Melbourne local time (see payrollController.clockIn and melbourneTime.ts).
-  await request(app)
+  const res = await request(app)
     .post(`/api/v1/clinics/${clinicId}/timesheets/clock-in`)
     .set("Authorization", `Bearer ${staffToken}`)
     .send({
       rosterEntryId: null,
       shiftStartAt,
       shiftEndAt,
+      physicalClinicId: clinicId,
+      clockInLocation,
     });
+  if (res.status !== 201) {
+    throw new Error(`seedClockIn: POST returned ${String(res.status)}: ${JSON.stringify(res.body)}`);
+  }
+  return (res.body as { data: { id: string } }).data;
+}
+
+/** Create and approve a deterministic hourly_manual entry through public APIs. */
+async function seedApprovedManual(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  managerToken: string,
+  clinicId: string,
+  shiftDate: string,
+  startHour = 8,
+): Promise<{ id: string; totalHoursWorked: number }> {
+  const hour = String(startHour).padStart(2, "0");
+  const endHour = String(startHour + 8).padStart(2, "0");
+  const createRes = await request(app)
+    .post(`/api/v1/clinics/${clinicId}/timesheets`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({
+      staffUserId: SEED_USER_IDS.clinicAStaff,
+      rosterEntryId: null,
+      shiftDate,
+      shiftStartAt: `${shiftDate}T${hour}:00:00.000Z`,
+      shiftEndAt: `${shiftDate}T${endHour}:00:00.000Z`,
+      clockInAt: `${shiftDate}T${hour}:00:00.000Z`,
+      clockOutAt: `${shiftDate}T${endHour}:00:00.000Z`,
+      breakDurationMinutes: 0,
+    });
+  if (createRes.status !== 201) {
+    throw new Error(`seedApprovedManual: create returned ${String(createRes.status)}: ${JSON.stringify(createRes.body)}`);
+  }
+  const created = (createRes.body as { data: { id: string } }).data;
+  const approveRes = await request(app)
+    .post(`/api/v1/clinics/${clinicId}/timesheets/${created.id}/approve`)
+    .set("Authorization", `Bearer ${managerToken}`)
+    .send({ approvalNotes: "Approved for export test" });
+  if (approveRes.status !== 200) {
+    throw new Error(`seedApprovedManual: approve returned ${String(approveRes.status)}: ${JSON.stringify(approveRes.body)}`);
+  }
+  return (approveRes.body as {
+    data: { id: string; totalHoursWorked: number };
+  }).data;
 }
 
 async function getExport(
@@ -74,6 +134,26 @@ async function getExport(
   const qs = new URLSearchParams(query).toString();
   const path = `/api/v1/clinics/${clinicId}/timesheets/export${qs ? `?${qs}` : ""}`;
   return request(app).get(path).set("Authorization", `Bearer ${token}`);
+}
+
+async function getBinaryExport(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  token: string,
+  clinicId: string,
+  query: Record<string, string> = {},
+) {
+  const qs = new URLSearchParams(query).toString();
+  const path = `/api/v1/clinics/${clinicId}/timesheets/export${qs ? `?${qs}` : ""}`;
+  return request(app)
+    .get(path)
+    .set("Authorization", `Bearer ${token}`)
+    .buffer(true)
+    .parse((res, callback) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+      res.on("end", () => { callback(null, Buffer.concat(chunks)); });
+      res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
+    });
 }
 
 /**
@@ -324,19 +404,11 @@ describe("GET /timesheets/export — validation", () => {
 describe("GET /timesheets/export — filters", () => {
   it("date range filter excludes entries outside the range (X-Export-Row-Count)", async () => {
     const app = await createTestApp();
-    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
-
-    // Seed two entries in different months.
-    await seedClockIn(
-      app, staffToken, SEED_CLINIC_A_ID,
-      "2026-01-15T08:00:00Z", "2026-01-15T17:00:00Z",
-    );
-    await seedClockIn(
-      app, staffToken, SEED_CLINIC_A_ID,
-      "2026-06-20T09:00:00Z", "2026-06-20T18:00:00Z",
-    );
-
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    // Seed two approved entries in different months.
+    await seedApprovedManual(app, adminToken, SEED_CLINIC_A_ID, "2026-01-15");
+    await seedApprovedManual(app, adminToken, SEED_CLINIC_A_ID, "2026-06-20");
 
     // Export only January — June entry must be excluded.
     const resJan = await getExport(app, adminToken, SEED_CLINIC_A_ID, {
@@ -352,8 +424,8 @@ describe("GET /timesheets/export — filters", () => {
     });
     const junCount = parseInt(resJun.headers["x-export-row-count"] as string, 10);
 
-    expect(janCount).toBeGreaterThanOrEqual(1);
-    expect(junCount).toBeGreaterThanOrEqual(1);
+    expect(janCount).toBe(1);
+    expect(junCount).toBe(1);
 
     // The January-only export must not include the June entry.
     // We verify this by confirming January export has fewer rows than combined export.
@@ -363,21 +435,14 @@ describe("GET /timesheets/export — filters", () => {
     });
     const combinedCount = parseInt(resCombined.headers["x-export-row-count"] as string, 10);
 
-    expect(janCount).toBeLessThan(combinedCount);
-    expect(junCount).toBeLessThan(combinedCount);
+    expect(combinedCount).toBe(2);
   });
 
   it("staffEmail filter scopes export to a single staff member", async () => {
     const app = await createTestApp();
-    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
-
-    // Seed at least one entry for this staff member.
-    await seedClockIn(
-      app, staffToken, SEED_CLINIC_A_ID,
-      "2026-09-01T08:00:00Z", "2026-09-01T17:00:00Z",
-    );
-
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    await seedApprovedManual(app, adminToken, SEED_CLINIC_A_ID, "2026-09-01");
 
     // Export filtered to the specific staff email.
     const resFiltered = await getExport(app, adminToken, SEED_CLINIC_A_ID, {
@@ -389,8 +454,7 @@ describe("GET /timesheets/export — filters", () => {
     const filteredCount = parseInt(resFiltered.headers["x-export-row-count"] as string, 10);
     const allCount = parseInt(resAll.headers["x-export-row-count"] as string, 10);
 
-    // Filtered count must be ≤ total count.
-    expect(filteredCount).toBeGreaterThanOrEqual(1);
+    expect(filteredCount).toBe(1);
     expect(filteredCount).toBeLessThanOrEqual(allCount);
   });
 });
@@ -411,21 +475,18 @@ describe("GET /timesheets/export — pagination safety", () => {
    */
   it("exports all records when count exceeds the default page size (55 entries)", async () => {
     const app = await createTestApp();
-    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
-    // Seed 55 distinct entries across different dates in August 2026.
+    // Seed 55 approved entries across different dates in August 2026.
     const SEED_COUNT = 55;
     for (let i = 1; i <= SEED_COUNT; i++) {
       const day = String(i % 28 === 0 ? 28 : i % 28).padStart(2, "0");
-      // Use varied hours to avoid any unique-constraint collisions that might
-      // exist on (staff_user_id, shift_date) in a real DB; in-memory has none.
-      const h = String(6 + (i % 10)).padStart(2, "0");
-      // shiftDate is now derived server-side; only shiftStartAt/shiftEndAt needed.
-      await seedClockIn(
-        app, staffToken, SEED_CLINIC_A_ID,
-        `2026-08-${day}T${h}:00:00Z`,
-        `2026-08-${day}T${String(parseInt(h, 10) + 8).padStart(2, "0")}:00:00Z`,
+      await seedApprovedManual(
+        app,
+        adminToken,
+        SEED_CLINIC_A_ID,
+        `2026-08-${day}`,
+        6 + (i % 10),
       );
     }
 
@@ -450,10 +511,179 @@ describe("GET /timesheets/export — pagination safety", () => {
 
     expect(exportRes.status).toBe(200);
     const exportCount = parseInt(exportRes.headers["x-export-row-count"] as string, 10);
-    expect(exportCount).toBeGreaterThanOrEqual(SEED_COUNT);
+    expect(exportCount).toBe(SEED_COUNT);
 
     // Crucially: the export count must exceed the paginated page size.
     expect(exportCount).toBeGreaterThan(listBody.data.length);
+  });
+});
+
+describe("timesheet export — payroll eligibility", () => {
+  it("exports only approved hourly_auto and hourly_manual rows", async () => {
+    const approvedByUserId = SEED_USER_IDS.clinicAAdmin;
+    const now = new Date("2026-10-01T00:00:00.000Z");
+    const baseEntry: TimesheetEntry = {
+      id: "00000000-0000-4000-8000-000000000001",
+      payrollType: "hourly_auto",
+      staffUserId: SEED_USER_IDS.clinicAStaff,
+      staffEmail: "staff@clinic-a.au",
+      clinicId: SEED_CLINIC_A_ID,
+      rosteredClinicId: SEED_CLINIC_A_ID,
+      rosteredClinicName: "Verve Dental Clinic A",
+      rosterEntryId: null,
+      shiftDate: "2026-09-15",
+      shiftStartAt: new Date("2026-09-14T22:00:00.000Z"),
+      shiftEndAt: new Date("2026-09-15T06:00:00.000Z"),
+      attendanceStatus: "present",
+      clockInAt: new Date("2026-09-14T22:00:00.000Z"),
+      clockOutAt: new Date("2026-09-15T06:00:00.000Z"),
+      breakDurationMinutes: 30,
+      totalHoursWorked: 7.5,
+      ordinaryHours: 7.5,
+      overtime15xHours: 0,
+      overtime2xHours: 0,
+      overtimeCustomHours: 0,
+      timesheetStatus: "approved",
+      approvedByUserId,
+      approvedAt: new Date("2026-09-16T01:00:00.000Z"),
+      approvalNotes: "Approved",
+      commissionNote: null,
+      clockInNote: null,
+      clockOutNote: null,
+      clockInLocation: null,
+      clockOutLocation: null,
+      generatedBy: "staff@clinic-a.au",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const approvedAuto = { ...baseEntry };
+    const approvedManual: TimesheetEntry = {
+      ...baseEntry,
+      id: "00000000-0000-4000-8000-000000000002",
+      payrollType: "hourly_manual",
+      shiftDate: "2026-09-16",
+      totalHoursWorked: 8,
+      ordinaryHours: 8,
+    };
+    const excludedStatuses: TimesheetStatus[] = [
+      "draft",
+      "submitted",
+      "rejected",
+      "requires_amendment",
+      "processed",
+    ];
+    const excludedHourly = excludedStatuses.map<TimesheetEntry>((timesheetStatus, index) => ({
+      ...baseEntry,
+      id: `00000000-0000-4000-8000-${String(index + 3).padStart(12, "0")}`,
+      staffUserId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      staffEmail: `excluded-${timesheetStatus}@clinic-a.au`,
+      shiftDate: `2026-09-${String(index + 17).padStart(2, "0")}`,
+      timesheetStatus,
+    }));
+    const commissionLog: TimesheetEntry = {
+      ...baseEntry,
+      id: "00000000-0000-4000-8000-000000000008",
+      payrollType: "commission_log",
+      staffUserId: "10000000-0000-4000-8000-000000000008",
+      staffEmail: "commission@clinic-a.au",
+      clockInAt: null,
+      clockOutAt: null,
+      breakDurationMinutes: null,
+      totalHoursWorked: null,
+      ordinaryHours: null,
+      overtime15xHours: null,
+      overtime2xHours: null,
+      overtimeCustomHours: null,
+      // Deliberately mark this malformed commission row approved so the test
+      // proves payroll-type eligibility is enforced independently of status.
+      timesheetStatus: "approved",
+      commissionNote: "Verified commission attendance",
+    };
+    const repositoryEntries = [
+      ...excludedHourly,
+      commissionLog,
+      approvedAuto,
+      approvedManual,
+    ];
+
+    const timesheetRepository = {
+      listByClinic: () => Promise.resolve(repositoryEntries),
+    } as unknown as TimesheetRepository;
+    const staffUser: UserRecord = {
+      id: SEED_USER_IDS.clinicAStaff,
+      email: "staff@clinic-a.au",
+      passwordHash: "",
+      role: "clinical_staff",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
+      firstName: "Ava",
+      lastName: "Worker",
+      displayName: null,
+      payrollTrack: "hourly",
+      totpSecret: null,
+      mfaEnabled: false,
+      isActive: true,
+    };
+    const approverUser: UserRecord = {
+      ...staffUser,
+      id: approvedByUserId,
+      email: "admin@clinic-a.au",
+      role: "owner_admin",
+      payrollTrack: "commission",
+    };
+    const lookedUpUserIds: string[] = [];
+    const userRepository = {
+      findById: (id: string) => {
+        lookedUpUserIds.push(id);
+        return Promise.resolve(
+          id === staffUser.id ? staffUser : id === approverUser.id ? approverUser : null,
+        );
+      },
+    } as unknown as UserRepository;
+    const service = createTimesheetService(
+      timesheetRepository,
+      userRepository,
+      {} as RosterRepository,
+      {} as UserClinicAssignmentsRepository,
+      {} as ClinicRepository,
+    );
+    const caller: AuthenticatedUser = {
+      id: approvedByUserId,
+      email: "admin@clinic-a.au",
+      role: "owner_admin",
+      homeClinicId: SEED_CLINIC_A_ID,
+      homeClinicName: "Verve Dental Clinic A",
+      firstName: null,
+      lastName: null,
+      displayName: null,
+      payrollTrack: "commission",
+      permissions: [],
+    };
+
+    const result = await service.exportTimesheets(caller, SEED_CLINIC_A_ID);
+
+    expect(result.rowCount).toBe(2);
+    expect(new Set(lookedUpUserIds)).toEqual(new Set([approvedByUserId, staffUser.id]));
+
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.read(result.buffer, { type: "buffer" });
+    const worksheet = workbook.Sheets["Timesheets"];
+    expect(worksheet).toBeDefined();
+    if (!worksheet) throw new Error("Timesheets worksheet missing from exported workbook");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => [row["Payroll Type"], row["Timesheet Status"]])).toEqual([
+      ["hourly_auto", "approved"],
+      ["hourly_manual", "approved"],
+    ]);
+    expect(rows[0]).toMatchObject({
+      "Staff Name": "Ava Worker",
+      "Staff Email": "staff@clinic-a.au",
+      "Date": "2026-09-15",
+      "Worked Hours": 7.5,
+    });
   });
 });
 
@@ -462,12 +692,12 @@ describe("GET /timesheets/export — pagination safety", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("GET /timesheets/export — empty result", () => {
-  it("returns 200 + xlsx with 0-row count when no entries match the date range", async () => {
+  it("returns the canonical headers and no data rows when no eligible entries match", async () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     // Use a date far in the future — guaranteed to have no entries.
-    const res = await getExport(app, adminToken, SEED_CLINIC_A_ID, {
+    const res = await getBinaryExport(app, adminToken, SEED_CLINIC_A_ID, {
       from: "2099-01-01",
       to: "2099-12-31",
     });
@@ -478,6 +708,39 @@ describe("GET /timesheets/export — empty result", () => {
     );
     const rowCount = parseInt(res.headers["x-export-row-count"] as string, 10);
     expect(rowCount).toBe(0);
+
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.read(res.body as Buffer, { type: "buffer" });
+    const worksheet = workbook.Sheets["Timesheets"];
+    expect(worksheet).toBeDefined();
+    if (!worksheet) throw new Error("Timesheets worksheet missing from exported workbook");
+
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual([
+      "Staff Name",
+      "Staff Email",
+      "Clinic / Location",
+      "Date",
+      "Clock In (Australia/Melbourne)",
+      "Clock Out (Australia/Melbourne)",
+      "Break (min)",
+      "Worked Hours",
+      "Duration",
+      "Payroll Type",
+      "Timesheet Status",
+      "Attendance",
+      "Approval Notes",
+      "Approved By",
+      "Approved At (Australia/Melbourne)",
+      "Commission Note",
+      "Clock In Location",
+      "Clock In Distance (m)",
+      "Clock In Note",
+      "Clock Out Location",
+      "Clock Out Distance (m)",
+      "Clock Out Note",
+    ]);
   });
 });
 
@@ -500,15 +763,10 @@ describe("GET /timesheets/export — hours calculation consistency", () => {
    */
   it("export row count matches list endpoint record count for the same date range", async () => {
     const app = await createTestApp();
-    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const targetDate = "2026-07-10";
-    const fromStr = `${targetDate}T08:00:00Z`;
-    const toStr = `${targetDate}T17:00:00Z`;
-
-    // Clock in (shiftDate derived server-side from shiftStartAt in Melbourne time).
-    await seedClockIn(app, staffToken, SEED_CLINIC_A_ID, fromStr, toStr);
+    await seedApprovedManual(app, adminToken, SEED_CLINIC_A_ID, targetDate);
 
     // List endpoint — count records for this exact date.
     const listRes = await request(app)
@@ -563,38 +821,36 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
-    // Clock in with a location payload — creates an entry with clockInLocation.
-    // We don't clock out so we don't need to advance time.
-    const inRes = await request(app)
-      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-20T22:00:00.000Z"));
+    const entry = await seedClockIn(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      "2026-09-20T22:00:00.000Z",
+      "2026-09-21T06:00:00.000Z",
+      {
+        lat: -37.8136,
+        lng: 144.9631,
+        accuracyMetres: 12,
+        targetClinicId: SEED_CLINIC_A_ID,
+      },
+    );
+    jest.setSystemTime(new Date("2026-09-21T06:00:00.000Z"));
+    const outRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/clock-out`)
       .set("Authorization", `Bearer ${staffToken}`)
-      .send({
-        rosterEntryId: null,
-        shiftStartAt: "2026-09-20T22:00:00.000Z",
-        shiftEndAt: "2026-09-21T06:00:00.000Z",
-        physicalClinicId: SEED_CLINIC_A_ID,
-        clockInLocation: {
-          lat: -37.8136,
-          lng: 144.9631,
-          accuracyMetres: 12,
-          targetClinicId: SEED_CLINIC_A_ID,
-        },
-      });
-    expect(inRes.status).toBe(201);
+      .send({ breakDurationMinutes: 0 });
+    expect(outRes.status).toBe(200);
+    const approveRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/approve`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({});
+    expect(approveRes.status).toBe(200);
+    jest.useRealTimers();
 
     // Export without date filter to include all entries.
-    // Inline binary parser: TypeScript infers res's type from .parse() context,
-    // avoiding any-typed member-access while collecting the raw XLSX bytes.
-    const exportRes = await request(app)
-      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
-      .set("Authorization", `Bearer ${adminToken}`)
-      .buffer(true)
-      .parse((res, callback) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
-        res.on("end", () => { callback(null, Buffer.concat(chunks)); });
-        res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
-      });
+    const exportRes = await getBinaryExport(app, adminToken, SEED_CLINIC_A_ID);
     expect(exportRes.status).toBe(200);
 
     // Verify the row count from the header before parsing
@@ -619,7 +875,7 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     expect(headers).toContain("Clock Out Location");
     expect(headers).toContain("Clock Out Distance (m)");
 
-    // The data row for our entry: Clock Out is null so it should show "Not recorded"
+    // The approved row retains both geofence audit columns.
     const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
     expect(dataRows.length).toBeGreaterThanOrEqual(1);
     const ourRow = dataRows[0] as Record<string, unknown>;
@@ -633,29 +889,29 @@ describe("GET /timesheets/export — geofence audit columns", () => {
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
-    // Clock in without location — simulates a historical / no-GPS entry
-    const inRes = await request(app)
-      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-09-21T22:00:00.000Z"));
+    const entry = await seedClockIn(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      "2026-09-21T22:00:00.000Z",
+      "2026-09-22T06:00:00.000Z",
+    );
+    jest.setSystemTime(new Date("2026-09-22T06:00:00.000Z"));
+    const outRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/clock-out`)
       .set("Authorization", `Bearer ${staffToken}`)
-      .send({
-        rosterEntryId: null,
-        shiftStartAt: "2026-09-21T22:00:00.000Z",
-        shiftEndAt: "2026-09-22T06:00:00.000Z",
-        physicalClinicId: SEED_CLINIC_A_ID,
-        // Intentionally omitted: no clockInLocation
-      });
-    expect(inRes.status).toBe(201);
-
-    const exportRes = await request(app)
-      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/export`)
+      .send({ breakDurationMinutes: 0 });
+    expect(outRes.status).toBe(200);
+    const approveRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/${entry.id}/approve`)
       .set("Authorization", `Bearer ${adminToken}`)
-      .buffer(true)
-      .parse((res, callback) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => { chunks.push(chunk); });
-        res.on("end", () => { callback(null, Buffer.concat(chunks)); });
-        res.on("error", (err: Error) => { callback(err, Buffer.alloc(0)); });
-      });
+      .send({});
+    expect(approveRes.status).toBe(200);
+    jest.useRealTimers();
+
+    const exportRes = await getBinaryExport(app, adminToken, SEED_CLINIC_A_ID);
     expect(exportRes.status).toBe(200);
 
     const rowCount = parseInt(exportRes.headers["x-export-row-count"] as string, 10);
