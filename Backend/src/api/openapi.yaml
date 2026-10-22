@@ -505,6 +505,42 @@ components:
           type: string
           format: date-time
 
+    LeaveCoverageWarning:
+      type: object
+      description: Privacy-minimal coverage warning; never includes colleague or leave details.
+      required: [enabled, status, overlappingColleagueCount, affectedGroups]
+      properties:
+        enabled:
+          type: boolean
+        status:
+          type: string
+          enum: [disabled, unconfigured, staff_unassigned, ready]
+        overlappingColleagueCount:
+          type: integer
+          minimum: 0
+        affectedGroups:
+          type: array
+          items:
+            type: object
+            required: [clinicId, groupId, groupName]
+            properties:
+              clinicId: { type: string, format: uuid }
+              groupId: { type: string, format: uuid }
+              groupName: { type: string }
+
+    CoverageGroup:
+      type: object
+      required: [id, clinicId, name, memberUserIds, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        clinicId: { type: string, format: uuid }
+        name: { type: string }
+        memberUserIds:
+          type: array
+          items: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
     CreateClinicRequest:
       type: object
       required: [name]
@@ -4145,6 +4181,187 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   # ── Leave ────────────────────────────────────────────────────────────────────
+
+  /api/v1/clinics/{clinicId}/leave/coverage-overlaps:
+    get:
+      summary: Check coverage-group leave overlaps for the authenticated user
+      operationId: getMyLeaveCoverageOverlaps
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: startDate, in: query, required: true, schema: { type: string, format: date } }
+        - { name: endDate, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Privacy-minimal overlap warning.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LeaveCoverageWarning" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-settings:
+    get:
+      summary: Get leave coverage warning settings
+      operationId: getLeaveCoverageSettings
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200": { description: Coverage warning settings. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      summary: Update leave coverage warning settings
+      operationId: updateLeaveCoverageSettings
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Updated coverage warning settings. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups:
+    get:
+      summary: List leave coverage groups
+      operationId: listLeaveCoverageGroups
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Clinic coverage groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoverageGroup" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a leave coverage group
+      operationId: createLeaveCoverageGroup
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201": { description: Created coverage group. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups/{groupId}:
+    patch:
+      summary: Rename a leave coverage group
+      operationId: updateLeaveCoverageGroup
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200": { description: Updated coverage group. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups/{groupId}/members:
+    put:
+      summary: Replace leave coverage group members
+      operationId: replaceLeaveCoverageGroupMembers
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [memberUserIds]
+              properties:
+                memberUserIds:
+                  type: array
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated coverage group membership. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/coverage-overlaps:
+    get:
+      summary: Check coverage overlaps for a persisted leave request
+      operationId: getLeaveRequestCoverageOverlaps
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      responses:
+        "200":
+          description: Privacy-minimal overlap warning using persisted staff and dates from a pending leave request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LeaveCoverageWarning" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The leave request is no longer pending.
 
   /api/v1/clinics/{clinicId}/leave/me:
     get:

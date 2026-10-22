@@ -242,6 +242,23 @@ const listCancellationRequestsQuerySchema = z.object({
   status: z.enum(LEAVE_CANCELLATION_REQUEST_STATUSES).optional(),
 }).strict();
 
+const coverageDatesQuerySchema = z.object({
+  startDate: isoDate(),
+  endDate: isoDate(),
+}).strict();
+
+const coverageSettingsSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
+
+const coverageGroupSchema = z.object({
+  name: z.string().trim().min(1, "Coverage group name cannot be blank").max(200),
+}).strict();
+
+const coverageMembersSchema = z.object({
+  memberUserIds: z.array(z.string().uuid()).max(500),
+}).strict();
+
 // Supports filtering by date window, leave type, and status.
 // from/to are YYYY-MM-DD (not full timestamps) to avoid timezone ambiguity.
 const listLeaveQuerySchema = z
@@ -276,6 +293,88 @@ const listLeaveQuerySchema = z
 
 export function createLeaveHandlers(leaveService: LeaveService) {
   return {
+    async getCoverageOverlaps(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = coverageDatesQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+      const warning = await leaveService.getCoverageWarning(
+        caller,
+        clinicId,
+        parsed.data.startDate,
+        parsed.data.endDate,
+      );
+      res.status(200).json({ data: warning });
+    },
+
+    async getLeaveCoverageOverlaps(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const warning = await leaveService.getLeaveCoverageWarning(caller, clinicId, leaveId);
+      res.status(200).json({ data: warning });
+    },
+
+    async getCoverageSettings(req: Request, res: Response): Promise<void> {
+      const result = await leaveService.getCoverageSettings(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+      );
+      res.status(200).json({ data: result });
+    },
+
+    async updateCoverageSettings(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageSettingsSchema, req.body);
+      const result = await leaveService.updateCoverageSettings(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        body.enabled,
+      );
+      res.status(200).json({ data: result });
+    },
+
+    async listCoverageGroups(req: Request, res: Response): Promise<void> {
+      const groups = await leaveService.listCoverageGroups(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+      );
+      res.status(200).json({ data: groups });
+    },
+
+    async createCoverageGroup(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageGroupSchema, req.body);
+      const group = await leaveService.createCoverageGroup(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        body.name,
+      );
+      res.status(201).json({ data: group });
+    },
+
+    async updateCoverageGroup(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageGroupSchema, req.body);
+      const group = await leaveService.updateCoverageGroup(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        requireUuidParam(req, "groupId"),
+        body.name,
+      );
+      res.status(200).json({ data: group });
+    },
+
+    async replaceCoverageGroupMembers(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageMembersSchema, req.body);
+      const group = await leaveService.replaceCoverageGroupMembers(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        requireUuidParam(req, "groupId"),
+        body.memberUserIds,
+      );
+      res.status(200).json({ data: group });
+    },
+
     async listCancellationRequests(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
       const clinicId = requireUuidParam(req, "clinicId");

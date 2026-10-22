@@ -42,6 +42,8 @@ import {
   createInMemoryLeaveRepository,
 } from "../repositories/leaveRepository.js";
 import { createPostgresLeaveRepository } from "../repositories/leaveRepository.postgres.js";
+import { createInMemoryLeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
+import { createPostgresLeaveCoverageRepository } from "../repositories/leaveCoverageRepository.postgres.js";
 import {
   createInMemoryUserRepository,
   seedInMemoryModuleGrants,
@@ -131,6 +133,7 @@ import type { CatalogRepository } from "../repositories/catalogRepository.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
 import type { InventoryRepository } from "../repositories/inventoryRepository.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
+import type { LeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
 import type { RosterRepository } from "../repositories/rosterRepository.js";
 import type { TimesheetRepository } from "../repositories/timesheetRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
@@ -190,6 +193,7 @@ export type AppDependencies = {
   rosterRepository: RosterRepository;
   timesheetRepository: TimesheetRepository;
   leaveRepository: LeaveRepository;
+  leaveCoverageRepository: LeaveCoverageRepository;
   billingRepository: BillingRepository;
   analyticsRepository: AnalyticsRepository;
   supplierRepository: SupplierRepository;
@@ -264,6 +268,7 @@ export async function createAppDependencies(
   let rosterRepository: RosterRepository;
   let timesheetRepository: TimesheetRepository;
   let leaveRepository: LeaveRepository;
+  let leaveCoverageRepository: LeaveCoverageRepository;
   let billingRepository: BillingRepository;
   let analyticsRepository: AnalyticsRepository;
   let supplierRepository: SupplierRepository;
@@ -364,6 +369,7 @@ export async function createAppDependencies(
     rosterRepository = createPostgresRosterRepository(connectedPool);
     timesheetRepository = createPostgresTimesheetRepository(connectedPool);
     leaveRepository = createPostgresLeaveRepository(connectedPool);
+    leaveCoverageRepository = createPostgresLeaveCoverageRepository(connectedPool);
     billingRepository = createPostgresBillingRepository(connectedPool);
     analyticsRepository = createPostgresAnalyticsRepository(connectedPool);
     supplierRepository = createPostgresSupplierRepository(connectedPool);
@@ -416,6 +422,10 @@ export async function createAppDependencies(
     });
     rosterRepository = createInMemoryRosterRepository((staffUserId, firstDate, lastDate) =>
       leaveRepository.findApprovedOverlapRange(staffUserId, firstDate, lastDate),
+    );
+    leaveCoverageRepository = createInMemoryLeaveCoverageRepository(
+      clinicAssignmentsRepository,
+      leaveRepository,
     );
     timesheetRepository = createInMemoryTimesheetRepository();
     billingRepository = createInMemoryBillingRepository();
@@ -562,7 +572,12 @@ export async function createAppDependencies(
     clinicAssignmentsRepository,
     clinicRepository,
   );
-  const leaveService = createLeaveService(leaveRepository, userRepository, analyticsRepository);
+  const leaveService = createLeaveService(
+    leaveRepository,
+    userRepository,
+    analyticsRepository,
+    leaveCoverageRepository,
+  );
   const billingService = createBillingService(billingRepository, analyticsRepository);
   const analyticsService = createAnalyticsService(
     analyticsRepository,
@@ -608,6 +623,7 @@ export async function createAppDependencies(
     rosterRepository,
     timesheetRepository,
     leaveRepository,
+    leaveCoverageRepository,
     billingRepository,
     analyticsRepository,
     supplierRepository,

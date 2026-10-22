@@ -4,6 +4,7 @@ import { Navigate } from "react-router-dom";
 import { createApiClient } from "../api/client.js";
 import { useAuth } from "../auth/useAuth.js";
 import { AppShell } from "../components/layout/AppShell.js";
+import { LeaveCoveragePanel } from "../components/leave/LeaveCoveragePanel.js";
 import { useOperationalClinic } from "../clinic/useOperationalClinic.js";
 import { loadConfig } from "../config/index.js";
 import { usePayRates } from "../hooks/usePayRates.js";
@@ -814,6 +815,8 @@ export function ManageUsersPage() {
           </form>
         ) : null}
       </section>
+
+      {clinicId ? <LeaveCoveragePanel clinicId={clinicId} /> : null}
 
       {/* ── Staff accounts table ──────────────────────────────────────────────── */}
       <section className="status-card">

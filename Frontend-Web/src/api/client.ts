@@ -174,6 +174,11 @@ import type {
   UpdateStocktakeLineRequest,
   UpdateStocktakeSessionRequest,
 } from "../types/stocktake.js";
+import type {
+  CoverageGroup,
+  LeaveCoverageSettings,
+  LeaveCoverageWarning,
+} from "../types/leaveCoverage.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -1766,6 +1771,100 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function getMyLeaveCoverageOverlaps(
+    clinicId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<LeaveCoverageWarning> {
+    const query = new URLSearchParams({ startDate, endDate });
+    return request<LeaveCoverageWarning>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-overlaps?${query.toString()}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getLeaveCoverageOverlaps(
+    clinicId: string,
+    leaveId: string,
+  ): Promise<LeaveCoverageWarning> {
+    return request<LeaveCoverageWarning>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/${encodeURIComponent(leaveId)}/coverage-overlaps`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getLeaveCoverageSettings(clinicId: string): Promise<LeaveCoverageSettings> {
+    return request<LeaveCoverageSettings>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-settings`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function updateLeaveCoverageSettings(
+    clinicId: string,
+    enabled: boolean,
+  ): Promise<LeaveCoverageSettings> {
+    return request<LeaveCoverageSettings>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-settings`,
+      { method: "PATCH", body: JSON.stringify({ enabled }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function listLeaveCoverageGroups(clinicId: string): Promise<CoverageGroup[]> {
+    return request<CoverageGroup[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createLeaveCoverageGroup(
+    clinicId: string,
+    name: string,
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups`,
+      { method: "POST", body: JSON.stringify({ name }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateLeaveCoverageGroup(
+    clinicId: string,
+    groupId: string,
+    name: string,
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups/${encodeURIComponent(groupId)}`,
+      { method: "PATCH", body: JSON.stringify({ name }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function replaceLeaveCoverageGroupMembers(
+    clinicId: string,
+    groupId: string,
+    memberUserIds: string[],
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups/${encodeURIComponent(groupId)}/members`,
+      { method: "PUT", body: JSON.stringify({ memberUserIds }) },
+      requireAccessToken(),
+    );
+  }
+
   async function approveLeave(
     clinicId: string,
     leaveId: string,
@@ -2964,6 +3063,14 @@ export function createApiClient(config: AppConfig) {
     listLeave,
     listMyLeave,
     createLeaveRequest,
+    getMyLeaveCoverageOverlaps,
+    getLeaveCoverageOverlaps,
+    getLeaveCoverageSettings,
+    updateLeaveCoverageSettings,
+    listLeaveCoverageGroups,
+    createLeaveCoverageGroup,
+    updateLeaveCoverageGroup,
+    replaceLeaveCoverageGroupMembers,
     approveLeave,
     listLeaveRosterConflicts,
     rejectLeave,

@@ -409,14 +409,15 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("057 is followed by the coordinated 059 RLS hardening migration", () => {
+  it("orders coordinated migrations as 057, 059, then 060", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("059_force_workflow_table_rls");
+    expect(ids[ids.length - 1]).toBe("060_leave_coverage_groups");
     expect(ids.indexOf("057_leave_cancellation_requests"))
       .toBe(ids.indexOf("056_approved_leave_cancellation") + 1);
-    expect(ids).not.toContain("058_leave_coverage_groups");
     expect(ids.indexOf("059_force_workflow_table_rls"))
       .toBe(ids.indexOf("057_leave_cancellation_requests") + 1);
+    expect(ids.indexOf("060_leave_coverage_groups"))
+      .toBe(ids.indexOf("059_force_workflow_table_rls") + 1);
   });
 
   it("059 FORCEs all three workflow tables with owner-admin and clinic predicates", () => {

@@ -7,8 +7,8 @@
  * 051_geofence_columns, 052_module_permissions_backfill,
  * 053_timesheet_staff_notes, 054_staff_pay_rates, and
  * 055_leave_pilot_safety, 056_approved_leave_cancellation, and
- * 057_leave_cancellation_requests, plus infrastructure hardening migration
- * 059_force_workflow_table_rls. Migration 058 belongs to Workforce.
+ * 057_leave_cancellation_requests, infrastructure hardening migration
+ * 059_force_workflow_table_rls, and 060_leave_coverage_groups.
  *
  * TWO GATING VARIABLES:
  *
@@ -140,6 +140,15 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
        ) AS present`,
     );
     expect(rows[0]?.present).toBe(true);
+  });
+
+  it("records 060_leave_coverage_groups last", async () => {
+    if (SKIP_FRESH) return;
+
+    const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
+      "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
+    );
+    expect(rows[0]?.id).toBe("060_leave_coverage_groups");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {
@@ -574,6 +583,101 @@ describe("Migration 059 — workflow table owner RLS hardening", () => {
       client.release();
     }
   }, 30_000);
+});
+
+describe("Migration 060 — leave coverage groups", () => {
+  it("registers clinic settings, same-clinic membership integrity, cleanup triggers, and FORCE RLS", async () => {
+    if (SKIP_ALL) return;
+    const db = anyPool();
+    const column = await db.query<{ column_default: string | null }>(
+      `SELECT column_default
+         FROM information_schema.columns
+        WHERE table_name = 'clinics'
+          AND column_name = 'leave_overlap_warnings_enabled'`,
+    );
+    expect(column.rows[0]?.column_default).toBe("false");
+
+    const tables = await db.query<{ name: string | null }>(
+      `SELECT to_regclass(name)::text AS name
+         FROM unnest(ARRAY['coverage_groups', 'coverage_group_members']) AS name`,
+    );
+    expect(tables.rows.map((row) => row.name)).toEqual([
+      "coverage_groups",
+      "coverage_group_members",
+    ]);
+
+    const forced = await db.query<{ relname: string; relforcerowsecurity: boolean }>(
+      `SELECT relname, relforcerowsecurity
+         FROM pg_class
+        WHERE relname IN ('coverage_groups', 'coverage_group_members')
+        ORDER BY relname`,
+    );
+    expect(forced.rows).toEqual([
+      { relname: "coverage_group_members", relforcerowsecurity: true },
+      { relname: "coverage_groups", relforcerowsecurity: true },
+    ]);
+
+    const triggers = await db.query<{ tgname: string }>(
+      `SELECT tgname FROM pg_trigger
+        WHERE tgname IN (
+          'coverage_group_member_roster_eligibility',
+          'user_assignment_remove_coverage_members'
+        )
+          AND NOT tgisinternal
+        ORDER BY tgname`,
+    );
+    expect(triggers.rows.map((row) => row.tgname)).toEqual([
+      "coverage_group_member_roster_eligibility",
+      "user_assignment_remove_coverage_members",
+    ]);
+  });
+
+  it("down migration refuses configured data and preserves it", async () => {
+    if (SKIP_ALL) return;
+    const db = anyPool();
+    const groupId = randomUUID();
+    const downSql = readFileSync(
+      new URL("../migrations/060_leave_coverage_groups.down.sql", import.meta.url),
+      "utf8",
+    );
+    await db.query(
+      "INSERT INTO coverage_groups (id, clinic_id, name) VALUES ($1, $2, $3)",
+      [groupId, "11111111-1111-4111-8111-111111111111", `Rollback proof ${groupId}`],
+    );
+    try {
+      await expect(db.query(downSql)).rejects.toThrow(
+        "Migration 060 rollback refused",
+      );
+      const preserved = await db.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM coverage_groups WHERE id = $1",
+        [groupId],
+      );
+      expect(preserved.rows[0]?.count).toBe("1");
+    } finally {
+      await db.query("DELETE FROM coverage_groups WHERE id = $1", [groupId]);
+    }
+
+    await db.query(
+      "UPDATE clinics SET leave_overlap_warnings_enabled = true WHERE id = $1",
+      ["11111111-1111-4111-8111-111111111111"],
+    );
+    try {
+      await expect(db.query(downSql)).rejects.toThrow(
+        "a clinic has leave overlap warnings enabled",
+      );
+      const preserved = await db.query<{ enabled: boolean }>(
+        `SELECT leave_overlap_warnings_enabled AS enabled
+           FROM clinics WHERE id = $1`,
+        ["11111111-1111-4111-8111-111111111111"],
+      );
+      expect(preserved.rows[0]?.enabled).toBe(true);
+    } finally {
+      await db.query(
+        "UPDATE clinics SET leave_overlap_warnings_enabled = false WHERE id = $1",
+        ["11111111-1111-4111-8111-111111111111"],
+      );
+    }
+  });
 });
 
 describe("Migration 047 — user_clinic_assignments schema", () => {

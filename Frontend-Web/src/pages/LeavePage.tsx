@@ -19,6 +19,7 @@ import {
   LEAVE_TYPE_LABELS,
   LEAVE_TYPES,
 } from "../types/payroll.js";
+import type { LeaveCoverageWarning } from "../types/leaveCoverage.js";
 import { canManagePayroll } from "../utils/roles.js";
 
 // ── Utility helpers ─────────────────────────────────────────────────────────
@@ -66,22 +67,52 @@ function LeaveTypeBadge({ type }: { type: LeaveType }) {
 type PendingLeaveQueueProps = {
   entries: LeaveRequest[];
   onApprove: (id: string) => Promise<ApproveLeaveResult>;
+  onFetchCoverageWarning: (id: string) => Promise<LeaveCoverageWarning>;
+  clinicName: string;
   onReject: (id: string, notes: string) => Promise<void>;
 };
 
-function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueueProps) {
+function PendingLeaveQueue({
+  entries,
+  onApprove,
+  onFetchCoverageWarning,
+  clinicName,
+  onReject,
+}: PendingLeaveQueueProps) {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNotes, setRejectNotes] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<ApproveLeaveResult | null>(null);
+  const [coverageAdvisory, setCoverageAdvisory] = useState<{
+    leaveId: string;
+    warning: LeaveCoverageWarning | null;
+    failed: boolean;
+  } | null>(null);
 
   async function handleApprove(id: string): Promise<void> {
     setIsBusy(true);
     setActionError(null);
     try {
+      if (coverageAdvisory?.leaveId !== id) {
+        try {
+          const warning = await onFetchCoverageWarning(id);
+          if (
+            warning.status !== "disabled"
+            && !(warning.status === "ready" && warning.overlappingColleagueCount === 0)
+          ) {
+            setCoverageAdvisory({ leaveId: id, warning, failed: false });
+            return;
+          }
+        } catch {
+          console.error("Leave coverage advisory check failed during approval.");
+          setCoverageAdvisory({ leaveId: id, warning: null, failed: true });
+          return;
+        }
+      }
       const result = await onApprove(id);
       setApprovalResult(result);
+      setCoverageAdvisory(null);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Approval failed.");
     } finally {
@@ -175,7 +206,7 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
                       onClick={() => { void handleApprove(req.id); }}
                       disabled={isBusy}
                     >
-                      Approve
+                      {coverageAdvisory?.leaveId === req.id ? "Approve Anyway" : "Approve"}
                     </button>
                     <button
                       type="button"
@@ -192,6 +223,45 @@ function PendingLeaveQueue({ entries, onApprove, onReject }: PendingLeaveQueuePr
                   </div>
                 </td>
               </tr>
+              {coverageAdvisory?.leaveId === req.id ? (
+                <tr className="pr-table__row pr-table__row--expanded">
+                  <td colSpan={7} className="pr-table__td">
+                    <div className="lv-coverage-warning" role="alert">
+                      {coverageAdvisory.failed ? (
+                        <p>
+                          The coverage advisory check could not be completed. Review operational
+                          coverage before approving, or approve anyway.
+                        </p>
+                      ) : coverageAdvisory.warning?.status === "unconfigured" ? (
+                        <p>
+                          Coverage warnings are enabled but not configured. Review operational
+                          coverage before approving, or approve anyway.
+                        </p>
+                      ) : coverageAdvisory.warning?.status === "staff_unassigned" ? (
+                        <p>
+                          This employee is not assigned to a coverage group. Review operational
+                          coverage before approving, or approve anyway.
+                        </p>
+                      ) : (
+                        <>
+                          <strong>Coverage warning</strong>
+                          <p>
+                            {coverageAdvisory.warning?.overlappingColleagueCount ?? 0} team member
+                            {(coverageAdvisory.warning?.overlappingColleagueCount ?? 0) === 1 ? "" : "s"} in the
+                            affected coverage group{(coverageAdvisory.warning?.affectedGroups.length ?? 0) === 1 ? "" : "s"} already
+                            have approved overlapping leave. Confirm operational coverage before approving.
+                          </p>
+                          <ul>
+                            {(coverageAdvisory.warning?.affectedGroups ?? []).map((group) => (
+                              <li key={group.groupId}>{clinicName} — {group.groupName}</li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ) : null}
               {rejectingId === req.id ? (
                 <tr className="pr-table__row pr-table__row--expanded">
                   <td colSpan={7} className="pr-table__td">
@@ -603,9 +673,10 @@ function AllLeaveTable({
 
 type RequestLeaveFormProps = {
   onSubmit: (payload: CreateLeaveRequest) => Promise<LeaveRequest>;
+  onPreviewCoverage: (startDate: string, endDate: string) => Promise<LeaveCoverageWarning>;
 };
 
-function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
+function RequestLeaveForm({ onSubmit, onPreviewCoverage }: RequestLeaveFormProps) {
   const [leaveType, setLeaveType] = useState<LeaveType>("annual");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -613,6 +684,13 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
   const [isBusy, setIsBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [coverageAdvisory, setCoverageAdvisory] = useState<
+    LeaveCoverageWarning | "failure" | null
+  >(null);
+
+  function clearCoverageAdvisory(): void {
+    setCoverageAdvisory(null);
+  }
 
   async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
@@ -628,6 +706,22 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
     }
     setIsBusy(true);
     try {
+      if (coverageAdvisory === null) {
+        try {
+          const warning = await onPreviewCoverage(startDate, endDate);
+          if (
+            warning.status !== "disabled"
+            && !(warning.status === "ready" && warning.overlappingColleagueCount === 0)
+          ) {
+            setCoverageAdvisory(warning);
+            return;
+          }
+        } catch {
+          console.error("Leave coverage advisory check failed before submission.");
+          setCoverageAdvisory("failure");
+          return;
+        }
+      }
       await onSubmit({
         leaveType,
         startDate,
@@ -639,6 +733,7 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
       setStartDate("");
       setEndDate("");
       setReason("");
+      setCoverageAdvisory(null);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Submission failed. Please try again.");
     } finally {
@@ -702,6 +797,7 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
           onChange={(e) => {
             setStartDate(e.target.value);
             if (!endDate || e.target.value > endDate) setEndDate(e.target.value);
+            clearCoverageAdvisory();
           }}
           disabled={isBusy}
           required
@@ -718,7 +814,10 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
           className="lv-request-form__control"
           value={endDate}
           min={startDate || undefined}
-          onChange={(e) => { setEndDate(e.target.value); }}
+          onChange={(e) => {
+            setEndDate(e.target.value);
+            clearCoverageAdvisory();
+          }}
           disabled={isBusy}
           required
         />
@@ -757,13 +856,38 @@ function RequestLeaveForm({ onSubmit }: RequestLeaveFormProps) {
         </p>
       ) : null}
 
+      {coverageAdvisory ? (
+        <div className="lv-coverage-warning" role="alert">
+          {coverageAdvisory === "failure" ? (
+            <p>
+              The coverage advisory check could not be completed. You can still submit your request.
+            </p>
+          ) : coverageAdvisory.status === "unconfigured" ? (
+            <p>
+              Coverage warnings are enabled but not configured. You can still submit your request.
+            </p>
+          ) : coverageAdvisory.status === "staff_unassigned" ? (
+            <p>
+              The employee is not assigned to a coverage group. You can still submit your request.
+            </p>
+          ) : (
+            <p>
+              Coverage warning: Another team member in your coverage group has approved leave
+              overlapping your selected dates. You can still submit your request.
+            </p>
+          )}
+        </div>
+      ) : null}
+
       <div className="lv-request-form__actions">
         <button
           type="submit"
           className="pr-action-btn pr-action-btn--submit"
           disabled={isBusy}
         >
-          {isBusy ? "Submitting…" : "Submit Request"}
+          {isBusy
+            ? coverageAdvisory === null ? "Checking…" : "Submitting…"
+            : coverageAdvisory ? "Submit Anyway" : "Submit Request"}
         </button>
       </div>
     </form>
@@ -981,6 +1105,8 @@ export function LeavePage() {
     refetch,
     submitRequest,
     approveLeave,
+    previewCoverageWarning,
+    fetchManagerCoverageWarning,
     listRosterConflicts,
     rejectLeave,
     cancelApprovedLeave,
@@ -1057,6 +1183,8 @@ export function LeavePage() {
               </h3>
               <PendingLeaveQueue
                 entries={pendingRequests}
+                clinicName={clinicName ?? user.homeClinicName}
+                onFetchCoverageWarning={fetchManagerCoverageWarning}
                 onApprove={async (id) => {
                   return approveLeave(id, {});
                 }}
@@ -1102,7 +1230,10 @@ export function LeavePage() {
             {/* ── Staff: Leave request form ── */}
             <div className="pr-section">
               <h3 className="pr-section__title">Request Leave</h3>
-              <RequestLeaveForm onSubmit={submitRequest} />
+              <RequestLeaveForm
+                onSubmit={submitRequest}
+                onPreviewCoverage={previewCoverageWarning}
+              />
             </div>
 
             {/* ── Staff: My leave history ── */}

@@ -19,6 +19,7 @@ import type {
   RejectLeaveRequest,
 } from "../types/payroll.js";
 import { canManagePayroll } from "../utils/roles.js";
+import type { LeaveCoverageWarning } from "../types/leaveCoverage.js";
 
 const apiClient = createApiClient(loadConfig());
 
@@ -40,11 +41,16 @@ export type UseLeaveResult = {
    * record to the authenticated user's own identity.
    */
   submitRequest: (payload: CreateLeaveRequest) => Promise<LeaveRequest>;
+  previewCoverageWarning: (
+    startDate: string,
+    endDate: string,
+  ) => Promise<LeaveCoverageWarning>;
   /**
    * Approve a pending leave request (manager/admin only).
    * `reviewNotes` is optional for approvals.
    */
   approveLeave: (leaveId: string, payload?: ApproveLeaveRequest) => Promise<ApproveLeaveResult>;
+  fetchManagerCoverageWarning: (leaveId: string) => Promise<LeaveCoverageWarning>;
   listRosterConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
   /**
    * Reject a leave request (manager/admin only).
@@ -163,6 +169,25 @@ export function useLeave(
     [clinicId, role, fetch],
   );
 
+  const previewCoverageWarning = useCallback(
+    async (startDate: string, endDate: string): Promise<LeaveCoverageWarning> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      return apiClient.getMyLeaveCoverageOverlaps(clinicId, startDate, endDate);
+    },
+    [clinicId],
+  );
+
+  const fetchManagerCoverageWarning = useCallback(
+    async (leaveId: string): Promise<LeaveCoverageWarning> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to review leave coverage");
+      }
+      return apiClient.getLeaveCoverageOverlaps(clinicId, leaveId);
+    },
+    [clinicId, role],
+  );
+
   const listRosterConflicts = useCallback(
     async (leaveId: string): Promise<LeaveRosterConflict[]> => {
       if (!clinicId) throw new Error("No clinic selected");
@@ -275,7 +300,9 @@ export function useLeave(
     error,
     refetch: fetch,
     submitRequest,
+    previewCoverageWarning,
     approveLeave,
+    fetchManagerCoverageWarning,
     listRosterConflicts,
     rejectLeave,
     cancelApprovedLeave,

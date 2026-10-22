@@ -69,6 +69,7 @@ const reviewedSqlHashes: Record<string, string> = {
   "056_approved_leave_cancellation": "5c046bc540c77d7ac17f3824b1d7d819ebf27158a637599cb64578dd37054e20",
   "057_leave_cancellation_requests": "d87ec182cc4291ae8b6156de0ab3be9f578350893d09af5b2e56573167e71e29",
   "059_force_workflow_table_rls": "38201cb05d0d7955f466d7487669e9b68f863f3aa1fc760815e7e0761b432362",
+  "060_leave_coverage_groups": "13a00bdc0f2003b4f45a72af7654b5bc5ee9db3b79f7a72b5bec85326f3dea36",
 };
 
 describe("embedded migration immutability", () => {

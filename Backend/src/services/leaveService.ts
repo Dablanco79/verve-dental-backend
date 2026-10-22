@@ -13,6 +13,7 @@ import type {
   ListLeavePageOptions,
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
+import type { LeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
@@ -67,7 +68,40 @@ export function createLeaveService(
   leaveRepository: LeaveRepository,
   userRepository: UserRepository,
   auditWriter?: AuditWriter,
+  leaveCoverageRepository?: LeaveCoverageRepository,
 ) {
+  const coverageRepository = (): LeaveCoverageRepository => {
+    if (!leaveCoverageRepository) {
+      throw new AppError(503, "LEAVE_COVERAGE_UNAVAILABLE", "Leave coverage is unavailable");
+    }
+    return leaveCoverageRepository;
+  };
+
+  const cleanGroupName = (name: string): string => {
+    const cleaned = name.trim();
+    if (!cleaned) throw new AppError(400, "VALIDATION_ERROR", "Coverage group name cannot be blank");
+    return cleaned;
+  };
+
+  const auditCoverage = (
+    caller: AuthenticatedUser,
+    clinicId: string,
+    action: string,
+    metadata: Record<string, unknown>,
+  ): void => {
+    auditWriter?.recordEvent({
+      clinicId,
+      entityType: "clinic",
+      entityId: clinicId,
+      action,
+      actorId: caller.id,
+      actorEmail: caller.email,
+      metadata,
+    }).catch((err: unknown) => {
+      console.error("[Audit Failure Guard]:", err);
+    });
+  };
+
   async function selfReviewException(
     caller: AuthenticatedUser,
     clinicId: string,
@@ -514,6 +548,121 @@ export function createLeaveService(
     ): Promise<LeavePage> {
       assertReviewAccess(caller, clinicId);
       return leaveRepository.listByClinicPaginated(clinicId, options);
+    },
+
+    async getCoverageWarning(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      startDate: string,
+      endDate: string,
+    ) {
+      if (caller.role !== "owner_admin" && caller.homeClinicId !== clinicId) {
+        throw new AppError(
+          403,
+          "FORBIDDEN",
+          "You can only preview leave coverage for your home clinic",
+        );
+      }
+      try {
+        inclusiveCalendarDayCount(startDate, endDate);
+      } catch (error) {
+        throw new AppError(
+          400,
+          "INVALID_DATE_RANGE",
+          error instanceof Error ? error.message : "Invalid leave date range",
+        );
+      }
+      return coverageRepository().getWarning(clinicId, caller.id, startDate, endDate);
+    },
+
+    async getLeaveCoverageWarning(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+    ) {
+      assertReviewAccess(caller, clinicId);
+      const request = await leaveRepository.findById(leaveId);
+      if (!request || request.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Leave request not found");
+      }
+      if (request.status !== "pending") {
+        throw new AppError(
+          409,
+          "INVALID_STATUS_TRANSITION",
+          `Leave request is already '${request.status}' and cannot be checked for coverage overlaps`,
+        );
+      }
+      return coverageRepository().getWarning(
+        clinicId,
+        request.staffUserId,
+        request.startDate,
+        request.endDate,
+      );
+    },
+
+    async getCoverageSettings(caller: AuthenticatedUser, clinicId: string) {
+      assertReviewAccess(caller, clinicId);
+      return coverageRepository().getSettings(clinicId);
+    },
+
+    async updateCoverageSettings(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      enabled: boolean,
+    ) {
+      assertReviewAccess(caller, clinicId);
+      const result = await coverageRepository().updateSettings(clinicId, enabled);
+      auditCoverage(caller, clinicId, "leave_coverage_settings_updated", { enabled });
+      return result;
+    },
+
+    async listCoverageGroups(caller: AuthenticatedUser, clinicId: string) {
+      assertReviewAccess(caller, clinicId);
+      return coverageRepository().listGroups(clinicId);
+    },
+
+    async createCoverageGroup(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      name: string,
+    ) {
+      assertReviewAccess(caller, clinicId);
+      const group = await coverageRepository().createGroup(clinicId, cleanGroupName(name));
+      auditCoverage(caller, clinicId, "leave_coverage_group_created", {
+        coverageGroupId: group.id,
+        name: group.name,
+      });
+      return group;
+    },
+
+    async updateCoverageGroup(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      groupId: string,
+      name: string,
+    ) {
+      assertReviewAccess(caller, clinicId);
+      const group = await coverageRepository().updateGroup(clinicId, groupId, cleanGroupName(name));
+      auditCoverage(caller, clinicId, "leave_coverage_group_updated", {
+        coverageGroupId: group.id,
+        name: group.name,
+      });
+      return group;
+    },
+
+    async replaceCoverageGroupMembers(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      groupId: string,
+      memberUserIds: string[],
+    ) {
+      assertReviewAccess(caller, clinicId);
+      const group = await coverageRepository().replaceMembers(clinicId, groupId, memberUserIds);
+      auditCoverage(caller, clinicId, "leave_coverage_members_updated", {
+        coverageGroupId: group.id,
+        memberCount: group.memberUserIds.length,
+      });
+      return group;
     },
 
     /**
