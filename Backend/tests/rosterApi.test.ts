@@ -367,7 +367,7 @@ describe("Roster API (Module 04)", () => {
       const clinicBLeaveId = await createAndApproveLeave(
         app,
         clinicBAdminToken,
-        clinicBAdminToken,
+        ownerToken,
         SEED_CLINIC_B_ID,
         LEAVE_DATE,
       );

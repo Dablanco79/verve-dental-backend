@@ -40,6 +40,23 @@ function assertOwnership(caller: AuthenticatedUser, request: LeaveRequest): void
   throw new AppError(403, "FORBIDDEN", "You can only manage your own leave requests");
 }
 
+/**
+ * Original leave decisions require a reviewer other than the employee whose
+ * leave is being reviewed. The sole Owner/Admin exception is intentionally
+ * limited to cancellation workflows and does not apply here.
+ */
+function assertIndependentLeaveReviewer(
+  caller: AuthenticatedUser,
+  request: LeaveRequest,
+): void {
+  if (caller.id !== request.staffUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot approve or reject your own leave request",
+  );
+}
+
 export type LeaveService = ReturnType<typeof createLeaveService>;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,6 +148,8 @@ export function createLeaveService(
         );
       }
 
+      assertIndependentLeaveReviewer(caller, request);
+
       const result = await leaveRepository.approveWithRosterConflicts({
         leaveId,
         clinicId,
@@ -209,6 +228,8 @@ export function createLeaveService(
           `Leave request is already '${request.status}' and cannot be rejected`,
         );
       }
+
+      assertIndependentLeaveReviewer(caller, request);
 
       const rejected = await leaveRepository.updateStatus(leaveId, {
         status: "rejected",

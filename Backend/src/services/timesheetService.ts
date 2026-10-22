@@ -111,6 +111,23 @@ function clockUpdatePayload(
   return { clockOutAt, breakDurationMinutes, ...buckets };
 }
 
+/**
+ * Managerial review must be performed by someone other than the employee
+ * whose time or attendance is being certified. The authenticated actor and
+ * persisted staff identity are authoritative; no administrator bypass applies.
+ */
+function assertIndependentTimesheetReviewer(
+  caller: AuthenticatedUser,
+  entry: TimesheetEntry,
+): void {
+  if (caller.id !== entry.staffUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot approve, reject, or verify your own time record",
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Export helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -988,6 +1005,8 @@ export function createTimesheetService(
         throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
       }
 
+      assertIndependentTimesheetReviewer(caller, entry);
+
       if (entry.payrollType === "commission_log") {
         throw new AppError(
           400,
@@ -1047,6 +1066,8 @@ export function createTimesheetService(
       if (!entry || entry.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
       }
+
+      assertIndependentTimesheetReviewer(caller, entry);
 
       if (entry.timesheetStatus !== "submitted") {
         throw new AppError(
@@ -1157,6 +1178,8 @@ export function createTimesheetService(
           "This method only applies to commission_log entries",
         );
       }
+
+      assertIndependentTimesheetReviewer(caller, entry);
 
       return timesheetRepository.update(timesheetId, {
         attendanceStatus,
