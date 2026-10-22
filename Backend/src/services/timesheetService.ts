@@ -500,6 +500,21 @@ export function createTimesheetService(
         clockInNote?: string | null;
       },
     ): Promise<TimesheetEntry> {
+      // Payroll track is contract data and may change after a token is issued.
+      // Always resolve it from the authoritative user record before reading a
+      // roster, resolving geolocation, or mutating any timesheet state.
+      const authoritativeUser = await userRepository.findById(caller.id);
+      if (!authoritativeUser?.isActive) {
+        throw new AppError(401, "UNAUTHORIZED", "Authenticated user is no longer available");
+      }
+      if (authoritativeUser.payrollTrack === "commission") {
+        throw new AppError(
+          403,
+          "COMMISSION_CLOCK_IN_FORBIDDEN",
+          "Commission staff attendance is managed from completed roster shifts",
+        );
+      }
+
       // All authenticated roles may clock in using their own identity.
       // Role determines management permissions, not personal timekeeping rights.
       // The security invariants below enforce self-only ownership:

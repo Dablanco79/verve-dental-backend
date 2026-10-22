@@ -182,6 +182,7 @@ export function createAuthService(
       firstName: user.firstName,
       lastName: user.lastName,
       displayName: user.displayName,
+      payrollTrack: user.payrollTrack,
       permissions,
       type: "access",
     };
@@ -646,6 +647,12 @@ export function createAuthService(
       firstName: payload.firstName ?? null,
       lastName: payload.lastName ?? null,
       displayName: payload.displayName ?? null,
+      // Access tokens issued before payroll-track clocking enforcement do not
+      // carry this claim. Keep it undefined so clients fail closed.
+      payrollTrack:
+        payload.payrollTrack === "hourly" || payload.payrollTrack === "commission"
+          ? payload.payrollTrack
+          : undefined,
       // Backward-compat: tokens issued before RBAC v2 have no permissions claim
       // at runtime even though the type says string[].  Cast to optional to allow
       // the nullish-coalescing fallback without a stale type assertion.

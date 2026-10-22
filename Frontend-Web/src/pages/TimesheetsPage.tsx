@@ -1981,6 +1981,7 @@ export function TimesheetsPage() {
   const [viewFilter, setViewFilter] = useState<TimesheetViewFilter>("pending");
 
   const isManager = user ? canManagePayroll(user.role) : false;
+  const canUseClock = user?.payrollTrack === "hourly";
 
   // ── Today's roster shifts (all roles) ────────────────────────────────────
   // Fetched once per page mount so ClockWidget can include the exact
@@ -2203,15 +2204,23 @@ export function TimesheetsPage() {
             {/* ── Personal: Clock In / Clock Out (all roles) ── */}
             <div className="pr-section ts-hub__clock-section">
               <h2 className="pr-section__title">Today&apos;s Session</h2>
-              <ClockWidget
-                openEntry={openEntry}
-                todayShifts={todayShifts}
-                onClockIn={clockIn}
-                onClockOut={clockOut}
-                clinicId={clinicId}
-                getClinicCoordinates={apiClient.getClinicCoordinates}
-                availableClinics={availableClinics}
-              />
+              {canUseClock ? (
+                <ClockWidget
+                  openEntry={openEntry}
+                  todayShifts={todayShifts}
+                  onClockIn={clockIn}
+                  onClockOut={clockOut}
+                  clinicId={clinicId}
+                  getClinicCoordinates={apiClient.getClinicCoordinates}
+                  availableClinics={availableClinics}
+                />
+              ) : (
+                <p className="pr-section__hint">
+                  {user.payrollTrack === "commission"
+                    ? "Attendance is managed from completed roster shifts for commission staff."
+                    : "Clocking controls are unavailable until your payroll track is confirmed."}
+                </p>
+              )}
             </div>
 
             {/* ── Manager: Export Hours ── */}
@@ -2294,15 +2303,23 @@ export function TimesheetsPage() {
             {/* ── Staff: Clock In / Clock Out ── */}
             <div className="pr-section ts-hub__clock-section">
               <h2 className="pr-section__title">Today&apos;s Session</h2>
-              <ClockWidget
-                openEntry={openEntry}
-                todayShifts={todayShifts}
-                onClockIn={clockIn}
-                onClockOut={clockOut}
-                clinicId={clinicId}
-                getClinicCoordinates={apiClient.getClinicCoordinates}
-                availableClinics={availableClinics}
-              />
+              {canUseClock ? (
+                <ClockWidget
+                  openEntry={openEntry}
+                  todayShifts={todayShifts}
+                  onClockIn={clockIn}
+                  onClockOut={clockOut}
+                  clinicId={clinicId}
+                  getClinicCoordinates={apiClient.getClinicCoordinates}
+                  availableClinics={availableClinics}
+                />
+              ) : (
+                <p className="pr-section__hint">
+                  {user.payrollTrack === "commission"
+                    ? "Attendance is managed from completed roster shifts for commission staff."
+                    : "Clocking controls are unavailable until your payroll track is confirmed."}
+                </p>
+              )}
             </div>
 
             {/* ── Staff: Personal timesheet ledger ── */}

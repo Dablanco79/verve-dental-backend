@@ -56,6 +56,8 @@ export type AuthenticatedUser = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  /** Optional for backward compatibility with access tokens issued before this claim existed. */
+  payrollTrack?: import("./payroll.js").StaffPayrollTrack;
   /**
    * Effective permission set for this token.
    * Derived at issuance as: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
@@ -73,6 +75,8 @@ export type AccessTokenPayload = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  /** Optional while previously issued access tokens remain valid. */
+  payrollTrack?: import("./payroll.js").StaffPayrollTrack;
   /** Effective permissions baked in at token issuance. */
   permissions: string[];
   type: "access";

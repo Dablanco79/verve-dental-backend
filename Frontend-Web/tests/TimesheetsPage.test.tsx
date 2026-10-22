@@ -102,6 +102,7 @@ function makeUser(role: AuthUser["role"]): AuthUser {
     firstName: null,
     lastName: null,
     displayName: null,
+    payrollTrack: "hourly",
     permissions: [],
   };
 }
@@ -843,6 +844,38 @@ describe("TimesheetsPage — all-roles personal timekeeping", () => {
     await waitFor(() => {
       expect(mockClockIn).toHaveBeenCalledOnce();
     });
+  });
+
+  it("commission clinical_staff sees roster-managed attendance message without clock controls", async () => {
+    const commissionUser = { ...makeUser("clinical_staff"), payrollTrack: "commission" as const };
+    renderTimesheetsPage(commissionUser);
+
+    expect(
+      await screen.findByText(/attendance is managed from completed roster shifts/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clock in/i })).not.toBeInTheDocument();
+  });
+
+  it("commission owner_admin keeps manager queues but has no clock controls", async () => {
+    const commissionAdmin = { ...makeUser("owner_admin"), payrollTrack: "commission" as const };
+    renderTimesheetsPage(commissionAdmin);
+
+    expect(
+      await screen.findByText(/attendance is managed from completed roster shifts/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clock in/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/hourly approval queue/i)).toBeInTheDocument();
+    expect(screen.getByText(/commission attendance verification/i)).toBeInTheDocument();
+  });
+
+  it("legacy user with unknown payroll track does not see clock controls", async () => {
+    const legacyUser = { ...makeUser("clinical_staff"), payrollTrack: undefined };
+    renderTimesheetsPage(legacyUser);
+
+    expect(
+      await screen.findByText(/clocking controls are unavailable until your payroll track is confirmed/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clock in/i })).not.toBeInTheDocument();
   });
 });
 
