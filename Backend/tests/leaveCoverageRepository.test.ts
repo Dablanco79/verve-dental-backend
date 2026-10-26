@@ -102,8 +102,9 @@ describe("leave coverage warnings", () => {
 
   it("enforces employee home-clinic scope inside the service", async () => {
     const leave = createInMemoryLeaveRepository();
+    const assignments = createInMemoryUserClinicAssignmentsRepository();
     const coverage = createInMemoryLeaveCoverageRepository(
-      createInMemoryUserClinicAssignmentsRepository(),
+      assignments,
       leave,
     );
     const service = createLeaveService(
@@ -111,6 +112,7 @@ describe("leave coverage warnings", () => {
       {} as UserRepository,
       undefined,
       coverage,
+      assignments,
     );
     const caller: AuthenticatedUser = {
       id: SEED_USER_IDS.clinicAStaff,

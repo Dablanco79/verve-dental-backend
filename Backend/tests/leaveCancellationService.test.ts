@@ -1,4 +1,5 @@
 import { createInMemoryLeaveRepository } from "../src/repositories/leaveRepository.js";
+import { createInMemoryUserClinicAssignmentsRepository } from "../src/repositories/userClinicAssignmentsRepository.js";
 import type { UserRepository } from "../src/repositories/userRepository.js";
 import { createLeaveService } from "../src/services/leaveService.js";
 import type { CreateAuditEventInput } from "../src/types/analytics.js";
@@ -40,6 +41,8 @@ describe("Leave cancellation sole-owner exception", () => {
           return Promise.resolve(input);
         },
       },
+      undefined,
+      createInMemoryUserClinicAssignmentsRepository(),
     );
 
     const leave = await service.createLeaveRequest(owner, CLINIC_ID, {

@@ -579,6 +579,7 @@ export async function createAppDependencies(
     userRepository,
     analyticsRepository,
     leaveCoverageRepository,
+    clinicAssignmentsRepository,
   );
   const billingService = createBillingService(billingRepository, analyticsRepository);
   const analyticsService = createAnalyticsService(

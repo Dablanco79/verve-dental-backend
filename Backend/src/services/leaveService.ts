@@ -15,6 +15,7 @@ import type {
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { LeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
 import type { UserRepository } from "../repositories/userRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
 import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
@@ -27,10 +28,17 @@ type AuditWriter = {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Managers and admins may act on leave requests from any staff member in their clinic. */
-function assertReviewAccess(caller: AuthenticatedUser, clinicId: string): void {
+/** Managers and admins may act on leave requests in clinics they can operate. */
+async function assertReviewAccess(
+  caller: AuthenticatedUser,
+  clinicId: string,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
+): Promise<void> {
   if (caller.role === "owner_admin") return;
-  if (caller.role === "group_practice_manager" && caller.homeClinicId === clinicId) return;
+  if (caller.role === "group_practice_manager") {
+    if (caller.homeClinicId === clinicId) return;
+    if (await clinicAssignmentsRepository.hasOperationalAccess(caller.id, clinicId)) return;
+  }
   throw new AppError(403, "FORBIDDEN", "Only managers and admins can approve or reject leave requests");
 }
 
@@ -67,8 +75,9 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 export function createLeaveService(
   leaveRepository: LeaveRepository,
   userRepository: UserRepository,
-  auditWriter?: AuditWriter,
-  leaveCoverageRepository?: LeaveCoverageRepository,
+  auditWriter: AuditWriter | undefined,
+  leaveCoverageRepository: LeaveCoverageRepository | undefined,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
 ) {
   const coverageRepository = (): LeaveCoverageRepository => {
     if (!leaveCoverageRepository) {
@@ -166,7 +175,7 @@ export function createLeaveService(
       leaveId: string,
       reviewNotes: string | null = null,
     ): Promise<ApproveLeaveResult> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const request = await leaveRepository.findById(leaveId);
 
@@ -219,7 +228,7 @@ export function createLeaveService(
       clinicId: string,
       leaveId: string,
     ): Promise<LeaveRosterConflict[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const request = await leaveRepository.findById(leaveId);
       if (!request || request.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Leave request not found");
@@ -239,7 +248,7 @@ export function createLeaveService(
       leaveId: string,
       reviewNotes: string,
     ): Promise<LeaveRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       if (!reviewNotes.trim()) {
         throw new AppError(
@@ -299,7 +308,7 @@ export function createLeaveService(
       leaveId: string,
       cancellationReason: string,
     ): Promise<LeaveRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const reason = cancellationReason.trim();
       if (!reason) {
@@ -404,7 +413,7 @@ export function createLeaveService(
         if (caller.homeClinicId !== clinicId) throw new AppError(403, "FORBIDDEN", "Clinic access denied");
         return leaveRepository.listCancellationRequestsByStaff(caller.id, options);
       }
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listCancellationRequestsByClinic(clinicId, options);
     },
 
@@ -415,7 +424,7 @@ export function createLeaveService(
       requestId: string,
       reviewNotes: string | null,
     ): Promise<ApproveLeaveCancellationResult> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
       if (!request) {
         throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
@@ -452,7 +461,7 @@ export function createLeaveService(
       requestId: string,
       reviewNotes: string,
     ): Promise<LeaveCancellationRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       if (!reviewNotes.trim()) throw new AppError(400, "REVIEW_NOTES_REQUIRED", "Review notes are required");
       const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
       if (!request) {
@@ -536,7 +545,7 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listByClinic(clinicId, options);
     },
 
@@ -546,7 +555,7 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeavePageOptions,
     ): Promise<LeavePage> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listByClinicPaginated(clinicId, options);
     },
 
@@ -556,12 +565,16 @@ export function createLeaveService(
       startDate: string,
       endDate: string,
     ) {
-      if (caller.role !== "owner_admin" && caller.homeClinicId !== clinicId) {
-        throw new AppError(
-          403,
-          "FORBIDDEN",
-          "You can only preview leave coverage for your home clinic",
-        );
+      if (caller.role === "clinical_staff") {
+        if (caller.homeClinicId !== clinicId) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "You can only preview leave coverage for your home clinic",
+          );
+        }
+      } else {
+        await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       }
       try {
         inclusiveCalendarDayCount(startDate, endDate);
@@ -580,7 +593,7 @@ export function createLeaveService(
       clinicId: string,
       leaveId: string,
     ) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const request = await leaveRepository.findById(leaveId);
       if (!request || request.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Leave request not found");
@@ -601,7 +614,7 @@ export function createLeaveService(
     },
 
     async getCoverageSettings(caller: AuthenticatedUser, clinicId: string) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return coverageRepository().getSettings(clinicId);
     },
 
@@ -610,14 +623,14 @@ export function createLeaveService(
       clinicId: string,
       enabled: boolean,
     ) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const result = await coverageRepository().updateSettings(clinicId, enabled);
       auditCoverage(caller, clinicId, "leave_coverage_settings_updated", { enabled });
       return result;
     },
 
     async listCoverageGroups(caller: AuthenticatedUser, clinicId: string) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return coverageRepository().listGroups(clinicId);
     },
 
@@ -626,7 +639,7 @@ export function createLeaveService(
       clinicId: string,
       name: string,
     ) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const group = await coverageRepository().createGroup(clinicId, cleanGroupName(name));
       auditCoverage(caller, clinicId, "leave_coverage_group_created", {
         coverageGroupId: group.id,
@@ -641,7 +654,7 @@ export function createLeaveService(
       groupId: string,
       name: string,
     ) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const group = await coverageRepository().updateGroup(clinicId, groupId, cleanGroupName(name));
       auditCoverage(caller, clinicId, "leave_coverage_group_updated", {
         coverageGroupId: group.id,
@@ -656,7 +669,7 @@ export function createLeaveService(
       groupId: string,
       memberUserIds: string[],
     ) {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const group = await coverageRepository().replaceMembers(clinicId, groupId, memberUserIds);
       auditCoverage(caller, clinicId, "leave_coverage_members_updated", {
         coverageGroupId: group.id,
