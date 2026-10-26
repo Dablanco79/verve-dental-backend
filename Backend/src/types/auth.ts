@@ -59,9 +59,9 @@ export type AuthenticatedUser = {
   /** Optional for backward compatibility with access tokens issued before this claim existed. */
   payrollTrack?: import("./payroll.js").StaffPayrollTrack;
   /**
-   * Effective permission set for this token.
-   * Derived at issuance as: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
-   * Use requirePermission() middleware to gate on a specific permission.
+   * Flat permission union retained in JWTs for UI/backward compatibility.
+   * Standard access middleware replaces the complete authorization identity
+   * and permissions from the current user record before authorization.
    */
   permissions: string[];
 };
@@ -77,7 +77,7 @@ export type AccessTokenPayload = {
   displayName: string | null;
   /** Optional while previously issued access tokens remain valid. */
   payrollTrack?: import("./payroll.js").StaffPayrollTrack;
-  /** Effective permissions baked in at token issuance. */
+  /** UI/backward-compatibility permission hint baked in at token issuance. */
   permissions: string[];
   type: "access";
 };

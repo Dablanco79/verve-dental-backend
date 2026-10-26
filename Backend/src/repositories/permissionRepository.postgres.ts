@@ -2,7 +2,8 @@
  * PostgreSQL-backed PermissionRepository.
  *
  * Queries run with owner_admin context (via withTenantContext) because:
- *   - listActiveByUser is called from the auth path (no per-request clinic context).
+ *   - permission reads are called from token issuance and request authentication
+ *     before any per-request clinic context exists.
  *   - grant/revoke are called from clinic-scoped API routes whose pool hook has
  *     already injected a tenant context, but using withTenantContext + ownerAdmin=true
  *     is safe here — RBAC enforcement is done in permissionService, not at DB level.
@@ -66,6 +67,25 @@ export function createPostgresPermissionRepository(
           return rows.map((r) => r.permission);
         },
         true, // ownerAdmin
+      );
+    },
+
+    async listActiveByUserForClinic(userId: string, clinicId: string): Promise<string[]> {
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const { rows } = await client.query<{ permission: string }>(
+            `SELECT DISTINCT permission
+               FROM user_permission_grants
+              WHERE user_id = $1
+                AND clinic_id = $2
+                AND revoked_at IS NULL`,
+            [userId, clinicId],
+          );
+          return rows.map((r) => r.permission);
+        },
+        true,
       );
     },
 

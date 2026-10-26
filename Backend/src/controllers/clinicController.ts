@@ -146,7 +146,7 @@ export function createClinicHandlers(clinicService: ClinicService) {
 
     /**
      * GET /clinics
-     * owner_admin → all active clinics ordered by name.
+     * owner_admin → active clinics in their home clinic's organisation.
      * All other roles → single-element array containing their home clinic.
      */
     async listClinics(req: Request, res: Response): Promise<void> {

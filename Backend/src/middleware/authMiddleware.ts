@@ -2,8 +2,12 @@ import type { NextFunction, Request, Response } from "express";
 
 import type { AuthService } from "../services/authService.js";
 import type { AuditService } from "../services/auditService.js";
+import type { ClinicRepository } from "../repositories/clinicRepository.js";
+import type { PermissionRepository } from "../repositories/permissionRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { UserRole } from "../types/auth.js";
 import type { Permission } from "../types/permissions.js";
+import { DEFAULT_PERMISSIONS } from "../types/permissions.js";
 import { AppError } from "../types/errors.js";
 
 function getBearerToken(req: Request): string | null {
@@ -40,9 +44,9 @@ export function createAuthenticateMiddleware(
       return;
     }
 
+    let authenticatedUser;
     try {
-      req.user = authService.authenticateAccessToken(token);
-      next();
+      authenticatedUser = authService.authenticateAccessToken(token);
     } catch {
       audit.logAuthEvent("auth.unauthorized", {
         reason: "invalid_token",
@@ -50,7 +54,96 @@ export function createAuthenticateMiddleware(
         userAgent: req.get("user-agent") ?? undefined,
       });
       next(new AppError(401, "UNAUTHORIZED", "Invalid or expired access token"));
+      return;
     }
+
+    // The signed JWT remains the session credential, but every authorization
+    // identity field and permission is rebuilt from the current user record.
+    void authService
+      .rehydrateAuthoritativeUser(authenticatedUser)
+      .then((authoritativeUser) => {
+        req.user = authoritativeUser;
+        next();
+      })
+      .catch(next);
+  };
+}
+
+/**
+ * Authorizes the actual clinic URL scope and reloads target-clinic grants.
+ * This runs before RLS; RLS remains an independent assignment/data boundary.
+ */
+export function createClinicScopeMiddleware(
+  clinics: ClinicRepository,
+  permissions: PermissionRepository,
+  assignments: UserClinicAssignmentsRepository,
+  paramName = "clinicId",
+) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    void (async () => {
+      if (!req.user) {
+        throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+      }
+
+      const rawTargetClinicId = req.params[paramName];
+      const targetClinicId = Array.isArray(rawTargetClinicId)
+        ? rawTargetClinicId[0]
+        : rawTargetClinicId;
+      if (!targetClinicId) {
+        throw new AppError(400, "VALIDATION_ERROR", `Missing route parameter: ${paramName}`);
+      }
+
+      const [targetClinic, homeClinic] = await Promise.all([
+        clinics.findById(targetClinicId),
+        clinics.findById(req.user.homeClinicId),
+      ]);
+
+      if (!targetClinic) {
+        throw new AppError(404, "CLINIC_NOT_FOUND", "Clinic not found");
+      }
+      if (!homeClinic) {
+        throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+      }
+
+      // Equality deliberately treats two null organisation IDs as the same
+      // legacy/test organisation, while one-null and differing IDs are denied.
+      const sameOrganisation = targetClinic.organisationId === homeClinic.organisationId;
+      if (!sameOrganisation) {
+        throw new AppError(
+          403,
+          "TENANT_ACCESS_DENIED",
+          "You do not have access to this clinic's organisation",
+        );
+      }
+
+      const isHomeClinic = targetClinic.id === homeClinic.id;
+      if (req.user.role === "clinical_staff" && !isHomeClinic) {
+        throw new AppError(
+          403,
+          "TENANT_ACCESS_DENIED",
+          "Clinical staff may only access their home clinic",
+        );
+      }
+      if (
+        req.user.role === "group_practice_manager" &&
+        !isHomeClinic &&
+        !(await assignments.hasOperationalAccess(req.user.id, targetClinic.id))
+      ) {
+        throw new AppError(403, "TENANT_ACCESS_DENIED", "Operational clinic access is required");
+      }
+
+      if (req.user.role === "owner_admin") {
+        req.user.permissions = [...DEFAULT_PERMISSIONS.owner_admin];
+      } else {
+        const grants = await permissions.listActiveByUserForClinic(req.user.id, targetClinic.id);
+        req.user.permissions = Array.from(
+          new Set([...DEFAULT_PERMISSIONS[req.user.role], ...grants]),
+        );
+      }
+
+      req.authorizedClinicId = targetClinic.id;
+      next();
+    })().catch(next);
   };
 }
 
@@ -127,15 +220,11 @@ export function requireRoles(...roles: UserRole[]) {
 }
 
 /**
- * Guards a route by checking that the authenticated user's token contains
- * the specified permission string.
+ * Guards a route using the request-time authoritative permission set.
  *
- * Effective permissions are baked into the JWT at issuance time as the union
- * of DEFAULT_PERMISSIONS[role] and any active user_permission_grants rows.
- * This middleware does NOT make a DB round-trip on each request.
- *
- * This is additive infrastructure — existing requireRoles guards are not
- * replaced until RBAC v2 is fully rolled out.
+ * JWT permissions are only a UI/backward-compatibility hint. Authentication
+ * reloads the current user identity and home-clinic grants, and clinic scope
+ * middleware replaces them with grants for the actual target clinic.
  */
 export function requirePermission(permission: Permission) {
   return (req: Request, _res: Response, next: NextFunction): void => {
@@ -173,7 +262,7 @@ export function enforceTenantParam(paramName = "clinicId") {
       return;
     }
 
-    if (req.user.role === "owner_admin") {
+    if (req.user.role === "owner_admin" || req.authorizedClinicId === clinicId) {
       next();
       return;
     }

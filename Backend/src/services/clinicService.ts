@@ -71,13 +71,20 @@ export function createClinicService(
     /**
      * Lists clinics visible to the caller.
      *
-     *   • owner_admin  — all active clinics, ordered by name.
+     *   • owner_admin  — active clinics in their home clinic's organisation.
      *   • all others   — only their own home clinic (single-element array,
      *                     or empty when the clinic record is missing).
      */
     async listClinics(caller: AuthenticatedUser): Promise<Clinic[]> {
       if (caller.role === "owner_admin") {
-        return clinicRepository.findAll();
+        const homeClinic = await clinicRepository.findById(caller.homeClinicId);
+        if (!homeClinic) {
+          throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+        }
+        const clinics = await clinicRepository.findAll();
+        return clinics.filter(
+          (clinic) => clinic.organisationId === homeClinic.organisationId,
+        );
       }
 
       const clinic = await clinicRepository.findById(caller.homeClinicId);
@@ -87,6 +94,7 @@ export function createClinicService(
     /**
      * Creates a new clinic.
      * Restricted to `owner_admin` — no other role may provision a new clinic.
+     * The new clinic inherits the caller's home clinic organisation.
      * Throws 403 for any non-admin caller.
      */
     async createClinic(
@@ -101,7 +109,15 @@ export function createClinicService(
         );
       }
 
-      const clinic = await clinicRepository.create(input);
+      const homeClinic = await clinicRepository.findById(caller.homeClinicId);
+      if (!homeClinic) {
+        throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+      }
+
+      const clinic = await clinicRepository.create({
+        ...input,
+        organisationId: homeClinic.organisationId,
+      });
 
       auditWriter?.recordEvent({
         clinicId: clinic.id,

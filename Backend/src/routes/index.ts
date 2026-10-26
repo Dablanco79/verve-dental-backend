@@ -12,6 +12,7 @@ import {
 } from "../controllers/healthController.js";
 import {
   createAuthenticateMiddleware,
+  createClinicScopeMiddleware,
   createMfaSetupMiddleware,
   enforceTenantParam,
   requireRoles,
@@ -75,6 +76,11 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   const router = Router();
   const authHandlers = createAuthHandlers(deps.authService, config);
   const authenticate = createAuthenticateMiddleware(deps.authService, deps.auditService);
+  const clinicScope = createClinicScopeMiddleware(
+    deps.clinicRepository,
+    deps.permissionRepository,
+    deps.clinicAssignmentsRepository,
+  );
 
   // Clinic service instance for the global (non-tenant-scoped) clinic routes.
   // The per-clinic routes (/clinics/:clinicId/*) create their own instance via createClinicRouter.
@@ -125,6 +131,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.get(
     "/clinics/:clinicId/summary",
     authenticate,
+    clinicScope,
     enforceTenantParam("clinicId"),
     validateParams(clinicIdParamsSchema),
     (req, res) => {
@@ -143,8 +150,8 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
 
   // ── Global clinic routes (no :clinicId — owner_admin scope) ─────────────────
   //
-  // GET  /clinics  — list all active clinics (owner_admin) or home clinic only
-  //                  (group_practice_manager / clinical_staff).
+  // GET  /clinics  — list active same-organisation clinics (owner_admin) or
+  //                  home clinic only (group_practice_manager / clinical_staff).
   // POST /clinics  — create a new clinic (owner_admin only).
   //
   // Registered before the /clinics/:clinicId block so exact-path matches
@@ -178,7 +185,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
 
   // rlsContext runs on all /clinics/:clinicId/* routes — sets the per-request
   // RLS session variable so installRlsPoolHook injects it on every DB checkout.
-  router.use("/clinics/:clinicId", authenticate, rlsContext);
+  router.use("/clinics/:clinicId", authenticate, clinicScope, rlsContext);
 
   router.use("/clinics/:clinicId/inventory", createInventoryRouter(deps));
   router.use("/clinics/:clinicId/stocktakes", createStocktakeRouter(deps));

@@ -369,6 +369,17 @@ export function ManageUsersPage() {
 
   async function openModuleAccess(u: StaffUser): Promise<void> {
     if (!user || user.role !== "owner_admin") return;
+    if (!clinicId) {
+      setModuleAccess({
+        userId: u.id,
+        userRole: u.role,
+        isLoading: false,
+        isSaving: null,
+        error: "Select a clinic before managing module access.",
+        activePermissions: new Set(),
+      });
+      return;
+    }
     setModuleAccess({
       userId: u.id,
       userRole: u.role,
@@ -385,7 +396,7 @@ export function ManageUsersPage() {
       // data is PermissionGrantRow[] — the API envelope { data: [...] } is
       // unwrapped by request().  Do NOT access data.grants — there is no such
       // property; doing so returns undefined and crashes .filter().
-      const data = await apiClient.listUserPermissions(u.homeClinicId, u.id);
+      const data = await apiClient.listUserPermissions(clinicId, u.id);
       // Include all non-revoked permissions tracked by MODULE_ITEMS
       // (both "module:*" and "payroll:*" families).
       const moduleItemPermissions = new Set(MODULE_ITEMS.map((m) => m.permission));
@@ -404,12 +415,18 @@ export function ManageUsersPage() {
 
   async function toggleModulePermission(u: StaffUser, permission: string, grant: boolean): Promise<void> {
     if (!moduleAccess || !user) return;
+    if (!clinicId) {
+      setModuleAccess((s) =>
+        s ? { ...s, error: "Select a clinic before managing module access." } : s,
+      );
+      return;
+    }
     setModuleAccess((s) => s ? { ...s, isSaving: permission, error: null } : s);
     try {
       if (grant) {
-        await apiClient.grantUserPermission(u.homeClinicId, u.id, permission);
+        await apiClient.grantUserPermission(clinicId, u.id, permission);
       } else {
-        await apiClient.revokeUserPermission(u.homeClinicId, u.id, permission);
+        await apiClient.revokeUserPermission(clinicId, u.id, permission);
       }
       setModuleAccess((s) => {
         if (!s) return s;

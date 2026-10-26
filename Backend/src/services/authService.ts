@@ -662,6 +662,43 @@ export function createAuthService(
     };
   }
 
+  async function rehydrateAuthoritativeUser(
+    credentialUser: AuthenticatedUser,
+  ): Promise<AuthenticatedUser> {
+    const currentUser = await userRepository.findById(credentialUser.id);
+    if (!currentUser?.isActive) {
+      throw new AppError(401, "UNAUTHORIZED", "User account is unavailable");
+    }
+
+    let permissions: string[];
+    if (currentUser.role === "owner_admin") {
+      permissions = [...DEFAULT_PERMISSIONS.owner_admin];
+    } else {
+      const grants = permissionRepository
+        ? await permissionRepository.listActiveByUserForClinic(
+            currentUser.id,
+            currentUser.homeClinicId,
+          )
+        : [];
+      permissions = Array.from(
+        new Set([...DEFAULT_PERMISSIONS[currentUser.role], ...grants]),
+      );
+    }
+
+    return {
+      id: currentUser.id,
+      email: currentUser.email,
+      role: currentUser.role,
+      homeClinicId: currentUser.homeClinicId,
+      homeClinicName: currentUser.homeClinicName,
+      firstName: currentUser.firstName,
+      lastName: currentUser.lastName,
+      displayName: currentUser.displayName,
+      payrollTrack: currentUser.payrollTrack,
+      permissions,
+    };
+  }
+
   function canAccessClinic(user: AuthenticatedUser, clinicId: string): boolean {
     if (user.role === "owner_admin") {
       return true;
@@ -837,6 +874,7 @@ export function createAuthService(
     refresh,
     logout,
     authenticateAccessToken,
+    rehydrateAuthoritativeUser,
     verifyMfaEnrollmentToken,
     canAccessClinic,
     changePassword,

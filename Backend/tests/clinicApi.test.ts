@@ -40,6 +40,7 @@ type ClinicData = {
   timezone: string;
   subscriptionTier: string;
   isActive: boolean;
+  organisationId: string | null;
 };
 type ApiData<T> = { data: T };
 
@@ -113,6 +114,7 @@ describe("POST /api/v1/clinics", () => {
       expect(body.data.id).toBeDefined();
       expect(body.data.name).toBe("Heathmont");
       expect(body.data.isActive).toBe(true);
+      expect(body.data.organisationId).toBeNull();
       expect(typeof body.data.id).toBe("string");
     });
 
@@ -230,6 +232,22 @@ describe("POST /api/v1/clinics", () => {
         .post(CLINICS_URL)
         .set("Authorization", `Bearer ${token}`)
         .send({ name: "Clinic X", id: "injected-uuid" });
+
+      expect(res.status).toBe(400);
+      expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("does not accept organisationId as a client-settable field", async () => {
+      const app = await createTestApp();
+      const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+      const res = await request(app)
+        .post(CLINICS_URL)
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+          name: "Injected Organisation Clinic",
+          organisationId: "77777777-7777-4777-8777-777777777777",
+        });
 
       expect(res.status).toBe(400);
       expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");

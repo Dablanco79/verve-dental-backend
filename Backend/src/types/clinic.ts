@@ -59,6 +59,8 @@ export type Clinic = {
 export type CreateClinicInput = {
   /** Fixed UUID for deterministic seed data.  Omit to auto-generate. */
   id?: string;
+  /** Internal tenant linkage. Controllers must not accept this from clients. */
+  organisationId?: string | null;
   name: string;
   abn?: string | null;
   addressLine1?: string | null;

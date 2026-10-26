@@ -109,17 +109,19 @@ export function createPostgresClinicRepository(
         params.push(input.timezone ?? "Australia/Sydney") && nextParam++;
       const tierParam =
         params.push(input.subscriptionTier ?? "standard") && nextParam++;
+      const organisationParam =
+        params.push(input.organisationId ?? null) && nextParam++;
 
       void idParam; // suppress unused-var lint; used inline in the query string.
 
       const { rows } = await pool.query<ClinicRow>(
         `INSERT INTO clinics
            (id, name, abn, address_line1, suburb, state, postcode,
-            timezone, subscription_tier, is_active)
+            timezone, subscription_tier, organisation_id, is_active)
          VALUES
            (${idClause}, $${String(nameParam)}, $${String(abnParam)}, $${String(addr1Param)},
             $${String(suburbParam)}, $${String(stateParam)}, $${String(postcodeParam)},
-            $${String(tzParam)}, $${String(tierParam)}, true)
+            $${String(tzParam)}, $${String(tierParam)}, $${String(organisationParam)}, true)
          RETURNING ${SELECT_COLUMNS}`,
         params,
       );

@@ -142,7 +142,7 @@ export function createInMemoryClinicRepository(): ClinicRepository {
         subscriptionTier: input.subscriptionTier ?? "standard",
         isActive: true,
         preferredName: null,
-        organisationId: null,
+        organisationId: input.organisationId ?? null,
         latitude: null,
         longitude: null,
         createdAt: now,

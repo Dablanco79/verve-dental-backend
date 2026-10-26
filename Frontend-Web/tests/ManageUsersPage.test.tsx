@@ -670,6 +670,44 @@ describe("ManageUsersPage — Module Access panel", () => {
     await waitFor(() => expect(inventoryBox).not.toBeChecked());
   });
 
+  it("uses the selected operational clinic for permission list, grant, and revoke", async () => {
+    const crossHomeUser: StaffUser = {
+      ...namedUser,
+      homeClinicId: TEST_CLINIC_B_ID,
+      homeClinicName: TEST_CLINIC_B_NAME,
+    };
+    mockListUsers.mockResolvedValue([crossHomeUser]);
+    mockListUserPermissions.mockResolvedValue([]);
+
+    await openModuleAccessPanel(crossHomeUser.email);
+
+    await waitFor(() => {
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+      );
+    });
+
+    const inventoryBox = await screen.findByRole("checkbox", { name: /inventory access/i });
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+        "module:inventory",
+      );
+    });
+
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+        "module:inventory",
+      );
+    });
+  });
+
   it("shows a controlled error state when listUserPermissions rejects (no crash)", async () => {
     mockListUserPermissions.mockRejectedValue(new Error("Permission load failed"));
 
