@@ -266,6 +266,7 @@ describe("GET /timesheets/export — RBAC", () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getExport(app, managerToken, SEED_CLINIC_B_ID);
@@ -319,6 +320,7 @@ describe("GET /timesheets — GPM multi-clinic list access", () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getList(app, managerToken, SEED_CLINIC_B_ID);

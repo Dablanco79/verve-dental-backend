@@ -44,6 +44,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AppError } from "../types/errors.js";
+import { withTenantContext } from "../db/tenantContext.js";
 import type {
   AttendanceStatus,
   ClockMutation,
@@ -58,7 +59,16 @@ import type {
   UpdateTimesheetEntryInput,
 } from "../types/payroll.js";
 import type { DatabasePool } from "../db/pool.js";
-import type { TimesheetRepository } from "./timesheetRepository.js";
+import {
+  insertAuditEvent,
+  type AuditQueryExecutor,
+} from "./analyticsRepository.postgres.js";
+import { buildTimesheetCorrectionAuditEvent } from "./timesheetRepository.js";
+import type {
+  CorrectTimesheetWithAuditInput,
+  TimesheetRepository,
+} from "./timesheetRepository.js";
+import type { AuditEvent } from "../types/analytics.js";
 
 // ── Row shape returned by node-postgres ──────────────────────────────────────
 
@@ -163,6 +173,10 @@ function toTimesheetEntry(row: TimesheetEntryRow): TimesheetEntry {
 
 export function createPostgresTimesheetRepository(
   pool: DatabasePool,
+  auditInserter: (
+    executor: AuditQueryExecutor,
+    input: CorrectTimesheetWithAuditInput["auditEvent"],
+  ) => Promise<AuditEvent> = insertAuditEvent,
 ): TimesheetRepository {
   return {
     // ── create ─────────────────────────────────────────────────────────────
@@ -543,10 +557,10 @@ export function createPostgresTimesheetRepository(
      * (should never happen in practice).
      *
      * FIX LOW — Clock-field atomicity:
-     *   Raw clock fields (`clock_out_at`, `break_duration_minutes`) are only
+     *   Raw clock fields (`clock_in_at`, `clock_out_at`, `break_duration_minutes`) are only
      *   written as part of a `clockMutation` bundle, which also atomically
-     *   writes all five derived hour-bucket columns.  `clock_in_at` is
-     *   excluded from updates entirely — it is set once at create time.
+     *   writes all five derived hour-bucket columns. `clock_in_at` is optional
+     *   in that bundle so existing clock-out callers leave it unchanged.
      *
      * Column name remapping for overtime fields:
      *   overtime15xHours → overtime_1_5x_hours
@@ -573,6 +587,10 @@ export function createPostgresTimesheetRepository(
       // columns so they can never drift out of sync with the clock times.
       if (input.clockMutation !== undefined) {
         const m: ClockMutation = input.clockMutation;
+        if (m.clockInAt !== undefined) {
+          params.push(m.clockInAt);
+          setClauses.push(`clock_in_at = $${String(params.length)}`);
+        }
         params.push(m.clockOutAt);
         setClauses.push(`clock_out_at = $${String(params.length)}`);
         params.push(m.breakDurationMinutes);
@@ -671,6 +689,92 @@ export function createPostgresTimesheetRepository(
       }
 
       return toTimesheetEntry(row);
+    },
+
+    // ── correctWithAudit ───────────────────────────────────────────────────
+
+    async correctWithAudit(input: CorrectTimesheetWithAuditInput): Promise<TimesheetEntry> {
+      return withTenantContext(
+        pool,
+        input.clinicId,
+        async (client) => {
+          const lockedResult = await client.query<TimesheetEntryRow>(
+            `SELECT *
+               FROM timesheet_entries
+              WHERE id = $1
+                AND clinic_id = $2
+              FOR UPDATE`,
+            [input.id, input.clinicId],
+          );
+          const lockedRow = lockedResult.rows[0];
+          if (
+            !lockedRow ||
+            (lockedRow.payroll_type !== "hourly_auto" &&
+              lockedRow.payroll_type !== "hourly_manual") ||
+            (lockedRow.timesheet_status !== "submitted" &&
+              lockedRow.timesheet_status !== "rejected" &&
+              lockedRow.timesheet_status !== "requires_amendment")
+          ) {
+            throw new AppError(
+              409,
+              "TIMESHEET_NOT_CORRECTABLE",
+              "Timesheet is no longer correctable",
+            );
+          }
+
+          const before = toTimesheetEntry(lockedRow);
+          const mutation = input.clockMutation;
+          const { rows } = await client.query<TimesheetEntryRow>(
+            `UPDATE timesheet_entries
+                SET clock_in_at = $1,
+                    clock_out_at = $2,
+                    break_duration_minutes = $3,
+                    total_hours_worked = $4,
+                    ordinary_hours = $5,
+                    overtime_1_5x_hours = $6,
+                    overtime_2x_hours = $7,
+                    overtime_custom_hours = $8,
+                    timesheet_status = 'submitted',
+                    approved_by_user_id = NULL,
+                    approved_at = NULL,
+                    approval_notes = NULL,
+                    updated_at = now()
+              WHERE id = $9
+                AND clinic_id = $10
+                AND payroll_type IN ('hourly_auto', 'hourly_manual')
+                AND timesheet_status IN ('submitted', 'rejected', 'requires_amendment')
+              RETURNING *`,
+            [
+              mutation.clockInAt,
+              mutation.clockOutAt,
+              mutation.breakDurationMinutes,
+              mutation.totalHoursWorked,
+              mutation.ordinaryHours,
+              mutation.overtime15xHours,
+              mutation.overtime2xHours,
+              mutation.overtimeCustomHours,
+              input.id,
+              input.clinicId,
+            ],
+          );
+          const row = rows[0];
+          if (!row) {
+            throw new AppError(
+              409,
+              "TIMESHEET_NOT_CORRECTABLE",
+              "Timesheet is no longer correctable",
+            );
+          }
+
+          const corrected = toTimesheetEntry(row);
+          await auditInserter(
+            client,
+            buildTimesheetCorrectionAuditEvent(input, before, corrected),
+          );
+          return corrected;
+        },
+        input.ownerAdmin,
+      );
     },
 
     // ── activateClockIn ────────────────────────────────────────────────────

@@ -37,6 +37,7 @@ const {
   mockClockIn,
   mockGetClinicCoordinates,
   mockApproveTimesheet,
+  mockCorrectTimesheet,
   mockRejectTimesheet,
 } = vi.hoisted(() => ({
   mockListMyTimesheets: vi.fn(),
@@ -62,6 +63,7 @@ const {
   }),
   // Approve / reject — captured for bulk-action assertions.
   mockApproveTimesheet: vi.fn(),
+  mockCorrectTimesheet: vi.fn(),
   mockRejectTimesheet: vi.fn(),
 }));
 
@@ -72,6 +74,7 @@ vi.mock("../src/api/client.js", () => ({
     clockIn: mockClockIn,
     clockOut: vi.fn(),
     approveTimesheet: mockApproveTimesheet,
+    correctTimesheet: mockCorrectTimesheet,
     rejectTimesheet: mockRejectTimesheet,
     verifyCommissionAttendance: vi.fn(),
     exportTimesheets: mockExportTimesheets,
@@ -173,6 +176,7 @@ beforeEach(() => {
   ]);
   // Approve / reject resolve with undefined by default (enough for hook's fetch re-trigger).
   mockApproveTimesheet.mockResolvedValue(undefined);
+  mockCorrectTimesheet.mockResolvedValue(undefined);
   mockRejectTimesheet.mockResolvedValue(undefined);
 });
 
@@ -541,6 +545,105 @@ function makeMyTimesheetEntry(
     ...overrides,
   };
 }
+
+describe("TimesheetsPage — manager corrections", () => {
+  it("shows Correct only for eligible hourly entries owned by another user", async () => {
+    const eligible = makeSubmittedEntry("eligible");
+    const own = { ...makeSubmittedEntry("own"), staffUserId: "user-1" };
+    mockListTimesheets.mockResolvedValue([eligible, own]);
+
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    expect(await screen.findByRole("button", { name: "Correct" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Correct" })).toHaveLength(1);
+  });
+
+  it("shows Correct for rejected and amendment rows, never approved, processed, commission, or self rows", async () => {
+    const rejected = { ...makeSubmittedEntry("rejected"), timesheetStatus: "rejected" as const };
+    const amendment = {
+      ...makeSubmittedEntry("amendment"),
+      timesheetStatus: "requires_amendment" as const,
+    };
+    const approved = { ...makeSubmittedEntry("approved"), timesheetStatus: "approved" as const };
+    const processed = { ...makeSubmittedEntry("processed"), timesheetStatus: "processed" as const };
+    const commission = {
+      ...makeSubmittedEntry("commission"),
+      payrollType: "commission_log" as const,
+    };
+    const own = {
+      ...makeSubmittedEntry("own-rejected"),
+      staffUserId: "user-1",
+      timesheetStatus: "rejected" as const,
+    };
+    mockListTimesheets.mockResolvedValue([
+      rejected,
+      amendment,
+      approved,
+      processed,
+      commission,
+      own,
+    ]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await userEvent.click(await screen.findByRole("button", { name: /^all/i }));
+
+    expect(screen.getAllByRole("button", { name: "Correct" })).toHaveLength(2);
+  });
+
+  it("validates required clock values before ISO conversion", async () => {
+    const user = userEvent.setup();
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry("blank-clock")]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await user.click(await screen.findByRole("button", { name: "Correct" }));
+    await user.clear(screen.getByLabelText("Clock in"));
+    await user.type(screen.getByLabelText("Correction reason"), "Verified");
+    await user.click(screen.getByRole("button", { name: "Save correction" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Both clock times are required.");
+    expect(mockCorrectTimesheet).not.toHaveBeenCalled();
+  });
+
+  it("requires a reason, sends corrected ISO clocks, and refreshes", async () => {
+    const user = userEvent.setup();
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry("correct-me")]);
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await user.click(await screen.findByRole("button", { name: "Correct" }));
+    await user.click(screen.getByRole("button", { name: "Save correction" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("A correction reason is required.");
+
+    await user.type(screen.getByLabelText("Correction reason"), "Verified paper log");
+    await user.click(screen.getByRole("button", { name: "Save correction" }));
+
+    await waitFor(() => {
+      expect(mockCorrectTimesheet).toHaveBeenCalledWith(
+        "11111111-1111-4111-8111-111111111111",
+        "correct-me",
+        expect.objectContaining({
+          clockInAt: "2026-09-21T07:02:00.000Z",
+          clockOutAt: "2026-09-21T15:05:00.000Z",
+          correctionReason: "Verified paper log",
+        }),
+      );
+      expect(mockListTimesheets).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("keeps the correction form open and displays API errors", async () => {
+    const user = userEvent.setup();
+    mockListTimesheets.mockResolvedValue([makeSubmittedEntry("failed")]);
+    mockCorrectTimesheet.mockRejectedValue(new Error("Correction unavailable"));
+    renderTimesheetsPage(makeUser("group_practice_manager"));
+
+    await user.click(await screen.findByRole("button", { name: "Correct" }));
+    await user.type(screen.getByLabelText("Correction reason"), "Verified");
+    await user.click(screen.getByRole("button", { name: "Save correction" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Correction unavailable");
+    expect(screen.getByRole("button", { name: "Save correction" })).toBeInTheDocument();
+  });
+});
 
 describe("TimesheetsPage — Approval notes inline form", () => {
   it("clicking Approve opens inline approval form with optional notes textarea", async () => {

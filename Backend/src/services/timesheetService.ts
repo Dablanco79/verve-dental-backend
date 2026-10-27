@@ -885,6 +885,84 @@ export function createTimesheetService(
       });
     },
 
+    /**
+     * Corrects both clock values on an existing hourly entry and returns it to
+     * submitted for independent approval. The repository mutation atomically
+     * writes both clocks, the unchanged break, and every recalculated bucket.
+     */
+    async correctTimesheet(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      timesheetId: string,
+      input: {
+        clockInAt: Date;
+        clockOutAt: Date;
+        correctionReason: string;
+      },
+    ): Promise<TimesheetEntry> {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+
+      const reason = input.correctionReason.trim();
+      if (!reason) {
+        throw new AppError(400, "CORRECTION_REASON_REQUIRED", "A correction reason is required");
+      }
+
+      const entry = await timesheetRepository.findById(timesheetId);
+      if (!entry || entry.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
+      }
+
+      assertIndependentTimesheetReviewer(caller, entry);
+
+      if (entry.payrollType === "commission_log") {
+        throw new AppError(409, "TIMESHEET_NOT_CORRECTABLE", "Commission entries cannot be corrected");
+      }
+      if (
+        entry.timesheetStatus !== "submitted" &&
+        entry.timesheetStatus !== "rejected" &&
+        entry.timesheetStatus !== "requires_amendment"
+      ) {
+        throw new AppError(
+          409,
+          "TIMESHEET_NOT_CORRECTABLE",
+          `Cannot correct a timesheet with status '${entry.timesheetStatus ?? "null"}'`,
+        );
+      }
+      if (!entry.clockInAt || !entry.clockOutAt) {
+        throw new AppError(400, "MISSING_CLOCK_TIMES", "Both existing clock times are required");
+      }
+      if (input.clockOutAt <= input.clockInAt) {
+        throw new AppError(400, "INVALID_CLOCK_TIMES", "clockOutAt must be after clockInAt");
+      }
+
+      const breakDurationMinutes = entry.breakDurationMinutes ?? 0;
+      if (breakDurationMinutes < 0) {
+        throw new AppError(400, "INVALID_BREAK", "breakDurationMinutes cannot be negative");
+      }
+      const clockMutation = {
+        ...clockUpdatePayload(input.clockInAt, input.clockOutAt, breakDurationMinutes),
+        clockInAt: input.clockInAt,
+      };
+
+      return timesheetRepository.correctWithAudit({
+        id: timesheetId,
+        clinicId,
+        clockMutation,
+        ownerAdmin: caller.role === "owner_admin",
+        auditEvent: {
+          clinicId,
+          entityType: "timesheet_entry",
+          entityId: timesheetId,
+          action: "corrected",
+          actorId: caller.id,
+          actorEmail: caller.email,
+          metadata: {
+            reason,
+          },
+        },
+      });
+    },
+
     // ── Manual entry (manager) ────────────────────────────────────────────────
 
     /**

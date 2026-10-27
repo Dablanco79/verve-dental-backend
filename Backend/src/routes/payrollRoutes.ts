@@ -296,6 +296,12 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.approveTimesheet(req, res)),
   );
 
+  router.patch(
+    "/:timesheetId/correct",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.correctTimesheet(req, res)),
+  );
+
   router.post(
     "/:timesheetId/reject",
     requireRoles(...PAYROLL_MANAGER_ROLES),

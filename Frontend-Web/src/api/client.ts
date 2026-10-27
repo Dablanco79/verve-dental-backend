@@ -89,6 +89,7 @@ import type {
   CancelApprovedLeaveRequest,
   ClockInRequest,
   ClockOutRequest,
+  CorrectTimesheetRequest,
   CreateLeaveRequest,
   CreateLeaveCancellationRequest,
   CreateManualTimesheetRequest,
@@ -1638,6 +1639,19 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function correctTimesheet(
+    clinicId: string,
+    timesheetId: string,
+    body: CorrectTimesheetRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/correct`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function verifyCommissionAttendance(
     clinicId: string,
     timesheetId: string,
@@ -3057,6 +3071,7 @@ export function createApiClient(config: AppConfig) {
     clockOut,
     createManualTimesheetEntry,
     approveTimesheet,
+    correctTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
     exportTimesheets,

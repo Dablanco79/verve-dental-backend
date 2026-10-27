@@ -697,6 +697,14 @@ const approveTimesheetSchema = z
   })
   .strict();
 
+const correctTimesheetSchema = z
+  .object({
+    clockInAt: isoDatetime(),
+    clockOutAt: isoDatetime(),
+    correctionReason: z.string().trim().min(1, "A correction reason is required").max(2000),
+  })
+  .strict();
+
 const rejectTimesheetSchema = z
   .object({
     approvalNotes: z
@@ -983,6 +991,22 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         timesheetId,
         body.approvalNotes ?? null,
       );
+
+      res.status(200).json({ data: serializeTimesheet(entry) });
+    },
+
+    /** PATCH /clinics/:clinicId/timesheets/:timesheetId/correct */
+    async correctTimesheet(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const timesheetId = requireUuidParam(req, "timesheetId");
+      const body = parseBody(correctTimesheetSchema, req.body);
+
+      const entry = await timesheetService.correctTimesheet(caller, clinicId, timesheetId, {
+        clockInAt: new Date(body.clockInAt),
+        clockOutAt: new Date(body.clockOutAt),
+        correctionReason: body.correctionReason,
+      });
 
       res.status(200).json({ data: serializeTimesheet(entry) });
     },

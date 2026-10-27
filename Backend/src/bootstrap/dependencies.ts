@@ -429,9 +429,9 @@ export async function createAppDependencies(
       clinicAssignmentsRepository,
       leaveRepository,
     );
-    timesheetRepository = createInMemoryTimesheetRepository();
     billingRepository = createInMemoryBillingRepository();
     analyticsRepository = createInMemoryAnalyticsRepository();
+    timesheetRepository = createInMemoryTimesheetRepository(analyticsRepository);
     supplierRepository = createInMemorySupplierRepository();
     supplierCatalogueRepository = createInMemorySupplierCatalogueRepository();
     supplierInvoiceRepository = createInMemorySupplierInvoiceRepository();

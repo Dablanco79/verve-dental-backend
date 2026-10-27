@@ -420,12 +420,14 @@ export type CreateTimesheetEntryInput = Omit<
 
 /**
  * Atomic payload produced by `clockUpdatePayload()` in the service layer.
- * Bundles the raw clock-out fields with all derived hour columns so the
+ * Bundles the raw clock fields with all derived hour columns so the
  * repository `update()` method can only write clock-out data as a single
  * indivisible unit — it is structurally impossible to mutate `clockOutAt` or
  * `breakDurationMinutes` without simultaneously recalculating the hour buckets.
  */
 export type ClockMutation = {
+  /** Present only for an authorised manager correction. Existing clock-out callers leave it unchanged. */
+  clockInAt?: Date;
   clockOutAt: Date;
   breakDurationMinutes: number;
   totalHoursWorked: number;
@@ -444,8 +446,8 @@ export type ClockMutation = {
  *   `clockOutAt` and `breakDurationMinutes` are NOT individually updatable.
  *   They may only be written as part of a `clockMutation` bundle, which
  *   forces the five derived hour-bucket columns to be recalculated in the
- *   same repository call.  `clockInAt` is excluded entirely — it is set once
- *   at `create()` time and never subsequently changed.
+ *   same repository call. `clockInAt` may only be included inside the same
+ *   bundle, for the manager correction workflow.
  *
  *   The individual hour-bucket fields (`totalHoursWorked` etc.) remain
  *   directly settable for the approval re-calculation path, where the manager
@@ -454,7 +456,7 @@ export type ClockMutation = {
 export type UpdateTimesheetEntryInput = Partial<{
   attendanceStatus: AttendanceStatus;
   timesheetStatus: TimesheetStatus | null;
-  /** Atomically writes clock-out + all derived hour columns.  Must be produced by clockUpdatePayload(). */
+  /** Atomically writes clocks + all derived hour columns. Must be produced by clockUpdatePayload(). */
   clockMutation: ClockMutation;
   totalHoursWorked: number | null;
   ordinaryHours: number | null;

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
+import type { CreateAuditEventInput } from "../types/analytics.js";
+import { AppError } from "../types/errors.js";
 import type {
+  ClockMutation,
   CreateTimesheetEntryInput,
   GeofenceLocation,
   ListTimesheetOptions,
@@ -9,6 +12,49 @@ import type {
   TimesheetPage,
   UpdateTimesheetEntryInput,
 } from "../types/payroll.js";
+
+export type CorrectTimesheetWithAuditInput = {
+  id: string;
+  clinicId: string;
+  clockMutation: ClockMutation & { clockInAt: Date };
+  auditEvent: CreateAuditEventInput;
+  ownerAdmin: boolean;
+};
+
+export type TimesheetCorrectionAuditWriter = {
+  recordEvent(input: CreateAuditEventInput): Promise<unknown>;
+};
+
+function correctionAuditSnapshot(entry: TimesheetEntry): Record<string, unknown> {
+  return {
+    clockInAt: entry.clockInAt?.toISOString() ?? null,
+    clockOutAt: entry.clockOutAt?.toISOString() ?? null,
+    breakDurationMinutes: entry.breakDurationMinutes,
+    totalHoursWorked: entry.totalHoursWorked,
+    ordinaryHours: entry.ordinaryHours,
+    overtime15xHours: entry.overtime15xHours,
+    overtime2xHours: entry.overtime2xHours,
+    overtimeCustomHours: entry.overtimeCustomHours,
+    status: entry.timesheetStatus,
+  };
+}
+
+export function buildTimesheetCorrectionAuditEvent(
+  input: CorrectTimesheetWithAuditInput,
+  before: TimesheetEntry,
+  after: TimesheetEntry,
+): CreateAuditEventInput {
+  return {
+    ...input.auditEvent,
+    clinicId: input.clinicId,
+    entityId: input.id,
+    metadata: {
+      ...input.auditEvent.metadata,
+      before: correctionAuditSnapshot(before),
+      after: correctionAuditSnapshot(after),
+    },
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TimesheetRepository interface
@@ -52,6 +98,7 @@ export interface TimesheetRepository {
    */
   getForecastLogs(rosteredClinicId: string, date: string): Promise<TimesheetEntry[]>;
   update(id: string, input: UpdateTimesheetEntryInput): Promise<TimesheetEntry>;
+  correctWithAudit(input: CorrectTimesheetWithAuditInput): Promise<TimesheetEntry>;
   /**
    * Activates a system-auto pre-filled timesheet entry with the actual
    * server-authoritative clock-in time.
@@ -83,7 +130,9 @@ export interface TimesheetRepository {
 // In-memory implementation (used when DATABASE_URL is absent)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function createInMemoryTimesheetRepository(): TimesheetRepository {
+export function createInMemoryTimesheetRepository(
+  auditWriter?: TimesheetCorrectionAuditWriter,
+): TimesheetRepository {
   const entries: TimesheetEntry[] = [];
 
   return {
@@ -242,6 +291,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
       // Expand clockMutation into its constituent fields atomically.
       const clockFields: Partial<Pick<
         TimesheetEntry,
+        | "clockInAt"
         | "clockOutAt"
         | "breakDurationMinutes"
         | "totalHoursWorked"
@@ -251,6 +301,9 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         | "overtimeCustomHours"
       >> = input.clockMutation !== undefined
         ? {
+            ...(input.clockMutation.clockInAt !== undefined && {
+              clockInAt: input.clockMutation.clockInAt,
+            }),
             clockOutAt: input.clockMutation.clockOutAt,
             breakDurationMinutes: input.clockMutation.breakDurationMinutes,
             totalHoursWorked: input.clockMutation.totalHoursWorked,
@@ -266,7 +319,7 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
         // Apply only fields that were explicitly provided.
         ...(input.attendanceStatus !== undefined && { attendanceStatus: input.attendanceStatus }),
         ...(input.timesheetStatus !== undefined && { timesheetStatus: input.timesheetStatus }),
-        // clockMutation expands atomically — clock-out and all hour buckets together.
+        // clockMutation expands atomically — corrected clocks and all hour buckets together.
         ...clockFields,
         // Individual hour-bucket overrides (approval re-calc path, no clock change).
         ...(input.totalHoursWorked !== undefined && { totalHoursWorked: input.totalHoursWorked }),
@@ -285,6 +338,63 @@ export function createInMemoryTimesheetRepository(): TimesheetRepository {
 
       entries[index] = updated;
       return Promise.resolve({ ...updated });
+    },
+
+    async correctWithAudit(input: CorrectTimesheetWithAuditInput): Promise<TimesheetEntry> {
+      const index = entries.findIndex((entry) => entry.id === input.id);
+      const existing = entries[index];
+      if (
+        index === -1 ||
+        !existing ||
+        existing.clinicId !== input.clinicId ||
+        (existing.payrollType !== "hourly_auto" && existing.payrollType !== "hourly_manual") ||
+        (existing.timesheetStatus !== "submitted" &&
+          existing.timesheetStatus !== "rejected" &&
+          existing.timesheetStatus !== "requires_amendment")
+      ) {
+        throw new AppError(
+          409,
+          "TIMESHEET_NOT_CORRECTABLE",
+          "Timesheet is no longer correctable",
+        );
+      }
+      if (!auditWriter) {
+        throw new AppError(
+          500,
+          "AUDIT_WRITER_UNAVAILABLE",
+          "Timesheet correction audit writer is unavailable",
+        );
+      }
+
+      const original = existing;
+      const mutation = input.clockMutation;
+      const corrected: TimesheetEntry = {
+        ...existing,
+        clockInAt: mutation.clockInAt,
+        clockOutAt: mutation.clockOutAt,
+        breakDurationMinutes: mutation.breakDurationMinutes,
+        totalHoursWorked: mutation.totalHoursWorked,
+        ordinaryHours: mutation.ordinaryHours,
+        overtime15xHours: mutation.overtime15xHours,
+        overtime2xHours: mutation.overtime2xHours,
+        overtimeCustomHours: mutation.overtimeCustomHours,
+        timesheetStatus: "submitted",
+        approvedByUserId: null,
+        approvedAt: null,
+        approvalNotes: null,
+        updatedAt: new Date(),
+      };
+      entries[index] = corrected;
+
+      try {
+        await auditWriter.recordEvent(
+          buildTimesheetCorrectionAuditEvent(input, original, corrected),
+        );
+        return { ...corrected };
+      } catch (error) {
+        entries[index] = original;
+        throw error;
+      }
     },
 
     activateClockIn(

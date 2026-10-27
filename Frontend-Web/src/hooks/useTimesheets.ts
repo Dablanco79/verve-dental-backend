@@ -7,6 +7,7 @@ import type {
   ApproveTimesheetRequest,
   ClockInRequest,
   ClockOutRequest,
+  CorrectTimesheetRequest,
   ExportTimesheetParams,
   RejectTimesheetRequest,
   TimesheetEntry,
@@ -50,6 +51,10 @@ export type UseTimesheetsResult = {
   approveTimesheet: (
     timesheetId: string,
     payload?: ApproveTimesheetRequest,
+  ) => Promise<TimesheetEntry>;
+  correctTimesheet: (
+    timesheetId: string,
+    payload: CorrectTimesheetRequest,
   ) => Promise<TimesheetEntry>;
   /**
    * Reject a timesheet entry (manager/admin only).
@@ -184,6 +189,22 @@ export function useTimesheets(
     [clinicId, role, fetch],
   );
 
+  const correctTimesheet = useCallback(
+    async (
+      timesheetId: string,
+      payload: CorrectTimesheetRequest,
+    ): Promise<TimesheetEntry> => {
+      if (!clinicId) throw new Error("No clinic selected");
+      if (!canManagePayroll(role ?? "clinical_staff")) {
+        throw new Error("Insufficient permissions to correct timesheets");
+      }
+      const entry = await apiClient.correctTimesheet(clinicId, timesheetId, payload);
+      fetch();
+      return entry;
+    },
+    [clinicId, role, fetch],
+  );
+
   const verifyCommissionAttendance = useCallback(
     async (
       timesheetId: string,
@@ -223,6 +244,7 @@ export function useTimesheets(
     clockIn,
     clockOut,
     approveTimesheet,
+    correctTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
     exportTimesheets,

@@ -939,9 +939,10 @@ describe("POST /clock-in — Fix B regression (partial unique index)", () => {
     expect(tsA.rosteredClinicId).toBe(SEED_CLINIC_A_ID);
 
     // Staff clocks in at Clinic B using roster entry B.
-    // This must succeed — no constraint violation — and produce a separate row.
+    // Personal timesheet routes remain anchored to the staff member's home
+    // clinic; the trusted roster records Clinic B as the physical location.
     const clockInB = await request(app)
-      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets/clock-in`)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
       .set("Authorization", `Bearer ${staffToken}`)
       .send({
         rosterEntryId: rosterB.id,

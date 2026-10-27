@@ -191,6 +191,116 @@ function PayrollTypeBadge({ type }: { type: PayrollType }) {
   );
 }
 
+function CorrectTimesheetControl({
+  entry,
+  onCorrect,
+}: {
+  entry: TimesheetEntry;
+  onCorrect: (
+    id: string,
+    input: { clockInAt: string; clockOutAt: string; correctionReason: string },
+  ) => Promise<unknown>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [clockInAt, setClockInAt] = useState(
+    entry.clockInAt ? toDatetimeLocal(new Date(entry.clockInAt)) : "",
+  );
+  const [clockOutAt, setClockOutAt] = useState(
+    entry.clockOutAt ? toDatetimeLocal(new Date(entry.clockOutAt)) : "",
+  );
+  const [reason, setReason] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(): Promise<void> {
+    if (!clockInAt || !clockOutAt) {
+      setError("Both clock times are required.");
+      return;
+    }
+    const parsedClockIn = new Date(clockInAt);
+    const parsedClockOut = new Date(clockOutAt);
+    if (
+      Number.isNaN(parsedClockIn.getTime()) ||
+      Number.isNaN(parsedClockOut.getTime()) ||
+      parsedClockOut <= parsedClockIn
+    ) {
+      setError("Clock out must be after a valid clock in time.");
+      return;
+    }
+    if (!reason.trim()) {
+      setError("A correction reason is required.");
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      await onCorrect(entry.id, {
+        clockInAt: parsedClockIn.toISOString(),
+        clockOutAt: parsedClockOut.toISOString(),
+        correctionReason: reason.trim(),
+      });
+      setIsOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Correction failed.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (!isOpen) {
+    return (
+      <button type="button" className="pr-action-btn" onClick={() => { setIsOpen(true); }}>
+        Correct
+      </button>
+    );
+  }
+
+  return (
+    <div className="pr-inline-form" aria-label={`Correct timesheet for ${entry.staffEmail}`}>
+      <label>
+        Clock in
+        <input
+          type="datetime-local"
+          value={clockInAt}
+          onChange={(event) => { setClockInAt(event.target.value); }}
+          required
+          disabled={isSaving}
+        />
+      </label>
+      <label>
+        Clock out
+        <input
+          type="datetime-local"
+          value={clockOutAt}
+          onChange={(event) => { setClockOutAt(event.target.value); }}
+          required
+          disabled={isSaving}
+        />
+      </label>
+      <label>
+        Correction reason
+        <textarea
+          value={reason}
+          onChange={(event) => { setReason(event.target.value); }}
+          required
+          aria-required="true"
+          maxLength={2000}
+          disabled={isSaving}
+        />
+      </label>
+      {error ? <p role="alert">{error}</p> : null}
+      <div className="pr-inline-form__row-actions">
+        <button type="button" className="pr-action-btn" onClick={() => { void save(); }} disabled={isSaving}>
+          {isSaving ? "Saving…" : "Save correction"}
+        </button>
+        <button type="button" className="pr-inline-form__cancel" onClick={() => { setIsOpen(false); setError(null); }} disabled={isSaving}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Compact geofence summary shown in manager approval/review tables.
  *
@@ -267,12 +377,17 @@ function GeofenceSummaryCell({
 
 type ApprovalQueueProps = {
   entries: TimesheetEntry[];
+  currentUserId: string;
   /** Notes are optional — pass null for a silent approval. */
   onApprove: (id: string, notes: string | null) => Promise<void>;
   onReject: (id: string, notes: string) => Promise<void>;
+  onCorrect: (
+    id: string,
+    input: { clockInAt: string; clockOutAt: string; correctionReason: string },
+  ) => Promise<unknown>;
 };
 
-function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
+function ApprovalQueue({ entries, currentUserId, onApprove, onReject, onCorrect }: ApprovalQueueProps) {
   // ── Individual-action state ───────────────────────────────────────────────
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveNotes, setApproveNotes] = useState("");
@@ -650,6 +765,13 @@ function ApprovalQueue({ entries, onApprove, onReject }: ApprovalQueueProps) {
                 </td>
                 <td className="pr-table__td pr-table__td--actions">
                   <div className="pr-row-actions">
+                    {entry.payrollType !== "commission_log" &&
+                    entry.staffUserId !== currentUserId &&
+                    (entry.timesheetStatus === "submitted" ||
+                      entry.timesheetStatus === "rejected" ||
+                      entry.timesheetStatus === "requires_amendment") ? (
+                      <CorrectTimesheetControl entry={entry} onCorrect={onCorrect} />
+                    ) : null}
                     <button
                       type="button"
                       className="pr-action-btn pr-action-btn--approve"
@@ -1741,7 +1863,18 @@ function TimesheetViewFilterBar({
 
 // ── Manager: Reviewed timesheets table (approved / rejected / all) ────────────
 
-function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
+function ReviewedTimesheets({
+  entries,
+  currentUserId,
+  onCorrect,
+}: {
+  entries: TimesheetEntry[];
+  currentUserId: string;
+  onCorrect: (
+    id: string,
+    input: { clockInAt: string; clockOutAt: string; correctionReason: string },
+  ) => Promise<unknown>;
+}) {
   if (entries.length === 0) {
     return (
       <p className="pr-table__empty">
@@ -1765,6 +1898,7 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
             <th className="pr-table__th">Staff Note</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Approval Notes</th>
+            <th className="pr-table__th">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -1813,6 +1947,15 @@ function ReviewedTimesheets({ entries }: { entries: TimesheetEntry[] }) {
                 <TimesheetStatusBadge status={entry.timesheetStatus} />
               </td>
               <td className="pr-table__td">{entry.approvalNotes ?? "—"}</td>
+              <td className="pr-table__td pr-table__td--actions">
+                {entry.payrollType !== "commission_log" &&
+                entry.staffUserId !== currentUserId &&
+                (entry.timesheetStatus === "submitted" ||
+                  entry.timesheetStatus === "rejected" ||
+                  entry.timesheetStatus === "requires_amendment") ? (
+                    <CorrectTimesheetControl entry={entry} onCorrect={onCorrect} />
+                  ) : null}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -2071,6 +2214,7 @@ export function TimesheetsPage() {
     clockIn,
     clockOut,
     approveTimesheet,
+    correctTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
     exportTimesheets,
@@ -2250,12 +2394,14 @@ export function TimesheetsPage() {
                   </h2>
                   <ApprovalQueue
                     entries={pendingApproval}
+                    currentUserId={user.id}
                     onApprove={async (id, notes) => {
                       await approveTimesheet(id, { approvalNotes: notes });
                     }}
                     onReject={async (id, notes) => {
                       await rejectTimesheet(id, { approvalNotes: notes });
                     }}
+                    onCorrect={correctTimesheet}
                   />
                 </div>
 
@@ -2294,7 +2440,11 @@ export function TimesheetsPage() {
                     <span className="pr-section__count">{reviewedEntries.length}</span>
                   ) : null}
                 </h2>
-                <ReviewedTimesheets entries={reviewedEntries} />
+                <ReviewedTimesheets
+                  entries={reviewedEntries}
+                  currentUserId={user.id}
+                  onCorrect={correctTimesheet}
+                />
               </div>
             )}
           </>
