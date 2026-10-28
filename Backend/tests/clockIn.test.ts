@@ -64,7 +64,10 @@
 import { jest } from "@jest/globals";
 import request from "supertest";
 
-import { loginAndGetAccessToken } from "./helpers/auth.js";
+import {
+  loginAndGetAccessToken,
+  replaceUserClinicAccess,
+} from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 import {
   SEED_CLINIC_A_ID,
@@ -868,9 +871,21 @@ describe("POST /clock-in — Fix B regression (partial unique index)", () => {
     // clinic in the route (the actual work location).
 
     const app            = await createTestApp();
+    const ownerAToken    = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const managerAToken  = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const adminBToken    = await loginAndGetAccessToken(app, "admin@clinic-b.au");
     const staffToken     = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    await replaceUserClinicAccess(
+      app,
+      ownerAToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+      [
+        { clinicId: SEED_CLINIC_A_ID, canOperate: true, canRoster: true },
+        { clinicId: SEED_CLINIC_B_ID, canOperate: false, canRoster: true },
+      ],
+    );
 
     // Roster entry at Clinic A.
     const createA = await request(app)

@@ -6,7 +6,10 @@ import {
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
 import { formatCalendarDate } from "../src/utils/calendarDate.js";
-import { loginAndGetAccessToken } from "./helpers/auth.js";
+import {
+  loginAndGetAccessToken,
+  replaceUserClinicAccess,
+} from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 type ApiData<T> = { data: T };
@@ -260,11 +263,7 @@ describe("Roster API (Module 04)", () => {
 
   // ─── Cross-clinic access via roster membership ────────────────────────────
 
-  it("clinical_staff at clinic-a sees only their own shifts (empty) when querying clinic-b without a roster entry there", async () => {
-    // Security model: clinical_staff calling the clinic endpoint are silently
-    // scoped to their own shifts — they never receive another staff member's
-    // data.  With no shift at clinic-b the result is 200 + empty array rather
-    // than a 403, which avoids leaking whether specific clinic IDs exist.
+  it("clinical_staff cannot query another clinic without an explicit roster assignment", async () => {
     const app = await createTestApp();
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
@@ -272,16 +271,28 @@ describe("Roster API (Module 04)", () => {
       .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
       .set("Authorization", `Bearer ${staffToken}`);
 
-    expect(res.status).toBe(200);
-    expect((res.body as ApiData<RosterEntryDto[]>).data).toHaveLength(0);
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("TENANT_ACCESS_DENIED");
   });
 
-  it("clinical_staff gains cross-clinic read access when rostered at that clinic", async () => {
+  it("clinical_staff gains self-only cross-clinic read access with can_roster assignment", async () => {
     const app = await createTestApp();
-    // Clinic-B admin creates a shift for clinic-A staff AT clinic-B.
+    const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const clinicBAdminToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
+    await replaceUserClinicAccess(
+      app,
+      ownerToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+      [
+        { clinicId: SEED_CLINIC_A_ID, canOperate: true, canRoster: true },
+        { clinicId: SEED_CLINIC_B_ID, canOperate: false, canRoster: true },
+      ],
+    );
+
+    // Clinic-B admin creates a shift for clinic-A staff AT clinic-B.
     await request(app)
       .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
       .set("Authorization", `Bearer ${clinicBAdminToken}`)

@@ -93,6 +93,19 @@ export function createClinicScopeMiddleware(
         throw new AppError(400, "VALIDATION_ERROR", `Missing route parameter: ${paramName}`);
       }
 
+      // /timesheets/me is clinic-agnostic: the service and repository scope the
+      // query exclusively to the authenticated user. Do not treat the URL's
+      // clinicId as authority or disclose whether that clinic exists.
+      const requestPath = req.originalUrl.split("?")[0] ?? "";
+      const clinicPathMarker = `/clinics/${targetClinicId}/`;
+      const markerIndex = requestPath.indexOf(clinicPathMarker);
+      const clinicRelativePath =
+        markerIndex >= 0
+          ? requestPath.slice(markerIndex + clinicPathMarker.length).replace(/\/+$/, "")
+          : "";
+      const isClinicAgnosticPersonalTimesheets =
+        req.method === "GET" && clinicRelativePath === "timesheets/me";
+
       const [targetClinic, homeClinic] = await Promise.all([
         clinics.findById(targetClinicId),
         clinics.findById(req.user.homeClinicId),
@@ -118,11 +131,29 @@ export function createClinicScopeMiddleware(
 
       const isHomeClinic = targetClinic.id === homeClinic.id;
       if (req.user.role === "clinical_staff" && !isHomeClinic) {
-        throw new AppError(
-          403,
-          "TENANT_ACCESS_DENIED",
-          "Clinical staff may only access their home clinic",
-        );
+        const isPersonalRosterRead =
+          req.method === "GET" &&
+          (clinicRelativePath === "roster" ||
+            clinicRelativePath === "roster/me" ||
+            /^roster\/[0-9a-f-]+$/i.test(clinicRelativePath));
+        const isPersonalClockAction =
+          req.method === "POST" &&
+          (clinicRelativePath === "timesheets/clock-in" ||
+            /^timesheets\/[0-9a-f-]+\/clock-out$/i.test(clinicRelativePath));
+
+        if (
+          !isClinicAgnosticPersonalTimesheets &&
+          (
+            (!isPersonalRosterRead && !isPersonalClockAction) ||
+            !(await assignments.hasRosterEligibility(req.user.id, targetClinic.id))
+          )
+        ) {
+          throw new AppError(
+            403,
+            "TENANT_ACCESS_DENIED",
+            "Roster eligibility is required for cross-clinic staff access",
+          );
+        }
       }
       if (
         req.user.role === "group_practice_manager" &&
@@ -135,7 +166,15 @@ export function createClinicScopeMiddleware(
       if (req.user.role === "owner_admin") {
         req.user.permissions = [...DEFAULT_PERMISSIONS.owner_admin];
       } else {
-        const grants = await permissions.listActiveByUserForClinic(req.user.id, targetClinic.id);
+        // Cross-clinic clinical-staff routes above remain self-only. Their
+        // module entitlement belongs to the home clinic; the target assignment
+        // independently authorises attendance at the physical clinic.
+        const permissionClinicId =
+          req.user.role === "clinical_staff" ? homeClinic.id : targetClinic.id;
+        const grants = await permissions.listActiveByUserForClinic(
+          req.user.id,
+          permissionClinicId,
+        );
         req.user.permissions = Array.from(
           new Set([...DEFAULT_PERMISSIONS[req.user.role], ...grants]),
         );

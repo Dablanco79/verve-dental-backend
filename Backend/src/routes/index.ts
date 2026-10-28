@@ -131,9 +131,9 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.get(
     "/clinics/:clinicId/summary",
     authenticate,
+    validateParams(clinicIdParamsSchema),
     clinicScope,
     enforceTenantParam("clinicId"),
-    validateParams(clinicIdParamsSchema),
     (req, res) => {
       authHandlers.getClinicSummary(req, res);
     },
@@ -185,7 +185,13 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
 
   // rlsContext runs on all /clinics/:clinicId/* routes — sets the per-request
   // RLS session variable so installRlsPoolHook injects it on every DB checkout.
-  router.use("/clinics/:clinicId", authenticate, clinicScope, rlsContext);
+  router.use(
+    "/clinics/:clinicId",
+    authenticate,
+    validateParams(clinicIdParamsSchema),
+    clinicScope,
+    rlsContext,
+  );
 
   router.use("/clinics/:clinicId/inventory", createInventoryRouter(deps));
   router.use("/clinics/:clinicId/stocktakes", createStocktakeRouter(deps));

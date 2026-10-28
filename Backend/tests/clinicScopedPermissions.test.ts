@@ -275,6 +275,8 @@ describe("clinic scope organisation boundary", () => {
     const assignments = {} as UserClinicAssignmentsRepository;
     const middleware = createClinicScopeMiddleware(clinics, permissions, assignments);
     const req = {
+      method: "GET",
+      originalUrl: `/api/v1/clinics/${targetClinic.id}/inventory`,
       params: { clinicId: targetClinic.id },
       user: {
         id: SEED_USER_IDS.clinicAAdmin,

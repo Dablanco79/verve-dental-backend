@@ -194,6 +194,23 @@ async function setManagerClinicBAccess(
   }
 }
 
+async function grantManagerClinicBTimesheetPermission(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  adminToken: string,
+): Promise<void> {
+  const res = await request(app)
+    .post(
+      `/api/v1/clinics/${SEED_CLINIC_B_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions`,
+    )
+    .set("Authorization", `Bearer ${adminToken}`)
+    .send({ permission: "module:timesheets" });
+  if (res.status !== 201) {
+    throw new Error(
+      `Permission setup failed (${String(res.status)}): ${JSON.stringify(res.body)}`,
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RBAC
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,9 +265,8 @@ describe("GET /timesheets/export — RBAC", () => {
   it("returns 200 for GPM with can_operate=true at a non-home clinic", async () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
-    // Grant manager@clinic-a.au canOperate=true at Clinic B via the owner_admin API.
-    // This uses the live assignment API rather than synthetic seed data.
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getExport(app, managerToken, SEED_CLINIC_B_ID);
@@ -304,11 +320,23 @@ describe("GET /timesheets — GPM multi-clinic list access", () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getList(app, managerToken, SEED_CLINIC_B_ID);
 
     expect(res.status).toBe(200);
+  });
+
+  it("GPM with can_operate but no target-clinic module grant cannot list timesheets", async () => {
+    const app = await createTestApp();
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const res = await getList(app, managerToken, SEED_CLINIC_B_ID);
+
+    expect(res.status).toBe(403);
   });
 
   it("GPM without can_operate for Clinic B cannot list Clinic B timesheets", async () => {

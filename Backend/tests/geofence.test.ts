@@ -37,7 +37,10 @@ import {
 } from "../src/repositories/userRepository.js";
 import { haversineDistance, GEOFENCE_RADIUS_METRES } from "../src/utils/haversine.js";
 import { createTestApp } from "./helpers/testApp.js";
-import { loginAndGetAccessToken } from "./helpers/auth.js";
+import {
+  loginAndGetAccessToken,
+  replaceUserClinicAccess,
+} from "./helpers/auth.js";
 
 // ── Shared type helpers ────────────────────────────────────────────────────────
 
@@ -335,8 +338,20 @@ describe("Geofence — Test 5: outside-range Clock Out warns but succeeds (soft 
 describe("Geofence — Test 6: roster-linked cross-clinic uses rosteredClinicId, not homeClinicId", () => {
   it("timesheet.rosteredClinicId differs from homeClinicId when shift is at Clinic B", async () => {
     const app = await createTestApp();
+    const ownerAToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const adminBToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
     const staffToken  = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    await replaceUserClinicAccess(
+      app,
+      ownerAToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+      [
+        { clinicId: SEED_CLINIC_A_ID, canOperate: true, canRoster: true },
+        { clinicId: SEED_CLINIC_B_ID, canOperate: false, canRoster: true },
+      ],
+    );
 
     // POST to Clinic B's roster endpoint — rosteredClinicId = SEED_CLINIC_B_ID
     const rosterRes = await request(app)
@@ -420,8 +435,20 @@ describe("Geofence — Test 7: ad-hoc shift uses explicitly selected physical cl
 describe("Geofence — Test 8: payroll clinic_id invariant is never overwritten", () => {
   it("entry.clinicId is homeClinicId even when geofence check targets a different clinic", async () => {
     const app = await createTestApp();
+    const ownerAToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const adminBToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
     const staffToken  = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    await replaceUserClinicAccess(
+      app,
+      ownerAToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+      [
+        { clinicId: SEED_CLINIC_A_ID, canOperate: true, canRoster: true },
+        { clinicId: SEED_CLINIC_B_ID, canOperate: false, canRoster: true },
+      ],
+    );
 
     const rosterRes = await request(app)
       .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/roster`)
