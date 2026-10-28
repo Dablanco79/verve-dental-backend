@@ -7,8 +7,14 @@ import type { PermissionRepository } from "../repositories/permissionRepository.
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { UserRole } from "../types/auth.js";
 import type { Permission } from "../types/permissions.js";
-import { DEFAULT_PERMISSIONS } from "../types/permissions.js";
+import { DEFAULT_PERMISSIONS, PERMISSIONS } from "../types/permissions.js";
 import { AppError } from "../types/errors.js";
+
+const GPM_PORTABLE_WORKFORCE_PERMISSIONS = new Set<string>([
+  PERMISSIONS.MODULE_TIMESHEETS,
+  PERMISSIONS.MODULE_ROSTER,
+  PERMISSIONS.MODULE_LEAVE,
+]);
 
 function getBearerToken(req: Request): string | null {
   const header = req.headers.authorization;
@@ -130,6 +136,8 @@ export function createClinicScopeMiddleware(
       }
 
       const isHomeClinic = targetClinic.id === homeClinic.id;
+      const isCrossClinicGpm =
+        req.user.role === "group_practice_manager" && !isHomeClinic;
       if (req.user.role === "clinical_staff" && !isHomeClinic) {
         const isPersonalRosterRead =
           req.method === "GET" &&
@@ -156,8 +164,7 @@ export function createClinicScopeMiddleware(
         }
       }
       if (
-        req.user.role === "group_practice_manager" &&
-        !isHomeClinic &&
+        isCrossClinicGpm &&
         !(await assignments.hasOperationalAccess(req.user.id, targetClinic.id))
       ) {
         throw new AppError(403, "TENANT_ACCESS_DENIED", "Operational clinic access is required");
@@ -171,10 +178,24 @@ export function createClinicScopeMiddleware(
         // independently authorises attendance at the physical clinic.
         const permissionClinicId =
           req.user.role === "clinical_staff" ? homeClinic.id : targetClinic.id;
-        const grants = await permissions.listActiveByUserForClinic(
+        let grants = await permissions.listActiveByUserForClinic(
           req.user.id,
           permissionClinicId,
         );
+        if (isCrossClinicGpm) {
+          const homeGrants = await permissions.listActiveByUserForClinic(
+            req.user.id,
+            homeClinic.id,
+          );
+          grants = [
+            ...grants.filter(
+              (permission) => !GPM_PORTABLE_WORKFORCE_PERMISSIONS.has(permission),
+            ),
+            ...homeGrants.filter((permission) =>
+              GPM_PORTABLE_WORKFORCE_PERMISSIONS.has(permission),
+            ),
+          ];
+        }
         req.user.permissions = Array.from(
           new Set([...DEFAULT_PERMISSIONS[req.user.role], ...grants]),
         );

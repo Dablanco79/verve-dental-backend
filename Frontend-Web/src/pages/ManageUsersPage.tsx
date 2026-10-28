@@ -44,6 +44,12 @@ const MODULE_ITEMS: Array<{ permission: string; label: string; roles: UserRole[]
   { permission: "payroll:rates:write", label: "Edit staff pay rates",  roles: ["group_practice_manager"] },
 ];
 
+const PORTABLE_GPM_WORKFORCE_PERMISSIONS = new Set([
+  "module:timesheets",
+  "module:roster",
+  "module:leave",
+]);
+
 // Roles an owner_admin may assign.
 const ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
   "owner_admin",
@@ -396,13 +402,30 @@ export function ManageUsersPage() {
       // data is PermissionGrantRow[] — the API envelope { data: [...] } is
       // unwrapped by request().  Do NOT access data.grants — there is no such
       // property; doing so returns undefined and crashes .filter().
-      const data = await apiClient.listUserPermissions(clinicId, u.id);
+      const selectedClinicData = await apiClient.listUserPermissions(clinicId, u.id);
+      const usesPortableWorkforceScope =
+        u.role === "group_practice_manager" && u.homeClinicId !== clinicId;
+      const homeClinicData = usesPortableWorkforceScope
+        ? await apiClient.listUserPermissions(u.homeClinicId, u.id)
+        : selectedClinicData;
       // Include all non-revoked permissions tracked by MODULE_ITEMS
       // (both "module:*" and "payroll:*" families).
       const moduleItemPermissions = new Set(MODULE_ITEMS.map((m) => m.permission));
       const active = new Set(
-        data
+        selectedClinicData
           .filter((g) => g.revokedAt === null && moduleItemPermissions.has(g.permission))
+          .filter(
+            (g) =>
+              !usesPortableWorkforceScope ||
+              !PORTABLE_GPM_WORKFORCE_PERMISSIONS.has(g.permission),
+          )
+          .concat(
+            homeClinicData.filter(
+              (g) =>
+                g.revokedAt === null &&
+                PORTABLE_GPM_WORKFORCE_PERMISSIONS.has(g.permission),
+            ),
+          )
           .map((g) => g.permission),
       );
       setModuleAccess((s) => s ? { ...s, isLoading: false, activePermissions: active } : s);
@@ -423,10 +446,15 @@ export function ManageUsersPage() {
     }
     setModuleAccess((s) => s ? { ...s, isSaving: permission, error: null } : s);
     try {
+      const permissionClinicId =
+        u.role === "group_practice_manager" &&
+        PORTABLE_GPM_WORKFORCE_PERMISSIONS.has(permission)
+          ? u.homeClinicId
+          : clinicId;
       if (grant) {
-        await apiClient.grantUserPermission(clinicId, u.id, permission);
+        await apiClient.grantUserPermission(permissionClinicId, u.id, permission);
       } else {
-        await apiClient.revokeUserPermission(clinicId, u.id, permission);
+        await apiClient.revokeUserPermission(permissionClinicId, u.id, permission);
       }
       setModuleAccess((s) => {
         if (!s) return s;
@@ -1309,7 +1337,9 @@ export function ManageUsersPage() {
                               ) : (
                                 <>
                                   <p className="inventory-page__subtitle" style={{ marginBottom: "1rem" }}>
-                                    Toggle which operational modules this user can access. Changes take effect on their next login.
+                                    {u.role === "group_practice_manager"
+                                      ? "Timesheets, Roster and Leave access applies at every same-organisation clinic where this manager has Can operate enabled. Other modules remain clinic-specific. Changes take effect immediately."
+                                      : "Toggle which operational modules this user can access. Changes take effect immediately."}
                                   </p>
                                   <div className="inventory-table-wrapper">
                                     <table className="inventory-table">

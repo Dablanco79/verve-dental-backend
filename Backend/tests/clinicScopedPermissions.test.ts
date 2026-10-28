@@ -12,7 +12,10 @@ import {
 import type { UserClinicAssignmentsRepository } from "../src/repositories/userClinicAssignmentsRepository.js";
 import type { Clinic } from "../src/types/clinic.js";
 import { AppError } from "../src/types/errors.js";
-import { loginAndGetAccessToken } from "./helpers/auth.js";
+import {
+  loginAndGetAccessToken,
+  replaceUserClinicAccess,
+} from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 
 const MISSING_CLINIC_ID = "99999999-9999-4999-8999-999999999999";
@@ -233,6 +236,122 @@ describe("clinic-scoped authoritative permissions", () => {
         .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/inventory`)
         .set("Authorization", `Bearer ${ownerToken}`);
       expect(response.status).toBe(200);
+    },
+    30_000,
+  );
+
+  it(
+    "carries a home Workforce grant to an operational clinic and applies assignment revocation immediately",
+    async () => {
+      const app = await createTestApp();
+      const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+      await replaceUserClinicAccess(
+        app,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        SEED_USER_IDS.clinicAManager,
+        [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_B_ID, canRoster: false, canOperate: true },
+        ],
+      );
+
+      const allowed = await request(app)
+        .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets`)
+        .set("Authorization", `Bearer ${managerToken}`);
+      expect(allowed.status).toBe(200);
+
+      await replaceUserClinicAccess(
+        app,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        SEED_USER_IDS.clinicAManager,
+        [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_B_ID, canRoster: false, canOperate: false },
+        ],
+      );
+
+      const revoked = await request(app)
+        .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets`)
+        .set("Authorization", `Bearer ${managerToken}`);
+      expect(revoked.status).toBe(403);
+    },
+    30_000,
+  );
+
+  it(
+    "removes portable Timesheets access everywhere when the home grant is revoked",
+    async () => {
+      const app = await createTestApp();
+      const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+      await replaceUserClinicAccess(
+        app,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        SEED_USER_IDS.clinicAManager,
+        [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_B_ID, canRoster: false, canOperate: true },
+        ],
+      );
+
+      const revoke = await request(app)
+        .delete(
+          `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions/module%3Atimesheets`,
+        )
+        .set("Authorization", `Bearer ${ownerToken}`);
+      expect(revoke.status).toBe(204);
+
+      for (const clinicId of [SEED_CLINIC_A_ID, SEED_CLINIC_B_ID]) {
+        const response = await request(app)
+          .get(`/api/v1/clinics/${clinicId}/timesheets`)
+          .set("Authorization", `Bearer ${managerToken}`);
+        expect(response.status).toBe(403);
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "does not substitute a target-clinic Workforce grant for the required home grant",
+    async () => {
+      const app = await createTestApp();
+      const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+      await replaceUserClinicAccess(
+        app,
+        ownerToken,
+        SEED_CLINIC_A_ID,
+        SEED_USER_IDS.clinicAManager,
+        [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_B_ID, canRoster: false, canOperate: true },
+        ],
+      );
+      const revokeHome = await request(app)
+        .delete(
+          `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions/module%3Atimesheets`,
+        )
+        .set("Authorization", `Bearer ${ownerToken}`);
+      expect(revokeHome.status).toBe(204);
+      const grantTarget = await request(app)
+        .post(
+          `/api/v1/clinics/${SEED_CLINIC_B_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions`,
+        )
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ permission: "module:timesheets" });
+      expect(grantTarget.status).toBe(201);
+
+      const response = await request(app)
+        .get(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets`)
+        .set("Authorization", `Bearer ${managerToken}`);
+      expect(response.status).toBe(403);
     },
     30_000,
   );

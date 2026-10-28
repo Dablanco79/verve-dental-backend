@@ -587,6 +587,17 @@ describe("ManageUsersPage — Module Access panel", () => {
     expect(screen.getByLabelText(`Module access for ${namedUser.email}`)).toBeInTheDocument();
   });
 
+  it("explains immediate cross-clinic Workforce access for Group Practice Managers", async () => {
+    await openModuleAccessPanel(unnamedUser.email);
+
+    expect(
+      await screen.findByText(
+        /Timesheets, Roster and Leave access applies at every same-organisation clinic where this manager has Can operate enabled/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/next login/i)).not.toBeInTheDocument();
+  });
+
   it("renders 3 seeded grants checked for a clinical_staff user", async () => {
     // Simulate the backend returning timesheets, roster, leave as active grants
     // (the 3 production initial grants for clinical_staff)
@@ -703,6 +714,86 @@ describe("ManageUsersPage — Module Access panel", () => {
       expect(mockRevokeUserPermission).toHaveBeenCalledWith(
         TEST_CLINIC_ID,
         crossHomeUser.id,
+        "module:inventory",
+      );
+    });
+  });
+
+  it("uses a GPM's home clinic for Workforce permissions while keeping other modules on the selected clinic", async () => {
+    const crossHomeGpm: StaffUser = {
+      ...unnamedUser,
+      homeClinicId: TEST_CLINIC_B_ID,
+      homeClinicName: TEST_CLINIC_B_NAME,
+    };
+    mockListUsers.mockResolvedValue([crossHomeGpm]);
+    mockListUserPermissions.mockImplementation((permissionClinicId: string, userId: string) => {
+      const common = {
+        userId,
+        grantedBy: adminUser.id,
+        grantedAt: "2026-09-01T00:00:00Z",
+        revokedAt: null,
+      };
+      if (permissionClinicId === TEST_CLINIC_B_ID) {
+        return Promise.resolve([
+          {
+            ...common,
+            id: "home-timesheets",
+            clinicId: TEST_CLINIC_B_ID,
+            permission: "module:timesheets",
+          },
+        ]);
+      }
+      return Promise.resolve([
+        {
+          ...common,
+          id: "selected-inventory",
+          clinicId: TEST_CLINIC_ID,
+          permission: "module:inventory",
+        },
+      ]);
+    });
+
+    await openModuleAccessPanel(crossHomeGpm.email);
+
+    await waitFor(() => {
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeGpm.id,
+      );
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+      );
+    });
+
+    const timesheetsBox = await screen.findByRole("checkbox", { name: /timesheets access/i });
+    const inventoryBox = screen.getByRole("checkbox", { name: /inventory access/i });
+    expect(timesheetsBox).toBeChecked();
+    expect(inventoryBox).toBeChecked();
+
+    await userEvent.click(timesheetsBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+        "module:timesheets",
+      );
+    });
+
+    await userEvent.click(timesheetsBox);
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+        "module:timesheets",
+      );
+    });
+
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeGpm.id,
         "module:inventory",
       );
     });

@@ -266,7 +266,6 @@ describe("GET /timesheets/export — RBAC", () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
-    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getExport(app, managerToken, SEED_CLINIC_B_ID);
@@ -320,7 +319,6 @@ describe("GET /timesheets — GPM multi-clinic list access", () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
-    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getList(app, managerToken, SEED_CLINIC_B_ID);
@@ -328,10 +326,17 @@ describe("GET /timesheets — GPM multi-clinic list access", () => {
     expect(res.status).toBe(200);
   });
 
-  it("GPM with can_operate but no target-clinic module grant cannot list timesheets", async () => {
+  it("GPM cannot use a target-clinic Timesheets grant after the home grant is revoked", async () => {
     const app = await createTestApp();
     const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     await setManagerClinicBAccess(app, adminToken, { canOperate: true, canRoster: false });
+    const revokeHome = await request(app)
+      .delete(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions/module%3Atimesheets`,
+      )
+      .set("Authorization", `Bearer ${adminToken}`);
+    expect(revokeHome.status).toBe(204);
+    await grantManagerClinicBTimesheetPermission(app, adminToken);
 
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const res = await getList(app, managerToken, SEED_CLINIC_B_ID);

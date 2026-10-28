@@ -104,12 +104,15 @@ describe("clinic-scoped permissions (PostgreSQL integration)", () => {
     );
   }
 
-  async function grant(clinicId: string): Promise<void> {
+  async function grant(
+    clinicId: string,
+    permission = "module:inventory",
+  ): Promise<void> {
     await fixturePool.query(
       `INSERT INTO user_permission_grants
          (clinic_id, user_id, permission, granted_by)
-       VALUES ($1, $2, 'module:inventory', $3)`,
-      [clinicId, gpmId, ownerAId],
+       VALUES ($1, $2, $3, $4)`,
+      [clinicId, gpmId, permission, ownerAId],
     );
   }
 
@@ -267,6 +270,76 @@ describe("clinic-scoped permissions (PostgreSQL integration)", () => {
         .get(`/api/v1/clinics/${clinicBId}/inventory`)
         .set("Authorization", `Bearer ${token}`)).status,
     ).toBe(200);
+  });
+
+  it("carries a home Timesheets grant only while target can_operate remains active", async () => {
+    await grant(clinicAId, "module:timesheets");
+    await fixturePool.query(
+      "UPDATE user_clinic_assignments SET can_operate = true WHERE user_id = $1 AND clinic_id = $2",
+      [gpmId, clinicBId],
+    );
+    const token = tokenFor(gpmId, "group_practice_manager");
+
+    expect(
+      (await request(app)
+        .get(`/api/v1/clinics/${clinicBId}/timesheets`)
+        .set("Authorization", `Bearer ${token}`)).status,
+    ).toBe(200);
+
+    await fixturePool.query(
+      "UPDATE user_clinic_assignments SET can_operate = false WHERE user_id = $1 AND clinic_id = $2",
+      [gpmId, clinicBId],
+    );
+    expect(
+      (await request(app)
+        .get(`/api/v1/clinics/${clinicBId}/timesheets`)
+        .set("Authorization", `Bearer ${token}`)).status,
+    ).toBe(403);
+  });
+
+  it("applies home Timesheets revocation everywhere and ignores a target-only Workforce grant", async () => {
+    await grant(clinicAId, "module:timesheets");
+    await grant(clinicBId, "module:timesheets");
+    await fixturePool.query(
+      "UPDATE user_clinic_assignments SET can_operate = true WHERE user_id = $1 AND clinic_id = $2",
+      [gpmId, clinicBId],
+    );
+    const token = tokenFor(gpmId, "group_practice_manager");
+
+    await fixturePool.query(
+      `UPDATE user_permission_grants
+          SET revoked_at = now()
+        WHERE clinic_id = $1
+          AND user_id = $2
+          AND permission = 'module:timesheets'
+          AND revoked_at IS NULL`,
+      [clinicAId, gpmId],
+    );
+
+    for (const clinicId of [clinicAId, clinicBId]) {
+      expect(
+        (await request(app)
+          .get(`/api/v1/clinics/${clinicId}/timesheets`)
+          .set("Authorization", `Bearer ${token}`)).status,
+      ).toBe(403);
+    }
+  });
+
+  it("does not carry home Workforce grants across organisation boundaries", async () => {
+    await grant(clinicAId, "module:timesheets");
+    await fixturePool.query(
+      `INSERT INTO user_clinic_assignments
+         (user_id, clinic_id, can_roster, can_operate, assigned_by_user_id)
+       VALUES ($1, $2, true, true, $3)`,
+      [gpmId, clinicCId, ownerAId],
+    );
+    const token = tokenFor(gpmId, "group_practice_manager");
+
+    expect(
+      (await request(app)
+        .get(`/api/v1/clinics/${clinicCId}/timesheets`)
+        .set("Authorization", `Bearer ${token}`)).status,
+    ).toBe(403);
   });
 
   it("applies persisted revoked_at immediately to the same issued JWT", async () => {
