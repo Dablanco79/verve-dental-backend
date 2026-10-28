@@ -264,7 +264,7 @@ describe("manager timesheet correction API", () => {
       .expect(404);
   });
 
-  it("allows a manager to correct Clinic B only while assignment and module grant are active", async () => {
+  it("allows a manager to correct Clinic B only while assignment and home module grant are active", async () => {
     const app = await createTestApp();
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const ownerAToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
@@ -325,7 +325,7 @@ describe("manager timesheet correction API", () => {
 
     await request(app)
       .delete(
-        `/api/v1/clinics/${SEED_CLINIC_B_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions/module%3Atimesheets`,
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions/module%3Atimesheets`,
       )
       .set("Authorization", `Bearer ${ownerAToken}`)
       .expect(204);

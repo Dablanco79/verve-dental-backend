@@ -507,7 +507,7 @@ describe("timesheet correction atomicity (PostgreSQL integration)", () => {
   it("enforces live GPM assignment, permission, and organisation scope with one token", async () => {
     const token = tokenFor(gpmId, "group_practice_manager");
     const clinicBEntry = await insertTimesheet(clinicBId, staffBId, "submitted");
-    await grantTimesheets(clinicBId);
+    await grantTimesheets(clinicAId);
 
     expect(
       (await request(app)
@@ -539,7 +539,7 @@ describe("timesheet correction atomicity (PostgreSQL integration)", () => {
       `UPDATE user_permission_grants
           SET revoked_at = now()
         WHERE user_id = $1 AND clinic_id = $2 AND permission = 'module:timesheets'`,
-      [gpmId, clinicBId],
+      [gpmId, clinicAId],
     );
     expect(
       (await request(app)
