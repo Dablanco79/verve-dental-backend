@@ -6,6 +6,7 @@ import {
   databaseConnectionStringForPool,
   resolvePostgresSsl,
 } from "../pool.js";
+import { installRlsPoolHook } from "../tenantContext.js";
 
 function config(
   databaseUrl: string,
@@ -120,5 +121,61 @@ describe("resolvePostgresSsl", () => {
     );
     const pool = createDatabasePool(localConfig);
     await pool?.end();
+  });
+
+  it("handles an idle-client pool error without throwing or exposing error details", async () => {
+    const events: unknown[] = [];
+    const pool = createDatabasePool(
+      config(
+        "postgresql://test:secret@localhost:5432/verve_test?sslmode=disable",
+        "test",
+        "false",
+      ),
+      (event) => {
+        events.push(event);
+      },
+    );
+    expect(pool).not.toBeNull();
+    if (!pool) return;
+
+    // The RLS hook mutates connect() on this same pool instance. Its presence
+    // must neither remove nor bypass the pool-level idle-client error guard.
+    installRlsPoolHook(pool);
+    const reset = Object.assign(
+      new Error("connection string and credentials must never be reported"),
+      { code: "ECONNRESET" },
+    );
+
+    expect(() => pool.emit("error", reset, undefined)).not.toThrow();
+    expect(events).toEqual([
+      {
+        category: "postgres_pool_idle_client_error",
+        code: "ECONNRESET",
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(reset.message);
+
+    await pool.end();
+  });
+
+  it("contains failures thrown by the pool error reporter", async () => {
+    const pool = createDatabasePool(
+      config(
+        "postgresql://test:secret@localhost:5432/verve_test?sslmode=disable",
+        "test",
+        "false",
+      ),
+      () => {
+        throw new Error("synthetic reporting failure");
+      },
+    );
+    expect(pool).not.toBeNull();
+    if (!pool) return;
+
+    expect(() =>
+      pool.emit("error", Object.assign(new Error("reset"), { code: "ECONNRESET" }), undefined),
+    ).not.toThrow();
+
+    await pool.end();
   });
 });

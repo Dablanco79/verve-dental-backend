@@ -244,7 +244,9 @@ export async function createAppDependencies(
     }
   }
 
-  const databasePool = createDatabasePool(config);
+  const databasePool = createDatabasePool(config, (event) => {
+    logger.warn(event, "Idle PostgreSQL client disconnected unexpectedly");
+  });
   const redisClient = createRedisClient(config);
 
   // Register the error guard BEFORE any connect() call.  ioredis emits an

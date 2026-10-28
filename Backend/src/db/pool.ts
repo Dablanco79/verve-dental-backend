@@ -4,6 +4,18 @@ import type { EnvConfig } from "../config/index.js";
 
 export type DatabasePool = pg.Pool;
 
+export type DatabasePoolErrorEvent = {
+  category: "postgres_pool_idle_client_error";
+  code: string;
+};
+
+export type DatabasePoolErrorReporter = (event: DatabasePoolErrorEvent) => void;
+
+function poolErrorCode(error: Error): string {
+  const code = (error as Error & { code?: unknown }).code;
+  return typeof code === "string" && code.length > 0 ? code : "UNKNOWN";
+}
+
 function parseDatabaseSslMode(
   databaseUrl: string,
 ): "disable" | "require" | "verify-ca" | "verify-full" | null {
@@ -133,7 +145,10 @@ export function resolvePostgresSsl(
   };
 }
 
-export function createDatabasePool(config: EnvConfig): DatabasePool | null {
+export function createDatabasePool(
+  config: EnvConfig,
+  reportError?: DatabasePoolErrorReporter,
+): DatabasePool | null {
   if (!config.DATABASE_URL) {
     return null;
   }
@@ -141,11 +156,33 @@ export function createDatabasePool(config: EnvConfig): DatabasePool | null {
   const ssl = resolvePostgresSsl(config);
   const connectionString = databaseConnectionStringForPool(config);
 
-  return new pg.Pool({
+  const pool = new pg.Pool({
     connectionString,
     ssl,
     max: config.NODE_ENV === "production" ? 20 : 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   });
+
+  // node-postgres emits `error` on the Pool when an idle client is terminated
+  // unexpectedly. EventEmitter treats an unhandled `error` as fatal, so this
+  // listener must be attached before the pool can execute its first query.
+  // pg removes the failed idle client itself; retrying application operations
+  // here could duplicate writes and is intentionally avoided.
+  pool.on("error", (error) => {
+    const event: DatabasePoolErrorEvent = {
+      category: "postgres_pool_idle_client_error",
+      code: poolErrorCode(error),
+    };
+    if (reportError) {
+      try {
+        reportError(event);
+      } catch {
+        // A reporting failure must not turn a handled idle-client error back
+        // into an unhandled EventEmitter crash.
+      }
+    }
+  });
+
+  return pool;
 }
