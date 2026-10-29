@@ -319,7 +319,6 @@ describe("Leave/roster person-lock concurrency (Postgres)", () => {
       expectedStaffUserId: SEED_USER_IDS.clinicAStaff,
       reviewedByUserId: SEED_USER_IDS.clinicAManager,
       reviewNotes: "Concurrent decision",
-      selfReviewExceptionUsed: false,
     };
     const [approveResult, declineResult] = await Promise.allSettled([
       leaveRepo.approveCancellationRequest(review),
@@ -362,7 +361,6 @@ describe("Leave/roster person-lock concurrency (Postgres)", () => {
         expectedStaffUserId: SEED_USER_IDS.clinicAStaff,
         reviewedByUserId: SEED_USER_IDS.clinicAManager,
         reviewNotes: null,
-        selfReviewExceptionUsed: false,
       }),
       rosterRepo.createEntry(
         {

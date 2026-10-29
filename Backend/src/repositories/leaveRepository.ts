@@ -263,6 +263,13 @@ export function createInMemoryLeaveRepository(
           new Error(`Leave request is '${request.status}' and cannot be cancelled`),
         );
       }
+      if (input.cancelledByUserId === request.staffUserId) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       if (cancellationRecords.some((item) =>
         item.leaveRequestId === input.leaveId && item.status === "pending")) {
         return Promise.reject(new AppError(
@@ -277,7 +284,7 @@ export function createInMemoryLeaveRepository(
         cancelledByUserId: input.cancelledByUserId,
         cancelledAt: new Date(),
         cancellationReason: input.cancellationReason,
-        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed ?? false,
+        cancellationSelfReviewExceptionUsed: false,
         updatedAt: new Date(),
       };
       records[records.indexOf(request)] = cancelled;
@@ -348,13 +355,24 @@ export function createInMemoryLeaveRepository(
       if (child.status !== "pending" || leave.status !== "approved") {
         return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
       }
+      if (
+        input.reviewedByUserId === leave.staffUserId ||
+        input.reviewedByUserId === child.staffUserId ||
+        input.reviewedByUserId === child.requestedByUserId
+      ) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       const now = new Date();
       Object.assign(child, {
         status: "approved",
         reviewedByUserId: input.reviewedByUserId,
         reviewedAt: now,
         reviewNotes: input.reviewNotes,
-        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        selfReviewExceptionUsed: false,
         updatedAt: now,
       });
       Object.assign(leave, {
@@ -362,7 +380,7 @@ export function createInMemoryLeaveRepository(
         cancelledByUserId: input.reviewedByUserId,
         cancelledAt: now,
         cancellationReason: child.requestReason,
-        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        cancellationSelfReviewExceptionUsed: false,
         updatedAt: now,
       });
       return Promise.resolve({ request: { ...child }, leave: { ...leave } });
@@ -377,13 +395,24 @@ export function createInMemoryLeaveRepository(
       if (child.status !== "pending" || leave.status !== "approved") {
         return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
       }
+      if (
+        input.reviewedByUserId === leave.staffUserId ||
+        input.reviewedByUserId === child.staffUserId ||
+        input.reviewedByUserId === child.requestedByUserId
+      ) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       const now = new Date();
       Object.assign(child, {
         status: "declined",
         reviewedByUserId: input.reviewedByUserId,
         reviewedAt: now,
         reviewNotes: input.reviewNotes,
-        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        selfReviewExceptionUsed: false,
         updatedAt: now,
       });
       return Promise.resolve({ ...child });

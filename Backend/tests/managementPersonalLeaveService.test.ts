@@ -1,6 +1,5 @@
 import { createInMemoryLeaveRepository } from "../src/repositories/leaveRepository.js";
 import { createInMemoryUserClinicAssignmentsRepository } from "../src/repositories/userClinicAssignmentsRepository.js";
-import type { UserRepository } from "../src/repositories/userRepository.js";
 import { createLeaveService } from "../src/services/leaveService.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
 
@@ -33,7 +32,6 @@ function owner(): AuthenticatedUser {
 function service() {
   return createLeaveService(
     createInMemoryLeaveRepository(),
-    {} as UserRepository,
     undefined,
     undefined,
     createInMemoryUserClinicAssignmentsRepository(),
@@ -75,7 +73,6 @@ describe("WF08 personal leave home-clinic fail-closed guard", () => {
     const repository = createInMemoryLeaveRepository();
     const leaveService = createLeaveService(
       repository,
-      {} as UserRepository,
       undefined,
       undefined,
       createInMemoryUserClinicAssignmentsRepository(),

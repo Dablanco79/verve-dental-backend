@@ -203,6 +203,14 @@ describe("Leave → roster pilot safety", () => {
     }).expect(201);
     const ownerLeaveId = (data(ownerLeave) as LeaveData).id;
     await approve(app, auth.manager, ownerLeaveId).expect(200);
+    const directSelfCancellation = await cancelApprovedLeave(
+      app,
+      auth.owner,
+      ownerLeaveId,
+      "Owner direct self cancellation",
+    ).expect(403);
+    expect(errorCode(directSelfCancellation)).toBe("SELF_REVIEW_FORBIDDEN");
+
     const ownerCancellation = await requestCancellation(
       app,
       auth.owner,
@@ -217,6 +225,27 @@ describe("Leave → roster pilot safety", () => {
       .send({})
       .expect(403);
     expect(errorCode(selfReview)).toBe("SELF_REVIEW_FORBIDDEN");
+
+    const selfDecline = await request(app)
+      .post(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${ownerLeaveId}/cancellation-requests/${(data(ownerCancellation) as { id: string }).id}/decline`,
+      )
+      .set("Authorization", `Bearer ${auth.owner}`)
+      .send({ reviewNotes: "Owner self decline" })
+      .expect(403);
+    expect(errorCode(selfDecline)).toBe("SELF_REVIEW_FORBIDDEN");
+
+    const ownerLeaveAfter = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/me`)
+      .set("Authorization", `Bearer ${auth.owner}`)
+      .expect(200);
+    expect(
+      (data(ownerLeaveAfter) as LeaveData[]).find((item) => item.id === ownerLeaveId),
+    ).toMatchObject({
+      status: "approved",
+      cancelledByUserId: null,
+      cancellationSelfReviewExceptionUsed: false,
+    });
   });
 
   it("keeps a GPM-owned cancellation pending after both self-review attempts", async () => {

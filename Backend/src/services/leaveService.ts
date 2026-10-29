@@ -14,7 +14,6 @@ import type {
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { LeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
-import type { UserRepository } from "../repositories/userRepository.js";
 import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
@@ -62,11 +61,7 @@ function assertPersonalHomeClinic(
   );
 }
 
-/**
- * Original leave decisions require a reviewer other than the employee whose
- * leave is being reviewed. The sole Owner/Admin exception is intentionally
- * limited to cancellation workflows and does not apply here.
- */
+/** Original leave decisions require a reviewer other than the employee. */
 function assertIndependentLeaveReviewer(
   caller: AuthenticatedUser,
   request: LeaveRequest,
@@ -79,6 +74,19 @@ function assertIndependentLeaveReviewer(
   );
 }
 
+/** Cancellation decisions always require a reviewer other than the requester. */
+function assertIndependentCancellationReviewer(
+  caller: AuthenticatedUser,
+  request: { staffUserId: string; requestedByUserId?: string },
+): void {
+  if (caller.id !== request.staffUserId && caller.id !== request.requestedByUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot review your own cancellation request",
+  );
+}
+
 export type LeaveService = ReturnType<typeof createLeaveService>;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,7 +95,6 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 
 export function createLeaveService(
   leaveRepository: LeaveRepository,
-  userRepository: UserRepository,
   auditWriter: AuditWriter | undefined,
   leaveCoverageRepository: LeaveCoverageRepository | undefined,
   clinicAssignmentsRepository: UserClinicAssignmentsRepository,
@@ -123,19 +130,6 @@ export function createLeaveService(
       console.error("[Audit Failure Guard]:", err);
     });
   };
-
-  async function selfReviewException(
-    caller: AuthenticatedUser,
-    clinicId: string,
-    request: { staffUserId: string; requestedByUserId?: string },
-  ): Promise<boolean> {
-    if (caller.id !== request.staffUserId && caller.id !== request.requestedByUserId) return false;
-    if (caller.role !== "owner_admin" ||
-        !(await userRepository.canUseSoleOwnerAdminLeaveReviewException(clinicId, caller.id))) {
-      throw new AppError(403, "SELF_REVIEW_FORBIDDEN", "You cannot review your own cancellation request");
-    }
-    return true;
-  }
 
   return {
     /**
@@ -339,7 +333,7 @@ export function createLeaveService(
           `Leave request is '${request.status}' and cannot be cancelled`,
         );
       }
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
 
       const cancelled = await leaveRepository.cancelApprovedLeave({
         leaveId,
@@ -347,7 +341,6 @@ export function createLeaveService(
         expectedStaffUserId: request.staffUserId,
         cancelledByUserId: caller.id,
         cancellationReason: reason,
-        selfReviewExceptionUsed: exceptionUsed,
       });
 
       auditWriter?.recordEvent({
@@ -363,7 +356,7 @@ export function createLeaveService(
           endDate: request.endDate,
           leaveType: request.leaveType,
           cancellationReason: reason,
-          selfReviewExceptionUsed: exceptionUsed,
+          selfReviewExceptionUsed: false,
         },
       }).catch((err: unknown) => {
         console.error("[Audit Failure Guard]:", err);
@@ -449,13 +442,12 @@ export function createLeaveService(
         throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
       }
       if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
       const result = await leaveRepository.approveCancellationRequest({
         requestId, leaveId, clinicId,
         expectedStaffUserId: request.staffUserId,
         reviewedByUserId: caller.id,
         reviewNotes,
-        selfReviewExceptionUsed: exceptionUsed,
       });
       for (const action of ["cancellation_request_approved", "cancelled"]) {
         auditWriter?.recordEvent({
@@ -465,7 +457,7 @@ export function createLeaveService(
           action,
           actorId: caller.id,
           actorEmail: caller.email,
-          metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, selfReviewExceptionUsed: exceptionUsed },
+          metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, selfReviewExceptionUsed: false },
         }).catch((err: unknown) => {
           console.error("[Audit Failure Guard]:", err);
         });
@@ -487,13 +479,12 @@ export function createLeaveService(
         throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
       }
       if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
       const declined = await leaveRepository.declineCancellationRequest({
         requestId, leaveId, clinicId,
         expectedStaffUserId: request.staffUserId,
         reviewedByUserId: caller.id,
         reviewNotes: reviewNotes.trim(),
-        selfReviewExceptionUsed: exceptionUsed,
       });
       auditWriter?.recordEvent({
         clinicId,
@@ -502,7 +493,7 @@ export function createLeaveService(
         action: "cancellation_request_declined",
         actorId: caller.id,
         actorEmail: caller.email,
-        metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, reviewNotes: reviewNotes.trim(), selfReviewExceptionUsed: exceptionUsed },
+        metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, reviewNotes: reviewNotes.trim(), selfReviewExceptionUsed: false },
       }).catch((err: unknown) => {
         console.error("[Audit Failure Guard]:", err);
       });

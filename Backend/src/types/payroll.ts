@@ -309,7 +309,7 @@ export type LeaveRequest = {
   cancelledAt: Date | null;
   /** Mandatory reason supplied when approved leave is cancelled. */
   cancellationReason: string | null;
-  /** Durable evidence that the sole-owner self-review exception was used. */
+  /** Historical evidence that the retired sole-owner self-review exception was used. */
   cancellationSelfReviewExceptionUsed: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -355,7 +355,6 @@ export type ReviewLeaveCancellationRequestInput = {
   expectedStaffUserId: string;
   reviewedByUserId: string;
   reviewNotes: string | null;
-  selfReviewExceptionUsed: boolean;
 };
 
 export type ApproveLeaveCancellationResult = {
@@ -509,7 +508,6 @@ export type CancelApprovedLeaveInput = {
   expectedStaffUserId: string;
   cancelledByUserId: string;
   cancellationReason: string;
-  selfReviewExceptionUsed?: boolean;
 };
 
 // ── List / filter options ─────────────────────────────────────────────────────

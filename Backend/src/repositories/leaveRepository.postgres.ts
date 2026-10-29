@@ -47,7 +47,6 @@ import type {
   UpdateLeaveStatusInput,
 } from "../types/payroll.js";
 import type { DatabasePool } from "../db/pool.js";
-import type { PoolClient } from "pg";
 import { AUTH_BYPASS_CLINIC_ID, withTenantContext } from "../db/tenantContext.js";
 import type { LeaveRepository } from "./leaveRepository.js";
 
@@ -155,71 +154,6 @@ function toCancellationRequest(row: LeaveCancellationRequestRow): LeaveCancellat
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-async function assertSoleOwnerAdminReviewException(
-  client: PoolClient,
-  clinicId: string,
-  actorId: string,
-  exceptionUsed: boolean,
-): Promise<void> {
-  if (!exceptionUsed) return;
-  const { rows } = await client.query<{ allowed: boolean }>(
-    `WITH target_organisation AS (
-       SELECT organisation_id
-         FROM clinics
-        WHERE id = $1
-          AND organisation_id IS NOT NULL
-     )
-     SELECT
-       EXISTS (
-         SELECT 1
-           FROM users actor
-           JOIN clinics actor_clinic ON actor_clinic.id = actor.home_clinic_id
-           JOIN target_organisation target
-             ON target.organisation_id = actor_clinic.organisation_id
-          WHERE actor.id = $2
-            AND actor.is_active = true
-            AND actor.role = 'owner_admin'
-       )
-       AND NOT EXISTS (
-         SELECT 1
-           FROM users u
-           CROSS JOIN target_organisation target
-          WHERE u.id <> $2
-            AND u.is_active = true
-            AND (
-              (
-                u.role = 'owner_admin'
-                AND EXISTS (
-                  SELECT 1
-                    FROM clinics owner_clinic
-                   WHERE owner_clinic.id = u.home_clinic_id
-                     AND owner_clinic.organisation_id = target.organisation_id
-                )
-              )
-              OR (
-                u.role = 'group_practice_manager'
-                AND u.home_clinic_id = $1
-                AND EXISTS (
-                  SELECT 1 FROM user_permission_grants g
-                   WHERE g.user_id = u.id
-                     AND g.clinic_id = $1
-                     AND g.revoked_at IS NULL
-                     AND g.permission = 'module:leave'
-                )
-              )
-            )
-       ) AS allowed`,
-    [clinicId, actorId],
-  );
-  if (!(rows[0]?.allowed ?? false)) {
-    throw new AppError(
-      403,
-      "SELF_REVIEW_FORBIDDEN",
-      "You cannot review your own cancellation request",
-    );
-  }
 }
 
 function toRosterConflict(row: RosterConflictRow): LeaveRosterConflict {
@@ -582,6 +516,13 @@ export function createPostgresLeaveRepository(
             `Leave request is '${request.status}' and cannot be cancelled`,
           );
         }
+        if (input.cancelledByUserId === request.staff_user_id) {
+          throw new AppError(
+            403,
+            "SELF_REVIEW_FORBIDDEN",
+            "You cannot review your own cancellation request",
+          );
+        }
 
         const pending = await client.query(
           `SELECT id FROM leave_cancellation_requests
@@ -597,24 +538,17 @@ export function createPostgresLeaveRepository(
           );
         }
 
-        await assertSoleOwnerAdminReviewException(
-          client,
-          input.clinicId,
-          input.cancelledByUserId,
-          input.selfReviewExceptionUsed ?? false,
-        );
-
         const updated = await client.query<LeaveRequestRow>(
           `UPDATE leave_requests
               SET status = 'cancelled',
                   cancelled_by_user_id = $2,
                   cancelled_at = now(),
                   cancellation_reason = $3,
-                  cancellation_self_review_exception_used = $4,
+                  cancellation_self_review_exception_used = false,
                   updated_at = now()
             WHERE id = $1 AND status = 'approved'
             RETURNING *`,
-          [input.leaveId, input.cancelledByUserId, input.cancellationReason, input.selfReviewExceptionUsed ?? false],
+          [input.leaveId, input.cancelledByUserId, input.cancellationReason],
         );
         const leave = updated.rows[0];
         if (!leave) {
@@ -740,23 +674,28 @@ export function createPostgresLeaveRepository(
         if (parent.rows[0].status !== "approved" || child.rows[0].status !== "pending") {
           throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
         }
-        await assertSoleOwnerAdminReviewException(
-          client,
-          input.clinicId,
-          input.reviewedByUserId,
-          input.selfReviewExceptionUsed,
-        );
+        if (
+          input.reviewedByUserId === parent.rows[0].staff_user_id ||
+          input.reviewedByUserId === child.rows[0].staff_user_id ||
+          input.reviewedByUserId === child.rows[0].requested_by_user_id
+        ) {
+          throw new AppError(
+            403,
+            "SELF_REVIEW_FORBIDDEN",
+            "You cannot review your own cancellation request",
+          );
+        }
         const updatedChild = await client.query<LeaveCancellationRequestRow>(
           `UPDATE leave_cancellation_requests SET status = 'approved', reviewed_by_user_id = $2, reviewed_at = now(),
-             review_notes = $3, self_review_exception_used = $4, updated_at = now()
+             review_notes = $3, self_review_exception_used = false, updated_at = now()
            WHERE id = $1 AND status = 'pending' RETURNING *`,
-          [input.requestId, input.reviewedByUserId, input.reviewNotes, input.selfReviewExceptionUsed],
+          [input.requestId, input.reviewedByUserId, input.reviewNotes],
         );
         const updatedParent = await client.query<LeaveRequestRow>(
           `UPDATE leave_requests SET status = 'cancelled', cancelled_by_user_id = $2, cancelled_at = now(),
-             cancellation_reason = $3, cancellation_self_review_exception_used = $4, updated_at = now()
+             cancellation_reason = $3, cancellation_self_review_exception_used = false, updated_at = now()
            WHERE id = $1 AND status = 'approved' RETURNING *`,
-          [input.leaveId, input.reviewedByUserId, child.rows[0].request_reason, input.selfReviewExceptionUsed],
+          [input.leaveId, input.reviewedByUserId, child.rows[0].request_reason],
         );
         if (!updatedChild.rows[0] || !updatedParent.rows[0]) throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
         await client.query("COMMIT");
@@ -788,17 +727,22 @@ export function createPostgresLeaveRepository(
         if (parent.rows[0].status !== "approved" || child.rows[0].status !== "pending") {
           throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
         }
-        await assertSoleOwnerAdminReviewException(
-          client,
-          input.clinicId,
-          input.reviewedByUserId,
-          input.selfReviewExceptionUsed,
-        );
+        if (
+          input.reviewedByUserId === parent.rows[0].staff_user_id ||
+          input.reviewedByUserId === child.rows[0].staff_user_id ||
+          input.reviewedByUserId === child.rows[0].requested_by_user_id
+        ) {
+          throw new AppError(
+            403,
+            "SELF_REVIEW_FORBIDDEN",
+            "You cannot review your own cancellation request",
+          );
+        }
         const updated = await client.query<LeaveCancellationRequestRow>(
           `UPDATE leave_cancellation_requests SET status = 'declined', reviewed_by_user_id = $2, reviewed_at = now(),
-             review_notes = $3, self_review_exception_used = $4, updated_at = now()
+             review_notes = $3, self_review_exception_used = false, updated_at = now()
            WHERE id = $1 AND status = 'pending' RETURNING *`,
-          [input.requestId, input.reviewedByUserId, input.reviewNotes, input.selfReviewExceptionUsed],
+          [input.requestId, input.reviewedByUserId, input.reviewNotes],
         );
         if (!updated.rows[0]) throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
         await client.query("COMMIT");

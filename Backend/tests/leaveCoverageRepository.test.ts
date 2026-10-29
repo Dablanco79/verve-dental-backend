@@ -6,7 +6,6 @@ import {
   SEED_CLINIC_B_ID,
   SEED_USER_IDS,
 } from "../src/repositories/userRepository.js";
-import type { UserRepository } from "../src/repositories/userRepository.js";
 import { createLeaveService } from "../src/services/leaveService.js";
 import type { AuthenticatedUser } from "../src/types/auth.js";
 
@@ -109,7 +108,6 @@ describe("leave coverage warnings", () => {
     );
     const service = createLeaveService(
       leave,
-      {} as UserRepository,
       undefined,
       coverage,
       assignments,
