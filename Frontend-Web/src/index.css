@@ -1192,6 +1192,342 @@ body {
   }
 }
 
+/* ── RENQOR login ───────────────────────────────────────────────────────────
+   Page-scoped so the operational application and shared form controls retain
+   the existing Verve design-system behaviour. */
+
+.renqor-login {
+  --renqor-midnight: #0b1026;
+  --renqor-deep-navy: #141b35;
+  --renqor-purple: #7957e8;
+  --renqor-blue: #3978f6;
+  --renqor-cyan: #35d5ed;
+  display: grid;
+  grid-template-columns: minmax(25rem, 0.92fr) minmax(30rem, 1.08fr);
+  min-height: 100vh;
+  padding: clamp(1.4rem, 2.6vw, 2.4rem);
+  background:
+    radial-gradient(circle at 20% 42%, rgba(57, 120, 246, 0.14), transparent 31rem),
+    radial-gradient(circle at 6% 95%, rgba(121, 87, 232, 0.1), transparent 26rem),
+    var(--renqor-midnight);
+  color: #f5f7fc;
+}
+
+.renqor-login__content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  max-width: 38rem;
+  padding: clamp(2rem, 6vw, 5.5rem);
+}
+
+.renqor-login__brand {
+  width: min(100%, 20.5rem);
+  margin-bottom: clamp(3rem, 7vh, 5rem);
+}
+
+.renqor-login__wordmark {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.renqor-login__brand p {
+  margin: 0.6rem 0 0;
+  color: #9ba8ca;
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
+}
+
+.renqor-login__stage {
+  width: 100%;
+  max-width: 27.5rem;
+}
+
+.renqor-login__content--flow {
+  max-width: 44rem;
+}
+
+.renqor-login__content--flow .renqor-login__stage {
+  max-width: 34rem;
+}
+
+.renqor-login__form-panel {
+  width: 100%;
+}
+
+.renqor-login__intro {
+  margin-bottom: 2rem;
+}
+
+.renqor-login__intro h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(2rem, 3.5vw, 2.65rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.renqor-login__intro p {
+  max-width: 25rem;
+  margin: 0.8rem 0 0;
+  color: #aab5d3;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.renqor-login__notice {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(53, 213, 237, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(53, 213, 237, 0.1);
+  color: #c7f8ff;
+  font-size: 0.88rem;
+}
+
+.renqor-login__form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.renqor-login__form label {
+  margin-top: 0.55rem;
+  color: #f5f7fc;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.renqor-login__input-wrap {
+  display: flex;
+  align-items: center;
+  min-height: 3.25rem;
+  padding: 0 0.9rem;
+  border: 1px solid rgba(155, 168, 202, 0.3);
+  border-radius: 0.72rem;
+  background: rgba(8, 15, 37, 0.58);
+  color: #8290b4;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.renqor-login__input-wrap:focus-within {
+  border-color: var(--renqor-blue);
+  background: rgba(10, 18, 45, 0.85);
+  box-shadow: 0 0 0 4px rgba(57, 120, 246, 0.2);
+}
+
+.renqor-login__input-wrap input {
+  width: 100%;
+  min-width: 0;
+  min-height: 3.15rem;
+  padding: 0 0 0 0.75rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.renqor-login__input-wrap input::placeholder {
+  color: #7885a8;
+  opacity: 1;
+}
+
+.renqor-login__submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-height: 3.25rem;
+  margin-top: 1.2rem;
+  padding: 0.75rem 1.2rem;
+  border: 0;
+  border-radius: 0.9rem;
+  background: linear-gradient(115deg, var(--renqor-purple), #4759fa 48%, #1539f4);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 15px 35px rgba(42, 67, 245, 0.28);
+  transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+}
+
+.renqor-login__submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 40px rgba(42, 67, 245, 0.38);
+}
+
+.renqor-login__submit:focus-visible {
+  outline: 3px solid var(--renqor-cyan);
+  outline-offset: 3px;
+}
+
+.renqor-login__submit:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.renqor-login__error {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 141, 155, 0.38);
+  border-radius: 0.75rem;
+  background: rgba(180, 35, 24, 0.16);
+  color: #ffbdc5;
+  font-size: 0.88rem;
+}
+
+.renqor-login__footer {
+  margin: clamp(2.5rem, 7vh, 5rem) 0 0;
+  color: #7480a1;
+  font-size: 0.78rem;
+}
+
+.renqor-login__visual {
+  position: relative;
+  height: calc(100vh - clamp(2.8rem, 5.2vw, 4.8rem));
+  min-height: 30rem;
+  overflow: hidden;
+  border: 1px solid rgba(57, 120, 246, 0.42);
+  border-radius: clamp(1.5rem, 2.6vw, 2.2rem);
+  background: var(--renqor-deep-navy);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+}
+
+.renqor-login__visual::after {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, transparent 58%, rgba(6, 11, 31, 0.82) 100%),
+    linear-gradient(90deg, rgba(11, 16, 38, 0.12), transparent 40%);
+  content: "";
+  pointer-events: none;
+}
+
+.renqor-login__artwork {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+}
+
+.renqor-login__visual-caption {
+  position: absolute;
+  z-index: 1;
+  right: clamp(1.5rem, 3vw, 2.5rem);
+  bottom: clamp(1.5rem, 4vw, 3rem);
+  left: clamp(1.5rem, 3vw, 2.5rem);
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+  color: #ffffff;
+}
+
+.renqor-login__visual-caption .renqor-login__visual-wordmark {
+  width: clamp(10rem, 20vw, 14rem);
+  height: auto;
+}
+
+.renqor-login__visual-caption span {
+  max-width: 22rem;
+  color: #bdc7e2;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.renqor-login .auth-card {
+  margin: 0;
+  color: var(--vds-colour-body);
+}
+
+.renqor-login .auth-card h2 {
+  margin-top: 0;
+}
+
+@media (min-width: 741px) {
+  .renqor-login__content {
+    justify-content: flex-start;
+    padding-top: clamp(4rem, 10vh, 7rem);
+  }
+
+  .renqor-login__footer {
+    margin-top: auto;
+    padding-top: 2rem;
+  }
+}
+
+@media (max-width: 960px) {
+  .renqor-login {
+    grid-template-columns: minmax(22rem, 1fr) minmax(21rem, 0.8fr);
+  }
+
+  .renqor-login__content {
+    padding: clamp(2rem, 5vw, 3.5rem);
+  }
+
+}
+
+@media (max-width: 740px) {
+  .renqor-login {
+    display: block;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  .renqor-login__content,
+  .renqor-login__content--flow {
+    min-height: 100vh;
+    max-width: none;
+    padding: clamp(1.5rem, 7vw, 3rem);
+  }
+
+  .renqor-login__brand {
+    width: min(14rem, 72vw);
+    margin-bottom: clamp(2.5rem, 8vh, 4rem);
+  }
+
+  .renqor-login__brand p {
+    font-size: 0.82rem;
+  }
+
+  .renqor-login__stage,
+  .renqor-login__content--flow .renqor-login__stage {
+    max-width: 30rem;
+  }
+
+  .renqor-login__visual {
+    display: none;
+  }
+
+  .renqor-login__footer {
+    margin-top: auto;
+    padding-top: 2.5rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .renqor-login__content,
+  .renqor-login__content--flow {
+    padding: 1.25rem;
+  }
+
+  .renqor-login__intro h1 {
+    font-size: 1.85rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .renqor-login__input-wrap,
+  .renqor-login__submit {
+    transition: none;
+  }
+}
+
 /* Account page */
 
 .account-details {
