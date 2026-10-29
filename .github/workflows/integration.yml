@@ -46,6 +46,10 @@ jobs:
     env:
       # ── Shared integration test database (migrated + seeded by test:db:setup) ──
       DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test
+      # ── Isolated clones for suites that mutate schema ownership or require
+      #     an explicit PostgreSQL security-test database ───────────────────────
+      WORKFLOW_RLS_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_workflow_rls
+      TEST_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_leave_security
       # ── Fresh empty database for clean-slate migration gate ───────────────────
       # freshDbMigration.integration.test.ts uses this URL to prove the full
       # migration chain applies to a brand-new database from scratch.
@@ -95,12 +99,18 @@ jobs:
       # verve_test).  It stays blank until freshDbMigration.integration.test.ts
       # runs and applies all migrations from scratch, proving the full chain is
       # idempotent and correct on a brand-new database.
-      - name: Create fresh migration gate database (verve_test_fresh)
+      - name: Create isolated integration databases
         run: |
           PGPASSWORD=verve_test psql -h localhost -U verve -d verve_test \
             -c "CREATE DATABASE verve_test_fresh OWNER verve;"
           PGPASSWORD=verve_test psql -h localhost -U verve -d verve_test \
             -c "CREATE DATABASE verve_test_bootstrap_concurrency OWNER verve;"
+          PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE verve_test_workflow_rls WITH TEMPLATE verve_test OWNER verve;"
+          PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE verve_test_leave_security WITH TEMPLATE verve_test OWNER verve;"
 
       - name: Start disposable TLS-enabled PostgreSQL
         shell: bash
@@ -191,7 +201,14 @@ jobs:
         run: npm test --workspace=@verve/backend -- --testPathPattern=bootstrapConcurrency --runInBand --forceExit
 
       - name: "P0 — Workflow table-owner FORCE-RLS behavioural gate"
-        run: npm run test:workflowrls-integration --workspace=@verve/backend
+        run: |
+          node -e "const u=new URL(process.env.WORKFLOW_RLS_DATABASE_URL||'');if(!['localhost','127.0.0.1'].includes(u.hostname)||u.pathname!='/verve_test_workflow_rls'){throw new Error('WORKFLOW_RLS_DATABASE_URL must target the isolated local CI database')}"
+          npm run test:workflowrls-integration --workspace=@verve/backend
+
+      - name: "P0 — Leave cancellation independent-review PostgreSQL security gate (5 real tests)"
+        run: |
+          node -e "const u=new URL(process.env.TEST_DATABASE_URL||'');if(!['localhost','127.0.0.1'].includes(u.hostname)||u.pathname!='/verve_test_leave_security'){throw new Error('TEST_DATABASE_URL must target the isolated local CI database')}"
+          npm test --workspace=@verve/backend -- --runInBand --forceExit --verbose --testPathPattern=soleOwnerLeaveReview.postgres.integration
 
       - name: "P0 — PostgreSQL certificate and hostname verification gate"
         run: npm run test:database-tls-integration --workspace=@verve/backend
