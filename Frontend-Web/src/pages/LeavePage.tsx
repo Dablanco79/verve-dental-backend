@@ -177,7 +177,7 @@ function PendingLeaveQueue({
             <th className="pr-table__th">Type</th>
             <th className="pr-table__th">From</th>
             <th className="pr-table__th">To</th>
-            <th className="pr-table__th">Days</th>
+            <th className="pr-table__th">Calendar days</th>
             <th className="pr-table__th">Reason</th>
             <th className="pr-table__th" />
           </tr>
@@ -531,7 +531,7 @@ function AllLeaveTable({
             <th className="pr-table__th">Type</th>
             <th className="pr-table__th">From</th>
             <th className="pr-table__th">To</th>
-            <th className="pr-table__th">Days</th>
+            <th className="pr-table__th">Calendar days</th>
             <th className="pr-table__th">Status</th>
             <th className="pr-table__th">Decision Details</th>
             <th className="pr-table__th">Roster / Actions</th>
@@ -826,12 +826,13 @@ function RequestLeaveForm({ onSubmit, onPreviewCoverage }: RequestLeaveFormProps
       </div>
 
       <div className="lv-request-form__field">
-        <span className="lv-request-form__label">Whole Days</span>
+        <span className="lv-request-form__label">Calendar days unavailable</span>
         <output className="lv-request-form__control">
           {startDate && endDate ? inclusiveDayCount(startDate, endDate) : "—"}
         </output>
         <span className="lv-request-form__hint">
-          Every calendar date from start through end is unavailable.
+          This is the full absence period, including weekends. Payable leave hours are calculated
+          separately from your ordinary working hours and applicable public holidays.
         </span>
       </div>
 
@@ -975,7 +976,7 @@ function MyLeaveTable({
               <th className="pr-table__th">Type</th>
               <th className="pr-table__th">From</th>
               <th className="pr-table__th">To</th>
-              <th className="pr-table__th">Days</th>
+              <th className="pr-table__th">Calendar days</th>
               <th className="pr-table__th">Status</th>
               <th className="pr-table__th">Decision Details</th>
               <th className="pr-table__th" />

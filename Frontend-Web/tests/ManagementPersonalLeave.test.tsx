@@ -122,6 +122,12 @@ describe("WF08 management personal leave UI", () => {
     expect(screen.getByRole("heading", { name: "Manage Leave" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Request Leave" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^Pending Approval/ })).toBeInTheDocument();
+    expect(screen.getByText("Calendar days unavailable")).toBeInTheDocument();
+    expect(screen.getByText(
+      "This is the full absence period, including weekends. Payable leave hours are calculated separately from your ordinary working hours and applicable public holidays.",
+    )).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader", { name: "Calendar days" })).toHaveLength(3);
+    expect(screen.queryByRole("columnheader", { name: "Days" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(1);
   });
 

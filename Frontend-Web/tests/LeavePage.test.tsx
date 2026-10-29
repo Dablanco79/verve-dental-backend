@@ -160,6 +160,10 @@ describe("LeavePage pilot safety", () => {
       target: { value: "2026-10-14" },
     });
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    expect(screen.getByText("Calendar days unavailable")).toBeInTheDocument();
+    expect(screen.getByText(
+      "This is the full absence period, including weekends. Payable leave hours are calculated separately from your ordinary working hours and applicable public holidays.",
+    )).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Submit Request" }));
 
