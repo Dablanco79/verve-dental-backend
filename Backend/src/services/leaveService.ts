@@ -49,6 +49,19 @@ function assertOwnership(caller: AuthenticatedUser, request: LeaveRequest): void
   throw new AppError(403, "FORBIDDEN", "You can only manage your own leave requests");
 }
 
+/** Personal leave is always recorded and read against the user's authoritative home clinic. */
+function assertPersonalHomeClinic(
+  caller: AuthenticatedUser,
+  clinicId: string,
+): void {
+  if (caller.homeClinicId === clinicId) return;
+  throw new AppError(
+    403,
+    "TENANT_ACCESS_DENIED",
+    "Personal leave is only available for your home clinic",
+  );
+}
+
 /**
  * Original leave decisions require a reviewer other than the employee whose
  * leave is being reviewed. The sole Owner/Admin exception is intentionally
@@ -126,9 +139,8 @@ export function createLeaveService(
 
   return {
     /**
-     * Staff member submits a leave request for their home clinic.
-     * Only the requesting staff member can create for themselves.
-     * Managers/admins may create on behalf of staff (e.g. retrospective sick leave).
+     * Any authenticated employee submits leave for themselves at their home clinic.
+     * Employee identity is always derived from the authoritative caller context.
      */
     async createLeaveRequest(
       caller: AuthenticatedUser,
@@ -138,10 +150,7 @@ export function createLeaveService(
         "staffUserId" | "staffEmail" | "clinicId" | "totalDays"
       >,
     ): Promise<LeaveRequest> {
-      // clinical_staff may only submit for their own home clinic.
-      if (caller.role === "clinical_staff" && caller.homeClinicId !== clinicId) {
-        throw new AppError(403, "FORBIDDEN", "You can only submit leave for your home clinic");
-      }
+      assertPersonalHomeClinic(caller, clinicId);
 
       let totalDays: number;
       try {
@@ -369,6 +378,7 @@ export function createLeaveService(
       leaveId: string,
       requestReason: string,
     ): Promise<LeaveCancellationRequest> {
+      assertPersonalHomeClinic(caller, clinicId);
       const reason = requestReason.trim();
       if (!reason) {
         throw new AppError(400, "CANCELLATION_REASON_REQUIRED", "A cancellation reason is required");
@@ -410,11 +420,20 @@ export function createLeaveService(
       options?: ListLeaveCancellationRequestOptions,
     ): Promise<LeaveCancellationRequest[]> {
       if (caller.role === "clinical_staff") {
-        if (caller.homeClinicId !== clinicId) throw new AppError(403, "FORBIDDEN", "Clinic access denied");
-        return leaveRepository.listCancellationRequestsByStaff(caller.id, options);
+        assertPersonalHomeClinic(caller, clinicId);
+        return leaveRepository.listCancellationRequestsByStaff(caller.id, clinicId, options);
       }
       await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listCancellationRequestsByClinic(clinicId, options);
+    },
+
+    async listMyCancellationRequests(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListLeaveCancellationRequestOptions,
+    ): Promise<LeaveCancellationRequest[]> {
+      assertPersonalHomeClinic(caller, clinicId);
+      return leaveRepository.listCancellationRequestsByStaff(caller.id, clinicId, options);
     },
 
     async approveCancellationRequest(
@@ -501,6 +520,7 @@ export function createLeaveService(
       clinicId: string,
       leaveId: string,
     ): Promise<LeaveRequest> {
+      assertPersonalHomeClinic(caller, clinicId);
       const request = await leaveRepository.findById(leaveId);
 
       if (!request || request.clinicId !== clinicId) {
@@ -531,12 +551,12 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
-      // clinical_staff can only see their own leave.
-      if (caller.role === "clinical_staff" && caller.id !== staffUserId) {
+      assertPersonalHomeClinic(caller, clinicId);
+      if (caller.id !== staffUserId) {
         throw new AppError(403, "FORBIDDEN", "You can only view your own leave requests");
       }
 
-      return leaveRepository.listByStaff(staffUserId, options);
+      return leaveRepository.listByStaff(staffUserId, clinicId, options);
     },
 
     /** Returns all leave requests for a clinic (manager view). */

@@ -452,11 +452,13 @@ function PendingCancellationQueue({
 function AllLeaveTable({
   entries,
   cancellationRequests,
+  currentUserId,
   onReviewConflicts,
   onCancelApprovedLeave,
 }: {
   entries: LeaveRequest[];
   cancellationRequests: LeaveCancellationRequest[];
+  currentUserId: string;
   onReviewConflicts: (leaveId: string) => Promise<LeaveRosterConflict[]>;
   onCancelApprovedLeave: (leaveId: string, cancellationReason: string) => Promise<LeaveRequest>;
 }) {
@@ -559,7 +561,7 @@ function AllLeaveTable({
                   : req.reviewNotes ?? "—"}
               </td>
               <td className="pr-table__td">
-                {req.status === "approved" ? (
+                {req.status === "approved" && req.staffUserId !== currentUserId ? (
                   <>
                     <button
                       type="button"
@@ -608,7 +610,7 @@ function AllLeaveTable({
                       </button>
                     )}
                   </>
-                ) : "—"}
+                ) : req.staffUserId === currentUserId ? "View in My Leave" : "—"}
               </td>
             </tr>
             {cancellingId === req.id ? (
@@ -1086,6 +1088,9 @@ function MyLeaveTable({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export function LeavePage() {
   const { user } = useAuth();
   const { clinicId, clinicName, isAllClinicsScope } = useOperationalClinic();
@@ -1096,50 +1101,69 @@ export function LeavePage() {
   }));
 
   const isManager = user ? canManagePayroll(user.role) : false;
+  const homeClinicId =
+    user?.homeClinicId && UUID_PATTERN.test(user.homeClinicId)
+      ? user.homeClinicId
+      : undefined;
 
-  const {
-    requests,
-    cancellationRequests,
-    isLoading,
-    error,
-    refetch,
-    submitRequest,
-    approveLeave,
-    previewCoverageWarning,
-    fetchManagerCoverageWarning,
-    listRosterConflicts,
-    rejectLeave,
-    cancelApprovedLeave,
-    withdrawLeave,
-    requestCancellation,
-    approveCancellationRequest,
-    declineCancellationRequest,
-  } = useLeave(clinicId, user?.role, filters);
+  const personalLeave = useLeave(homeClinicId, user?.role, filters, "personal");
+  const managedLeave = useLeave(
+    isManager ? clinicId : undefined,
+    user?.role,
+    filters,
+    "manage",
+  );
 
   if (!user) return null;
 
-  if (isAllClinicsScope && isManager) {
-    return (
-      <AppShell>
-        <section className="status-card inventory-receiving-callout" role="status">
-          <h2>Select a clinic to view leave</h2>
-          <p>
-            Leave management is clinic-specific. Choose a clinic from the clinic selector to
-            review and approve leave requests.
-          </p>
-        </section>
-      </AppShell>
-    );
-  }
-
-  const pendingRequests = requests.filter((r) => r.status === "pending");
-  const pendingCancellationRequests = cancellationRequests.filter(
-    (request) => request.status === "pending",
+  const pendingRequests = managedLeave.requests.filter(
+    (request) => request.status === "pending" && request.staffUserId !== user.id,
+  );
+  const pendingCancellationRequests = managedLeave.cancellationRequests.filter(
+    (request) => request.status === "pending" && request.staffUserId !== user.id,
   );
 
   const subtitleText = isManager
-    ? `${String(pendingRequests.length)} pending approval`
+    ? isAllClinicsScope
+      ? `personal leave at ${user.homeClinicName} · select a clinic to manage leave`
+      : `${String(pendingRequests.length)} pending approval`
     : "your leave requests and history";
+  const refresh = (): void => {
+    personalLeave.refetch();
+    if (isManager && !isAllClinicsScope) managedLeave.refetch();
+  };
+  const isRefreshing =
+    personalLeave.isLoading || (isManager && managedLeave.isLoading);
+
+  const personalContent = !homeClinicId ? (
+    <p className="status-card__error" role="alert">
+      Personal leave is unavailable because your home clinic assignment is missing or invalid.
+    </p>
+  ) : personalLeave.error ? (
+    <p className="status-card__error" role="alert">{personalLeave.error}</p>
+  ) : personalLeave.isLoading ? (
+    <p className="loading-message">Loading your leave requests…</p>
+  ) : (
+    <>
+      <div className="pr-section">
+        <h3 className="pr-section__title">Request Leave</h3>
+        <RequestLeaveForm
+          onSubmit={personalLeave.submitRequest}
+          onPreviewCoverage={personalLeave.previewCoverageWarning}
+        />
+      </div>
+      <div className="pr-section">
+        <h3 className="pr-section__title">My Requests (Last 90 Days)</h3>
+        <MyLeaveTable
+          entries={personalLeave.requests}
+          cancellationRequests={personalLeave.cancellationRequests}
+          onWithdraw={personalLeave.withdrawLeave}
+          onRequestCancellation={async (leaveId, requestReason) =>
+            personalLeave.requestCancellation(leaveId, { requestReason })}
+        />
+      </div>
+    </>
+  );
 
   return (
     <AppShell>
@@ -1155,99 +1179,92 @@ export function LeavePage() {
             <button
               type="button"
               className="button-link"
-              onClick={refetch}
-              disabled={isLoading}
+              onClick={refresh}
+              disabled={isRefreshing}
             >
-              {isLoading ? "Loading…" : "Refresh"}
+              {isRefreshing ? "Loading…" : "Refresh"}
             </button>
           </div>
         </div>
 
-        {error ? (
-          <p className="status-card__error" role="alert">
-            {error}
-          </p>
-        ) : isLoading ? (
-          <p className="loading-message">Loading leave requests…</p>
-        ) : isManager ? (
+        {isManager ? (
           <>
-            {/* ── Manager: Pending approval queue ── */}
             <div className="pr-section">
-              <h3 className="pr-section__title">
-                Pending Approval
-                {pendingRequests.length > 0 ? (
-                  <span className="pr-section__count pr-section__count--warn">
-                    {pendingRequests.length}
-                  </span>
-                ) : null}
-              </h3>
-              <PendingLeaveQueue
-                entries={pendingRequests}
-                clinicName={clinicName ?? user.homeClinicName}
-                onFetchCoverageWarning={fetchManagerCoverageWarning}
-                onApprove={async (id) => {
-                  return approveLeave(id, {});
-                }}
-                onReject={async (id, notes) => {
-                  await rejectLeave(id, { reviewNotes: notes });
-                }}
-              />
+              <h3 className="pr-section__title">My Leave</h3>
+              <p className="inventory-page__subtitle">{user.homeClinicName}</p>
             </div>
+            {personalContent}
 
             <div className="pr-section">
-              <h3 className="pr-section__title">
-                Pending Cancellation Requests
-                {pendingCancellationRequests.length > 0 ? (
-                  <span className="pr-section__count pr-section__count--warn">
-                    {pendingCancellationRequests.length}
-                  </span>
-                ) : null}
-              </h3>
-              <PendingCancellationQueue
-                entries={pendingCancellationRequests}
-                leaveRequests={requests}
-                onApprove={async (request) => approveCancellationRequest(request, {})}
-                onDecline={async (request, notes) =>
-                  declineCancellationRequest(request, { reviewNotes: notes })}
-              />
+              <h3 className="pr-section__title">Manage Leave</h3>
             </div>
-
-            {/* ── Manager: All requests (last 90 days) ── */}
-            <div className="pr-section">
-              <h3 className="pr-section__title">All Requests (Last 90 Days)</h3>
-              <AllLeaveTable
-                entries={requests}
-                cancellationRequests={cancellationRequests}
-                onReviewConflicts={listRosterConflicts}
-                onCancelApprovedLeave={async (id, cancellationReason) => {
-                  return cancelApprovedLeave(id, { cancellationReason });
-                }}
-              />
-            </div>
+            {isAllClinicsScope ? (
+              <section className="inventory-receiving-callout" role="status">
+                <h3>Select a clinic to manage leave</h3>
+                <p>
+                  Leave management is clinic-specific. Your personal leave remains available
+                  above for {user.homeClinicName}.
+                </p>
+              </section>
+            ) : managedLeave.error ? (
+              <p className="status-card__error" role="alert">{managedLeave.error}</p>
+            ) : managedLeave.isLoading ? (
+              <p className="loading-message">Loading managed leave requests…</p>
+            ) : (
+              <>
+                <div className="pr-section">
+                  <h3 className="pr-section__title">
+                    Pending Approval
+                    {pendingRequests.length > 0 ? (
+                      <span className="pr-section__count pr-section__count--warn">
+                        {pendingRequests.length}
+                      </span>
+                    ) : null}
+                  </h3>
+                  <PendingLeaveQueue
+                    entries={pendingRequests}
+                    clinicName={clinicName ?? user.homeClinicName}
+                    onFetchCoverageWarning={managedLeave.fetchManagerCoverageWarning}
+                    onApprove={async (id) => managedLeave.approveLeave(id, {})}
+                    onReject={async (id, notes) => {
+                      await managedLeave.rejectLeave(id, { reviewNotes: notes });
+                    }}
+                  />
+                </div>
+                <div className="pr-section">
+                  <h3 className="pr-section__title">
+                    Pending Cancellation Requests
+                    {pendingCancellationRequests.length > 0 ? (
+                      <span className="pr-section__count pr-section__count--warn">
+                        {pendingCancellationRequests.length}
+                      </span>
+                    ) : null}
+                  </h3>
+                  <PendingCancellationQueue
+                    entries={pendingCancellationRequests}
+                    leaveRequests={managedLeave.requests}
+                    onApprove={async (request) =>
+                      managedLeave.approveCancellationRequest(request, {})}
+                    onDecline={async (request, notes) =>
+                      managedLeave.declineCancellationRequest(request, { reviewNotes: notes })}
+                  />
+                </div>
+                <div className="pr-section">
+                  <h3 className="pr-section__title">All Requests (Last 90 Days)</h3>
+                  <AllLeaveTable
+                    entries={managedLeave.requests}
+                    cancellationRequests={managedLeave.cancellationRequests}
+                    currentUserId={user.id}
+                    onReviewConflicts={managedLeave.listRosterConflicts}
+                    onCancelApprovedLeave={async (id, cancellationReason) =>
+                      managedLeave.cancelApprovedLeave(id, { cancellationReason })}
+                  />
+                </div>
+              </>
+            )}
           </>
         ) : (
-          <>
-            {/* ── Staff: Leave request form ── */}
-            <div className="pr-section">
-              <h3 className="pr-section__title">Request Leave</h3>
-              <RequestLeaveForm
-                onSubmit={submitRequest}
-                onPreviewCoverage={previewCoverageWarning}
-              />
-            </div>
-
-            {/* ── Staff: My leave history ── */}
-            <div className="pr-section">
-              <h3 className="pr-section__title">My Requests (Last 90 Days)</h3>
-              <MyLeaveTable
-                entries={requests}
-                cancellationRequests={cancellationRequests}
-                onWithdraw={withdrawLeave}
-                onRequestCancellation={async (leaveId, requestReason) =>
-                  requestCancellation(leaveId, { requestReason })}
-              />
-            </div>
-          </>
+          personalContent
         )}
       </section>
     </AppShell>

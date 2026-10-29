@@ -371,15 +371,38 @@ describe("PostgresLeaveRepository — listByClinic date overlap semantics", () =
     const { pool, query } = makeMockPool([]);
     const repo = createPostgresLeaveRepository(pool);
 
-    await repo.listByStaff(STAFF_USER_ID, {
+    await repo.listByStaff(STAFF_USER_ID, CLINIC_ID, {
       from: "2026-07-01",
       to: "2026-07-31",
     });
 
     const [sql, params] = lastCall(query);
-    expect(sql).toContain("end_date >= $2::date");
-    expect(sql).toContain("start_date <= $3::date");
-    expect(params[0]).toBe(STAFF_USER_ID);
+    expect(sql).toContain("clinic_id = $2");
+    expect(sql).toContain("end_date >= $3::date");
+    expect(sql).toContain("start_date <= $4::date");
+    expect(params).toEqual([
+      STAFF_USER_ID,
+      CLINIC_ID,
+      "2026-07-01",
+      "2026-07-31",
+    ]);
+  });
+
+  it("personal cancellation history filters by staff user and clinic", async () => {
+    const { pool, query } = makeMockPool([]);
+    const repo = createPostgresLeaveRepository(pool);
+
+    await repo.listCancellationRequestsByStaff(
+      STAFF_USER_ID,
+      CLINIC_ID,
+      { status: "pending" },
+    );
+
+    const [sql, params] = lastCall(query);
+    expect(sql).toContain("staff_user_id = $1");
+    expect(sql).toContain("clinic_id = $2");
+    expect(sql).toContain("status = $3");
+    expect(params).toEqual([STAFF_USER_ID, CLINIC_ID, "pending"]);
   });
 
   it("results are ordered by start_date DESC", async () => {

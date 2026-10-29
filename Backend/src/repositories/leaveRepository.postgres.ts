@@ -281,10 +281,14 @@ export function createPostgresLeaveRepository(
 
     async listByStaff(
       staffUserId: string,
+      clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
-      const params: unknown[] = [staffUserId];
-      const conditions: string[] = ["staff_user_id = $1"];
+      const params: unknown[] = [staffUserId, clinicId];
+      const conditions: string[] = [
+        "staff_user_id = $1",
+        "clinic_id = $2",
+      ];
 
       if (options?.status) {
         params.push(options.status);
@@ -677,12 +681,15 @@ export function createPostgresLeaveRepository(
       }
     },
 
-    async listCancellationRequestsByStaff(staffUserId, options) {
-      const params: unknown[] = [staffUserId];
-      const status = options?.status ? " AND status = $2" : "";
+    async listCancellationRequestsByStaff(staffUserId, clinicId, options) {
+      const params: unknown[] = [staffUserId, clinicId];
+      const status = options?.status ? " AND status = $3" : "";
       if (options?.status) params.push(options.status);
       const { rows } = await pool.query<LeaveCancellationRequestRow>(
-        `SELECT * FROM leave_cancellation_requests WHERE staff_user_id = $1${status} ORDER BY requested_at DESC`,
+        `SELECT * FROM leave_cancellation_requests
+          WHERE staff_user_id = $1
+            AND clinic_id = $2${status}
+          ORDER BY requested_at DESC`,
         params,
       );
       return rows.map(toCancellationRequest);

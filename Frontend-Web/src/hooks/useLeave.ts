@@ -23,6 +23,8 @@ import type { LeaveCoverageWarning } from "../types/leaveCoverage.js";
 
 const apiClient = createApiClient(loadConfig());
 
+export type LeaveView = "role-default" | "personal" | "manage";
+
 export type UseLeaveResult = {
   /**
    * Leave requests visible to the current user.
@@ -83,7 +85,7 @@ export type UseLeaveResult = {
 };
 
 /**
- * Loads leave requests for a clinic with **dual-view fetching** based on role:
+ * Loads either personal or clinic-management leave data.
  *
  *   - `owner_admin` / `group_practice_manager` — calls
  *     `GET /clinics/:clinicId/leave` (clinic-wide, all staff, filterable).
@@ -100,6 +102,7 @@ export function useLeave(
   clinicId: string | undefined,
   role: UserRole | undefined,
   filters: LeaveFilters = {},
+  view: LeaveView = "role-default",
 ): UseLeaveResult {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [cancellationRequests, setCancellationRequests] = useState<LeaveCancellationRequest[]>([]);
@@ -110,19 +113,29 @@ export function useLeave(
   const filtersKey = JSON.stringify(filters);
 
   const fetch = useCallback(() => {
-    if (!clinicId || !role) return;
+    if (!clinicId || !role) {
+      setRequests([]);
+      setCancellationRequests([]);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
 
-    // Dual-view dispatch: managers see all clinic requests; staff see their own.
-    const leaveRequest = canManagePayroll(role)
+    const manageView =
+      view === "manage" || (view === "role-default" && canManagePayroll(role));
+    const leaveRequest = manageView
       ? apiClient.listLeave(clinicId, filters)
       : apiClient.listMyLeave(clinicId, filters);
+    const cancellationRequest = manageView
+      ? apiClient.listLeaveCancellationRequests(clinicId)
+      : apiClient.listMyLeaveCancellationRequests(clinicId);
 
     void Promise.all([
       leaveRequest,
-      apiClient.listLeaveCancellationRequests(clinicId),
+      cancellationRequest,
     ])
       .then(([leaveResult, cancellationResult]) => {
         setRequests(leaveResult);
@@ -138,7 +151,7 @@ export function useLeave(
       });
     // filtersKey is the stable proxy for the filters object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clinicId, role, filtersKey]);
+  }, [clinicId, role, filtersKey, view]);
 
   useEffect(() => {
     fetch();

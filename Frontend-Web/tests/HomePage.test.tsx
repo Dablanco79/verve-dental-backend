@@ -528,6 +528,21 @@ describe("HomePage role dashboards", () => {
     expect(screen.queryByText("Pending OCR")).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["GPM", createManagerUser({ permissions: ["module:timesheets", "module:roster"] })],
+    ["clinical staff", createStaffUser({ permissions: ["module:timesheets", "module:roster"] })],
+  ])("hides Leave links and skips leave loading after %s grant revocation", async (_label, user) => {
+    authTestState.user = user;
+
+    renderHomePage();
+
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: /Leave/i })).not.toBeInTheDocument();
+    });
+    expect(mockListLeave).not.toHaveBeenCalled();
+    expect(mockListMyLeave).not.toHaveBeenCalled();
+  });
+
   it("keeps selected clinic context compatible with dashboard loading", async () => {
     authTestState.user = createManagerUser();
     selectedClinicState.selectedClinic = { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME };

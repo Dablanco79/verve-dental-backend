@@ -1957,6 +1957,21 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function listMyLeaveCancellationRequests(
+    clinicId: string,
+    filters: LeaveCancellationRequestFilters = {},
+  ): Promise<LeaveCancellationRequest[]> {
+    const query = new URLSearchParams();
+    if (filters.status) query.set("status", filters.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<LeaveCancellationRequest[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/cancellation-requests/me${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
   async function createLeaveCancellationRequest(
     clinicId: string,
     leaveId: string,
@@ -3092,6 +3107,7 @@ export function createApiClient(config: AppConfig) {
     cancelApprovedLeave,
     withdrawLeave,
     listLeaveCancellationRequests,
+    listMyLeaveCancellationRequests,
     createLeaveCancellationRequest,
     approveLeaveCancellationRequest,
     declineLeaveCancellationRequest,

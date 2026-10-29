@@ -116,6 +116,12 @@ export function createLeaveRouter(deps: AppDependencies): Router {
   );
 
   router.get(
+    "/cancellation-requests/me",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.listMyCancellationRequests(req, res)),
+  );
+
+  router.get(
     "/cancellation-requests",
     requireRoles(...PAYROLL_ALL_ROLES),
     asyncHandler((req, res) => handlers.listCancellationRequests(req, res)),

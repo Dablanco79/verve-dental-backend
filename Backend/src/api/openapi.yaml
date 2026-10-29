@@ -4431,9 +4431,9 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Returns leave requests for the currently authenticated user. Accessible
-        to all roles. Supports the same filters as GET /leave. Does NOT return
-        a pagination envelope — returns the array directly.
+        Returns leave requests for the currently authenticated user at their
+        authoritative home clinic. Accessible to all roles. Supports the same
+        filters as GET /leave. Does NOT return a pagination envelope.
       parameters:
         - $ref: "#/components/parameters/clinicId"
         - $ref: "#/components/parameters/fromDateParam"
@@ -4525,8 +4525,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Submits whole-day leave for the authenticated user. `totalDays` is
-        derived by the server from the inclusive start/end dates.
+        Submits whole-day leave for the authenticated user at their authoritative
+        home clinic. Employee identity and `totalDays` are derived by the server.
       parameters:
         - $ref: "#/components/parameters/clinicId"
       requestBody:
@@ -4708,6 +4708,34 @@ paths:
                   data:
                     type: array
                     items: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+
+  /api/v1/clinics/{clinicId}/leave/cancellation-requests/me:
+    get:
+      summary: List the authenticated user's own leave cancellation requests
+      operationId: listMyLeaveCancellationRequests
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Returns only cancellation requests belonging to the authenticated user
+        at their authoritative home clinic.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, declined] }
+      responses:
+        "200":
+          description: Self-scoped cancellation requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/clinics/{clinicId}/leave/{leaveId}/cancellation-requests:
     post:

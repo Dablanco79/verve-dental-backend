@@ -384,6 +384,15 @@ export function createLeaveHandlers(leaveService: LeaveService) {
       res.status(200).json({ data: requests.map(serializeLeaveCancellationRequest) });
     },
 
+    async listMyCancellationRequests(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = listCancellationRequestsQuerySchema.safeParse(req.query);
+      if (!parsed.success) throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      const requests = await leaveService.listMyCancellationRequests(caller, clinicId, parsed.data);
+      res.status(200).json({ data: requests.map(serializeLeaveCancellationRequest) });
+    },
+
     async createCancellationRequest(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
       const clinicId = requireUuidParam(req, "clinicId");
@@ -424,9 +433,8 @@ export function createLeaveHandlers(leaveService: LeaveService) {
 
     /**
      * POST /clinics/:clinicId/leave
-     * Staff submits a leave request for their home clinic.
-     * Managers/admins may also submit on behalf of staff (e.g. retrospective
-     * sick leave).  The service enforces clinic-match for clinical_staff.
+     * Any authenticated employee submits their own leave for their home clinic.
+     * The service derives identity from the caller and rejects other clinic scopes.
      */
     async createLeaveRequest(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);

@@ -11,6 +11,7 @@ import { createTestApp } from "./helpers/testApp.js";
 type TestApp = Awaited<ReturnType<typeof createTestApp>>;
 
 const clinicBLeaveRoot = `/api/v1/clinics/${SEED_CLINIC_B_ID}/leave`;
+const clinicALeaveRoot = `/api/v1/clinics/${SEED_CLINIC_A_ID}/leave`;
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 const data = (response: request.Response): unknown =>
   (response.body as { data: unknown }).data;
@@ -153,7 +154,7 @@ describe("cross-clinic leave management", () => {
       .expect(200);
   });
 
-  it("preserves independent review rules for a GPM's cross-clinic leave", async () => {
+  it("keeps GPM management cross-clinic while binding personal leave to home clinic", async () => {
     const app = await createTestApp();
     const owner = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const manager = await loginAndGetAccessToken(app, "manager@clinic-a.au");
@@ -164,8 +165,20 @@ describe("cross-clinic leave management", () => {
       canOperate: true,
     });
 
-    const approveAttempt = await request(app)
+    const crossClinicPersonal = await request(app)
       .post(clinicBLeaveRoot)
+      .set(auth(manager))
+      .send({
+        leaveType: "annual",
+        startDate: "2037-01-20",
+        endDate: "2037-01-20",
+      })
+      .expect(403);
+    expect((crossClinicPersonal.body as { error: { code: string } }).error.code)
+      .toBe("TENANT_ACCESS_DENIED");
+
+    const approveAttempt = await request(app)
+      .post(clinicALeaveRoot)
       .set(auth(manager))
       .send({
         leaveType: "annual",
@@ -174,7 +187,7 @@ describe("cross-clinic leave management", () => {
       })
       .expect(201);
     const selfApprove = await request(app)
-      .post(`${clinicBLeaveRoot}/${(data(approveAttempt) as { id: string }).id}/approve`)
+      .post(`${clinicALeaveRoot}/${(data(approveAttempt) as { id: string }).id}/approve`)
       .set(auth(manager))
       .send({})
       .expect(403);
@@ -182,7 +195,7 @@ describe("cross-clinic leave management", () => {
       .toBe("SELF_REVIEW_FORBIDDEN");
 
     const rejectAttempt = await request(app)
-      .post(clinicBLeaveRoot)
+      .post(clinicALeaveRoot)
       .set(auth(manager))
       .send({
         leaveType: "annual",
@@ -191,7 +204,7 @@ describe("cross-clinic leave management", () => {
       })
       .expect(201);
     const selfReject = await request(app)
-      .post(`${clinicBLeaveRoot}/${(data(rejectAttempt) as { id: string }).id}/reject`)
+      .post(`${clinicALeaveRoot}/${(data(rejectAttempt) as { id: string }).id}/reject`)
       .set(auth(manager))
       .send({ reviewNotes: "Self-review must remain forbidden" })
       .expect(403);

@@ -26,7 +26,11 @@ import type {
 export interface LeaveRepository {
   create(input: CreateLeaveRequestInput): Promise<LeaveRequest>;
   findById(id: string): Promise<LeaveRequest | null>;
-  listByStaff(staffUserId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
+  listByStaff(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListLeaveOptions,
+  ): Promise<LeaveRequest[]>;
   listByClinic(clinicId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
   listByClinicPaginated(clinicId: string, options?: ListLeavePageOptions): Promise<LeavePage>;
   /**
@@ -52,7 +56,11 @@ export interface LeaveRepository {
   }): Promise<ApproveLeaveResult>;
   cancelApprovedLeave(input: CancelApprovedLeaveInput): Promise<LeaveRequest>;
   createCancellationRequest(input: CreateLeaveCancellationRequestInput): Promise<LeaveCancellationRequest>;
-  listCancellationRequestsByStaff(staffUserId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
+  listCancellationRequestsByStaff(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListLeaveCancellationRequestOptions,
+  ): Promise<LeaveCancellationRequest[]>;
   listCancellationRequestsByClinic(clinicId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
   findCancellationRequestById(input: {
     requestId: string;
@@ -117,12 +125,14 @@ export function createInMemoryLeaveRepository(
 
     listByStaff(
       staffUserId: string,
+      clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
       return Promise.resolve(
         records
           .filter((r) => {
             if (r.staffUserId !== staffUserId) return false;
+            if (r.clinicId !== clinicId) return false;
             if (options?.status && r.status !== options.status) return false;
             if (options?.leaveType && r.leaveType !== options.leaveType) return false;
             // YYYY-MM-DD string comparison is lexicographically correct for ISO dates.
@@ -304,9 +314,12 @@ export function createInMemoryLeaveRepository(
       return Promise.resolve({ ...record });
     },
 
-    listCancellationRequestsByStaff(staffUserId, options) {
+    listCancellationRequestsByStaff(staffUserId, clinicId, options) {
       return Promise.resolve(cancellationRecords
-        .filter((item) => item.staffUserId === staffUserId && (!options?.status || item.status === options.status))
+        .filter((item) =>
+          item.staffUserId === staffUserId &&
+          item.clinicId === clinicId &&
+          (!options?.status || item.status === options.status))
         .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
         .map((item) => ({ ...item })));
     },
