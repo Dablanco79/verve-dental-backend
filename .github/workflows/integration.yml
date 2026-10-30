@@ -51,6 +51,7 @@ jobs:
       WORKFLOW_RLS_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_workflow_rls
       TEST_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_leave_security
       CLINIC_BRAND_ASSETS_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_clinic_brand_assets
+      WEEKLY_ROSTER_PDF_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_weekly_roster_pdf
       # ── Fresh empty database for clean-slate migration gate ───────────────────
       # freshDbMigration.integration.test.ts uses this URL to prove the full
       # migration chain applies to a brand-new database from scratch.
@@ -115,6 +116,9 @@ jobs:
           PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
             -v ON_ERROR_STOP=1 \
             -c "CREATE DATABASE verve_test_clinic_brand_assets WITH TEMPLATE verve_test OWNER verve;"
+          PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE verve_test_weekly_roster_pdf WITH TEMPLATE verve_test OWNER verve;"
 
       - name: Start disposable TLS-enabled PostgreSQL
         shell: bash
@@ -218,6 +222,11 @@ jobs:
         run: |
           node -e "const u=new URL(process.env.CLINIC_BRAND_ASSETS_DATABASE_URL||'');if(u.hostname!=='localhost'||u.port!=='5432'||u.pathname!='/verve_test_clinic_brand_assets'){throw new Error('CLINIC_BRAND_ASSETS_DATABASE_URL must target the isolated local CI database')}"
           npm run test:clinicbrandrls-integration --workspace=@verve/backend
+
+      - name: "P0 — Weekly Roster PDF PostgreSQL Export"
+        run: |
+          node -e "const raw=process.env.WEEKLY_ROSTER_PDF_DATABASE_URL;if(!raw)throw new Error('WEEKLY_ROSTER_PDF_DATABASE_URL is required');const u=new URL(raw);if(u.protocol!=='postgresql:'||u.hostname!=='localhost'||u.port!=='5432'||u.pathname!='/verve_test_weekly_roster_pdf'){throw new Error('WEEKLY_ROSTER_PDF_DATABASE_URL must target the isolated disposable CI database')}"
+          npm run test:weeklyrosterpdf-integration --workspace=@verve/backend
 
       - name: "P0 — PostgreSQL certificate and hostname verification gate"
         run: npm run test:database-tls-integration --workspace=@verve/backend

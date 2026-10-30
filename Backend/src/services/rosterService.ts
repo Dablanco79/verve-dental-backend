@@ -15,8 +15,58 @@ import type { UserClinicAssignmentsRepository } from "../repositories/userClinic
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterLeaveBlock } from "../types/payroll.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
-import { calendarDayWindow, coveredCalendarDateRange } from "../utils/calendarDate.js";
+import {
+  addCalendarDays,
+  calendarDayWindow,
+  coveredCalendarDateRange,
+  startOfCalendarDate,
+} from "../utils/calendarDate.js";
 import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
+import {
+  generateWeeklyRosterPdf,
+  weeklyRosterPdfFilename,
+} from "./weeklyRosterPdf.js";
+
+const MAX_WEEKLY_EXPORT_STAFF = 500;
+const MAX_WEEKLY_EXPORT_STAFF_CANDIDATES = 2_000;
+const MAX_WEEKLY_EXPORT_SHIFTS = 5_000;
+
+export function assertWeeklyRosterExportSize(input: {
+  shiftCount?: number;
+  candidateStaffCount?: number;
+  activeStaffCount?: number;
+}): void {
+  if (
+    input.shiftCount !== undefined &&
+    input.shiftCount > MAX_WEEKLY_EXPORT_SHIFTS
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many shifts to export safely",
+    );
+  }
+  if (
+    input.candidateStaffCount !== undefined &&
+    input.candidateStaffCount > MAX_WEEKLY_EXPORT_STAFF_CANDIDATES
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many staff candidates to export safely",
+    );
+  }
+  if (
+    input.activeStaffCount !== undefined &&
+    input.activeStaffCount > MAX_WEEKLY_EXPORT_STAFF
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many active staff members to export safely",
+    );
+  }
+}
 
 // Narrow write-only audit dependency.
 type AuditWriter = {
@@ -124,6 +174,67 @@ export function createRosterService(
       "FORBIDDEN",
       "You do not have permission to manage this clinic's roster",
     );
+  }
+
+  async function assertWeeklyExportAccess(
+    caller: AuthenticatedUser,
+    clinicId: string,
+  ) {
+    if (
+      caller.role !== "owner_admin" &&
+      caller.role !== "group_practice_manager"
+    ) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Only authorised managers may export a clinic roster",
+      );
+    }
+    const [homeClinic, targetClinic] = await Promise.all([
+      clinicRepository.findById(caller.homeClinicId),
+      clinicRepository.findById(clinicId),
+    ]);
+    if (!homeClinic) {
+      throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+    }
+    if (!targetClinic) {
+      throw new AppError(404, "CLINIC_NOT_FOUND", "Target clinic not found");
+    }
+    if (homeClinic.organisationId !== targetClinic.organisationId) {
+      throw new AppError(
+        403,
+        "TENANT_ACCESS_DENIED",
+        "You do not have access to this clinic's organisation",
+      );
+    }
+    await assertClinicWriteAccess(caller, clinicId);
+    return targetClinic;
+  }
+
+  function weeklyExportWindow(weekStart: string, timeZone: string) {
+    try {
+      const weekEndExclusive = addCalendarDays(weekStart, 7);
+      const weekday = new Date(`${weekStart}T00:00:00.000Z`).getUTCDay();
+      if (weekday !== 1) {
+        throw new AppError(
+          400,
+          "INVALID_WEEK_START",
+          "weekStart must be a Monday",
+        );
+      }
+      return {
+        weekEnd: addCalendarDays(weekStart, 6),
+        from: startOfCalendarDate(weekStart, timeZone),
+        to: startOfCalendarDate(weekEndExclusive, timeZone),
+      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        400,
+        "INVALID_WEEK_START",
+        "weekStart must be a valid ISO calendar date in YYYY-MM-DD format",
+      );
+    }
   }
 
   return {
@@ -594,6 +705,113 @@ export function createRosterService(
         dateRange.firstDate,
         dateRange.lastDate,
       );
+    },
+
+    async exportWeeklyPdf(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      weekStart: string,
+    ): Promise<{
+      buffer: Buffer;
+      filename: string;
+      pageCount: number;
+      staffCount: number;
+      shiftCount: number;
+    }> {
+      const clinic = await assertWeeklyExportAccess(caller, clinicId);
+      const window = weeklyExportWindow(weekStart, clinic.timezone);
+      const entries = (
+        await rosterRepository.listByClinic(clinicId, {
+          from: window.from,
+          to: window.to,
+        })
+      ).filter((entry) => entry.status !== "cancelled");
+      assertWeeklyRosterExportSize({ shiftCount: entries.length });
+
+      // Read the exact-clinic assignment rows first, then resolve active users.
+      // listRosterEligible joins users under the target clinic's RLS context,
+      // which can hide active cross-home staff from an authorised GPM.
+      const assignments = (await assignmentsRepository.listByClinic(clinicId))
+        .filter((assignment) => assignment.canRoster);
+      const entryStaffIds = new Set(entries.map((entry) => entry.staffUserId));
+      const candidateStaffIds = new Set([
+        ...assignments.map((assignment) => assignment.userId),
+        ...entryStaffIds,
+      ]);
+      // Bound repository lookups independently of the active-staff export
+      // limit. Historical inactive assignments are filtered below.
+      assertWeeklyRosterExportSize({
+        candidateStaffCount: candidateStaffIds.size,
+      });
+
+      const users = await Promise.all(
+        [...candidateStaffIds].map((staffUserId) =>
+          userRepository.findById(staffUserId)),
+      );
+      const usersById = new Map(
+        users
+          .filter((user): user is UserRecord => user !== null)
+          .map((user) => [user.id, user]),
+      );
+      const staffIds = [...candidateStaffIds].filter(
+        (staffUserId) => usersById.get(staffUserId)?.isActive === true,
+      );
+      assertWeeklyRosterExportSize({ activeStaffCount: staffIds.length });
+      const approvedLeave = await leaveRepository.listApprovedForStaff(
+        staffIds,
+        weekStart,
+        window.weekEnd,
+      );
+      const logo = await clinicRepository.findBrandAsset(clinicId);
+      const staff = staffIds.map((staffUserId) => {
+        const user = usersById.get(staffUserId);
+        const legalName = [user?.firstName, user?.lastName]
+          .filter((part): part is string => Boolean(part?.trim()))
+          .join(" ");
+        const displayName =
+          user?.displayName?.trim() ||
+          legalName ||
+          `Staff ${staffUserId.slice(0, 8)}`;
+        return {
+          staffUserId,
+          displayName,
+          shifts: entries
+            .filter((entry) => entry.staffUserId === staffUserId)
+            .map((entry) => ({
+              id: entry.id,
+              shiftStartAt: entry.shiftStartAt,
+              shiftEndAt: entry.shiftEndAt,
+            })),
+          approvedLeave: approvedLeave
+            .filter((leave) => leave.staffUserId === staffUserId)
+            .map((leave) => ({
+              startDate: leave.startDate,
+              endDate: leave.endDate,
+            })),
+        };
+      });
+      const pdf = await generateWeeklyRosterPdf(
+        {
+          clinicName: clinic.name,
+          clinicTimeZone: clinic.timezone,
+          weekStart,
+          weekEnd: window.weekEnd,
+          generatedAt: new Date(),
+          logo: logo
+            ? { imageData: logo.imageData, mimeType: logo.mimeType }
+            : undefined,
+          staff,
+        },
+        window.from,
+        window.to,
+      );
+
+      return {
+        ...pdf,
+        filename: weeklyRosterPdfFilename(clinic.name, weekStart),
+        staffCount: staff.length,
+        shiftCount: entries.length,
+      };
     },
 
     /**

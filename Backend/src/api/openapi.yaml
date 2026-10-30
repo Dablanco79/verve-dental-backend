@@ -3537,13 +3537,13 @@ paths:
           schema:
             type: string
             format: date-time
-          description: Filter shifts starting at or after this datetime (ISO 8601 with offset).
+          description: Include shifts ending after this datetime (ISO 8601 with offset).
         - name: to
           in: query
           schema:
             type: string
             format: date-time
-          description: Filter shifts starting before this datetime. Must be after `from`.
+          description: Include shifts starting before this datetime. Must be after `from`.
         - name: status
           in: query
           schema:
@@ -3608,6 +3608,65 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/roster/export.pdf:
+    get:
+      summary: Export a weekly clinic roster as PDF
+      operationId: exportWeeklyRosterPdf
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Downloads the clinic's current Monday-to-Sunday roster as an A4 landscape
+        PDF. Requires `module:roster` and an `owner_admin` or
+        `group_practice_manager` with authorised access to the selected clinic.
+        Clinical staff cannot export clinic-wide rosters. Organisation and clinic
+        scope are enforced before roster or logo data is read. Scheduled elapsed
+        hours are not payroll-approved or payable hours. This endpoint does not
+        publish the roster or send notifications.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: weekStart
+          in: query
+          required: true
+          description: Strict ISO calendar date for the Monday commencing the roster week.
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+            example: "2026-11-16"
+      responses:
+        "200":
+          description: Weekly roster PDF attachment.
+          headers:
+            Content-Disposition:
+              description: Safe server-generated attachment filename.
+              schema:
+                type: string
+            Cache-Control:
+              description: Private no-store caching policy.
+              schema:
+                type: string
+                example: private, no-store
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The roster is too large to export safely.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/clinics/{clinicId}/roster/me:
     get:

@@ -202,6 +202,8 @@ export function RosterCalendarPage() {
   const [staffList, setStaffList] = useState<EligibleStaff[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isExportingWeeklyPdf, setIsExportingWeeklyPdf] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const [accessibleClinics, setAccessibleClinics] = useState<{ id: string; name: string }[]>([]);
 
@@ -225,6 +227,8 @@ export function RosterCalendarPage() {
   const conflictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canWrite = user ? canManageRoster(user.role) : false;
+  const canExportWeeklyPdf =
+    canWrite && Boolean(user?.permissions.includes("module:roster"));
 
   /** Resolve the best display name for a roster entry's staff member. */
   function resolveStaffName(userId: string, email: string): string {
@@ -340,6 +344,26 @@ export function RosterCalendarPage() {
   useEffect(() => {
     void loadEntries();
   }, [loadEntries]);
+
+  async function handleWeeklyPdfExport(): Promise<void> {
+    if (!clinicId || isAllClinicsScope || !canExportWeeklyPdf) return;
+    setIsExportingWeeklyPdf(true);
+    setExportError(null);
+    try {
+      await apiClient.exportWeeklyRosterPdf(
+        clinicId,
+        getWeekStart(anchorDate),
+      );
+    } catch (error: unknown) {
+      setExportError(
+        error instanceof Error
+          ? error.message
+          : "Unable to export the weekly roster PDF.",
+      );
+    } finally {
+      setIsExportingWeeklyPdf(false);
+    }
+  }
 
   // ── Load staff list for the grid (resolving staff names) ─────────────────
   useEffect(() => {
@@ -892,28 +916,52 @@ export function RosterCalendarPage() {
           <p className="roster-hub__subtitle">{clinicName ?? user.homeClinicName}</p>
         </div>
 
-        {/* Export actions — visual prototype only; PDF and Excel are approved pre-pilot requirements */}
-        <div className="roster-hub__export-actions">
-          <span className="roster-hub__export-label">Export</span>
-          <button
-            type="button"
-            className="roster-export-btn"
-            disabled
-            title="PDF export — post-pilot (unless operational testing requires it for Pilot Day 0)"
-            aria-label="Export roster as PDF (post-pilot requirement)"
-          >
-            PDF
-          </button>
-          <button
-            type="button"
-            className="roster-export-btn"
-            disabled
-            title="Excel export — approved pre-pilot requirement, not yet implemented"
-            aria-label="Export roster as Excel (pre-pilot requirement)"
-          >
-            Excel
-          </button>
-        </div>
+        {canExportWeeklyPdf ? (
+          <div className="roster-hub__export-panel">
+            <div className="roster-hub__export-actions">
+              <span className="roster-hub__export-label">Export</span>
+              <button
+                type="button"
+                className="roster-export-btn"
+                disabled={
+                  isExportingWeeklyPdf ||
+                  isAllClinicsScope ||
+                  !clinicId
+                }
+                title={
+                  isAllClinicsScope
+                    ? "Select one clinic before exporting a weekly roster"
+                    : `Export the week commencing ${getWeekStart(anchorDate)}`
+                }
+                aria-label="Export Weekly PDF"
+                onClick={() => {
+                  void handleWeeklyPdfExport();
+                }}
+              >
+                {isExportingWeeklyPdf ? "Exporting…" : "Export Weekly PDF"}
+              </button>
+              <button
+                type="button"
+                className="roster-export-btn"
+                disabled
+                title="Excel export is not included in this release"
+                aria-label="Export roster as Excel (not yet implemented)"
+              >
+                Excel
+              </button>
+            </div>
+            {isAllClinicsScope ? (
+              <span className="roster-hub__export-note">
+                Select one clinic to export its roster.
+              </span>
+            ) : null}
+            {exportError ? (
+              <span className="status-card__error roster-hub__export-error" role="alert">
+                {exportError}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
 

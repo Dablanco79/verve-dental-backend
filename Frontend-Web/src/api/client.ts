@@ -1071,6 +1071,48 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function exportWeeklyRosterPdf(
+    clinicId: string,
+    weekStart: string,
+  ): Promise<string> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const query = new URLSearchParams({ weekStart });
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/export.pdf?${query.toString()}`,
+      {
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ??
+          `Weekly roster PDF export failed (${String(response.status)})`,
+      );
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const suggested = /filename="([^"]+)"/.exec(disposition)?.[1];
+    const filename =
+      suggested && /^[A-Za-z0-9._-]+\.pdf$/i.test(suggested)
+        ? suggested
+        : `RENQOR_Roster_${weekStart}.pdf`;
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // Revoking synchronously can cancel downloads in some browsers. Keep the
+    // URL alive briefly, then release it to avoid leaking blob memory.
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 1_000);
+    return filename;
+  }
+
   /**
    * GET /api/v1/clinics/:clinicId/users/:userId/clinic-access
    * Returns a user's clinic assignments. owner_admin only.
@@ -3104,6 +3146,7 @@ export function createApiClient(config: AppConfig) {
     createPurchasingDraft,
     getPurchasingDraftDetail,
     listRoster,
+    exportWeeklyRosterPdf,
     getMyShifts,
     getMyShiftsAllClinics,
     getRosterAccessibleClinics,

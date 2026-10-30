@@ -32,6 +32,7 @@ import type { StaffUser } from "../src/types/index.js";
 import type { RosterEntry } from "../src/types/roster.js";
 import {
   createManagerUser,
+  createStaffUser,
   TEST_CLINIC_ID,
   TEST_CLINIC_NAME,
 } from "./helpers/auth.js";
@@ -55,6 +56,7 @@ const {
   mockListRosterApprovedLeave,
   mockUseOperationalClinic,
   mockCancelShift,
+  mockExportWeeklyRosterPdf,
   mockUpdateShift,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -68,6 +70,7 @@ const {
     mockGetRosterAccessibleClinics: vi.fn(),
     mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
     mockCancelShift: vi.fn(),
+    mockExportWeeklyRosterPdf: vi.fn(),
     mockUpdateShift: vi.fn(),
     mockUseOperationalClinic: vi.fn().mockReturnValue({
       clinicId: DEFAULT_CLINIC_ID,
@@ -264,6 +267,7 @@ vi.mock("../src/api/client.js", () => ({
     createShift: vi.fn(),
     updateShift: mockUpdateShift,
     cancelShift: mockCancelShift,
+    exportWeeklyRosterPdf: mockExportWeeklyRosterPdf,
     checkShiftConflicts: vi.fn().mockResolvedValue({ overlapping: [], sameDay: [] }),
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
     listRosterApprovedLeave: mockListRosterApprovedLeave,
@@ -377,6 +381,114 @@ describe("staffDisplayName helper", () => {
 
   it("falls back to email when all name fields are null", () => {
     expect(staffDisplayName(unnamedStaff)).toBe("charlie@clinic-a.au");
+  });
+});
+
+describe("RosterCalendarPage — weekly PDF export", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAuthenticatedUser(authTestState, managerUser);
+    mockUseOperationalClinic.mockReturnValue({
+      clinicId: TEST_CLINIC_ID,
+      clinicName: TEST_CLINIC_NAME,
+      selectedClinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      isAllClinicsScope: false,
+    });
+    mockListRoster.mockResolvedValue([]);
+    mockListUsers.mockResolvedValue([namedStaff]);
+    mockListRosterApprovedLeave.mockResolvedValue([]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME, preferredName: null },
+    ]);
+    mockExportWeeklyRosterPdf.mockResolvedValue(
+      "RENQOR_Clinic_Roster_2026-11-16.pdf",
+    );
+  });
+
+  it("exports the selected clinic and week and prevents duplicate clicks", async () => {
+    let resolveExport: ((filename: string) => void) | undefined;
+    mockExportWeeklyRosterPdf.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const button = await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    });
+    await user.click(button);
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Exporting");
+    expect(mockExportWeeklyRosterPdf).toHaveBeenCalledTimes(1);
+    const [clinicId, weekStart] =
+      mockExportWeeklyRosterPdf.mock.calls[0] as [string, string];
+    expect(clinicId).toBe(TEST_CLINIC_ID);
+    expect(weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(new Date(`${weekStart}T00:00:00.000Z`).getUTCDay()).toBe(1);
+
+    resolveExport?.("RENQOR_Clinic_Roster.pdf");
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  it("disables combined export in All Clinics scope", async () => {
+    mockUseOperationalClinic.mockReturnValue({
+      clinicId: undefined,
+      clinicName: undefined,
+      selectedClinic: null,
+      isAllClinicsScope: true,
+    });
+    renderPage();
+    const button = await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/select one clinic to export/i)).toBeInTheDocument();
+    expect(mockExportWeeklyRosterPdf).not.toHaveBeenCalled();
+  });
+
+  it("does not show the clinic-wide export action to clinical staff", async () => {
+    setAuthenticatedUser(authTestState, createStaffUser());
+    renderPage();
+    await waitFor(() => {
+      expect(mockListRoster).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the export action to a manager without module:roster", async () => {
+    setAuthenticatedUser(authTestState, createManagerUser({
+      permissions: ["module:inventory"],
+    }));
+    renderPage();
+    await waitFor(() => {
+      expect(mockListRoster).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces export failures without changing roster controls", async () => {
+    mockExportWeeklyRosterPdf.mockRejectedValue(
+      new Error("Unable to generate weekly roster"),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to generate weekly roster",
+    );
+    expect(
+      screen.getAllByRole("button", { name: /add shift/i }).length,
+    ).toBeGreaterThan(0);
   });
 });
 

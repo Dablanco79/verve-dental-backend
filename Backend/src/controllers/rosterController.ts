@@ -80,6 +80,13 @@ const conflictQuerySchema = z.object({
   excludeEntryId: z.string().uuid().optional(),
 });
 
+const weeklyExportQuerySchema = z.object({
+  weekStart: z.string().regex(
+    /^\d{4}-\d{2}-\d{2}$/,
+    "weekStart must use YYYY-MM-DD",
+  ),
+});
+
 // UUID v4 path param — rejects malformed values before they reach Postgres.
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -272,6 +279,37 @@ export function createRosterHandlers(rosterService: RosterService) {
         to: new Date(parsed.data.to),
       });
       res.status(200).json({ data: blocks.map(serializeLeaveBlock) });
+    },
+
+    async exportWeeklyPdf(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = weeklyExportQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(parsed.error),
+        );
+      }
+      const result = await rosterService.exportWeeklyPdf(
+        caller,
+        clinicId,
+        parsed.data.weekStart,
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`,
+      );
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Export-Staff-Count", String(result.staffCount));
+      res.setHeader("X-Export-Shift-Count", String(result.shiftCount));
+      res.setHeader("X-Export-Page-Count", String(result.pageCount));
+      res.status(200).send(result.buffer);
     },
 
     /** GET /roster/me (clinic-agnostic personal endpoint) */
