@@ -505,6 +505,31 @@ components:
           type: string
           format: date-time
 
+    ClinicLogoMetadata:
+      type: object
+      required: [clinicId, mimeType, sha256Checksum, width, height, updatedAt]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        mimeType:
+          type: string
+          enum: [image/png, image/jpeg]
+        sha256Checksum:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        width:
+          type: integer
+          minimum: 1
+          maximum: 1600
+        height:
+          type: integer
+          minimum: 1
+          maximum: 1600
+        updatedAt:
+          type: string
+          format: date-time
+
     LeaveCoverageWarning:
       type: object
       description: Privacy-minimal coverage warning; never includes colleague or leave details.
@@ -2910,7 +2935,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Returns the full clinic record. `owner_admin` may fetch any clinic;
+        Returns the full clinic record. `owner_admin` may fetch any clinic in
+        their organisation;
         all other roles are restricted to their home clinic.
       parameters:
         - $ref: "#/components/parameters/clinicId"
@@ -2963,6 +2989,94 @@ paths:
                     $ref: "#/components/schemas/Clinic"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/logo:
+    get:
+      summary: Retrieve the clinic logo
+      operationId: getClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Normalised PNG or JPEG clinic logo.
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string }
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Upload or replace the clinic logo
+      operationId: upsertClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: Owner/Admin only. PNG and JPEG files up to 2 MB are decoded and normalised.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Stored logo metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClinicLogoMetadata"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: Upload or normalised image exceeds the permitted size.
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete the clinic logo
+      operationId: deleteClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: Owner/Admin only.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "204":
+          description: Clinic logo deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

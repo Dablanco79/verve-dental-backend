@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 
 import { createApiClient } from "../api/client.js";
@@ -10,6 +10,8 @@ import type { ClinicData, UpdateClinicData } from "../types/clinic.js";
 import { canViewClinicSettings } from "../utils/roles.js";
 
 const apiClient = createApiClient(loadConfig());
+const MAX_LOGO_UPLOAD_BYTES = 2 * 1024 * 1024;
+const ACCEPTED_LOGO_TYPES = new Set(["image/png", "image/jpeg"]);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -146,6 +148,13 @@ export function ClinicSettingsPage() {
   const [fieldErrors,  setFieldErrors]  = useState<FieldErrors>({});
   const [submitError,  setSubmitError]  = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [isLogoLoading, setIsLogoLoading] = useState(false);
+  const [isLogoSaving, setIsLogoSaving] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoSuccess, setLogoSuccess] = useState<string | null>(null);
+  const logoObjectUrlRef = useRef<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   const isReadOnly = user?.role !== "owner_admin";
 
@@ -168,6 +177,40 @@ export function ClinicSettingsPage() {
   useEffect(() => {
     void loadClinic();
   }, [loadClinic]);
+
+  const replaceLogoPreview = useCallback((blob: Blob | null) => {
+    if (logoObjectUrlRef.current) {
+      URL.revokeObjectURL(logoObjectUrlRef.current);
+      logoObjectUrlRef.current = null;
+    }
+    const nextUrl = blob ? URL.createObjectURL(blob) : null;
+    logoObjectUrlRef.current = nextUrl;
+    setLogoUrl(nextUrl);
+  }, []);
+
+  const loadLogo = useCallback(async () => {
+    if (!user || !targetClinicId) return;
+    setIsLogoLoading(true);
+    setLogoError(null);
+    try {
+      replaceLogoPreview(await apiClient.getClinicLogo(targetClinicId));
+    } catch (err: unknown) {
+      replaceLogoPreview(null);
+      setLogoError(err instanceof Error ? err.message : "Unable to load clinic logo.");
+    } finally {
+      setIsLogoLoading(false);
+    }
+  }, [user, targetClinicId, replaceLogoPreview]);
+
+  useEffect(() => {
+    void loadLogo();
+    return () => {
+      if (logoObjectUrlRef.current) {
+        URL.revokeObjectURL(logoObjectUrlRef.current);
+        logoObjectUrlRef.current = null;
+      }
+    };
+  }, [loadLogo]);
 
   // When accessed via /settings/clinics/:clinicId/edit, only owner_admin may
   // proceed — redirect anyone else before rendering.
@@ -259,6 +302,51 @@ export function ClinicSettingsPage() {
     }
   }
 
+  async function handleLogoFile(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setLogoError(null);
+    setLogoSuccess(null);
+    if (!ACCEPTED_LOGO_TYPES.has(file.type)) {
+      setLogoError("Choose a PNG or JPEG image.");
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_LOGO_UPLOAD_BYTES) {
+      setLogoError("Clinic logos must be 2 MB or smaller.");
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      return;
+    }
+
+    const replacingExistingLogo = logoUrl !== null;
+    setIsLogoSaving(true);
+    try {
+      await apiClient.uploadClinicLogo(targetClinicId, file);
+      await loadLogo();
+      setLogoSuccess(replacingExistingLogo ? "Clinic logo replaced." : "Clinic logo uploaded.");
+    } catch (err: unknown) {
+      setLogoError(err instanceof Error ? err.message : "Unable to upload clinic logo.");
+    } finally {
+      setIsLogoSaving(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  }
+
+  async function handleLogoDelete(): Promise<void> {
+    if (!window.confirm("Remove this clinic logo? The clinic name will be used instead.")) return;
+    setIsLogoSaving(true);
+    setLogoError(null);
+    setLogoSuccess(null);
+    try {
+      await apiClient.deleteClinicLogo(targetClinicId);
+      replaceLogoPreview(null);
+      setLogoSuccess("Clinic logo removed.");
+    } catch (err: unknown) {
+      setLogoError(err instanceof Error ? err.message : "Unable to remove clinic logo.");
+    } finally {
+      setIsLogoSaving(false);
+    }
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -305,6 +393,65 @@ export function ClinicSettingsPage() {
         </section>
       ) : (
         <>
+          <section className="status-card cs-logo-card" aria-labelledby="clinic-logo-heading">
+            <div className="cs-logo-card__details">
+              <div>
+                <h3 id="clinic-logo-heading">Clinic logo</h3>
+                <p className="cs-field-hint">
+                  Used on clinic-branded roster exports. PNG or JPEG, up to 2 MB.
+                </p>
+              </div>
+              <div className="cs-logo-preview" aria-live="polite">
+                {isLogoLoading ? (
+                  <span>Loading logo…</span>
+                ) : logoUrl ? (
+                  <img src={logoUrl} alt={`${clinic.name} logo`} />
+                ) : (
+                  <strong>{clinic.name}</strong>
+                )}
+              </div>
+            </div>
+
+            {logoError ? <p className="status-card__error" role="alert">{logoError}</p> : null}
+            {logoSuccess ? <p className="inventory-notice" role="status">{logoSuccess}</p> : null}
+
+            {!isReadOnly ? (
+              <div className="cs-logo-actions">
+                <button
+                  type="button"
+                  className="button-link cs-logo-upload"
+                  disabled={isLogoSaving}
+                  onClick={() => logoInputRef.current?.click()}
+                >
+                  {isLogoSaving ? "Processing…" : logoUrl ? "Replace logo" : "Upload logo"}
+                </button>
+                <input
+                  ref={logoInputRef}
+                  className="cs-logo-file-input"
+                  type="file"
+                  accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                  disabled={isLogoSaving}
+                  aria-label="Choose clinic logo file"
+                  onChange={(event) => {
+                    void handleLogoFile(event.target.files?.[0]);
+                  }}
+                />
+                {logoUrl ? (
+                  <button
+                    type="button"
+                    className="button-link cs-logo-remove"
+                    disabled={isLogoSaving}
+                    onClick={() => { void handleLogoDelete(); }}
+                  >
+                    Remove logo
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="cs-field-hint">Logo changes are restricted to Owner/Admin users.</p>
+            )}
+          </section>
+
           {/* ── Settings form ─────────────────────────────────────────── */}
           <section className="status-card">
             {submitSuccess ? (

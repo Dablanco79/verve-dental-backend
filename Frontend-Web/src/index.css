@@ -2732,6 +2732,83 @@ body {
   font-size: 0.88rem;
 }
 
+.cs-logo-card {
+  display: grid;
+  gap: var(--vds-space-4, 1rem);
+}
+
+.cs-logo-card__details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 22rem);
+  align-items: center;
+  gap: var(--vds-space-5, 1.25rem);
+}
+
+.cs-logo-card__details h3 {
+  margin: 0;
+}
+
+.cs-logo-preview {
+  display: grid;
+  place-items: center;
+  min-height: 8rem;
+  padding: var(--vds-space-4, 1rem);
+  overflow: hidden;
+  border: 1px solid var(--vds-colour-border, #e8dfea);
+  border-radius: var(--vds-control-radius, 0.75rem);
+  background: var(--vds-colour-panel-subtle, #fbf9fc);
+  color: var(--vds-colour-heading, #2f2131);
+  text-align: center;
+}
+
+.cs-logo-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 7rem;
+  object-fit: contain;
+}
+
+.cs-logo-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--vds-space-3, 0.75rem);
+  flex-wrap: wrap;
+}
+
+.cs-logo-upload {
+  cursor: pointer;
+}
+
+.cs-logo-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.cs-logo-remove {
+  color: var(--vds-colour-danger, #b42318);
+}
+
+@media (max-width: 640px) {
+  .cs-logo-card__details {
+    grid-template-columns: 1fr;
+  }
+
+  .cs-logo-preview {
+    min-height: 6.5rem;
+  }
+
+  .cs-logo-actions > button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 /* Subscription tier read-only row (sits inside the form grid) */
 .cs-tier-row {
   display: flex;

@@ -1,4 +1,6 @@
+import type { NextFunction, Request, Response } from "express";
 import { Router } from "express";
+import multer from "multer";
 
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import { createClinicHandlers } from "../controllers/clinicController.js";
@@ -12,7 +14,50 @@ import {
   clinicIdParamsSchema,
 } from "../middleware/validationMiddleware.js";
 import { createClinicService } from "../services/clinicService.js";
+import { CLINIC_LOGO_UPLOAD_MAX_BYTES } from "../services/clinicLogoImage.js";
+import { AppError } from "../types/errors.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
+
+const clinicLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: CLINIC_LOGO_UPLOAD_MAX_BYTES,
+    files: 1,
+    fields: 0,
+  },
+  fileFilter: (_req, file, callback) => {
+    if (file.mimetype === "image/png" || file.mimetype === "image/jpeg") {
+      callback(null, true);
+      return;
+    }
+    callback(new AppError(
+      400,
+      "UNSUPPORTED_LOGO_FORMAT",
+      "Only PNG and JPEG clinic logos are accepted",
+    ));
+  },
+});
+
+function parseClinicLogoUpload(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  clinicLogoUpload.single("file")(req, res, (error: unknown) => {
+    if (error instanceof multer.MulterError) {
+      const isSizeError = error.code === "LIMIT_FILE_SIZE";
+      next(new AppError(
+        isSizeError ? 413 : 400,
+        isSizeError ? "LOGO_FILE_TOO_LARGE" : "INVALID_LOGO_UPLOAD",
+        isSizeError
+          ? "Clinic logos must be 2 MB or smaller before processing"
+          : "The clinic logo upload is invalid",
+      ));
+      return;
+    }
+    next(error);
+  });
+}
 
 /**
  * Mounts routes for the canonical clinic entity at /clinics/:clinicId.
@@ -36,8 +81,36 @@ export function createClinicRouter(deps: AppDependencies): Router {
     deps.authService,
     deps.auditService,
   );
-  const clinicService = createClinicService(deps.clinicRepository, deps.analyticsRepository);
+  const clinicService = createClinicService(
+    deps.clinicRepository,
+    deps.analyticsRepository,
+    deps.clinicAssignmentsRepository,
+  );
   const handlers = createClinicHandlers(clinicService);
+
+  router.get(
+    "/logo",
+    authenticate,
+    validateParams(clinicIdParamsSchema),
+    asyncHandler((req, res) => handlers.getClinicLogo(req, res)),
+  );
+
+  router.put(
+    "/logo",
+    authenticate,
+    requireRoles("owner_admin"),
+    validateParams(clinicIdParamsSchema),
+    parseClinicLogoUpload,
+    asyncHandler((req, res) => handlers.upsertClinicLogo(req, res)),
+  );
+
+  router.delete(
+    "/logo",
+    authenticate,
+    requireRoles("owner_admin"),
+    validateParams(clinicIdParamsSchema),
+    asyncHandler((req, res) => handlers.deleteClinicLogo(req, res)),
+  );
 
   /**
    * GET /clinics/:clinicId

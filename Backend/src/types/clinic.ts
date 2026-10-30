@@ -12,6 +12,29 @@
 
 export type ClinicSubscriptionTier = "standard" | "premium" | "enterprise";
 
+export type ClinicBrandAsset = {
+  clinicId: string;
+  imageData: Buffer;
+  mimeType: "image/png" | "image/jpeg";
+  sha256Checksum: string;
+  width: number;
+  height: number;
+  createdAt: Date;
+  updatedAt: Date;
+  updatedByUserId: string | null;
+};
+
+export type UpsertClinicBrandAssetInput = Pick<
+  ClinicBrandAsset,
+  | "clinicId"
+  | "imageData"
+  | "mimeType"
+  | "sha256Checksum"
+  | "width"
+  | "height"
+  | "updatedByUserId"
+>;
+
 /**
  * Full clinic entity as returned from the repository layer.
  * Timestamps are hydrated as `Date` objects — never raw strings.

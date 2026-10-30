@@ -53,4 +53,95 @@ describe("clinic organisation compatibility", () => {
     expect(afterCreate.map((clinic) => clinic.id)).toContain(created.id);
     expect(afterCreate.map((clinic) => clinic.id)).not.toContain(OTHER_ORG_CLINIC_ID);
   });
+
+  it("denies cross-organisation logo reads, writes and deletes before repository mutation", async () => {
+    const repository = createInMemoryClinicRepository();
+    await repository.create({
+      id: HOME_CLINIC_ID,
+      name: "Home Clinic",
+      organisationId: HOME_ORGANISATION_ID,
+    });
+    await repository.create({
+      id: OTHER_ORG_CLINIC_ID,
+      name: "Other Organisation Clinic",
+      organisationId: OTHER_ORGANISATION_ID,
+    });
+    await repository.upsertBrandAsset({
+      clinicId: OTHER_ORG_CLINIC_ID,
+      imageData: Buffer.from("existing"),
+      mimeType: "image/png",
+      sha256Checksum: "a".repeat(64),
+      width: 1,
+      height: 1,
+      updatedByUserId: owner.id,
+    });
+    const service = createClinicService(repository);
+
+    await expect(
+      service.getClinicLogo(owner, OTHER_ORG_CLINIC_ID),
+    ).rejects.toMatchObject({ code: "TENANT_ACCESS_DENIED" });
+    await expect(
+      service.upsertClinicLogo(owner, OTHER_ORG_CLINIC_ID, Buffer.from("invalid")),
+    ).rejects.toMatchObject({ code: "TENANT_ACCESS_DENIED" });
+    await expect(
+      service.deleteClinicLogo(owner, OTHER_ORG_CLINIC_ID),
+    ).rejects.toMatchObject({ code: "TENANT_ACCESS_DENIED" });
+    expect(await repository.findBrandAsset(OTHER_ORG_CLINIC_ID)).not.toBeNull();
+  });
+
+  it("requires home-clinic or operational assignment access for non-admin logo reads", async () => {
+    const repository = createInMemoryClinicRepository();
+    await repository.create({
+      id: HOME_CLINIC_ID,
+      name: "Home Clinic",
+      organisationId: HOME_ORGANISATION_ID,
+    });
+    await repository.create({
+      id: SAME_ORG_CLINIC_ID,
+      name: "Sibling Clinic",
+      organisationId: HOME_ORGANISATION_ID,
+    });
+    await repository.upsertBrandAsset({
+      clinicId: SAME_ORG_CLINIC_ID,
+      imageData: Buffer.from("logo"),
+      mimeType: "image/png",
+      sha256Checksum: "a".repeat(64),
+      width: 1,
+      height: 1,
+      updatedByUserId: owner.id,
+    });
+
+    let operationalAccess = false;
+    const service = createClinicService(repository, undefined, {
+      hasOperationalAccess: () => Promise.resolve(operationalAccess),
+    });
+    const manager: AuthenticatedUser = {
+      ...owner,
+      id: "99999999-9999-4999-8999-999999999999",
+      email: "manager@example.test",
+      role: "group_practice_manager",
+      homeClinicId: HOME_CLINIC_ID,
+    };
+    const staff: AuthenticatedUser = {
+      ...manager,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      email: "staff@example.test",
+      role: "clinical_staff",
+    };
+
+    await expect(
+      service.getClinicLogo(manager, SAME_ORG_CLINIC_ID),
+    ).rejects.toMatchObject({ code: "TENANT_ACCESS_DENIED" });
+    await expect(
+      service.getClinicLogo(staff, SAME_ORG_CLINIC_ID),
+    ).rejects.toMatchObject({ code: "TENANT_ACCESS_DENIED" });
+
+    operationalAccess = true;
+    await expect(
+      service.getClinicLogo(manager, SAME_ORG_CLINIC_ID),
+    ).resolves.toMatchObject({ clinicId: SAME_ORG_CLINIC_ID });
+    await expect(
+      service.getClinicLogo(owner, SAME_ORG_CLINIC_ID),
+    ).resolves.toMatchObject({ clinicId: SAME_ORG_CLINIC_ID });
+  });
 });

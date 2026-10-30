@@ -409,15 +409,34 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("orders coordinated migrations as 057, 059, then 060", () => {
+  it("orders coordinated migrations as 057, 059, 060, then 061", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("060_leave_coverage_groups");
+    expect(ids[ids.length - 1]).toBe("061_clinic_brand_assets");
     expect(ids.indexOf("057_leave_cancellation_requests"))
       .toBe(ids.indexOf("056_approved_leave_cancellation") + 1);
     expect(ids.indexOf("059_force_workflow_table_rls"))
       .toBe(ids.indexOf("057_leave_cancellation_requests") + 1);
     expect(ids.indexOf("060_leave_coverage_groups"))
       .toBe(ids.indexOf("059_force_workflow_table_rls") + 1);
+    expect(ids.indexOf("061_clinic_brand_assets"))
+      .toBe(ids.indexOf("060_leave_coverage_groups") + 1);
+  });
+
+  it("061 FORCEs exact-clinic RLS without an owner-admin bypass", () => {
+    const migration = BOOTSTRAP_MIGRATIONS.find(
+      (candidate) => candidate.id === "061_clinic_brand_assets",
+    );
+    expect(migration).toBeDefined();
+    expect(migration?.sql).toContain(
+      "ALTER TABLE clinic_brand_assets FORCE ROW LEVEL SECURITY",
+    );
+    expect(migration?.sql).toContain(
+      "USING (clinic_id = app_current_clinic_id())",
+    );
+    expect(migration?.sql).toContain(
+      "WITH CHECK (clinic_id = app_current_clinic_id())",
+    );
+    expect(migration?.sql).not.toContain("app_is_owner_admin()");
   });
 
   it("059 FORCEs all three workflow tables with owner-admin and clinic predicates", () => {

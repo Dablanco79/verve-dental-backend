@@ -8,6 +8,15 @@
 
 export type ClinicSubscriptionTier = "standard" | "premium" | "enterprise";
 
+export type ClinicLogoMetadata = {
+  clinicId: string;
+  mimeType: "image/png" | "image/jpeg";
+  sha256Checksum: string;
+  width: number;
+  height: number;
+  updatedAt: string;
+};
+
 /** Full clinic record as returned from GET /clinics/:clinicId. */
 export type ClinicData = {
   id: string;

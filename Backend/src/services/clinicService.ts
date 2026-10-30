@@ -1,8 +1,15 @@
 import type { AuthenticatedUser } from "../types/auth.js";
-import type { Clinic, CreateClinicInput, UpdateClinicInput } from "../types/clinic.js";
+import type {
+  Clinic,
+  ClinicBrandAsset,
+  CreateClinicInput,
+  UpdateClinicInput,
+} from "../types/clinic.js";
 import { AppError } from "../types/errors.js";
 import type { ClinicRepository } from "../repositories/clinicRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
+import { normalizeClinicLogo } from "./clinicLogoImage.js";
 
 type AuditWriter = {
   recordEvent(input: CreateAuditEventInput): Promise<unknown>;
@@ -13,7 +20,54 @@ export type ClinicService = ReturnType<typeof createClinicService>;
 export function createClinicService(
   clinicRepository: ClinicRepository,
   auditWriter?: AuditWriter,
+  clinicAssignmentsRepository?: Pick<
+    UserClinicAssignmentsRepository,
+    "hasOperationalAccess"
+  >,
 ) {
+  async function assertSameOrganisation(
+    caller: AuthenticatedUser,
+    clinicId: string,
+  ): Promise<Clinic> {
+    const [homeClinic, targetClinic] = await Promise.all([
+      clinicRepository.findById(caller.homeClinicId),
+      clinicRepository.findById(clinicId),
+    ]);
+    if (!homeClinic) {
+      throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+    }
+    if (!targetClinic) {
+      throw new AppError(404, "CLINIC_NOT_FOUND", "Clinic not found");
+    }
+    if (targetClinic.organisationId !== homeClinic.organisationId) {
+      throw new AppError(
+        403,
+        "TENANT_ACCESS_DENIED",
+        "You do not have access to this clinic's organisation",
+      );
+    }
+    return targetClinic;
+  }
+
+  async function assertLogoReadAccess(
+    caller: AuthenticatedUser,
+    clinicId: string,
+  ): Promise<void> {
+    if (caller.role === "owner_admin" || caller.homeClinicId === clinicId) return;
+    if (
+      caller.role === "group_practice_manager" &&
+      clinicAssignmentsRepository &&
+      await clinicAssignmentsRepository.hasOperationalAccess(caller.id, clinicId)
+    ) {
+      return;
+    }
+    throw new AppError(
+      403,
+      "TENANT_ACCESS_DENIED",
+      "Operational clinic access is required to view this clinic logo",
+    );
+  }
+
   /**
    * Asserts the caller is entitled to read the given clinic.
    *
@@ -205,6 +259,91 @@ export function createClinicService(
       });
 
       return updated;
+    },
+
+    async getClinicLogo(
+      caller: AuthenticatedUser,
+      clinicId: string,
+    ): Promise<ClinicBrandAsset> {
+      await assertSameOrganisation(caller, clinicId);
+      await assertLogoReadAccess(caller, clinicId);
+      const asset = await clinicRepository.findBrandAsset(clinicId);
+      if (!asset) {
+        throw new AppError(404, "CLINIC_LOGO_NOT_FOUND", "This clinic has no logo");
+      }
+      return asset;
+    },
+
+    async upsertClinicLogo(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      fileData: Buffer,
+    ): Promise<Omit<ClinicBrandAsset, "imageData">> {
+      if (caller.role !== "owner_admin") {
+        throw new AppError(403, "FORBIDDEN", "Only owner_admin may update clinic logos");
+      }
+      await assertSameOrganisation(caller, clinicId);
+      const normalized = await normalizeClinicLogo(fileData);
+      const asset = await clinicRepository.upsertBrandAsset({
+        clinicId,
+        ...normalized,
+        updatedByUserId: caller.id,
+      });
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "clinic",
+        entityId: clinicId,
+        action: "logo_updated",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {
+          mimeType: asset.mimeType,
+          sha256Checksum: asset.sha256Checksum,
+          width: asset.width,
+          height: asset.height,
+          sizeBytes: asset.imageData.length,
+        },
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
+
+      return {
+        clinicId: asset.clinicId,
+        mimeType: asset.mimeType,
+        sha256Checksum: asset.sha256Checksum,
+        width: asset.width,
+        height: asset.height,
+        createdAt: asset.createdAt,
+        updatedAt: asset.updatedAt,
+        updatedByUserId: asset.updatedByUserId,
+      };
+    },
+
+    async deleteClinicLogo(
+      caller: AuthenticatedUser,
+      clinicId: string,
+    ): Promise<void> {
+      if (caller.role !== "owner_admin") {
+        throw new AppError(403, "FORBIDDEN", "Only owner_admin may remove clinic logos");
+      }
+      await assertSameOrganisation(caller, clinicId);
+      const deleted = await clinicRepository.deleteBrandAsset(clinicId);
+      if (!deleted) {
+        throw new AppError(404, "CLINIC_LOGO_NOT_FOUND", "This clinic has no logo");
+      }
+
+      auditWriter?.recordEvent({
+        clinicId,
+        entityType: "clinic",
+        entityId: clinicId,
+        action: "logo_deleted",
+        actorId: caller.id,
+        actorEmail: caller.email,
+        metadata: {},
+      }).catch((err: unknown) => {
+        console.error("[Audit Failure Guard]:", err);
+      });
     },
   };
 }

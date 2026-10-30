@@ -127,6 +127,18 @@ const updateClinicSchema = z
   })
   .strict();
 
+function requireAuthorizedClinic(req: Request): string {
+  const { clinicId } = req.params as { clinicId: string };
+  if (!req.authorizedClinicId || req.authorizedClinicId !== clinicId) {
+    throw new AppError(
+      403,
+      "TENANT_ACCESS_DENIED",
+      "The requested clinic scope has not been authorised",
+    );
+  }
+  return clinicId;
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 export function createClinicHandlers(clinicService: ClinicService) {
@@ -212,6 +224,57 @@ export function createClinicHandlers(clinicService: ClinicService) {
       };
       const clinic = await clinicService.updateClinic(caller, clinicId, input);
       res.status(200).json({ data: clinic });
+    },
+
+    async getClinicLogo(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+      const clinicId = requireAuthorizedClinic(req);
+      const asset = await clinicService.getClinicLogo(req.user, clinicId);
+      const etag = `"${asset.sha256Checksum}"`;
+
+      res.setHeader("Cache-Control", "private, max-age=3600, must-revalidate");
+      res.setHeader("Content-Type", asset.mimeType);
+      res.setHeader("Content-Length", String(asset.imageData.length));
+      res.setHeader("Content-Disposition", `inline; filename="clinic-logo.${asset.mimeType === "image/png" ? "png" : "jpg"}"`);
+      res.setHeader("ETag", etag);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+
+      if (req.get("If-None-Match") === etag) {
+        res.status(304).end();
+        return;
+      }
+      res.status(200).send(asset.imageData);
+    },
+
+    async upsertClinicLogo(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+      const clinicId = requireAuthorizedClinic(req);
+      if (!req.file) {
+        throw new AppError(400, "LOGO_FILE_REQUIRED", "Choose a PNG or JPEG logo to upload");
+      }
+      const asset = await clinicService.upsertClinicLogo(
+        req.user,
+        clinicId,
+        req.file.buffer,
+      );
+      res.status(200).json({
+        data: {
+          clinicId: asset.clinicId,
+          mimeType: asset.mimeType,
+          sha256Checksum: asset.sha256Checksum,
+          width: asset.width,
+          height: asset.height,
+          updatedAt: asset.updatedAt,
+        },
+      });
+    },
+
+    async deleteClinicLogo(req: Request, res: Response): Promise<void> {
+      if (!req.user) throw new AppError(401, "UNAUTHENTICATED", "Authentication required");
+      const clinicId = requireAuthorizedClinic(req);
+      await clinicService.deleteClinicLogo(req.user, clinicId);
+      res.status(204).send();
     },
   };
 }

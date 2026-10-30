@@ -1,8 +1,10 @@
 import type { DatabasePool } from "../db/pool.js";
 import type {
   Clinic,
+  ClinicBrandAsset,
   ClinicSubscriptionTier,
   CreateClinicInput,
+  UpsertClinicBrandAssetInput,
   UpdateClinicInput,
 } from "../types/clinic.js";
 import { AppError } from "../types/errors.js";
@@ -30,6 +32,18 @@ type ClinicRow = {
   updated_at: Date;
 };
 
+type ClinicBrandAssetRow = {
+  clinic_id: string;
+  image_data: Buffer;
+  mime_type: "image/png" | "image/jpeg";
+  sha256_checksum: string;
+  width: number;
+  height: number;
+  created_at: Date;
+  updated_at: Date;
+  updated_by_user_id: string | null;
+};
+
 const SELECT_COLUMNS = `
   id, name, abn, address_line1, suburb, state, postcode,
   timezone, subscription_tier, is_active, preferred_name, organisation_id,
@@ -55,6 +69,20 @@ function toClinic(row: ClinicRow): Clinic {
     longitude: row.longitude ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toClinicBrandAsset(row: ClinicBrandAssetRow): ClinicBrandAsset {
+  return {
+    clinicId: row.clinic_id,
+    imageData: row.image_data,
+    mimeType: row.mime_type,
+    sha256Checksum: row.sha256_checksum,
+    width: row.width,
+    height: row.height,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    updatedByUserId: row.updated_by_user_id,
   };
 }
 
@@ -191,6 +219,60 @@ export function createPostgresClinicRepository(
         [preferredName, excludeId, organisationId],
       );
       return rows[0] ? toClinic(rows[0]) : null;
+    },
+
+    async findBrandAsset(clinicId: string): Promise<ClinicBrandAsset | null> {
+      const { rows } = await pool.query<ClinicBrandAssetRow>(
+        `SELECT clinic_id, image_data, mime_type, sha256_checksum, width, height,
+                created_at, updated_at, updated_by_user_id
+         FROM clinic_brand_assets
+         WHERE clinic_id = $1`,
+        [clinicId],
+      );
+      return rows[0] ? toClinicBrandAsset(rows[0]) : null;
+    },
+
+    async upsertBrandAsset(
+      input: UpsertClinicBrandAssetInput,
+    ): Promise<ClinicBrandAsset> {
+      const { rows } = await pool.query<ClinicBrandAssetRow>(
+        `INSERT INTO clinic_brand_assets
+           (clinic_id, image_data, mime_type, sha256_checksum, width, height,
+            updated_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (clinic_id) DO UPDATE
+           SET image_data = EXCLUDED.image_data,
+               mime_type = EXCLUDED.mime_type,
+               sha256_checksum = EXCLUDED.sha256_checksum,
+               width = EXCLUDED.width,
+               height = EXCLUDED.height,
+               updated_at = now(),
+               updated_by_user_id = EXCLUDED.updated_by_user_id
+         RETURNING clinic_id, image_data, mime_type, sha256_checksum, width, height,
+                   created_at, updated_at, updated_by_user_id`,
+        [
+          input.clinicId,
+          input.imageData,
+          input.mimeType,
+          input.sha256Checksum,
+          input.width,
+          input.height,
+          input.updatedByUserId,
+        ],
+      );
+      const row = rows[0];
+      if (!row) {
+        throw new AppError(500, "INTERNAL_ERROR", "Failed to store clinic logo");
+      }
+      return toClinicBrandAsset(row);
+    },
+
+    async deleteBrandAsset(clinicId: string): Promise<boolean> {
+      const result = await pool.query(
+        "DELETE FROM clinic_brand_assets WHERE clinic_id = $1",
+        [clinicId],
+      );
+      return (result.rowCount ?? 0) > 0;
     },
   };
 }

@@ -55,7 +55,12 @@ import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
 } from "../types/materialsForecast.js";
-import type { ClinicData, CreateClinicData, UpdateClinicData } from "../types/clinic.js";
+import type {
+  ClinicData,
+  ClinicLogoMetadata,
+  CreateClinicData,
+  UpdateClinicData,
+} from "../types/clinic.js";
 import type {
   CreateOrganisationData,
   OrganisationData,
@@ -1253,6 +1258,60 @@ export function createApiClient(config: AppConfig) {
       config,
       `/api/v1/clinics/${clinicId}`,
       {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getClinicLogo(clinicId: string): Promise<Blob | null> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      {
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ?? `Unable to load clinic logo (${String(response.status)})`,
+      );
+    }
+    return response.blob();
+  }
+
+  async function uploadClinicLogo(
+    clinicId: string,
+    file: File,
+  ): Promise<ClinicLogoMetadata> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      {
+        method: "PUT",
+        body: formData,
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ?? `Unable to upload clinic logo (${String(response.status)})`,
+      );
+    }
+    const envelope = await response.json() as ApiEnvelope<ClinicLogoMetadata>;
+    return envelope.data;
+  }
+
+  async function deleteClinicLogo(clinicId: string): Promise<void> {
+    await request<undefined>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      { method: "DELETE" },
       requireAccessToken(),
     );
   }
@@ -3068,6 +3127,9 @@ export function createApiClient(config: AppConfig) {
     listClinics,
     createClinic,
     getClinic,
+    getClinicLogo,
+    uploadClinicLogo,
+    deleteClinicLogo,
     getClinicCoordinates,
     updateClinicSettings,
     listInvoices,

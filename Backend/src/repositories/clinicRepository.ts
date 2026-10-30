@@ -6,7 +6,9 @@ import {
 } from "./userRepository.js";
 import type {
   Clinic,
+  ClinicBrandAsset,
   CreateClinicInput,
+  UpsertClinicBrandAssetInput,
   UpdateClinicInput,
 } from "../types/clinic.js";
 
@@ -52,6 +54,12 @@ export interface ClinicRepository {
    * Returns null if no duplicate exists.
    */
   findDuplicatePreferredName(preferredName: string, excludeId: string, organisationId: string | null): Promise<Clinic | null>;
+
+  findBrandAsset(clinicId: string): Promise<ClinicBrandAsset | null>;
+
+  upsertBrandAsset(input: UpsertClinicBrandAssetInput): Promise<ClinicBrandAsset>;
+
+  deleteBrandAsset(clinicId: string): Promise<boolean>;
 }
 
 // ─── In-Memory implementation (used in tests + DATABASE_URL-less dev) ────────
@@ -62,6 +70,7 @@ export interface ClinicRepository {
  */
 export function createInMemoryClinicRepository(): ClinicRepository {
   const SEED_CREATED_AT = new Date("2024-01-01T00:00:00.000Z");
+  const brandAssets = new Map<string, ClinicBrandAsset>();
 
   const clinics: Clinic[] = [
     {
@@ -186,6 +195,30 @@ export function createInMemoryClinicRepository(): ClinicRepository {
           c.organisationId === organisationId,
       );
       return Promise.resolve(found ? { ...found } : null);
+    },
+
+    findBrandAsset(clinicId: string): Promise<ClinicBrandAsset | null> {
+      const asset = brandAssets.get(clinicId);
+      return Promise.resolve(
+        asset ? { ...asset, imageData: Buffer.from(asset.imageData) } : null,
+      );
+    },
+
+    upsertBrandAsset(input: UpsertClinicBrandAssetInput): Promise<ClinicBrandAsset> {
+      const existing = brandAssets.get(input.clinicId);
+      const now = new Date();
+      const asset: ClinicBrandAsset = {
+        ...input,
+        imageData: Buffer.from(input.imageData),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      brandAssets.set(input.clinicId, asset);
+      return Promise.resolve({ ...asset, imageData: Buffer.from(asset.imageData) });
+    },
+
+    deleteBrandAsset(clinicId: string): Promise<boolean> {
+      return Promise.resolve(brandAssets.delete(clinicId));
     },
   };
 }

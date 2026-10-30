@@ -84,7 +84,11 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
 
   // Clinic service instance for the global (non-tenant-scoped) clinic routes.
   // The per-clinic routes (/clinics/:clinicId/*) create their own instance via createClinicRouter.
-  const clinicService = createClinicService(deps.clinicRepository, deps.analyticsRepository);
+  const clinicService = createClinicService(
+    deps.clinicRepository,
+    deps.analyticsRepository,
+    deps.clinicAssignmentsRepository,
+  );
   const clinicHandlers = createClinicHandlers(clinicService);
   const mfaSetupAuth = createMfaSetupMiddleware(deps.authService, deps.auditService);
   // RLS context middleware: runs after authenticate, sets per-request AsyncLocalStorage

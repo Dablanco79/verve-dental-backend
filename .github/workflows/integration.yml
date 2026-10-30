@@ -50,6 +50,7 @@ jobs:
       #     an explicit PostgreSQL security-test database ───────────────────────
       WORKFLOW_RLS_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_workflow_rls
       TEST_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_leave_security
+      CLINIC_BRAND_ASSETS_DATABASE_URL: postgresql://verve:verve_test@localhost:5432/verve_test_clinic_brand_assets
       # ── Fresh empty database for clean-slate migration gate ───────────────────
       # freshDbMigration.integration.test.ts uses this URL to prove the full
       # migration chain applies to a brand-new database from scratch.
@@ -111,6 +112,9 @@ jobs:
           PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
             -v ON_ERROR_STOP=1 \
             -c "CREATE DATABASE verve_test_leave_security WITH TEMPLATE verve_test OWNER verve;"
+          PGPASSWORD=verve_test psql -h localhost -U verve -d postgres \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE verve_test_clinic_brand_assets WITH TEMPLATE verve_test OWNER verve;"
 
       - name: Start disposable TLS-enabled PostgreSQL
         shell: bash
@@ -209,6 +213,11 @@ jobs:
         run: |
           node -e "const u=new URL(process.env.TEST_DATABASE_URL||'');if(!['localhost','127.0.0.1'].includes(u.hostname)||u.pathname!='/verve_test_leave_security'){throw new Error('TEST_DATABASE_URL must target the isolated local CI database')}"
           npm test --workspace=@verve/backend -- --runInBand --forceExit --verbose --testPathPattern=soleOwnerLeaveReview.postgres.integration
+
+      - name: "P0 — Clinic brand assets PostgreSQL RLS"
+        run: |
+          node -e "const u=new URL(process.env.CLINIC_BRAND_ASSETS_DATABASE_URL||'');if(u.hostname!=='localhost'||u.port!=='5432'||u.pathname!='/verve_test_clinic_brand_assets'){throw new Error('CLINIC_BRAND_ASSETS_DATABASE_URL must target the isolated local CI database')}"
+          npm run test:clinicbrandrls-integration --workspace=@verve/backend
 
       - name: "P0 — PostgreSQL certificate and hostname verification gate"
         run: npm run test:database-tls-integration --workspace=@verve/backend

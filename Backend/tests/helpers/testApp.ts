@@ -1,7 +1,10 @@
 import type { Express } from "express";
 
 import { createApp } from "../../src/app.js";
-import { createAppDependencies } from "../../src/bootstrap/dependencies.js";
+import {
+  createAppDependencies,
+  type AppDependencies,
+} from "../../src/bootstrap/dependencies.js";
 import { loadConfig } from "../../src/config/index.js";
 import { createLogger } from "../../src/utils/logger.js";
 
@@ -22,6 +25,9 @@ type TestAppOptions = {
    * Example: "https://verve-dental-frontend.onrender.com"
    */
   corsOrigin?: string;
+  configureDependencies?: (
+    dependencies: AppDependencies,
+  ) => void | Promise<void>;
 };
 
 export async function createTestApp(options?: TestAppOptions): Promise<Express> {
@@ -36,6 +42,7 @@ export async function createTestApp(options?: TestAppOptions): Promise<Express> 
   const config = loadConfig();
   const logger = createLogger(config);
   const deps = await createAppDependencies(config, logger);
+  await options?.configureDependencies?.(deps);
 
   return createApp(config, logger, deps);
 }
