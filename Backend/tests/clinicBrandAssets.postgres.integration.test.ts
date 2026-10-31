@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 
+import { createPostgresClinicRepository } from "../src/repositories/clinicRepository.postgres.js";
 import {
   SEED_CLINIC_A_ID,
   SEED_CLINIC_B_ID,
@@ -56,6 +57,11 @@ describe("migration 061 clinic brand assets FORCE RLS", () => {
   }
 
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+  const appRolePool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 2,
+    options: "-c role=verve_app",
+  });
   const otherOrganisationId = randomUUID();
   const otherOrganisationClinicId = randomUUID();
 
@@ -154,6 +160,7 @@ describe("migration 061 clinic brand assets FORCE RLS", () => {
       .catch(() => undefined);
     await pool.query("DELETE FROM organisations WHERE id = $1", [otherOrganisationId])
       .catch(() => undefined);
+    await appRolePool.end();
     await pool.end();
   });
 
@@ -309,5 +316,49 @@ describe("migration 061 clinic brand assets FORCE RLS", () => {
     } finally {
       client.release();
     }
+  });
+
+  it("creates and replaces a logo through the repository under an explicit exact-clinic context", async () => {
+    await withClinicContext(SEED_CLINIC_A_ID, async (client) => {
+      await client.query(
+        "DELETE FROM clinic_brand_assets WHERE clinic_id = $1",
+        [SEED_CLINIC_A_ID],
+      );
+    });
+
+    const repository = createPostgresClinicRepository(appRolePool);
+    const created = await repository.upsertBrandAsset({
+      clinicId: SEED_CLINIC_A_ID,
+      imageData: Buffer.from([1, 2, 3]),
+      mimeType: "image/png",
+      sha256Checksum: "1".repeat(64),
+      width: 2,
+      height: 2,
+      updatedByUserId: null,
+    });
+    expect(created).toMatchObject({
+      clinicId: SEED_CLINIC_A_ID,
+      sha256Checksum: "1".repeat(64),
+    });
+
+    const replaced = await repository.upsertBrandAsset({
+      clinicId: SEED_CLINIC_A_ID,
+      imageData: Buffer.from([4, 5, 6]),
+      mimeType: "image/jpeg",
+      sha256Checksum: "2".repeat(64),
+      width: 3,
+      height: 3,
+      updatedByUserId: null,
+    });
+    expect(replaced).toMatchObject({
+      clinicId: SEED_CLINIC_A_ID,
+      mimeType: "image/jpeg",
+      sha256Checksum: "2".repeat(64),
+    });
+    await expect(repository.findBrandAsset(SEED_CLINIC_A_ID)).resolves.toMatchObject({
+      imageData: Buffer.from([4, 5, 6]),
+      sha256Checksum: "2".repeat(64),
+    });
+    await expect(repository.deleteBrandAsset(SEED_CLINIC_A_ID)).resolves.toBe(true);
   });
 });

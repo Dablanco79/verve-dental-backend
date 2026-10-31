@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import { withTenantContext } from "../db/tenantContext.js";
 import type {
   Clinic,
   ClinicBrandAsset,
@@ -222,12 +223,14 @@ export function createPostgresClinicRepository(
     },
 
     async findBrandAsset(clinicId: string): Promise<ClinicBrandAsset | null> {
-      const { rows } = await pool.query<ClinicBrandAssetRow>(
-        `SELECT clinic_id, image_data, mime_type, sha256_checksum, width, height,
-                created_at, updated_at, updated_by_user_id
-         FROM clinic_brand_assets
-         WHERE clinic_id = $1`,
-        [clinicId],
+      const { rows } = await withTenantContext(pool, clinicId, (client) =>
+        client.query<ClinicBrandAssetRow>(
+          `SELECT clinic_id, image_data, mime_type, sha256_checksum, width, height,
+                  created_at, updated_at, updated_by_user_id
+           FROM clinic_brand_assets
+           WHERE clinic_id = $1`,
+          [clinicId],
+        ),
       );
       return rows[0] ? toClinicBrandAsset(rows[0]) : null;
     },
@@ -235,30 +238,34 @@ export function createPostgresClinicRepository(
     async upsertBrandAsset(
       input: UpsertClinicBrandAssetInput,
     ): Promise<ClinicBrandAsset> {
-      const { rows } = await pool.query<ClinicBrandAssetRow>(
-        `INSERT INTO clinic_brand_assets
-           (clinic_id, image_data, mime_type, sha256_checksum, width, height,
-            updated_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (clinic_id) DO UPDATE
-           SET image_data = EXCLUDED.image_data,
-               mime_type = EXCLUDED.mime_type,
-               sha256_checksum = EXCLUDED.sha256_checksum,
-               width = EXCLUDED.width,
-               height = EXCLUDED.height,
-               updated_at = now(),
-               updated_by_user_id = EXCLUDED.updated_by_user_id
-         RETURNING clinic_id, image_data, mime_type, sha256_checksum, width, height,
-                   created_at, updated_at, updated_by_user_id`,
-        [
-          input.clinicId,
-          input.imageData,
-          input.mimeType,
-          input.sha256Checksum,
-          input.width,
-          input.height,
-          input.updatedByUserId,
-        ],
+      const { rows } = await withTenantContext(
+        pool,
+        input.clinicId,
+        (client) => client.query<ClinicBrandAssetRow>(
+          `INSERT INTO clinic_brand_assets
+             (clinic_id, image_data, mime_type, sha256_checksum, width, height,
+              updated_by_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (clinic_id) DO UPDATE
+             SET image_data = EXCLUDED.image_data,
+                 mime_type = EXCLUDED.mime_type,
+                 sha256_checksum = EXCLUDED.sha256_checksum,
+                 width = EXCLUDED.width,
+                 height = EXCLUDED.height,
+                 updated_at = now(),
+                 updated_by_user_id = EXCLUDED.updated_by_user_id
+           RETURNING clinic_id, image_data, mime_type, sha256_checksum, width, height,
+                     created_at, updated_at, updated_by_user_id`,
+          [
+            input.clinicId,
+            input.imageData,
+            input.mimeType,
+            input.sha256Checksum,
+            input.width,
+            input.height,
+            input.updatedByUserId,
+          ],
+        ),
       );
       const row = rows[0];
       if (!row) {
@@ -268,9 +275,11 @@ export function createPostgresClinicRepository(
     },
 
     async deleteBrandAsset(clinicId: string): Promise<boolean> {
-      const result = await pool.query(
-        "DELETE FROM clinic_brand_assets WHERE clinic_id = $1",
-        [clinicId],
+      const result = await withTenantContext(pool, clinicId, (client) =>
+        client.query(
+          "DELETE FROM clinic_brand_assets WHERE clinic_id = $1",
+          [clinicId],
+        ),
       );
       return (result.rowCount ?? 0) > 0;
     },
