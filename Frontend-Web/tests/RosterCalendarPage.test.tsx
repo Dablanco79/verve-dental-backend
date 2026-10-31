@@ -137,6 +137,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
       })]);
 
       const { container } = renderPage();
+      await navigateMonthViewTo(user, "2026-10");
       const monthCell = (date: string): HTMLElement => {
         const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
           .find((candidate) =>
@@ -163,6 +164,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         within(monthCell("13")).getByRole("button", { name: /Shift: Alice Jones/i }),
       ).toBeInTheDocument();
 
+      await user.click(screen.getByRole("button", { name: "Today" }));
       await navigateDayViewTo(user, "2026-10-12");
       expect(
         await screen.findByLabelText(/Approved leave: Alice Jones/i),
@@ -225,6 +227,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
       }]);
 
       const { container } = renderPage();
+      await navigateMonthViewTo(user, "2026-10");
       await waitFor(() => {
         for (const date of monthDates) {
           const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
@@ -238,6 +241,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         }
       });
 
+      await user.click(screen.getByRole("button", { name: "Today" }));
       await navigateDayViewTo(user, startDate.slice(0, 10));
       expect(
         await screen.findByLabelText(/Approved leave: Alice Jones/i),
@@ -352,6 +356,31 @@ function renderPage() {
 
 function todayDateString(): string {
   return currentRosterCalendarDate();
+}
+
+async function navigateMonthViewTo(
+  user: ReturnType<typeof userEvent.setup>,
+  targetMonth: string,
+): Promise<void> {
+  const [currentYear, currentMonth] = currentRosterCalendarDate()
+    .slice(0, 7)
+    .split("-")
+    .map(Number);
+  const [targetYear, targetMonthNumber] = targetMonth.split("-").map(Number);
+  if (
+    currentYear === undefined ||
+    currentMonth === undefined ||
+    targetYear === undefined ||
+    targetMonthNumber === undefined
+  ) {
+    throw new Error(`Invalid target month: ${targetMonth}`);
+  }
+  const distance =
+    targetYear * 12 + targetMonthNumber - (currentYear * 12 + currentMonth);
+  const buttonName = distance >= 0 ? "Next month" : "Previous month";
+  for (let step = 0; step < Math.abs(distance); step += 1) {
+    await user.click(screen.getByRole("button", { name: buttonName }));
+  }
 }
 
 async function navigateDayViewTo(
