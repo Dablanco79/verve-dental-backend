@@ -87,6 +87,14 @@ const weeklyExportQuerySchema = z.object({
   ),
 });
 
+const monthlyExportQuerySchema = z.object({
+  month: z.string().regex(
+    /^\d{4}-\d{2}$/,
+    "month must use YYYY-MM",
+  ),
+  paperSize: z.enum(["A3", "A4"]).default("A3"),
+});
+
 // UUID v4 path param — rejects malformed values before they reach Postgres.
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -102,6 +110,41 @@ function requireUuidParam(req: Request, paramName: string): string {
     );
   }
   return value;
+}
+
+function sendRosterPdf(
+  res: Response,
+  result: {
+    buffer: Buffer;
+    filename: string;
+    pageCount: number;
+    staffCount: number;
+    shiftCount: number;
+    entryCount?: number;
+    continuationEntryCount?: number;
+  },
+): void {
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${result.filename}"`,
+  );
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Export-Staff-Count", String(result.staffCount));
+  res.setHeader("X-Export-Shift-Count", String(result.shiftCount));
+  res.setHeader("X-Export-Page-Count", String(result.pageCount));
+  if (result.entryCount !== undefined) {
+    res.setHeader("X-Export-Entry-Count", String(result.entryCount));
+  }
+  if (result.continuationEntryCount !== undefined) {
+    res.setHeader(
+      "X-Export-Continuation-Entry-Count",
+      String(result.continuationEntryCount),
+    );
+  }
+  res.status(200).send(result.buffer);
 }
 
 function serializeEntry(entry: RosterEntry) {
@@ -298,18 +341,28 @@ export function createRosterHandlers(rosterService: RosterService) {
         clinicId,
         parsed.data.weekStart,
       );
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${result.filename}"`,
+      sendRosterPdf(res, result);
+    },
+
+    async exportMonthlyPdf(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = monthlyExportQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed",
+          zodToDetails(parsed.error),
+        );
+      }
+      const result = await rosterService.exportMonthlyPdf(
+        caller,
+        clinicId,
+        parsed.data.month,
+        parsed.data.paperSize,
       );
-      res.setHeader("Cache-Control", "private, no-store");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader("X-Export-Staff-Count", String(result.staffCount));
-      res.setHeader("X-Export-Shift-Count", String(result.shiftCount));
-      res.setHeader("X-Export-Page-Count", String(result.pageCount));
-      res.status(200).send(result.buffer);
+      sendRosterPdf(res, result);
     },
 
     /** GET /roster/me (clinic-agnostic personal endpoint) */

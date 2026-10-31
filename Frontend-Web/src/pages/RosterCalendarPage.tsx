@@ -202,7 +202,13 @@ export function RosterCalendarPage() {
   const [staffList, setStaffList] = useState<EligibleStaff[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isExportingWeeklyPdf, setIsExportingWeeklyPdf] = useState(false);
+  const [pdfExportMode, setPdfExportMode] =
+    useState<"weekly" | "monthly">("weekly");
+  const [monthlyExportMonth, setMonthlyExportMonth] = useState(() =>
+    formatCalendarDate(new Date(), ROSTER_TIME_ZONE).slice(0, 7));
+  const [monthlyPaperSize, setMonthlyPaperSize] =
+    useState<"A3" | "A4">("A3");
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
   const [accessibleClinics, setAccessibleClinics] = useState<{ id: string; name: string }[]>([]);
@@ -227,7 +233,7 @@ export function RosterCalendarPage() {
   const conflictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const canWrite = user ? canManageRoster(user.role) : false;
-  const canExportWeeklyPdf =
+  const canExportRosterPdf =
     canWrite && Boolean(user?.permissions.includes("module:roster"));
 
   /** Resolve the best display name for a roster entry's staff member. */
@@ -345,23 +351,37 @@ export function RosterCalendarPage() {
     void loadEntries();
   }, [loadEntries]);
 
-  async function handleWeeklyPdfExport(): Promise<void> {
-    if (!clinicId || isAllClinicsScope || !canExportWeeklyPdf) return;
-    setIsExportingWeeklyPdf(true);
+  useEffect(() => {
+    if (pdfExportMode === "monthly") {
+      setMonthlyExportMonth(anchorDate.slice(0, 7));
+    }
+  }, [anchorDate, pdfExportMode]);
+
+  async function handleRosterPdfExport(): Promise<void> {
+    if (!clinicId || isAllClinicsScope || !canExportRosterPdf) return;
+    setIsExportingPdf(true);
     setExportError(null);
     try {
-      await apiClient.exportWeeklyRosterPdf(
-        clinicId,
-        getWeekStart(anchorDate),
-      );
+      if (pdfExportMode === "weekly") {
+        await apiClient.exportWeeklyRosterPdf(
+          clinicId,
+          getWeekStart(anchorDate),
+        );
+      } else {
+        await apiClient.exportMonthlyRosterPdf(
+          clinicId,
+          monthlyExportMonth,
+          monthlyPaperSize,
+        );
+      }
     } catch (error: unknown) {
       setExportError(
         error instanceof Error
           ? error.message
-          : "Unable to export the weekly roster PDF.",
+          : `Unable to export the ${pdfExportMode} roster PDF.`,
       );
     } finally {
-      setIsExportingWeeklyPdf(false);
+      setIsExportingPdf(false);
     }
   }
 
@@ -916,29 +936,96 @@ export function RosterCalendarPage() {
           <p className="roster-hub__subtitle">{clinicName ?? user.homeClinicName}</p>
         </div>
 
-        {canExportWeeklyPdf ? (
+        {canExportRosterPdf ? (
           <div className="roster-hub__export-panel">
             <div className="roster-hub__export-actions">
-              <span className="roster-hub__export-label">Export</span>
+              <label
+                className="roster-hub__export-label"
+                htmlFor="roster-pdf-export-mode"
+              >
+                Export Roster PDF
+              </label>
+              <select
+                id="roster-pdf-export-mode"
+                className="roster-export-control"
+                value={pdfExportMode}
+                disabled={isExportingPdf}
+                onChange={(event) => {
+                  const mode = event.target.value as "weekly" | "monthly";
+                  setPdfExportMode(mode);
+                  if (mode === "monthly") {
+                    setMonthlyExportMonth(anchorDate.slice(0, 7));
+                  }
+                  setExportError(null);
+                }}
+              >
+                <option value="weekly">Weekly Roster</option>
+                <option value="monthly">Monthly Calendar</option>
+              </select>
+              {pdfExportMode === "monthly" ? (
+                <>
+                  <label className="visually-hidden" htmlFor="roster-export-month">
+                    Roster month
+                  </label>
+                  <input
+                    id="roster-export-month"
+                    className="roster-export-control"
+                    type="month"
+                    value={monthlyExportMonth}
+                    disabled={isExportingPdf}
+                    onChange={(event) => {
+                      setMonthlyExportMonth(event.target.value);
+                    }}
+                  />
+                  <label className="visually-hidden" htmlFor="roster-export-paper">
+                    PDF paper size
+                  </label>
+                  <select
+                    id="roster-export-paper"
+                    className="roster-export-control"
+                    value={monthlyPaperSize}
+                    disabled={isExportingPdf}
+                    onChange={(event) => {
+                      setMonthlyPaperSize(
+                        event.target.value as "A3" | "A4",
+                      );
+                    }}
+                  >
+                    <option value="A3">A3 Landscape</option>
+                    <option value="A4">A4 Landscape</option>
+                  </select>
+                </>
+              ) : null}
               <button
                 type="button"
                 className="roster-export-btn"
                 disabled={
-                  isExportingWeeklyPdf ||
+                  isExportingPdf ||
                   isAllClinicsScope ||
-                  !clinicId
+                  !clinicId ||
+                  (pdfExportMode === "monthly" && !monthlyExportMonth)
                 }
                 title={
                   isAllClinicsScope
-                    ? "Select one clinic before exporting a weekly roster"
-                    : `Export the week commencing ${getWeekStart(anchorDate)}`
+                    ? "Select one clinic before exporting a roster PDF"
+                    : pdfExportMode === "weekly"
+                      ? `Export the week commencing ${getWeekStart(anchorDate)}`
+                      : `Export ${monthlyExportMonth} as ${monthlyPaperSize} landscape`
                 }
-                aria-label="Export Weekly PDF"
+                aria-label={
+                  pdfExportMode === "weekly"
+                    ? "Export Weekly PDF"
+                    : "Export Monthly PDF"
+                }
                 onClick={() => {
-                  void handleWeeklyPdfExport();
+                  void handleRosterPdfExport();
                 }}
               >
-                {isExportingWeeklyPdf ? "Exporting…" : "Export Weekly PDF"}
+                {isExportingPdf
+                  ? "Exporting…"
+                  : pdfExportMode === "weekly"
+                    ? "Export Weekly PDF"
+                    : "Export Monthly PDF"}
               </button>
               <button
                 type="button"

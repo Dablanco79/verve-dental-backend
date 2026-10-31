@@ -1071,14 +1071,14 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
-  async function exportWeeklyRosterPdf(
-    clinicId: string,
-    weekStart: string,
+  async function downloadRosterPdf(
+    path: string,
+    fallbackFilename: string,
+    errorLabel: string,
   ): Promise<string> {
     const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
-    const query = new URLSearchParams({ weekStart });
     const response = await fetch(
-      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/export.pdf?${query.toString()}`,
+      `${baseUrl}${path}`,
       {
         headers: { Authorization: `Bearer ${requireAccessToken()}` },
         credentials: "include",
@@ -1088,7 +1088,7 @@ export function createApiClient(config: AppConfig) {
       const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
       throw new Error(
         errorBody?.error.message ??
-          `Weekly roster PDF export failed (${String(response.status)})`,
+          `${errorLabel} failed (${String(response.status)})`,
       );
     }
 
@@ -1097,7 +1097,7 @@ export function createApiClient(config: AppConfig) {
     const filename =
       suggested && /^[A-Za-z0-9._-]+\.pdf$/i.test(suggested)
         ? suggested
-        : `RENQOR_Roster_${weekStart}.pdf`;
+        : fallbackFilename;
     const objectUrl = URL.createObjectURL(await response.blob());
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
@@ -1111,6 +1111,31 @@ export function createApiClient(config: AppConfig) {
       URL.revokeObjectURL(objectUrl);
     }, 1_000);
     return filename;
+  }
+
+  async function exportWeeklyRosterPdf(
+    clinicId: string,
+    weekStart: string,
+  ): Promise<string> {
+    const query = new URLSearchParams({ weekStart });
+    return downloadRosterPdf(
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/export.pdf?${query.toString()}`,
+      `RENQOR_Roster_${weekStart}.pdf`,
+      "Weekly roster PDF export",
+    );
+  }
+
+  async function exportMonthlyRosterPdf(
+    clinicId: string,
+    month: string,
+    paperSize: "A3" | "A4",
+  ): Promise<string> {
+    const query = new URLSearchParams({ month, paperSize });
+    return downloadRosterPdf(
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/monthly.pdf?${query.toString()}`,
+      `RENQOR_Roster_${month}_${paperSize}.pdf`,
+      "Monthly roster PDF export",
+    );
   }
 
   /**
@@ -3147,6 +3172,7 @@ export function createApiClient(config: AppConfig) {
     getPurchasingDraftDetail,
     listRoster,
     exportWeeklyRosterPdf,
+    exportMonthlyRosterPdf,
     getMyShifts,
     getMyShiftsAllClinics,
     getRosterAccessibleClinics,

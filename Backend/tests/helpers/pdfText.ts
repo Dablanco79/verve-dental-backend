@@ -42,7 +42,12 @@ export function extractPdfKitText(buffer: Buffer): string {
 
     const text = [...content.matchAll(/<([0-9A-Fa-f]+)>/g)]
       .map((hexMatch) =>
-        Buffer.from(hexMatch[1] ?? "", "hex").toString("latin1"))
+        Buffer.from(hexMatch[1] ?? "", "hex")
+          .toString("latin1")
+          // PDFKit's standard Helvetica encoding uses Windows-1252 bytes for
+          // typographic dashes rather than ISO-8859-1 control characters.
+          .replace(/\x96/g, "–")
+          .replace(/\x97/g, "—"))
       .join("");
     if (text) decodedStreams.push(text);
     streamPattern.lastIndex = streamEndMarker + "endstream".length;

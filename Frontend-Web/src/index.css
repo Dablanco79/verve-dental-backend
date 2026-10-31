@@ -12010,6 +12010,23 @@ select.vds-control {
   letter-spacing: 0.07em;
 }
 
+.roster-export-control {
+  min-height: 2.25rem;
+  max-width: 10.5rem;
+  border: var(--vds-card-border);
+  border-radius: var(--vds-control-radius);
+  background: var(--vds-colour-surface);
+  color: var(--vds-colour-text);
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  font-size: var(--vds-font-size-xs);
+}
+
+.roster-export-control:focus-visible {
+  outline: 2px solid var(--vds-colour-primary);
+  outline-offset: 2px;
+}
+
 /* ── Leave coverage advisory and manager configuration ─────────────────────── */
 
 .lv-coverage-warning {
@@ -12153,6 +12170,12 @@ select.vds-control {
 
   .roster-export-btn {
     min-height: 2.75rem;
+  }
+
+  .roster-export-control {
+    min-height: 2.75rem;
+    max-width: 100%;
+    flex: 1 1 9rem;
   }
 }
 

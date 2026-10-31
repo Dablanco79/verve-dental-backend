@@ -15,7 +15,7 @@ vi.mock("../src/auth/tokenStorage.js", () => ({
   clearAccessToken: vi.fn(),
 }));
 
-describe("weekly roster PDF API download", () => {
+describe("roster PDF API downloads", () => {
   beforeEach(() => {
     mockGetAccessToken.mockReturnValue("test-token");
     mockCreateObjectUrl.mockClear();
@@ -112,5 +112,48 @@ describe("weekly roster PDF API download", () => {
       client.exportWeeklyRosterPdf("clinic-id", "2026-11-16"),
     ).rejects.toThrow("Roster access denied");
     expect(mockCreateObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("downloads a monthly A4 calendar using the selected clinic and month", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(new Blob(["%PDF-test"]), {
+      status: 200,
+      headers: {
+        "Content-Disposition":
+          'attachment; filename="RENQOR_Heathmont_Roster_2026-11_A4.pdf"',
+      },
+    }));
+    const client = createApiClient({
+      apiBaseUrl: "http://test",
+      pilotResetEnabled: false,
+    });
+
+    await expect(
+      client.exportMonthlyRosterPdf("clinic/monthly", "2026-11", "A4"),
+    ).resolves.toBe("RENQOR_Heathmont_Roster_2026-11_A4.pdf");
+    expect(fetch).toHaveBeenCalledWith(
+      "http://test/api/v1/clinics/clinic%2Fmonthly/roster/monthly.pdf?month=2026-11&paperSize=A4",
+      expect.objectContaining({
+        credentials: "include",
+        headers: { Authorization: "Bearer test-token" },
+      }),
+    );
+    expect(mockAnchorClick).toHaveBeenCalledOnce();
+  });
+
+  it("uses a safe deterministic monthly fallback filename", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(new Blob(["%PDF-test"]), {
+      status: 200,
+      headers: {
+        "Content-Disposition": 'attachment; filename="../../monthly.pdf"',
+      },
+    }));
+    const client = createApiClient({
+      apiBaseUrl: "http://test",
+      pilotResetEnabled: false,
+    });
+
+    await expect(
+      client.exportMonthlyRosterPdf("clinic-id", "2026-02", "A3"),
+    ).resolves.toBe("RENQOR_Roster_2026-02_A3.pdf");
   });
 });

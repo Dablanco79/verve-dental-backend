@@ -1,7 +1,17 @@
 import PDFDocument from "pdfkit";
 
-import type { RosterEntry } from "../types/roster.js";
 import { addCalendarDays, formatCalendarDate } from "../utils/calendarDate.js";
+import {
+  addRosterPdfFooters,
+  collectPdfBuffer,
+  drawRosterPageHeading,
+  formatRosterPdfTime,
+  safeRosterFilenamePart,
+  type RosterPdfLeave,
+  type RosterPdfLogo,
+  type RosterPdfShift,
+  type RosterPdfStaff,
+} from "./rosterPdfShared.js";
 
 const PAGE_OPTIONS = {
   size: "A4",
@@ -26,22 +36,9 @@ const TABLE_HEADER_HEIGHT = 28;
 const ROW_PADDING = 4;
 const MAX_LINES_PER_SEGMENT = 7;
 
-export type WeeklyRosterPdfShift = Pick<
-  RosterEntry,
-  "id" | "shiftStartAt" | "shiftEndAt"
->;
-
-export type WeeklyRosterPdfLeave = {
-  startDate: string;
-  endDate: string;
-};
-
-export type WeeklyRosterPdfStaff = {
-  staffUserId: string;
-  displayName: string;
-  shifts: WeeklyRosterPdfShift[];
-  approvedLeave: WeeklyRosterPdfLeave[];
-};
+export type WeeklyRosterPdfShift = RosterPdfShift;
+export type WeeklyRosterPdfLeave = RosterPdfLeave;
+export type WeeklyRosterPdfStaff = RosterPdfStaff;
 
 export type WeeklyRosterPdfData = {
   clinicName: string;
@@ -49,10 +46,7 @@ export type WeeklyRosterPdfData = {
   weekStart: string;
   weekEnd: string;
   generatedAt: Date;
-  logo?: {
-    imageData: Buffer;
-    mimeType: "image/png" | "image/jpeg";
-  };
+  logo?: RosterPdfLogo;
   staff: WeeklyRosterPdfStaff[];
 };
 
@@ -73,15 +67,6 @@ export type WeeklyRosterPdfRow = {
   scheduledHours: string;
 };
 
-function formatTime(instant: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-AU", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(instant);
-}
-
 function shortDateLabel(date: string): string {
   const [year, month, day] = date.split("-").map(Number);
   return new Intl.DateTimeFormat("en-AU", {
@@ -101,8 +86,8 @@ function formatShift(
     new Date(shift.shiftEndAt.getTime() - 1),
     timeZone,
   );
-  const startTime = formatTime(shift.shiftStartAt, timeZone);
-  const endTime = formatTime(shift.shiftEndAt, timeZone);
+  const startTime = formatRosterPdfTime(shift.shiftStartAt, timeZone);
+  const endTime = formatRosterPdfTime(shift.shiftEndAt, timeZone);
   if (startDate === endDate) return `${startTime}-${endTime}`;
   return `${shortDateLabel(startDate)} ${startTime} - ${shortDateLabel(endDate)} ${endTime}`;
 }
@@ -169,22 +154,11 @@ export function buildWeeklyRosterPdfRows(
     .sort((a, b) => a.employee.localeCompare(b.employee));
 }
 
-function safeFilenamePart(value: string): string {
-  const cleaned = value
-    .normalize("NFKD")
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/[\s_]+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 80);
-  return cleaned || "Clinic";
-}
-
 export function weeklyRosterPdfFilename(
   clinicName: string,
   weekStart: string,
 ): string {
-  return `RENQOR_${safeFilenamePart(clinicName)}_Roster_${weekStart}.pdf`;
+  return `RENQOR_${safeRosterFilenamePart(clinicName)}_Roster_${weekStart}.pdf`;
 }
 
 function splitRow(row: WeeklyRosterPdfRow): WeeklyRosterPdfRow[] {
@@ -205,19 +179,6 @@ function splitRow(row: WeeklyRosterPdfRow): WeeklyRosterPdfRow[] {
     }),
     scheduledHours: segmentIndex === 0 ? row.scheduledHours : "",
   }));
-}
-
-function collectPdfBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-    doc.on("end", () => {
-      resolve(Buffer.concat(chunks));
-    });
-    doc.on("error", reject);
-  });
 }
 
 export async function generateWeeklyRosterPdf(
@@ -241,48 +202,14 @@ export async function generateWeeklyRosterPdf(
   const pageContentBottom = (): number => doc.page.height - 72;
 
   function drawPageHeading(): number {
-    const top = PAGE_OPTIONS.margins.top;
-    let textX = PAGE_OPTIONS.margins.left;
-    if (data.logo) {
-      try {
-        doc.image(data.logo.imageData, textX, top, {
-          fit: [92, 38],
-        });
-        textX += 104;
-      } catch {
-        // Phase 1 stores normalized PNG/JPEG bytes. If historical bytes are
-        // unreadable, retain a usable export with the clinic-name fallback.
-      }
-    }
-
-    const clinicNameWidth =
-      doc.page.width - textX - PAGE_OPTIONS.margins.right;
-    doc
-      .fillColor("#17233c")
-      .font("Helvetica-Bold")
-      .fontSize(14);
-    const clinicNameHeight = doc.heightOfString(data.clinicName, {
-      width: clinicNameWidth,
-    });
-    doc.text(data.clinicName, textX, top, {
-      width: clinicNameWidth,
-    });
-    const titleY = top + clinicNameHeight + 3;
-    doc
-      .fontSize(11)
-      .text("WEEKLY STAFF ROSTER", textX, titleY, { lineBreak: false });
-    const dateY = titleY + 16;
-    doc
-      .fillColor("#526077")
-      .font("Helvetica")
-      .fontSize(8)
-      .text(
+    return drawRosterPageHeading(doc, {
+      clinicName: data.clinicName,
+      logo: data.logo,
+      title: "WEEKLY STAFF ROSTER",
+      subtitle:
         `${shortDateLabel(data.weekStart)} - ${shortDateLabel(data.weekEnd)}`,
-        textX,
-        dateY,
-        { lineBreak: false },
-      );
-    return Math.max(top + 55, dateY + 13, data.logo ? top + 48 : top);
+      margins: PAGE_OPTIONS.margins,
+    });
   }
 
   function drawTableHeader(y: number): number {
@@ -383,43 +310,11 @@ export async function generateWeeklyRosterPdf(
       { width: 620 },
     );
 
-  const range = doc.bufferedPageRange();
-  pageCount = range.count;
-  for (let index = range.start; index < range.start + range.count; index += 1) {
-    doc.switchToPage(index);
-    // Keep text above PDFKit's writable bottom edge. Drawing text below that
-    // edge makes PDFKit silently append a blank overflow page.
-    const footerY =
-      doc.page.height - PAGE_OPTIONS.margins.bottom - 11;
-    doc
-      .strokeColor("#b9c2d0")
-      .moveTo(PAGE_OPTIONS.margins.left, footerY - 5)
-      .lineTo(doc.page.width - PAGE_OPTIONS.margins.right, footerY - 5)
-      .stroke();
-    doc
-      .fillColor("#526077")
-      .font("Helvetica")
-      .fontSize(7.5)
-      .text("Printed from RENQOR", PAGE_OPTIONS.margins.left, footerY, {
-        lineBreak: false,
-      })
-      .text(
-        `Generated ${data.generatedAt.toLocaleDateString("en-AU", {
-          timeZone: data.clinicTimeZone,
-        })}  |  Page ${String(index - range.start + 1)} of ${String(range.count)}`,
-        PAGE_OPTIONS.margins.left,
-        footerY,
-        {
-          width:
-            doc.page.width -
-            PAGE_OPTIONS.margins.left -
-            PAGE_OPTIONS.margins.right,
-          align: "right",
-          lineBreak: false,
-        },
-      );
-  }
-  pageCount = doc.bufferedPageRange().count;
+  pageCount = addRosterPdfFooters(doc, {
+    margins: PAGE_OPTIONS.margins,
+    generatedAt: data.generatedAt,
+    timeZone: data.clinicTimeZone,
+  });
 
   doc.end();
   return { buffer: await result, pageCount };

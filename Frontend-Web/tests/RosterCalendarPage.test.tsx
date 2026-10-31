@@ -57,6 +57,7 @@ const {
   mockUseOperationalClinic,
   mockCancelShift,
   mockExportWeeklyRosterPdf,
+  mockExportMonthlyRosterPdf,
   mockUpdateShift,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -71,6 +72,7 @@ const {
     mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
     mockCancelShift: vi.fn(),
     mockExportWeeklyRosterPdf: vi.fn(),
+    mockExportMonthlyRosterPdf: vi.fn(),
     mockUpdateShift: vi.fn(),
     mockUseOperationalClinic: vi.fn().mockReturnValue({
       clinicId: DEFAULT_CLINIC_ID,
@@ -268,6 +270,7 @@ vi.mock("../src/api/client.js", () => ({
     updateShift: mockUpdateShift,
     cancelShift: mockCancelShift,
     exportWeeklyRosterPdf: mockExportWeeklyRosterPdf,
+    exportMonthlyRosterPdf: mockExportMonthlyRosterPdf,
     checkShiftConflicts: vi.fn().mockResolvedValue({ overlapping: [], sameDay: [] }),
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
     listRosterApprovedLeave: mockListRosterApprovedLeave,
@@ -384,7 +387,7 @@ describe("staffDisplayName helper", () => {
   });
 });
 
-describe("RosterCalendarPage — weekly PDF export", () => {
+describe("RosterCalendarPage — roster PDF export", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setAuthenticatedUser(authTestState, managerUser);
@@ -402,6 +405,9 @@ describe("RosterCalendarPage — weekly PDF export", () => {
     ]);
     mockExportWeeklyRosterPdf.mockResolvedValue(
       "RENQOR_Clinic_Roster_2026-11-16.pdf",
+    );
+    mockExportMonthlyRosterPdf.mockResolvedValue(
+      "RENQOR_Clinic_Roster_2026-11_A3.pdf",
     );
   });
 
@@ -434,6 +440,92 @@ describe("RosterCalendarPage — weekly PDF export", () => {
     });
   });
 
+  it("exports the selected monthly calendar with A3 default and optional A4", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const exportType = await screen.findByLabelText("Export Roster PDF");
+    expect(
+      within(exportType).getByRole("option", { name: "Weekly Roster" }),
+    ).toBeInTheDocument();
+    expect(
+      within(exportType).getByRole("option", { name: "Monthly Calendar" }),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(exportType, "monthly");
+    const monthInput = screen.getByLabelText("Roster month");
+    await user.clear(monthInput);
+    await user.type(monthInput, "2026-11");
+    const paperSelect = screen.getByLabelText("PDF paper size");
+    expect(paperSelect).toHaveValue("A3");
+    await user.selectOptions(paperSelect, "A4");
+    await user.click(screen.getByRole("button", {
+      name: "Export Monthly PDF",
+    }));
+
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      "2026-11",
+      "A4",
+    );
+    expect(mockExportWeeklyRosterPdf).not.toHaveBeenCalled();
+  });
+
+  it("keeps the monthly export month aligned with calendar navigation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(
+      await screen.findByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    const monthInput = screen.getByLabelText<HTMLInputElement>("Roster month");
+    const initialMonth = monthInput.value;
+
+    await user.click(screen.getByRole("button", { name: "Next month" }));
+    await waitFor(() => {
+      expect(monthInput.value).not.toBe(initialMonth);
+    });
+    const navigatedMonth = monthInput.value;
+    await user.click(
+      screen.getByRole("button", { name: "Export Monthly PDF" }),
+    );
+
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      navigatedMonth,
+      "A3",
+    );
+  });
+
+  it("prevents duplicate monthly exports and reports monthly failures", async () => {
+    let rejectExport: ((error: Error) => void) | undefined;
+    mockExportMonthlyRosterPdf.mockReturnValue(
+      new Promise<string>((_resolve, reject) => {
+        rejectExport = reject;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(
+      await screen.findByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    const button = screen.getByRole("button", {
+      name: "Export Monthly PDF",
+    });
+    await user.click(button);
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledTimes(1);
+
+    rejectExport?.(new Error("Unable to generate monthly roster"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to generate monthly roster",
+    );
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
   it("disables combined export in All Clinics scope", async () => {
     mockUseOperationalClinic.mockReturnValue({
       clinicId: undefined,
@@ -448,6 +540,14 @@ describe("RosterCalendarPage — weekly PDF export", () => {
     expect(button).toBeDisabled();
     expect(screen.getByText(/select one clinic to export/i)).toBeInTheDocument();
     expect(mockExportWeeklyRosterPdf).not.toHaveBeenCalled();
+    await userEvent.setup().selectOptions(
+      screen.getByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    expect(
+      screen.getByRole("button", { name: "Export Monthly PDF" }),
+    ).toBeDisabled();
+    expect(mockExportMonthlyRosterPdf).not.toHaveBeenCalled();
   });
 
   it("does not show the clinic-wide export action to clinical staff", async () => {
@@ -458,6 +558,9 @@ describe("RosterCalendarPage — weekly PDF export", () => {
     });
     expect(
       screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Export Roster PDF"),
     ).not.toBeInTheDocument();
   });
 
@@ -471,6 +574,9 @@ describe("RosterCalendarPage — weekly PDF export", () => {
     });
     expect(
       screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Export Roster PDF"),
     ).not.toBeInTheDocument();
   });
 
