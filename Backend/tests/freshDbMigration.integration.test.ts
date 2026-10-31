@@ -8,7 +8,8 @@
  * 053_timesheet_staff_notes, 054_staff_pay_rates, and
  * 055_leave_pilot_safety, 056_approved_leave_cancellation, and
  * 057_leave_cancellation_requests, infrastructure hardening migration
- * 059_force_workflow_table_rls, and 060_leave_coverage_groups.
+ * 059_force_workflow_table_rls, 060_leave_coverage_groups, and
+ * 061_clinic_brand_assets.
  *
  * TWO GATING VARIABLES:
  *
@@ -142,13 +143,16 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     expect(rows[0]?.present).toBe(true);
   });
 
-  it("records 060_leave_coverage_groups last", async () => {
+  it("records the final registered migration last", async () => {
     if (SKIP_FRESH) return;
+
+    const expectedLastMigration = BOOTSTRAP_MIGRATIONS.at(-1)?.id;
+    expect(expectedLastMigration).toBe("061_clinic_brand_assets");
 
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
-    expect(rows[0]?.id).toBe("060_leave_coverage_groups");
+    expect(rows[0]?.id).toBe(expectedLastMigration);
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {

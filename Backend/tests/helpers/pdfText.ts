@@ -13,19 +13,25 @@ export function extractPdfKitText(buffer: Buffer): string {
 
   while ((match = streamPattern.exec(source)) !== null) {
     const streamStart = streamPattern.lastIndex;
-    const streamEndMarker = source.indexOf("endstream", streamStart);
-    if (streamEndMarker < 0) break;
-
-    let streamEnd = streamEndMarker;
-    while (
-      streamEnd > streamStart &&
-      (source[streamEnd - 1] === "\r" || source[streamEnd - 1] === "\n")
-    ) {
-      streamEnd -= 1;
-    }
-
     const objectStart = source.lastIndexOf("obj", match.index);
     const dictionary = source.slice(Math.max(0, objectStart), match.index);
+    const declaredLength = dictionary.match(/\/Length\s+(\d+)\b/)?.[1];
+    const streamEndMarker = source.indexOf(
+      "endstream",
+      declaredLength
+        ? streamStart + Number(declaredLength)
+        : streamStart,
+    );
+    if (streamEndMarker < 0) break;
+
+    let streamEnd = declaredLength
+      ? streamStart + Number(declaredLength)
+      : streamEndMarker;
+    if (!declaredLength && source[streamEnd - 1] === "\n") {
+      streamEnd -= 1;
+      if (source[streamEnd - 1] === "\r") streamEnd -= 1;
+    }
+
     const bytes = Buffer.from(
       source.slice(streamStart, streamEnd),
       "latin1",

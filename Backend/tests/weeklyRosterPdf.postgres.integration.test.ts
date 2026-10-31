@@ -469,9 +469,15 @@ describe("weekly roster PDF composed PostgreSQL export", () => {
     }
     expect(response.status).toBe(200);
     expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-disposition"]).toMatch(
+      /^attachment; filename="RENQOR_[^"]+\.pdf"$/,
+    );
     expect(response.headers["x-export-staff-count"]).toBe("2");
     expect(response.headers["x-export-shift-count"]).toBe("1");
+    expect(Buffer.isBuffer(response.body)).toBe(true);
     const pdf = response.body as Buffer;
+    expect(pdf.length).toBeGreaterThan(1_000);
+    expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
     const text = extractPdfKitText(pdf);
     expect(text).toContain(selectedClinicName);
     expect(text).toContain("PG Export Alpha");
