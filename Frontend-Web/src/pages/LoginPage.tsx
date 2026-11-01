@@ -1,9 +1,9 @@
-import { useState, type SubmitEvent } from "react";
+import { ArrowRight, LockKeyhole, Mail } from "lucide-react";
+import { useState, type ReactNode, type SubmitEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth.js";
 import { MfaEnrollmentPanel } from "../components/MfaEnrollmentPanel.js";
-import { AppShell } from "../components/layout/AppShell.js";
 import type { MfaSetupData } from "../types/index.js";
 
 // ── Step machine ──────────────────────────────────────────────────────────────
@@ -15,6 +15,52 @@ type LoginStep =
   | { step: "enrollment"; setupData: MfaSetupData }
   | { step: "enrollment_confirming"; setupData: MfaSetupData }
   | { step: "enrollment_success" };
+
+const INLINE_ARTWORK_FALLBACK =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+
+function LoginLayout({ children, isFlow = false }: { children: ReactNode; isFlow?: boolean }) {
+  return (
+    <main className="renqor-login">
+      <section
+        className={`renqor-login__content${isFlow ? " renqor-login__content--flow" : ""}`}
+      >
+        <header className="renqor-login__brand">
+          <img
+            src="/assets/brand/renqor-horizontal-dark.svg"
+            alt="RENQOR"
+            className="renqor-login__wordmark"
+          />
+          <p>Operational Intelligence Made Clear</p>
+        </header>
+        <div className="renqor-login__stage">{children}</div>
+        <p className="renqor-login__footer">Secure access to RENQOR operations</p>
+      </section>
+
+      <aside className="renqor-login__visual" aria-hidden="true">
+        <picture>
+          <source
+            media="(min-width: 741px)"
+            srcSet="/assets/brand/rq-right-artwork.png"
+          />
+          <img
+            src={INLINE_ARTWORK_FALLBACK}
+            alt=""
+            className="renqor-login__artwork"
+          />
+        </picture>
+        <div className="renqor-login__visual-caption">
+          <img
+            src="/assets/brand/renqor-horizontal-dark.svg"
+            alt=""
+            className="renqor-login__visual-wordmark"
+          />
+          <span>Operational intelligence for modern, multi-location operations.</span>
+        </div>
+      </aside>
+    </main>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -105,7 +151,7 @@ export function LoginPage() {
 
   if (loginStep.step === "enrollment_success") {
     return (
-      <AppShell>
+      <LoginLayout isFlow>
         <section className="auth-card">
           <h2>MFA enabled</h2>
           <p>
@@ -122,13 +168,13 @@ export function LoginPage() {
             Back to sign in
           </button>
         </section>
-      </AppShell>
+      </LoginLayout>
     );
   }
 
   if (loginStep.step === "enrollment_loading") {
     return (
-      <AppShell>
+      <LoginLayout isFlow>
         <section className="auth-card">
           <h2>Setting up MFA</h2>
           <p className="loading-message">
@@ -136,13 +182,13 @@ export function LoginPage() {
           </p>
           {error ? <p className="status-card__error">{error}</p> : null}
         </section>
-      </AppShell>
+      </LoginLayout>
     );
   }
 
   if (loginStep.step === "enrollment" || loginStep.step === "enrollment_confirming") {
     return (
-      <AppShell>
+      <LoginLayout isFlow>
         <section className="auth-card">
           <h2>Enable MFA — required</h2>
           <p className="inventory-page__subtitle">
@@ -157,13 +203,13 @@ export function LoginPage() {
             isBusy={loginStep.step === "enrollment_confirming"}
           />
         </section>
-      </AppShell>
+      </LoginLayout>
     );
   }
 
   if (loginStep.step === "mfa_verify") {
     return (
-      <AppShell>
+      <LoginLayout isFlow>
         <section className="auth-card">
           <h2>Verify MFA</h2>
           <form className="auth-form" onSubmit={(event) => { void handleMfaSubmit(event); }}>
@@ -181,45 +227,65 @@ export function LoginPage() {
               Verify
             </button>
           </form>
-          {error ? <p className="status-card__error">{error}</p> : null}
+          {error ? <p className="status-card__error" role="alert">{error}</p> : null}
         </section>
-      </AppShell>
+      </LoginLayout>
     );
   }
 
   // Default: credentials step
   return (
-    <AppShell>
-      <section className="auth-card">
-        <h2>Sign in</h2>
-        {sessionMessage ? <p className="inventory-notice--inline" role="status">{sessionMessage}</p> : null}
-        <form className="auth-form" onSubmit={(event) => { void handleLoginSubmit(event); }}>
-          <label>
-            Email
+    <LoginLayout>
+      <section className="renqor-login__form-panel" aria-labelledby="login-heading">
+        <div className="renqor-login__intro">
+          <h1 id="login-heading">Welcome</h1>
+          <p>Sign in to your RENQOR account to continue managing your operations.</p>
+        </div>
+
+        {sessionMessage ? (
+          <p className="renqor-login__notice" role="status">{sessionMessage}</p>
+        ) : null}
+
+        <form
+          className="renqor-login__form"
+          onSubmit={(event) => { void handleLoginSubmit(event); }}
+        >
+          <label htmlFor="login-email">Email address</label>
+          <div className="renqor-login__input-wrap">
+            <Mail size={18} strokeWidth={1.7} aria-hidden="true" />
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={(event) => { setEmail(event.target.value); }}
               autoComplete="username"
+              placeholder="you@company.com"
               required
             />
-          </label>
-          <label>
-            Password
+          </div>
+
+          <label htmlFor="login-password">Password</label>
+          <div className="renqor-login__input-wrap">
+            <LockKeyhole size={18} strokeWidth={1.7} aria-hidden="true" />
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(event) => { setPassword(event.target.value); }}
               autoComplete="current-password"
+              placeholder="Enter your password"
               required
             />
-          </label>
-          <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Signing in…" : "Sign in"}
+          </div>
+
+          <button className="renqor-login__submit" type="submit" disabled={isSubmitting}>
+            <span>{isSubmitting ? "Signing in…" : "Sign in"}</span>
+            <ArrowRight size={18} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </form>
-        {error ? <p className="status-card__error">{error}</p> : null}
+
+        {error ? <p className="renqor-login__error" role="alert">{error}</p> : null}
       </section>
-    </AppShell>
+    </LoginLayout>
   );
 }
