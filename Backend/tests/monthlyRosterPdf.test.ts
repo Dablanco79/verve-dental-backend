@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { randomBytes } from "node:crypto";
 import request from "supertest";
 import sharp from "sharp";
 
@@ -512,6 +513,44 @@ describe("monthly roster calendar data and PDF generation", () => {
     expect(a3.pageCount).toBe(1);
     expect(a4.pageCount).toBe(1);
   });
+
+  it.each(["A3", "A4"] as const)(
+    "embeds the clinic logo once for a realistic busy %s calendar",
+    async (paperSize) => {
+      const data = sampleMonthlyData(paperSize);
+      const rawLogo = randomBytes(360 * 140 * 3);
+      data.logo = {
+        imageData: await sharp(rawLogo, {
+          raw: { width: 360, height: 140, channels: 3 },
+        }).jpeg({ quality: 85 }).toBuffer(),
+        mimeType: "image/jpeg",
+      };
+      data.staff = Array.from({ length: 120 }, (_, staffIndex) => ({
+        staffUserId: `volume-staff-${String(staffIndex)}`,
+        displayName: `Volume Staff ${String(staffIndex).padStart(3, "0")}`,
+        shifts: Array.from({ length: 8 }, (_, shiftIndex) => {
+          const day = 1 + ((staffIndex * 8 + shiftIndex) % 30);
+          const shiftStartAt = new Date(Date.UTC(2026, 10, day, 0));
+          return {
+            id: `volume-shift-${String(staffIndex)}-${String(shiftIndex)}`,
+            shiftStartAt,
+            shiftEndAt: new Date(shiftStartAt.getTime() + 8 * 60 * 60_000),
+          };
+        }),
+        approvedLeave: [],
+      }));
+
+      const pdf = await generateMonthlyRosterPdf(data, { compress: false });
+      const source = pdf.buffer.toString("latin1");
+      const text = extractPdfKitText(pdf.buffer);
+      expect(pdf.entryCount).toBe(960);
+      expect(pdf.pageCount).toBeGreaterThan(1);
+      expect(source.match(/\/Subtype\s*\/Image\b/g)?.length ?? 0).toBe(1);
+      expect(text.split(data.clinicName).length - 1).toBe(pdf.pageCount);
+      expect(text.split("Printed from RENQOR").length - 1).toBe(pdf.pageCount);
+    },
+    15_000,
+  );
 
   it("does not render confidential contact, payroll, notes, or leave-reason fields", async () => {
     const data = sampleMonthlyData();

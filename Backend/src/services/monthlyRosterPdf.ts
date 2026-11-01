@@ -301,10 +301,11 @@ export async function generateMonthlyRosterPdf(
   function drawHeading(
     title = "MONTHLY STAFF ROSTER",
     headingSubtitle = subtitle,
+    includeLogo = true,
   ): number {
     return drawRosterPageHeading(doc, {
       clinicName: data.clinicName,
-      logo: data.logo,
+      logo: includeLogo ? data.logo : undefined,
       title,
       subtitle: headingSubtitle,
       margins: layout.margins,
@@ -477,6 +478,7 @@ export async function generateMonthlyRosterPdf(
     return drawHeading(
       "MONTHLY STAFF ROSTER — CONTINUATION",
       `${calendar.monthLabel}  |  ${data.paperSize} landscape`,
+      false,
     ) + 7;
   }
 
