@@ -16,6 +16,9 @@ type LoginStep =
   | { step: "enrollment_confirming"; setupData: MfaSetupData }
   | { step: "enrollment_success" };
 
+const INLINE_ARTWORK_FALLBACK =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+
 function LoginLayout({ children, isFlow = false }: { children: ReactNode; isFlow?: boolean }) {
   return (
     <main className="renqor-login">
@@ -35,11 +38,17 @@ function LoginLayout({ children, isFlow = false }: { children: ReactNode; isFlow
       </section>
 
       <aside className="renqor-login__visual" aria-hidden="true">
-        <img
-          src="/assets/brand/rq-right-artwork.png"
-          alt=""
-          className="renqor-login__artwork"
-        />
+        <picture>
+          <source
+            media="(min-width: 741px)"
+            srcSet="/assets/brand/rq-right-artwork.png"
+          />
+          <img
+            src={INLINE_ARTWORK_FALLBACK}
+            alt=""
+            className="renqor-login__artwork"
+          />
+        </picture>
         <div className="renqor-login__visual-caption">
           <img
             src="/assets/brand/renqor-horizontal-dark.svg"

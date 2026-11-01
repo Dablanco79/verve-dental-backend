@@ -125,6 +125,20 @@ describe("LoginPage — credentials step", () => {
       expect(screen.getByRole("button", { name: /signing in/i })).toBeDisabled();
     });
   });
+
+  it("only selects the decorative artwork above the mobile breakpoint", () => {
+    const { container } = renderLoginPage();
+    const source = container.querySelector<HTMLSourceElement>(
+      'source[srcset="/assets/brand/rq-right-artwork.png"]',
+    );
+    const fallback = container.querySelector<HTMLImageElement>(
+      "img.renqor-login__artwork",
+    );
+
+    expect(source).toHaveAttribute("media", "(min-width: 741px)");
+    expect(fallback?.src).toMatch(/^data:image\/svg\+xml,/);
+    expect(fallback).toHaveAttribute("alt", "");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
