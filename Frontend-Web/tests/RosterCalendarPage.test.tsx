@@ -665,6 +665,10 @@ describe("RosterCalendarPage — staff dropdown (manager view)", () => {
       name: /Alice Jones \(alice\.jones@clinic-a\.au\)/i,
     });
     expect(option).toBeInTheDocument();
+    const modal = screen.getByRole("dialog", { name: "Add shift" });
+    expect(within(modal).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Add shift" })).toBeInTheDocument();
+    expect(within(modal).queryByRole("button", { name: "Cancel shift" })).toBeNull();
   });
 
   it("shows email only (no parenthetical hint) for unnamed staff", async () => {
@@ -764,6 +768,10 @@ describe("RosterCalendarPage — edit modal staff/clinic display", () => {
       expect(within(modal).getByText(/Alice Jones/)).toBeInTheDocument();
       expect(within(modal).getByText(new RegExp(namedStaff.email))).toBeInTheDocument();
     });
+    const modal = screen.getByRole("dialog", { name: "Edit shift" });
+    expect(within(modal).getByRole("button", { name: "Cancel shift" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   });
 });
 

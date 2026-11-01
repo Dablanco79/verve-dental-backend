@@ -1725,8 +1725,10 @@ body {
   padding: 1.5rem;
   width: 100%;
   max-width: 460px;
+  min-width: 0;
   max-height: 90vh;
   overflow-y: auto;
+  overflow-x: hidden;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
 }
 
@@ -1764,11 +1766,13 @@ body {
 .roster-form {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .roster-form__field {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
   font-weight: 600;
   font-size: 0.9rem;
   color: #334e68;
@@ -1809,6 +1813,9 @@ body {
 }
 
 .roster-form__control {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding: 0.6rem 0.75rem;
   border: 1px solid #bcccdc;
   border-radius: 8px;
@@ -1830,8 +1837,9 @@ body {
 
 .roster-form__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .roster-form__actions {
@@ -1840,13 +1848,22 @@ body {
   gap: 0.75rem;
   padding-top: 0.5rem;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .roster-form__actions-right {
   display: flex;
   gap: 0.75rem;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   margin-left: auto;
+}
+
+.roster-form__actions button {
+  max-width: 100%;
 }
 
 .roster-form__danger-btn {
@@ -11937,9 +11954,33 @@ select.vds-control {
   }
 
   .roster-modal {
-    max-height: 90dvh;
+    max-height: calc(100dvh - 1rem);
     overflow-y: auto;
-    margin: 0.5rem;
+    margin: 0;
+    padding: 1rem;
+  }
+
+  .roster-form__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .roster-form__actions {
+    align-items: stretch;
+  }
+
+  .roster-form__danger-btn {
+    width: 100%;
+  }
+
+  .roster-form__actions-right {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .roster-form__actions-right > button {
+    width: 100%;
   }
 }
 
