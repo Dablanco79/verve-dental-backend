@@ -184,7 +184,7 @@ function AdjustForm({ item, values, errors, mode, onChange, onBack, onPreview }:
         <div className="inventory-receiving-callout" role="status">
           <h3>Opening stock count</h3>
           <p>
-            Enter the counted quantity on hand. Verve will calculate the stock movement
+            Enter the counted quantity on hand. RENQOR will calculate the stock movement
             required and save it with reason &quot;Opening stock count&quot;.
           </p>
         </div>
@@ -389,7 +389,7 @@ function ConfirmStep({ item, values, mode, isSubmitting, onBack, onConfirm }: Co
 
       {delta === 0 ? (
         <p className="inventory-notice inventory-notice--info" role="status">
-          Counted stock already matches Verve. No adjustment is needed, and the backend only records
+          Counted stock already matches RENQOR. No adjustment is needed, and the backend only records
           non-zero stock movements.
         </p>
       ) : null}
@@ -629,7 +629,7 @@ export function InventoryAdjustPage() {
       : buildReasonString(formValues.reason, formValues.notes);
 
     if (delta === 0) {
-      setSubmitError("Counted stock already matches Verve. No adjustment was recorded.");
+      setSubmitError("Counted stock already matches RENQOR. No adjustment was recorded.");
       return;
     }
 

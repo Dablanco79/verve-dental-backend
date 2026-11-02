@@ -101,6 +101,15 @@ describe("AppShell navigation and clinic scope", () => {
 
     renderShell();
 
+    expect(screen.getByRole("img", { name: "RENQOR" })).toHaveAttribute(
+      "src",
+      "/assets/brand/renqor-horizontal-dark.svg",
+    );
+    expect(screen.getByRole("link", { name: "RENQOR home" }).querySelector("img")).toHaveAttribute(
+      "src",
+      "/assets/brand/rq-square-gradient.svg",
+    );
+
     const selector = await screen.findByRole("combobox", { name: "Clinic scope" });
     expect(selector).toHaveValue("all_clinics");
     // Both the header selector and the drawer selector render the same options in JSDOM

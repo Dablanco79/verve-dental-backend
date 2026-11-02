@@ -397,7 +397,7 @@ function LineRow({
                     </div>
                   ) : null}
                   <p>
-                    <strong>Selection required.</strong> Verve will not choose a candidate
+                    <strong>Selection required.</strong> RENQOR will not choose a candidate
                     automatically.
                   </p>
                 </div>
@@ -435,7 +435,7 @@ function LineRow({
                   <div className="invoice-review__match-feedback" role="status">
                     <strong>No suitable suggestions found</strong>
                     <p>
-                      Verve couldn&apos;t confidently identify a matching Master Product. Search
+                      RENQOR couldn&apos;t confidently identify a matching Master Product. Search
                       existing products manually or create a new product if required.
                     </p>
                   </div>
