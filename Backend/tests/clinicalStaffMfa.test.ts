@@ -32,6 +32,7 @@
 
 import request from "supertest";
 import { generateSync } from "otplib";
+import { jest } from "@jest/globals";
 
 import {
   SEED_ADMIN_TOTP_SECRET,
@@ -42,6 +43,18 @@ import { createTestApp } from "./helpers/testApp.js";
 import { loginAndGetAccessToken } from "./helpers/auth.js";
 
 const PASSWORD = "password123";
+const TOTP_STEP_MS = 30_000;
+
+beforeEach(() => {
+  const now = Date.now();
+  const stableNow =
+    Math.floor(now / TOTP_STEP_MS) * TOTP_STEP_MS + TOTP_STEP_MS / 2;
+  jest.spyOn(Date, "now").mockReturnValue(stableNow);
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
 
 // ─── Response type helpers ────────────────────────────────────────────────────
 
@@ -72,6 +85,20 @@ function findRefreshCookie(res: request.Response): string | null {
   const raw = res.headers["set-cookie"] as string | string[] | undefined;
   const cookies = Array.isArray(raw) ? raw : raw ? [raw] : [];
   return cookies.find((c) => c.startsWith("refreshToken=")) ?? null;
+}
+
+function generateGuaranteedInvalidCode(secret: string, now = Date.now()): string {
+  const acceptedCodes = new Set(
+    [-TOTP_STEP_MS, 0, TOTP_STEP_MS].map((offset) =>
+      generateSync({ secret, epoch: now + offset })),
+  );
+
+  for (let value = 0; value <= 999_999; value += 1) {
+    const candidate = value.toString().padStart(6, "0");
+    if (!acceptedCodes.has(candidate)) return candidate;
+  }
+
+  throw new Error("Unable to generate an invalid six-digit TOTP code");
 }
 
 // ─── 1. owner_admin MFA remains mandatory (regression guard) ─────────────────
@@ -365,25 +392,32 @@ describe("clinical_staff — enrolled — MFA bypass prevention", () => {
       .send();
     const { secret } = (setupRes.body as ApiData<{ secret: string }>).data;
     const code = generateSync({ secret });
-    await request(app)
+    const confirmRes = await request(app)
       .post("/api/v1/auth/mfa/confirm")
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ code });
+    expect(confirmRes.status).toBe(200);
     return secret;
   }
 
   it("submitting a wrong code to /auth/mfa/verify returns 401 INVALID_MFA_CODE", async () => {
     const app = await createTestApp();
-    await enrollStaff(app);
+    const secret = await enrollStaff(app);
 
     const loginRes = await request(app)
       .post("/api/v1/auth/login")
       .send({ email: "staff@clinic-a.au", password: PASSWORD });
-    const { mfaToken } = (loginRes.body as ApiData<LoginMfaData>).data;
+    expect(loginRes.status).toBe(200);
+    const loginData = (loginRes.body as ApiData<LoginMfaData>).data;
+    expect(loginData.requiresMfa).toBe(true);
+    expect(typeof loginData.mfaToken).toBe("string");
 
     const verifyRes = await request(app)
       .post("/api/v1/auth/mfa/verify")
-      .send({ mfaToken, code: "000000" });
+      .send({
+        mfaToken: loginData.mfaToken,
+        code: generateGuaranteedInvalidCode(secret),
+      });
 
     expect(verifyRes.status).toBe(401);
     expect((verifyRes.body as ApiError).error.code).toBe("INVALID_MFA_CODE");
@@ -640,13 +674,62 @@ describe("clinical_staff — TOTP tolerance rules (±30 s) preserved", () => {
       .send({ email: "staff@clinic-a.au", password: PASSWORD });
     const { mfaToken } = (loginRes.body as ApiData<LoginMfaData>).data;
 
-    // Deliberately wrong code (static; never matches a real TOTP period)
     const verifyRes = await request(app)
       .post("/api/v1/auth/mfa/verify")
-      .send({ mfaToken, code: "000000" });
+      .send({ mfaToken, code: generateGuaranteedInvalidCode(secret) });
 
     expect(verifyRes.status).toBe(401);
     expect((verifyRes.body as ApiError).error.code).toBe("INVALID_MFA_CODE");
+  });
+
+  it("rejects an enrollment code that expires across a controlled TOTP boundary", async () => {
+    const periodStart = Math.floor(Date.now() / TOTP_STEP_MS) * TOTP_STEP_MS;
+    jest.mocked(Date.now).mockReturnValue(periodStart + TOTP_STEP_MS - 1);
+
+    const app = await createTestApp();
+    const accessToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const setupRes = await request(app)
+      .post("/api/v1/auth/mfa/setup")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send();
+    expect(setupRes.status).toBe(200);
+    const { secret } = (setupRes.body as ApiData<{ secret: string }>).data;
+    const expiredCode = generateSync({ secret });
+
+    jest.mocked(Date.now).mockReturnValue(periodStart + TOTP_STEP_MS);
+
+    const expiredConfirmRes = await request(app)
+      .post("/api/v1/auth/mfa/confirm")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ code: expiredCode });
+    expect(expiredConfirmRes.status).toBe(401);
+    expect((expiredConfirmRes.body as ApiError).error.code).toBe(
+      "INVALID_MFA_CODE",
+    );
+
+    const loginBeforeEnrollmentRes = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: "staff@clinic-a.au", password: PASSWORD });
+    expect(loginBeforeEnrollmentRes.status).toBe(200);
+    const loginBeforeEnrollmentData = (
+      loginBeforeEnrollmentRes.body as ApiData<LoginAuthData>
+    ).data;
+    expect(loginBeforeEnrollmentData.requiresMfa).toBe(false);
+    expect(loginBeforeEnrollmentData).not.toHaveProperty("mfaToken");
+
+    const confirmRes = await request(app)
+      .post("/api/v1/auth/mfa/confirm")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ code: generateSync({ secret }) });
+    expect(confirmRes.status).toBe(200);
+
+    const loginRes = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: "staff@clinic-a.au", password: PASSWORD });
+    expect(loginRes.status).toBe(200);
+    const loginData = (loginRes.body as ApiData<LoginMfaData>).data;
+    expect(loginData.requiresMfa).toBe(true);
+    expect(typeof loginData.mfaToken).toBe("string");
   });
 });
 
