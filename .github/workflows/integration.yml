@@ -11,7 +11,7 @@ on:
   push:
     branches: [main, dev, staging/workforce-rc]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, staging/workforce-rc]
 
 jobs:
   integration:
