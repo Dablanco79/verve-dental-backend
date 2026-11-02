@@ -1501,7 +1501,7 @@ body {
 .renqor-login .mfa-panel .product-form__actions button[type="submit"] {
   border: 1px solid transparent;
   border-radius: var(--vds-control-radius);
-  background: linear-gradient(115deg, var(--renqor-purple), var(--renqor-blue));
+  background: linear-gradient(115deg, var(--renqor-purple), var(--renqor-blue-strong));
   color: #ffffff;
   font: inherit;
   font-weight: 700;
@@ -1516,7 +1516,15 @@ body {
 .renqor-login .auth-form button:hover:not(:disabled),
 .renqor-login .auth-card > button:hover:not(:disabled),
 .renqor-login .mfa-panel .product-form__actions button[type="submit"]:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: linear-gradient(115deg, var(--renqor-purple-strong), var(--renqor-blue-strong));
+  filter: none;
+}
+
+.renqor-login .auth-form button:active:not(:disabled),
+.renqor-login .auth-card > button:active:not(:disabled),
+.renqor-login .mfa-panel .product-form__actions button[type="submit"]:active:not(:disabled) {
+  background: linear-gradient(115deg, var(--vds-colour-primary-hover), var(--renqor-blue-strong));
+  filter: none;
 }
 
 .renqor-login .auth-form button:focus-visible,
