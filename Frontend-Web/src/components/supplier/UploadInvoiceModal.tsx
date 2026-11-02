@@ -858,7 +858,7 @@ export function UploadInvoiceModal({
               <p className="upload-mode-toggle__hint">
                 The supplier will be automatically detected from the invoice content.
                 You can confirm or override after upload. If no supplier is matched,
-                Verve will ask you to choose or create the supplier before review.
+                RENQOR will ask you to choose or create the supplier before review.
               </p>
             )}
 

@@ -207,11 +207,11 @@ export function AppShell({ children }: AppShellProps) {
 
       <aside className="app-shell__sidebar">
         <div className="app-shell__brand">
-          <span className="app-shell__logo-mark" aria-hidden="true">V</span>
-          <div>
-            <h1>verve</h1>
-            <p className="app-shell__eyebrow">Operational Suite</p>
-          </div>
+          <img
+            className="app-shell__brand-logo"
+            src="/assets/brand/renqor-horizontal-dark.svg"
+            alt="RENQOR"
+          />
         </div>
 
         {/* Clinic scope selector — mobile drawer only (hidden on desktop via CSS).
@@ -291,6 +291,10 @@ export function AppShell({ children }: AppShellProps) {
           >
             {mobileNavOpen ? <X size={20} strokeWidth={2} /> : <Menu size={20} strokeWidth={2} />}
           </button>
+
+          <NavLink to="/" className="app-shell__mobile-brand" aria-label="RENQOR home">
+            <img src="/assets/brand/rq-square-gradient.svg" alt="" />
+          </NavLink>
 
           <div className="app-shell__header-controls app-shell__header-controls--primary">
             <div className="app-shell__selector app-shell__selector--static" aria-label="Organisation selector">
