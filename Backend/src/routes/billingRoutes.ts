@@ -17,14 +17,14 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 // ── Param schemas ─────────────────────────────────────────────────────────────
 
 const invoiceParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
-  invoiceId: z.string().uuid("invoiceId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
+  invoiceId: z.guid("invoiceId must be a valid UUID"),
 });
 
 const lineItemParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
-  invoiceId: z.string().uuid("invoiceId must be a valid UUID"),
-  lineItemId: z.string().uuid("lineItemId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
+  invoiceId: z.guid("invoiceId must be a valid UUID"),
+  lineItemId: z.guid("lineItemId must be a valid UUID"),
 });
 
 /**

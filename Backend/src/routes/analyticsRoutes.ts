@@ -18,8 +18,8 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 
 // Validates :clinicId + :eventId for the single-event detail route.
 const analyticsEventParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
-  eventId: z.string().uuid("eventId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
+  eventId: z.guid("eventId must be a valid UUID"),
 });
 
 /**

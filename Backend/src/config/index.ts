@@ -28,10 +28,10 @@ const envSchema = z.object({
    * Default: 43200 s = 12 hours.  Override with SESSION_MAX_AGE_SECONDS=<n>.
    */
   SESSION_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(43200),
-  DATABASE_URL: z.string().url().optional(),
+  DATABASE_URL: z.url().optional(),
   // Deployed remote URLs require sslmode=verify-full; local/test remains configurable.
   DATABASE_SSL: z.enum(["auto", "true", "false"]).default("auto"),
-  REDIS_URL: z.string().url().optional(),
+  REDIS_URL: z.url().optional(),
   // auto: enable TLS when REDIS_URL uses rediss://; true/false to force.
   REDIS_TLS: z.enum(["auto", "true", "false"]).default("auto"),
   /**
@@ -206,7 +206,7 @@ export function loadConfig(): EnvConfig {
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    const formatted = result.error.flatten().fieldErrors;
+    const formatted = z.flattenError(result.error).fieldErrors;
     throw new Error(`Invalid environment configuration: ${JSON.stringify(formatted)}`);
   }
 

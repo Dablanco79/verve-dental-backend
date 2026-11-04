@@ -72,7 +72,7 @@ const clockLocationInputSchema = z
     lat: z.number().min(-90).max(90).nullable(),
     lng: z.number().min(-180).max(180).nullable(),
     accuracyMetres: z.number().nullable().optional(),
-    targetClinicId: z.string().uuid("targetClinicId must be a valid UUID"),
+    targetClinicId: z.guid("targetClinicId must be a valid UUID"),
     // Only sent when lat/lng are null. Backend ignores this when coordinates are present.
     locationState: z.enum(["denied", "unavailable"]).optional(),
   })
@@ -87,7 +87,7 @@ const isoDate = () =>
 
 // Full ISO 8601 datetimes with timezone — { offset: true } accepts both UTC
 // ('Z') and local offsets (e.g. '+10:00' for AEST).
-const isoDatetime = () => z.string().datetime({ offset: true });
+const isoDatetime = () => z.iso.datetime({ offset: true });
 
 // ── Serializers ───────────────────────────────────────────────────────────────
 // Date objects are serialized to ISO strings here so the service layer never
@@ -256,7 +256,7 @@ const coverageGroupSchema = z.object({
 }).strict();
 
 const coverageMembersSchema = z.object({
-  memberUserIds: z.array(z.string().uuid()).max(500),
+  memberUserIds: z.array(z.guid()).max(500),
 }).strict();
 
 // Supports filtering by date window, leave type, and status.
@@ -282,7 +282,7 @@ const listLeaveQuerySchema = z
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });
@@ -618,8 +618,7 @@ const clockInSchema = z
   .object({
     // null = no roster link (ad-hoc clock-in without a matching shift).
     rosterEntryId: z
-      .string()
-      .uuid("rosterEntryId must be a valid UUID")
+      .guid("rosterEntryId must be a valid UUID")
       .nullable()
       .optional(),
     shiftStartAt: isoDatetime(),
@@ -628,8 +627,7 @@ const clockInSchema = z
     // Ignored when rosterEntryId is present (physical clinic is derived
     // from the trusted roster DB record instead).
     physicalClinicId: z
-      .string()
-      .uuid("physicalClinicId must be a valid UUID")
+      .guid("physicalClinicId must be a valid UUID")
       .nullable()
       .optional(),
     // Optional geofence snapshot — raw device data only; backend computes
@@ -680,10 +678,9 @@ const clockOutSchema = z
 // to prevent identity and rostered-location spoofing.
 const createManualEntrySchema = z
   .object({
-    staffUserId: z.string().uuid("staffUserId must be a valid UUID"),
+    staffUserId: z.guid("staffUserId must be a valid UUID"),
     rosterEntryId: z
-      .string()
-      .uuid("rosterEntryId must be a valid UUID")
+      .guid("rosterEntryId must be a valid UUID")
       .nullable()
       .optional(),
     shiftDate: isoDate(),
@@ -768,7 +765,7 @@ const listTimesheetsQuerySchema = z
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });
@@ -777,7 +774,7 @@ const listTimesheetsQuerySchema = z
     // ambiguous and most likely a client mistake.
     if (data.shiftDate && (data.from ?? data.to)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'shiftDate' cannot be combined with 'from' or 'to' range filters",
         path: ["shiftDate"],
       });
@@ -797,12 +794,12 @@ const exportTimesheetsQuerySchema = z
   .object({
     from: isoDate().optional(),
     to: isoDate().optional(),
-    staffEmail: z.string().email("staffEmail must be a valid email address").optional(),
+    staffEmail: z.email("staffEmail must be a valid email address").optional(),
   })
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });

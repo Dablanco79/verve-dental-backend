@@ -7,10 +7,10 @@ import { zodToDetails } from "../utils/validation.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 const createSupplierProductBodySchema = z.object({
-  productId: z.string().uuid("productId must be a valid UUID"),
+  productId: z.guid("productId must be a valid UUID"),
   supplierSku: z.string().max(100).nullable().optional(),
   supplierDescription: z.string().max(500).nullable().optional(),
   unitCostCents: z
@@ -41,7 +41,7 @@ const listQuerySchema = z.object({
       if (v === "false") return false;
       return undefined;
     }),
-  productId: z.string().uuid().optional(),
+  productId: z.guid().optional(),
 });
 
 // ─── Handler factory ──────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ function requireUuidParam(req: Request, paramName: string): string {
 const replaceAssignmentsSchema = z.object({
   assignments: z.array(
     z.object({
-      clinicId: z.string().uuid("clinicId must be a valid UUID"),
+      clinicId: z.guid("clinicId must be a valid UUID"),
       canRoster: z.boolean(),
       canOperate: z.boolean(),
     }),

@@ -7,10 +7,10 @@ import { zodToDetails } from "../utils/validation.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 const manualMappingsSchema = z
-  .record(z.string(), z.string().uuid())
+  .record(z.string(), z.guid())
   .optional()
   .transform((v) => {
     if (!v) return undefined;
@@ -38,7 +38,7 @@ const reviewedRowsSchema = z.object({
     description: z.string().max(512).nullable(),
     unitCostCents: z.number().int().nonnegative().nullable(),
     unitOfMeasure: z.string().max(128).nullable(),
-    matchedProductId: z.string().uuid().nullable(),
+    matchedProductId: z.guid().nullable(),
   })).min(1),
 });
 

@@ -34,14 +34,14 @@ const createProductSchema = z.object({
   initialQuantity: z.number().int().nonnegative(),
   reorderPoint: z.number().int().nonnegative(),
   unitCostOverrideCents: z.number().int().nonnegative().optional(),
-  supplierId: z.string().uuid(),
+  supplierId: z.guid(),
 });
 
 const updateClinicProductSchema = z
   .object({
     reorderPoint: z.number().int().nonnegative().optional(),
     unitCostOverrideCents: z.number().int().nonnegative().nullable().optional(),
-    supplierId: z.string().uuid().nullable().optional(),
+    supplierId: z.guid().nullable().optional(),
   })
   .strict()
   .refine(

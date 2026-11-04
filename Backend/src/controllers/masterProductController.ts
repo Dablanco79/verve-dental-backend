@@ -16,7 +16,7 @@ import { zodToDetails } from "../utils/validation.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const masterProductIdSchema = z.string().uuid("id must be a valid UUID");
+const masterProductIdSchema = z.guid("id must be a valid UUID");
 
 const nullableTrimmedString = (max: number) =>
   z.string().trim().max(max).nullable().optional();

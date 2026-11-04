@@ -24,7 +24,7 @@ import { zodToDetails } from "../utils/validation.js";
 
 const suggestMatchesBodySchema = z
   .object({
-    supplierId: z.string().uuid("supplierId must be a valid UUID"),
+    supplierId: z.guid("supplierId must be a valid UUID"),
     supplierSku: z.string().trim().max(128).nullable().optional(),
     supplierDescription: z.string().trim().max(512).nullable().optional(),
     category: z.string().trim().max(128).nullable().optional(),
@@ -36,7 +36,7 @@ const suggestMatchesBodySchema = z
 
 const discoverReviewCandidatesBodySchema = z
   .object({
-    supplierId: z.string().uuid("supplierId must be a valid UUID"),
+    supplierId: z.guid("supplierId must be a valid UUID"),
     supplierSku: z.string().trim().max(128).nullable().optional(),
     supplierDescription: z.string().trim().max(512).nullable().optional(),
   })
@@ -44,8 +44,8 @@ const discoverReviewCandidatesBodySchema = z
 
 const confirmMatchBodySchema = z
   .object({
-    supplierId: z.string().uuid("supplierId must be a valid UUID"),
-    masterProductId: z.string().uuid("masterProductId must be a valid UUID"),
+    supplierId: z.guid("supplierId must be a valid UUID"),
+    masterProductId: z.guid("masterProductId must be a valid UUID"),
     supplierSku: z.string().trim().max(128).nullable().optional(),
     supplierDescription: z.string().trim().max(512).nullable().optional(),
     lastUnitCostCents: z.number().int().min(0).nullable().optional(),

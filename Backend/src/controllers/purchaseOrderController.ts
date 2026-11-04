@@ -7,7 +7,7 @@ import { zodToDetails } from "../utils/validation.js";
 
 // ─── Parameter validation ─────────────────────────────────────────────────────
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 /**
  * Extract and validate a UUID route parameter.
@@ -31,20 +31,20 @@ const submitPoBodySchema = z.object({}).strict();
 
 const createPoBodySchema = z.object({
   // RULE 3 — Supplier is required for all new manual supplier POs.
-  supplierId: z.string().uuid({ message: "supplierId must be a valid UUID" }),
+  supplierId: z.guid({ message: "supplierId must be a valid UUID" }),
   notes: z.string().max(2000).nullable().optional(),
   poReference: z.string().max(128).nullable().optional(),
 });
 
 const updatePoBodySchema = z.object({
-  supplierId: z.string().uuid().nullable().optional(),
+  supplierId: z.guid().nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
   poReference: z.string().max(128).nullable().optional(),
 });
 
 const addPoLineBodySchema = z.object({
-  masterCatalogItemId: z.string().uuid(),
-  clinicInventoryItemId: z.string().uuid(),
+  masterCatalogItemId: z.guid(),
+  clinicInventoryItemId: z.guid(),
   quantity: z.number().int().positive(),
   reason: z.string().min(1).max(255).default("manual"),
   unitCostCents: z.number().int().min(0).nullable().optional(),
@@ -59,14 +59,14 @@ const updatePoLineBodySchema = z.object({
 
 const receivePoBodySchema = z.object({
   lines: z.array(z.object({
-    poLineId: z.string().uuid(),
+    poLineId: z.guid(),
     quantityDelta: z.number().int().positive(),
   })).min(1),
 });
 
 const poLineInputSchema = z.object({
-  masterCatalogItemId: z.string().uuid(),
-  clinicInventoryItemId: z.string().uuid(),
+  masterCatalogItemId: z.guid(),
+  clinicInventoryItemId: z.guid(),
   quantity: z.number().int().positive(),
   reason: z.string().min(1).max(255).optional(),
   unitCostCents: z.number().int().min(0).nullable().optional(),
@@ -74,7 +74,7 @@ const poLineInputSchema = z.object({
 });
 
 const createPoWithLinesBodySchema = z.object({
-  supplierId: z.string().uuid("supplierId must be a valid UUID"),
+  supplierId: z.guid("supplierId must be a valid UUID"),
   notes: z.string().max(2000).nullable().optional(),
   poReference: z.string().max(128).nullable().optional(),
   lines: z.array(poLineInputSchema).min(1),
@@ -85,7 +85,7 @@ const batchAddLinesBodySchema = z.object({
 });
 
 const supplierGroupSchema = z.object({
-  supplierId: z.string().uuid().nullable().optional(),
+  supplierId: z.guid().nullable().optional(),
   supplierName: z.string().max(255).default("Unknown supplier"),
   lines: z.array(poLineInputSchema).min(1),
 });

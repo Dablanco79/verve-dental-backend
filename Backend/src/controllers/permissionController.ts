@@ -42,7 +42,7 @@ export function createPermissionHandlers(permissionService: PermissionService) {
           400,
           "VALIDATION_ERROR",
           "Request validation failed",
-          parsed.error.errors.map((e) => ({
+          parsed.error.issues.map((e) => ({
             field: e.path.join("."),
             message: e.message,
           })),

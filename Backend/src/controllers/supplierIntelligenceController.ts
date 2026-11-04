@@ -12,7 +12,7 @@ import type { Request, Response } from "express";
 import type { SupplierIntelligenceService } from "../services/supplierIntelligenceService.js";
 
 const paramsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
 });
 
 export function createSupplierIntelligenceHandlers(
@@ -25,7 +25,7 @@ export function createSupplierIntelligenceHandlers(
         res.status(400).json({
           error: {
             code: "VALIDATION_ERROR",
-            message: parsed.error.errors[0]?.message ?? "Invalid parameters",
+            message: parsed.error.issues[0]?.message ?? "Invalid parameters",
           },
         });
         return;

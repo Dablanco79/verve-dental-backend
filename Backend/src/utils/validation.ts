@@ -20,7 +20,7 @@ export function zodToDetails(error: z.ZodError): ValidationDetail[] {
  * Throws AppError(400, VALIDATION_ERROR) with structured field-level details
  * on failure so the global error handler emits the canonical error shape.
  */
-export function parseBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
+export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
 
   if (!result.success) {

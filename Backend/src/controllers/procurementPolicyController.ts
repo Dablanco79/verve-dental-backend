@@ -16,10 +16,8 @@ const reorderStrategyEnum = z.enum([
 
 const createPolicySchema = z
   .object({
-    supplierRelationshipId: z
-      .string()
-      .uuid("supplierRelationshipId must be a valid UUID"),
-    masterCatalogItemId: z.string().uuid().nullable().optional(),
+    supplierRelationshipId: z.guid("supplierRelationshipId must be a valid UUID"),
+    masterCatalogItemId: z.guid().nullable().optional(),
     policyName: z.string().trim().min(1).max(255),
     policyStatus: z.enum(["active", "inactive"]).optional(),
     priority: z.number().int().min(1),

@@ -14,7 +14,7 @@ function routeParam(value: string | string[] | undefined): string {
 }
 
 const createUserSchema = z.object({
-  email: z.string().email("Must be a valid email address"),
+  email: z.email("Must be a valid email address"),
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
@@ -40,7 +40,7 @@ const updateUserSchema = z
     displayName: z.string().min(1).max(200).nullable().optional(),
     payrollTrack: z.enum(STAFF_PAYROLL_TRACKS).optional(),
     role: z.enum(USER_ROLES).optional(),
-    homeClinicId: z.string().uuid("homeClinicId must be a valid UUID").optional(),
+    homeClinicId: z.guid("homeClinicId must be a valid UUID").optional(),
     homeClinicName: z.string().min(1).max(120).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {

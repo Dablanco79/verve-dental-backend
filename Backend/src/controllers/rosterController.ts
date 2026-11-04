@@ -8,14 +8,14 @@ import { AppError } from "../types/errors.js";
 import { parseBody, zodToDetails } from "../utils/validation.js";
 
 // { offset: true } accepts UTC (Z) and local offsets like +10:00 for AEST.
-const isoDatetime = () => z.string().datetime({ offset: true });
+const isoDatetime = () => z.iso.datetime({ offset: true });
 
 // Inline literals mirror SHIFT_TYPES / ROSTER_STATUSES from types/roster.ts
 // Shift-time ordering (shiftEndAt > shiftStartAt) is validated as business
 // logic in the service layer, which returns the stable INVALID_SHIFT_TIMES
 // error code rather than a generic VALIDATION_ERROR.
 const createEntrySchema = z.object({
-  staffUserId: z.string().uuid(),
+  staffUserId: z.guid(),
   // rosteredClinicName is intentionally absent — the service derives it
   // server-side from the DB to prevent client spoofing.
   shiftStartAt: isoDatetime(),
@@ -40,7 +40,7 @@ const updateEntrySchema = z
       .enum(["scheduled", "confirmed", "completed", "cancelled"])
       .optional(),
     notes: z.string().trim().max(1000).nullable().optional(),
-    rosteredClinicId: z.string().uuid().optional(),
+    rosteredClinicId: z.guid().optional(),
   })
   .strict();
 
@@ -66,7 +66,7 @@ const listQuerySchema = z
   .superRefine((data, ctx) => {
     if (data.from && data.to && new Date(data.from) >= new Date(data.to)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be earlier than 'to'",
         path: ["from"],
       });
@@ -74,10 +74,10 @@ const listQuerySchema = z
   });
 
 const conflictQuerySchema = z.object({
-  staffUserId: z.string().uuid(),
+  staffUserId: z.guid(),
   start: isoDatetime(),
   end: isoDatetime(),
-  excludeEntryId: z.string().uuid().optional(),
+  excludeEntryId: z.guid().optional(),
 });
 
 const weeklyExportQuerySchema = z.object({
@@ -251,7 +251,7 @@ export function createRosterHandlers(rosterService: RosterService) {
         staffUserId: body.staffUserId,
         shiftStartAt: new Date(body.shiftStartAt),
         shiftEndAt: new Date(body.shiftEndAt),
-        shiftType: body.shiftType ?? "standard",
+        shiftType: body.shiftType,
         notes: body.notes ?? null,
       });
 

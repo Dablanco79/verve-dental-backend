@@ -16,9 +16,9 @@ import { zodToDetails } from "../utils/validation.js";
 
 const createInvoiceSchema = z
   .object({
-    patientId: z.string().uuid().nullable().optional().default(null),
+    patientId: z.guid().nullable().optional().default(null),
     patientName: z.string().min(1).max(255),
-    dueAt: z.string().datetime({ offset: true }).nullable().optional().default(null),
+    dueAt: z.iso.datetime({ offset: true }).nullable().optional().default(null),
     taxRateBasisPoints: z.number().int().min(0).max(10_000).optional(),
     notes: z.string().max(2000).nullable().optional().default(null),
   })
@@ -28,7 +28,7 @@ const addLineItemSchema = z
   .object({
     lineItemType: z.enum(LINE_ITEM_TYPES),
     description: z.string().min(1).max(512),
-    catalogueItemId: z.string().uuid().nullable().optional().default(null),
+    catalogueItemId: z.guid().nullable().optional().default(null),
     catalogueSku: z.string().max(64).nullable().optional().default(null),
     quantity: z.number().int().min(1),
     unitPriceCents: z.number().int().min(0),
@@ -45,7 +45,7 @@ const recordPaymentSchema = z
     }),
     referenceNumber: z.string().max(128).nullable().optional().default(null),
     notes: z.string().max(2000).nullable().optional().default(null),
-    transactionAt: z.string().datetime({ offset: true }),
+    transactionAt: z.iso.datetime({ offset: true }),
   })
   .strict();
 
@@ -65,7 +65,7 @@ const listInvoicesQuerySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-  patientId: z.string().uuid().optional(),
+  patientId: z.guid().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });

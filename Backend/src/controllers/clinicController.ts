@@ -107,9 +107,7 @@ const updateClinicSchema = z
 
     timezone: z
       .enum(AU_TIMEZONES, {
-        errorMap: () => ({
-          message: `Timezone must be one of: ${AU_TIMEZONES.join(", ")}`,
-        }),
+        error: `Timezone must be one of: ${AU_TIMEZONES.join(", ")}`,
       })
       .optional(),
 
