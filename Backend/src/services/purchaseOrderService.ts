@@ -341,6 +341,14 @@ export function createPurchaseOrderService(
       return { purchaseOrder: po, lines };
     },
 
+    async getPurchaseOrderLineIds(clinicId: string, poId: string): Promise<Set<string>> {
+      const po = await inventoryRepository.findPurchaseOrderById(clinicId, poId);
+      if (!po) throw new AppError(404, "PO_NOT_FOUND", "Purchase order not found");
+
+      const lines = await inventoryRepository.listPoLinesByPoId(poId);
+      return new Set(lines.map((line) => line.id));
+    },
+
     async createManualPurchaseOrder(
       clinicId: string,
       userId: string,

@@ -7,8 +7,10 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 
 /**
  * Clinic-scoped router — mounted at /clinics/:clinicId/supplier-relationships.
@@ -36,17 +38,17 @@ export function createClinicSupplierRelationshipRouter(
   );
   const handlers = createSupplierRelationshipHandlers(service);
 
+  router.use(authenticate);
+  router.use(enforceTenantParam("clinicId"));
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   router.get(
     "/",
-    authenticate,
-    enforceTenantParam("clinicId"),
     asyncHandler((req, res) => handlers.listByClinic(req, res)),
   );
 
   router.post(
     "/",
-    authenticate,
-    enforceTenantParam("clinicId"),
     requireWriteAccess,
     asyncHandler((req, res) => handlers.create(req, res)),
   );
@@ -79,22 +81,22 @@ export function createSupplierRelationshipRouter(deps: AppDependencies): Router 
   );
   const handlers = createSupplierRelationshipHandlers(service);
 
+  router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   router.get(
     "/:relationshipId",
-    authenticate,
     asyncHandler((req, res) => handlers.getById(req, res)),
   );
 
   router.patch(
     "/:relationshipId",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.update(req, res)),
   );
 
   router.post(
     "/:relationshipId/deactivate",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.deactivate(req, res)),
   );

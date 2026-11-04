@@ -31,8 +31,10 @@ import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { createLaborForecastService } from "../services/laborForecastService.js";
 import type {
   CostBreakdown,
@@ -441,6 +443,7 @@ export function createLaborForecastRouter(deps: AppDependencies): Router {
   const handlers = createLaborForecastHandlers(deps);
 
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_REPORTS));
   router.use(enforceTenantParam("clinicId"));
 
   router.get(
@@ -461,6 +464,7 @@ export function createGroupLaborForecastRouter(deps: AppDependencies): Router {
   const handlers = createLaborForecastHandlers(deps);
 
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_REPORTS));
 
   router.get(
     "/labor/group",

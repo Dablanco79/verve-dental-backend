@@ -5,8 +5,10 @@ import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { createBillingHandlers } from "../controllers/billingController.js";
 import {
   validateParams,
@@ -33,7 +35,9 @@ const lineItemParamsSchema = z.object({
  * RBAC summary:
  *   ALL routes → owner_admin, group_practice_manager only (security fix: GET routes
  *   previously lacked the role guard; now all routes require managerOrAdmin).
- *   Billing remains admin+GPM only for the pilot — no module:billing gate needed.
+ *   Billing is outside the Workforce pilot. Access additionally requires the
+ *   existing billing:read permission. owner_admin retains it inherently and may
+ *   explicitly grant it to a manager when Billing is enabled after the pilot.
  *
  * Service-layer `assertTenantAccess` provides defence-in-depth beyond middleware.
  *
@@ -64,6 +68,7 @@ export function createBillingRouter(deps: AppDependencies): Router {
   // Previously, the GET routes lacked the role guard — this is the security fix.
   router.use(authenticate);
   router.use(tenantGuard);
+  router.use(requirePermission(PERMISSIONS.BILLING_READ));
   router.use(managerOrAdmin);
 
   // ── Invoice CRUD ──────────────────────────────────────────────────────────

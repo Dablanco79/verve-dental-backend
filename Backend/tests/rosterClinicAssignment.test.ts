@@ -25,6 +25,8 @@ import { createTestApp } from "./helpers/testApp.js";
 type ApiData<T> = { data: T };
 type ApiError = { error: { code: string; message: string } };
 
+const OTHER_ORGANISATION_CLINIC_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
 type RosterEntryDto = {
   id: string;
   staffUserId: string;
@@ -315,6 +317,68 @@ describe("Clinic Access Assignment — GET/PUT /clinics/:id/users/:id/clinic-acc
       .send({ assignments: newAssignments });
 
     expect(res.status).toBe(200);
+  });
+
+  it("rejects duplicate clinic assignments", async () => {
+    const app = await createTestApp();
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .put(`/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        assignments: [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_A_ID, canRoster: false, canOperate: false },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("rejects assignment collections larger than the organisation clinic set", async () => {
+    const app = await createTestApp();
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .put(`/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        assignments: [
+          { clinicId: SEED_CLINIC_A_ID, canRoster: true, canOperate: true },
+          { clinicId: SEED_CLINIC_B_ID, canRoster: true, canOperate: false },
+          { clinicId: SEED_CLINIC_A_ID, canRoster: false, canOperate: false },
+        ],
+      });
+
+    expect(res.status).toBe(400);
+    expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("rejects clinic assignments outside the user's organisation", async () => {
+    const app = await createTestApp({
+      configureDependencies: async (deps) => {
+        await deps.clinicRepository.create({
+          id: OTHER_ORGANISATION_CLINIC_ID,
+          organisationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          name: "Other Organisation Clinic",
+        });
+      },
+    });
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .put(`/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAStaff}/clinic-access`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({
+        assignments: [
+          { clinicId: OTHER_ORGANISATION_CLINIC_ID, canRoster: true, canOperate: true },
+        ],
+      });
+
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("TENANT_ACCESS_DENIED");
   });
 
   it("after granting Clinic B roster eligibility, manager can roster the cross-clinic staff", async () => {

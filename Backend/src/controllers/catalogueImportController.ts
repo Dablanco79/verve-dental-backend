@@ -10,14 +10,13 @@ import { zodToDetails } from "../utils/validation.js";
 const uuidSchema = z.guid();
 
 const manualMappingsSchema = z
-  .record(z.string(), z.guid())
+  .record(z.string().regex(/^\d+$/, "manualMappings keys must be row numbers"), z.guid())
   .optional()
   .transform((v) => {
     if (!v) return undefined;
     const result: Record<number, string> = {};
     for (const [k, val] of Object.entries(v)) {
-      const num = parseInt(k, 10);
-      if (!isNaN(num)) result[num] = val;
+      result[Number(k)] = val;
     }
     return result;
   });

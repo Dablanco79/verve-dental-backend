@@ -5,8 +5,10 @@ import { createProductHandlers } from "../controllers/productController.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import {
   validateParams,
   clinicIdParamsSchema,
@@ -28,6 +30,7 @@ export function createProductRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  router.use(requirePermission(PERMISSIONS.MODULE_INVENTORY));
   router.use(validateParams(clinicIdParamsSchema));
 
   router.post(

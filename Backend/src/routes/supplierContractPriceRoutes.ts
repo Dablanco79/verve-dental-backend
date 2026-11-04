@@ -6,8 +6,10 @@ import { createSupplierContractPriceService } from "../services/supplierContract
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   createAuthenticateMiddleware,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 
 /**
  * Contract-scoped router — mounted at /supplier-contracts.
@@ -34,15 +36,16 @@ export function createContractPriceSubRouter(deps: AppDependencies): Router {
   );
   const handlers = createSupplierContractPriceHandlers(service);
 
+  router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   router.get(
     "/:contractId/prices",
-    authenticate,
     asyncHandler((req, res) => handlers.listByContract(req, res)),
   );
 
   router.post(
     "/:contractId/prices",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.create(req, res)),
   );
@@ -80,22 +83,22 @@ export function createSupplierContractPriceRouter(
   );
   const handlers = createSupplierContractPriceHandlers(service);
 
+  router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   router.get(
     "/:id",
-    authenticate,
     asyncHandler((req, res) => handlers.getById(req, res)),
   );
 
   router.patch(
     "/:id",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.update(req, res)),
   );
 
   router.post(
     "/:id/expire",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.expire(req, res)),
   );

@@ -5,8 +5,10 @@ import { createScanHandlers } from "../controllers/scanController.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import {
   validateParams,
   clinicIdParamsSchema,
@@ -28,6 +30,7 @@ export function createScanRouter(deps: AppDependencies): Router {
 
   router.use(authenticate);
   router.use(enforceTenantParam("clinicId"));
+  router.use(requirePermission(PERMISSIONS.MODULE_INVENTORY));
   router.use(validateParams(clinicIdParamsSchema));
 
   router.post(

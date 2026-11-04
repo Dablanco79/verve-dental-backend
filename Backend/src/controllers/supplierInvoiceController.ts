@@ -109,6 +109,56 @@ const confirmImportSchema = z.object({
   skippedLineIds: z.array(z.guid()).optional(),
 });
 
+function assertInvoiceConfirmationIds(
+  body: unknown,
+  allowedLineIds: Set<string>,
+): void {
+  const rawBody = body as {
+    readyToCreateLineIds?: unknown;
+    skippedLineIds?: unknown;
+  } | null;
+  const collections = [
+    ["readyToCreateLineIds", rawBody?.readyToCreateLineIds],
+    ["skippedLineIds", rawBody?.skippedLineIds],
+  ] as const;
+  const allSeen = new Set<string>();
+
+  for (const [field, rawIds] of collections) {
+    if (!Array.isArray(rawIds)) continue;
+    if (rawIds.length > allowedLineIds.size) {
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field, message: `${field} cannot exceed the lines on this invoice` },
+      ]);
+    }
+
+    const fieldSeen = new Set<string>();
+    rawIds.forEach((rawId, index) => {
+      if (typeof rawId !== "string") return;
+      if (fieldSeen.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          { field: `${field}.${String(index)}`, message: `${field} must contain unique IDs` },
+        ]);
+      }
+      fieldSeen.add(rawId);
+
+      if (!allowedLineIds.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          { field: `${field}.${String(index)}`, message: "line ID must belong to this invoice" },
+        ]);
+      }
+      if (allSeen.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          {
+            field: `${field}.${String(index)}`,
+            message: "a line ID cannot be both ready to create and skipped",
+          },
+        ]);
+      }
+      allSeen.add(rawId);
+    });
+  }
+}
+
 const receiveInvoiceSchema = z.object({
   lines: z
     .array(
@@ -317,6 +367,21 @@ export function createSupplierInvoiceHandlers(
       const invoiceId = uuidSchema.safeParse(req.params.invoiceId);
       if (!invoiceId.success) {
         throw new AppError(400, "VALIDATION_ERROR", "Invalid invoiceId");
+      }
+
+      const rawBody = req.body as {
+        readyToCreateLineIds?: unknown;
+        skippedLineIds?: unknown;
+      } | null;
+      if (
+        Array.isArray(rawBody?.readyToCreateLineIds) ||
+        Array.isArray(rawBody?.skippedLineIds)
+      ) {
+        const invoice = await service.getInvoice(caller, clinicId, invoiceId.data);
+        assertInvoiceConfirmationIds(
+          req.body,
+          new Set(invoice.lines.map((line) => line.id)),
+        );
       }
 
       const body = confirmImportSchema.safeParse(req.body ?? {});

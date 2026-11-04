@@ -97,7 +97,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.ROSTER_WRITE,
     PERMISSIONS.TIMESHEETS_READ,
     PERMISSIONS.TIMESHEETS_WRITE,
-    PERMISSIONS.BILLING_READ,
     PERMISSIONS.ANALYTICS_READ,
   ],
 
@@ -115,15 +114,12 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
 // owner_admin is not listed here — they have ALL_PERMISSIONS inherently.
 
 export const INITIAL_MODULE_GRANTS: Partial<Record<UserRole, Permission[]>> = {
+  // Workforce pilot default. Deferred modules remain explicitly grantable by
+  // owner_admin but are not enabled for newly created managers.
   group_practice_manager: [
     PERMISSIONS.MODULE_TIMESHEETS,
     PERMISSIONS.MODULE_ROSTER,
     PERMISSIONS.MODULE_LEAVE,
-    PERMISSIONS.MODULE_INVENTORY,
-    PERMISSIONS.MODULE_STOCKTAKES,
-    PERMISSIONS.MODULE_PROCUREMENT,
-    PERMISSIONS.MODULE_RECEIVING,
-    PERMISSIONS.MODULE_REPORTS,
   ],
   clinical_staff: [
     PERMISSIONS.MODULE_TIMESHEETS,

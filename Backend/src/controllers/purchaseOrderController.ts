@@ -95,6 +95,48 @@ const createPurchasingDraftBodySchema = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 
+function assertPoReceivingLineIds(
+  body: unknown,
+  allowedLineIds: Set<string>,
+): void {
+  const rawLines = (body as { lines?: unknown } | null)?.lines;
+  if (!Array.isArray(rawLines)) return;
+
+  if (rawLines.length > allowedLineIds.size) {
+    throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+      {
+        field: "lines",
+        message: "lines cannot exceed the existing lines on this purchase order",
+      },
+    ]);
+  }
+
+  const seen = new Set<string>();
+  rawLines.forEach((rawLine, index) => {
+    const poLineId =
+      typeof rawLine === "object" && rawLine !== null
+        ? (rawLine as { poLineId?: unknown }).poLineId
+        : undefined;
+    if (typeof poLineId !== "string") return;
+
+    if (seen.has(poLineId)) {
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field: `lines.${String(index)}.poLineId`, message: "poLineId values must be unique" },
+      ]);
+    }
+    seen.add(poLineId);
+
+    if (!allowedLineIds.has(poLineId)) {
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        {
+          field: `lines.${String(index)}.poLineId`,
+          message: "poLineId must belong to this purchase order",
+        },
+      ]);
+    }
+  });
+}
+
 // ─── Handler factory ──────────────────────────────────────────────────────────
 
 export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
@@ -288,12 +330,28 @@ export function createPurchaseOrderHandlers(service: PurchaseOrderService) {
       if (!req.user) {
         throw new AppError(401, "UNAUTHORIZED", "Authentication required");
       }
+      const rawLines = (req.body as { lines?: unknown } | null)?.lines;
+      if (!Array.isArray(rawLines) || rawLines.length === 0) {
+        const invalidBody = receivePoBodySchema.safeParse(req.body ?? {});
+        if (!invalidBody.success) {
+          throw new AppError(
+            400,
+            "VALIDATION_ERROR",
+            "Request validation failed",
+            zodToDetails(invalidBody.error),
+          );
+        }
+      }
+
+      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
+      const poId = parseUuidParam(req.params.poId, "poId");
+      const allowedLineIds = await service.getPurchaseOrderLineIds(clinicId, poId);
+      assertPoReceivingLineIds(req.body ?? {}, allowedLineIds);
+
       const parseResult = receivePoBodySchema.safeParse(req.body ?? {});
       if (!parseResult.success) {
         throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parseResult.error));
       }
-      const clinicId = parseUuidParam(req.params.clinicId, "clinicId");
-      const poId = parseUuidParam(req.params.poId, "poId");
       const result = await service.receivePurchaseOrder(
         clinicId,
         poId,

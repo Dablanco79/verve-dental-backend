@@ -5,7 +5,8 @@
  * the master_catalog_items pattern used by the supplier catalogue import.
  *
  * Auth:
- *   GET routes    — any authenticated role (read-only for clinical_staff).
+ *   All routes    — valid JWT plus module:procurement.
+ *   GET routes    — any role with that module.
  *   Write routes  — owner_admin or group_practice_manager only (POST, PATCH,
  *                   archive, reactivate, and the library import).
  */
@@ -19,8 +20,10 @@ import { createMasterProductImportHandlers } from "../controllers/masterProductI
 import { createMasterProductMatchHandlers } from "../controllers/masterProductMatchController.js";
 import {
   createAuthenticateMiddleware,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 // 5 MB limit — curated master product libraries should be well within this.
@@ -56,26 +59,26 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
     deps.auditService,
   );
 
+  router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   // ── Product Matching Engine — MUST be registered before /:id routes ───────
   //    Both endpoints require write access (clinical_staff is blocked).
 
   router.post(
     "/match",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => matchHandlers.suggestMatches(req, res)),
   );
 
   router.post(
     "/match/candidates",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => matchHandlers.discoverReviewCandidates(req, res)),
   );
 
   router.post(
     "/match/confirm",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => matchHandlers.confirmMatch(req, res)),
   );
@@ -84,7 +87,6 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
 
   router.get(
     "/categories",
-    authenticate,
     (req, res) => { handlers.listCategories(req, res); },
   );
 
@@ -92,40 +94,34 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
 
   router.get(
     "/",
-    authenticate,
     asyncHandler((req, res) => handlers.listMasterProducts(req, res)),
   );
 
   router.post(
     "/",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.createMasterProduct(req, res)),
   );
 
   router.get(
     "/:id",
-    authenticate,
     asyncHandler((req, res) => handlers.getMasterProduct(req, res)),
   );
 
   router.patch(
     "/:id",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.updateMasterProduct(req, res)),
   );
 
   router.post(
     "/:id/archive",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.archiveMasterProduct(req, res)),
   );
 
   router.post(
     "/:id/reactivate",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => handlers.reactivateMasterProduct(req, res)),
   );
@@ -134,7 +130,6 @@ export function createMasterProductRouter(deps: AppDependencies): Router {
 
   router.post(
     "/import",
-    authenticate,
     requireWriteAccess,
     upload.single("file"),
     asyncHandler((req, res) => importHandlers.importLibrary(req, res)),
