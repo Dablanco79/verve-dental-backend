@@ -116,6 +116,22 @@ describe("POST /api/v1/suppliers/:id/catalogue/import/preview", () => {
 
     expect(res.status).toBe(403);
   });
+
+  it("rejects catalogue uploads larger than 5 MB", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const supplierId = await createSupplier(app, token);
+
+    const res = await request(app)
+      .post(`/api/v1/suppliers/${supplierId}/catalogue/import/preview`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.alloc(5 * 1024 * 1024 + 1), {
+        filename: "oversized.csv",
+        contentType: "text/csv",
+      });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  }, 15000);
 });
 
 // ─── Confirm ───────────────────────────────────────────────────────────────────
