@@ -121,6 +121,7 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.post("/auth/mfa/setup", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
   router.post("/auth/mfa/confirm", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));
   router.post("/auth/refresh", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.refresh(req, res)));
+  router.post("/auth/activity", originGuard, asyncHandler((req, res) => authHandlers.recordActivity(req, res)));
   router.post("/auth/logout", originGuard, asyncHandler((req, res) => authHandlers.logout(req, res)));
   router.get("/auth/me", authenticate, (req, res) => {
     authHandlers.me(req, res);

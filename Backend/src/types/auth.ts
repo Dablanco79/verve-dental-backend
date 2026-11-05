@@ -80,6 +80,11 @@ export type AccessTokenPayload = {
   /** UI/backward-compatibility permission hint baked in at token issuance. */
   permissions: string[];
   type: "access";
+  /**
+   * Original login time. Optional only for access tokens issued before the
+   * strict absolute-session enforcement rollout.
+   */
+  sessionStartAt?: number;
 };
 
 export type RefreshTokenPayload = {
@@ -90,6 +95,11 @@ export type RefreshTokenPayload = {
    *  Carried forward unchanged through every refresh rotation so the backend
    *  can enforce an absolute session max-age (SESSION_MAX_AGE_SECONDS). */
   sessionStartAt: number;
+  /**
+   * Last genuine browser activity time. Normal refresh rotation preserves this
+   * value; only the activity endpoint advances it.
+   */
+  lastUserActivityAt?: number;
 };
 
 export type MfaChallengePayload = {

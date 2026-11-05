@@ -93,6 +93,7 @@ function makeTestConfig(): EnvConfig {
     JWT_ACCESS_EXPIRES_IN: "15m",
       JWT_REFRESH_EXPIRES_IN: "7d",
       SESSION_MAX_AGE_SECONDS: 43200,
+    SESSION_IDLE_TIMEOUT_SECONDS: 3600,
     DATABASE_URL: undefined,
     DATABASE_SSL: "auto",
     REDIS_URL: undefined,

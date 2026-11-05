@@ -424,6 +424,12 @@ export function createApiClient(config: AppConfig) {
     });
   }
 
+  async function recordActivity(): Promise<void> {
+    await request<undefined>(config, "/api/v1/auth/activity", {
+      method: "POST",
+    });
+  }
+
   async function logout(): Promise<void> {
     await request<undefined>(
       config,
@@ -3137,6 +3143,7 @@ export function createApiClient(config: AppConfig) {
     setupMfa,
     confirmMfa,
     refresh,
+    recordActivity,
     logout,
     getMe,
     listInventory,

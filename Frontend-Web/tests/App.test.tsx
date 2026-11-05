@@ -11,15 +11,21 @@ vi.mock("../src/api/client.js", () => ({
     login: vi.fn(),
     verifyMfa: vi.fn(),
     refresh: vi.fn().mockRejectedValue(new Error("No refresh cookie")),
+    recordActivity: vi.fn(),
     logout: vi.fn(),
     getMe: vi.fn(),
   }),
 }));
 
 vi.mock("../src/auth/tokenStorage.js", () => ({
+  ACCESS_TOKEN_KEY: "verve.accessToken",
+  LAST_USER_ACTIVITY_KEY: "verve.lastUserActivityAt",
   getAccessToken: vi.fn(() => null),
   setAccessToken: vi.fn(),
   clearAccessToken: vi.fn(),
+  getLastUserActivityAt: vi.fn(() => null),
+  setLastUserActivityAt: vi.fn(),
+  clearLastUserActivityAt: vi.fn(),
 }));
 
 describe("LoginPage", () => {

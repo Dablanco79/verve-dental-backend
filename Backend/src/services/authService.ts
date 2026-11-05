@@ -83,7 +83,12 @@ export function createAuthService(
     if (redisClient) {
       return redisClient.get(`refresh:${jti}`);
     }
-    return refreshTokens.get(jti)?.userId ?? null;
+    const record = refreshTokens.get(jti);
+    if (!record || record.expiresAt.getTime() <= Date.now()) {
+      refreshTokens.delete(jti);
+      return null;
+    }
+    return record.userId;
   }
 
   async function deleteRefreshToken(jti: string, userId: string): Promise<void> {
@@ -172,7 +177,11 @@ export function createAuthService(
     };
   }
 
-  function signAccessToken(user: UserRecord, permissions: string[]): string {
+  function signAccessToken(
+    user: UserRecord,
+    permissions: string[],
+    sessionStartAt: number,
+  ): string {
     const payload: AccessTokenPayload = {
       sub: user.id,
       email: user.email,
@@ -185,6 +194,7 @@ export function createAuthService(
       payrollTrack: user.payrollTrack,
       permissions,
       type: "access",
+      sessionStartAt,
     };
 
     const signOptions: SignOptions = {
@@ -194,17 +204,18 @@ export function createAuthService(
     return jwt.sign(payload, config.JWT_ACCESS_SECRET, signOptions);
   }
 
-  async function signRefreshToken(userId: string, sessionStartAt?: number): Promise<string> {
+  async function signRefreshToken(
+    userId: string,
+    sessionStartAt: number,
+    lastUserActivityAt: number,
+  ): Promise<string> {
     const jti = randomUUID();
-    const now = Math.floor(Date.now() / 1000);
     const payload: RefreshTokenPayload = {
       sub: userId,
       jti,
       type: "refresh",
-      // On the first issuance (login) we set sessionStartAt to now.
-      // On every rotation we carry forward the original value so the absolute
-      // session cap is measured from the original login, not from each refresh.
-      sessionStartAt: sessionStartAt ?? now,
+      sessionStartAt,
+      lastUserActivityAt,
     };
 
     const signOptions: SignOptions = {
@@ -224,7 +235,14 @@ export function createAuthService(
     return token;
   }
 
-  async function issueTokens(user: UserRecord, sessionStartAt?: number): Promise<AuthTokens> {
+  async function issueTokens(
+    user: UserRecord,
+    sessionStartAt?: number,
+    lastUserActivityAt?: number,
+  ): Promise<AuthTokens> {
+    const now = Math.floor(Date.now() / 1000);
+    const originalSessionStartAt = sessionStartAt ?? now;
+    const recordedUserActivityAt = lastUserActivityAt ?? now;
     // Build effective permissions: role defaults ∪ active explicit grants.
     const roleDefaults: string[] = DEFAULT_PERMISSIONS[user.role];
     const explicitGrants: string[] = permissionRepository
@@ -232,8 +250,12 @@ export function createAuthService(
       : [];
     const permissions = Array.from(new Set([...roleDefaults, ...explicitGrants]));
 
-    const accessToken = signAccessToken(user, permissions);
-    const refreshToken = await signRefreshToken(user.id, sessionStartAt);
+    const accessToken = signAccessToken(user, permissions, originalSessionStartAt);
+    const refreshToken = await signRefreshToken(
+      user.id,
+      originalSessionStartAt,
+      recordedUserActivityAt,
+    );
     const decoded = jwt.decode(accessToken) as { exp?: number; iat?: number } | null;
     const expiresIn =
       decoded?.exp && decoded.iat ? decoded.exp - decoded.iat : 900;
@@ -315,7 +337,16 @@ export function createAuthService(
         throw new AppError(401, "UNAUTHORIZED", "Invalid access token");
       }
 
-      return payload as unknown as AccessTokenPayload;
+      const accessPayload = payload as unknown as AccessTokenPayload;
+      if (
+        typeof accessPayload.sessionStartAt === "number" &&
+        Math.floor(Date.now() / 1000) - accessPayload.sessionStartAt >=
+          config.SESSION_MAX_AGE_SECONDS
+      ) {
+        throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
+      }
+
+      return accessPayload;
     } catch (error) {
       if (error instanceof AppError) {
         throw error;
@@ -529,6 +560,19 @@ export function createAuthService(
       }
 
       const refreshPayload = payload as unknown as RefreshTokenPayload;
+      const sessionStartAt =
+        typeof refreshPayload.sessionStartAt === "number"
+          ? refreshPayload.sessionStartAt
+          : // Legacy tokens that pre-date this field get one final rotation.
+            // On the next refresh the hard cap applies from this conservative
+            // near-expiry timestamp.
+            Math.floor(Date.now() / 1000) - config.SESSION_MAX_AGE_SECONDS + 60;
+      const lastUserActivityAt =
+        typeof refreshPayload.lastUserActivityAt === "number"
+          ? refreshPayload.lastUserActivityAt
+          : typeof payload.iat === "number"
+            ? payload.iat
+            : sessionStartAt;
       const storedUserId = await getRefreshTokenUserId(refreshPayload.jti);
 
       if (!storedUserId || storedUserId !== refreshPayload.sub) {
@@ -542,24 +586,29 @@ export function createAuthService(
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
       }
 
-      // Enforce absolute session max-age.  Each rotation carries forward the
-      // original sessionStartAt so this check is always relative to login time.
-      const sessionStartAt =
-        typeof refreshPayload.sessionStartAt === "number"
-          ? refreshPayload.sessionStartAt
-          : // Legacy tokens that pre-date this field get one final rotation.
-            // On the next refresh the new token will carry sessionStartAt and
-            // the hard cap will apply from that point forward.
-            Math.floor(Date.now() / 1000) - config.SESSION_MAX_AGE_SECONDS + 60;
-
       const sessionAgeSeconds = Math.floor(Date.now() / 1000) - sessionStartAt;
-      if (sessionAgeSeconds > config.SESSION_MAX_AGE_SECONDS) {
+      if (sessionAgeSeconds >= config.SESSION_MAX_AGE_SECONDS) {
         await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
         audit.logAuthEvent("auth.refresh.session_expired", {
           userId: refreshPayload.sub,
           ...auditContext,
         });
         throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
+      }
+
+      const idleSeconds =
+        Math.floor(Date.now() / 1000) - lastUserActivityAt;
+      if (idleSeconds >= config.SESSION_IDLE_TIMEOUT_SECONDS) {
+        await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+        audit.logAuthEvent("auth.refresh.idle_expired", {
+          userId: refreshPayload.sub,
+          ...auditContext,
+        });
+        throw new AppError(
+          401,
+          "SESSION_IDLE_EXPIRED",
+          "Session expired due to inactivity. Please log in again.",
+        );
       }
 
       // Enforce MFA enrollment on refresh: a user who somehow holds a refresh
@@ -588,7 +637,12 @@ export function createAuthService(
 
       await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
       // Pass through the original session start so the absolute cap is preserved.
-      const tokens = await issueTokens(user, sessionStartAt);
+      // Rotation itself is not user activity, so preserve lastUserActivityAt.
+      const tokens = await issueTokens(
+        user,
+        sessionStartAt,
+        lastUserActivityAt,
+      );
 
       audit.logAuthEvent("auth.refresh.success", {
         userId: user.id,
@@ -609,6 +663,58 @@ export function createAuthService(
       });
       throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
     }
+  }
+
+  async function recordUserActivity(refreshToken: string): Promise<string> {
+    let payload: jwt.JwtPayload;
+    try {
+      payload = parseJwtPayload(jwt.verify(refreshToken, config.JWT_REFRESH_SECRET));
+    } catch {
+      throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+    }
+
+    if (
+      payload.type !== "refresh" ||
+      typeof payload.jti !== "string" ||
+      typeof payload.sub !== "string"
+    ) {
+      throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+    }
+
+    const refreshPayload = payload as unknown as RefreshTokenPayload;
+    const now = Math.floor(Date.now() / 1000);
+    const sessionStartAt =
+      typeof refreshPayload.sessionStartAt === "number"
+        ? refreshPayload.sessionStartAt
+        : now - config.SESSION_MAX_AGE_SECONDS + 60;
+    const lastUserActivityAt =
+      typeof refreshPayload.lastUserActivityAt === "number"
+        ? refreshPayload.lastUserActivityAt
+        : typeof payload.iat === "number"
+          ? payload.iat
+          : sessionStartAt;
+    const storedUserId = await getRefreshTokenUserId(refreshPayload.jti);
+
+    if (!storedUserId || storedUserId !== refreshPayload.sub) {
+      throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+    }
+    if (now - sessionStartAt >= config.SESSION_MAX_AGE_SECONDS) {
+      await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+      throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
+    }
+    if (
+      now - lastUserActivityAt >= config.SESSION_IDLE_TIMEOUT_SECONDS
+    ) {
+      await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+      throw new AppError(
+        401,
+        "SESSION_IDLE_EXPIRED",
+        "Session expired due to inactivity. Please log in again.",
+      );
+    }
+
+    await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+    return signRefreshToken(refreshPayload.sub, sessionStartAt, now);
   }
 
   async function logout(
@@ -872,6 +978,7 @@ export function createAuthService(
     login,
     verifyMfa,
     refresh,
+    recordUserActivity,
     logout,
     authenticateAccessToken,
     rehydrateAuthoritativeUser,

@@ -28,6 +28,12 @@ const envSchema = z.object({
    * Default: 43200 s = 12 hours.  Override with SESSION_MAX_AGE_SECONDS=<n>.
    */
   SESSION_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(43200),
+  /**
+   * Maximum period without genuine user activity before refresh is denied.
+   * Frontend activity events rotate signed refresh-session metadata;
+   * background API calls and token rotation do not.
+   */
+  SESSION_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(3600),
   DATABASE_URL: z.url().optional(),
   // Deployed remote URLs require sslmode=verify-full; local/test remains configurable.
   DATABASE_SSL: z.enum(["auto", "true", "false"]).default("auto"),

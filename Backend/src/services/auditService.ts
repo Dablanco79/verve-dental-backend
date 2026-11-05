@@ -17,6 +17,7 @@ export type AuthAuditEvent =
   | "auth.refresh.failure"
   | "auth.refresh.mfa_enrollment_required"
   | "auth.refresh.session_expired"
+  | "auth.refresh.idle_expired"
   | "auth.logout"
   | "auth.unauthorized"
   | "auth.forbidden"

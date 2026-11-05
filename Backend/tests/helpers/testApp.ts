@@ -25,6 +25,9 @@ type TestAppOptions = {
    * Example: "https://verve-dental-frontend.onrender.com"
    */
   corsOrigin?: string;
+  sessionIdleTimeoutSeconds?: number;
+  sessionMaxAgeSeconds?: number;
+  accessExpiresIn?: string;
   configureDependencies?: (
     dependencies: AppDependencies,
   ) => void | Promise<void>;
@@ -34,6 +37,13 @@ export async function createTestApp(options?: TestAppOptions): Promise<Express> 
   process.env.NODE_ENV = options?.nodeEnv ?? "test";
   process.env.JWT_ACCESS_SECRET = TEST_JWT_ACCESS_SECRET;
   process.env.JWT_REFRESH_SECRET = TEST_JWT_REFRESH_SECRET;
+  process.env.JWT_ACCESS_EXPIRES_IN = options?.accessExpiresIn ?? "15m";
+  process.env.SESSION_IDLE_TIMEOUT_SECONDS = String(
+    options?.sessionIdleTimeoutSeconds ?? 3600,
+  );
+  process.env.SESSION_MAX_AGE_SECONDS = String(
+    options?.sessionMaxAgeSeconds ?? 43200,
+  );
   process.env.CORS_ORIGIN = options?.corsOrigin ?? "http://localhost:5173";
   process.env.MFA_ENCRYPTION_KEY = TEST_MFA_ENCRYPTION_KEY;
   delete process.env.DATABASE_URL;

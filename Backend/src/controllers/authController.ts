@@ -170,6 +170,19 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
       });
     },
 
+    async recordActivity(req: Request, res: Response): Promise<void> {
+      const refreshToken = (req.cookies as Record<string, string> | undefined)?.[
+        REFRESH_COOKIE_NAME
+      ];
+      if (!refreshToken) {
+        throw new AppError(401, "MISSING_REFRESH_TOKEN", "Refresh token required");
+      }
+
+      const rotatedRefreshToken = await authService.recordUserActivity(refreshToken);
+      setRefreshCookie(res, rotatedRefreshToken);
+      res.status(204).send();
+    },
+
     async logout(req: Request, res: Response): Promise<void> {
       const tokenToRevoke = (req.cookies as Record<string, string> | undefined)?.[REFRESH_COOKIE_NAME];
 

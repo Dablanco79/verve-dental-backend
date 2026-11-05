@@ -11,7 +11,7 @@ import { createApiClient } from "../api/client.js";
 import { loadConfig } from "../config/index.js";
 import type { AuthUser, MfaSetupData } from "../types/index.js";
 import * as tokenStorage from "./tokenStorage.js";
-import { decodeTokenPermissions } from "./tokenUtils.js";
+import { decodeTokenIssuedAt, decodeTokenPermissions } from "./tokenUtils.js";
 import { AuthContext } from "./AuthContext.js";
 import type { AuthContextValue } from "./AuthContext.js";
 
@@ -31,14 +31,18 @@ const IDLE_TIMEOUT_MS = (() => {
 })();
 
 const IDLE_ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"] as const;
-
+const SERVER_ACTIVITY_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 function persistSession(
   accessToken: string,
   user: AuthUser,
   setUser: (user: AuthUser) => void,
+  markUserActivity: boolean,
 ): void {
   tokenStorage.setAccessToken(accessToken);
+  if (markUserActivity) {
+    tokenStorage.setLastUserActivityAt();
+  }
   // Merge token-level permissions (full union of defaults + explicit grants)
   // into the user object before committing to React state.  The response body
   // `user` carries only DEFAULT_PERMISSIONS[role]; explicit module grants are
@@ -56,12 +60,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Stored in React state (memory only) — never persisted to localStorage.
   const [enrollmentToken, setEnrollmentToken] = useState<string | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastServerActivitySyncRef = useRef(0);
+
+  const clearClientSession = useCallback(() => {
+    tokenStorage.clearAccessToken();
+    tokenStorage.clearLastUserActivityAt();
+    setUser(null);
+    setEnrollmentToken(null);
+  }, []);
+
+  const logout = useCallback(async () => {
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+    try {
+      await apiClient.logout();
+    } finally {
+      clearClientSession();
+    }
+  }, [clearClientSession]);
+
+  const expireSession = useCallback((): Promise<void> => {
+    // Fail closed immediately; revocation is best-effort and must not leave an
+    // expired session visible while a slow or offline network request settles.
+    clearClientSession();
+    window.sessionStorage.setItem("verve.sessionExpired", "1");
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    // Revocation must not block the login screen when the client is offline.
+    void Promise.resolve()
+      .then(() => apiClient.logout())
+      .catch(() => undefined);
+    return Promise.resolve();
+  }, [clearClientSession]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function restoreSession(): Promise<void> {
       const accessToken = tokenStorage.getAccessToken();
+      let lastUserActivityAt = tokenStorage.getLastUserActivityAt();
+
+      // Backward-compatible rollout: a recent legacy access token can seed the
+      // persisted timestamp once. Missing/old evidence fails closed rather than
+      // allowing an unknown-age cookie to restore an unattended session.
+      if (lastUserActivityAt === null && accessToken) {
+        const issuedAt = decodeTokenIssuedAt(accessToken);
+        if (issuedAt !== null && Date.now() - issuedAt < IDLE_TIMEOUT_MS) {
+          lastUserActivityAt = issuedAt;
+          tokenStorage.setLastUserActivityAt(issuedAt);
+        }
+      }
+
+      if (lastUserActivityAt === null && !accessToken) {
+        // Cookie-only legacy sessions have no trustworthy browser activity
+        // evidence. Revoke them without presenting an expiry warning to a
+        // genuinely signed-out visitor.
+        await Promise.resolve()
+          .then(() => apiClient.logout())
+          .catch(() => undefined);
+        clearClientSession();
+        if (!cancelled) setIsLoading(false);
+        return;
+      }
+
+      if (
+        lastUserActivityAt === null ||
+        Date.now() - lastUserActivityAt >= IDLE_TIMEOUT_MS
+      ) {
+        await expireSession();
+        if (!cancelled) setIsLoading(false);
+        return;
+      }
 
       try {
         if (accessToken) {
@@ -75,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             tokenStorage.clearAccessToken();
             const session = await apiClient.refresh();
             if (!cancelled) {
-              persistSession(session.accessToken, session.user, setUser);
+              persistSession(session.accessToken, session.user, setUser, false);
             }
             return;
           }
@@ -85,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // If there is no valid cookie the request will 401 and we catch below.
         const session = await apiClient.refresh();
         if (!cancelled) {
-          persistSession(session.accessToken, session.user, setUser);
+          persistSession(session.accessToken, session.user, setUser, false);
         }
       } catch {
         tokenStorage.clearAccessToken();
@@ -101,19 +171,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [clearClientSession, expireSession]);
 
   useEffect(() => {
     function handleSessionExpired(): void {
-      setUser(null);
-      setEnrollmentToken(null);
+      clearClientSession();
     }
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
     return () => {
       window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
     };
-  }, []);
+  }, [clearClientSession]);
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiClient.login(email, password);
@@ -134,13 +203,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { requiresMfa: true as const, mfaToken: result.mfaToken };
     }
 
-    persistSession(result.accessToken, result.user, setUser);
+    persistSession(result.accessToken, result.user, setUser, true);
     return { requiresMfa: false as const };
   }, []);
 
   const verifyMfa = useCallback(async (mfaToken: string, code: string) => {
     const session = await apiClient.verifyMfa(mfaToken, code);
-    persistSession(session.accessToken, session.user, setUser);
+    persistSession(session.accessToken, session.user, setUser, true);
   }, []);
 
   const setupMfa = useCallback(async (token?: string): Promise<MfaSetupData> => {
@@ -157,20 +226,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEnrollmentToken(null);
   }, [enrollmentToken]);
 
-  const logout = useCallback(async () => {
-    if (idleTimerRef.current !== null) {
-      clearTimeout(idleTimerRef.current);
-      idleTimerRef.current = null;
-    }
-    try {
-      await apiClient.logout();
-    } finally {
-      tokenStorage.clearAccessToken();
-      setUser(null);
-      setEnrollmentToken(null);
-    }
-  }, []);
-
   // ── Idle timeout ──────────────────────────────────────────────────────────
   // Only active while a user is logged in.  Each user-interaction event resets
   // the timer.  When the timer fires the session is explicitly invalidated so
@@ -178,19 +233,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) return;
 
-    function resetTimer(): void {
+    function scheduleExpiry(lastUserActivityAt: number): void {
       if (idleTimerRef.current !== null) clearTimeout(idleTimerRef.current);
+      const remainingMs = IDLE_TIMEOUT_MS - (Date.now() - lastUserActivityAt);
+      if (remainingMs <= 0) {
+        void expireSession();
+        return;
+      }
       idleTimerRef.current = setTimeout(() => {
-        void logout();
-        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
-      }, IDLE_TIMEOUT_MS);
+        void expireSession();
+      }, remainingMs);
     }
 
-    resetTimer();
+    function recordGenuineActivity(event?: Event): void {
+      if (event && !event.isTrusted && import.meta.env.MODE !== "test") return;
+      const previousActivityAt = tokenStorage.getLastUserActivityAt();
+      if (
+        previousActivityAt === null ||
+        Date.now() - previousActivityAt >= IDLE_TIMEOUT_MS
+      ) {
+        void expireSession();
+        return;
+      }
+
+      const now = Date.now();
+      tokenStorage.setLastUserActivityAt(now);
+      scheduleExpiry(now);
+
+      if (
+        now - lastServerActivitySyncRef.current >=
+        SERVER_ACTIVITY_SYNC_INTERVAL_MS
+      ) {
+        lastServerActivitySyncRef.current = now;
+        // A network failure must not convert local activity into a logout.
+        // The server remains authoritative and will reject a stale refresh.
+        void apiClient.recordActivity().catch(() => undefined);
+      }
+    }
+
+    function handleVisibilityChange(event: Event): void {
+      if (document.visibilityState === "visible") {
+        recordGenuineActivity(event);
+      }
+    }
+
+    function handleStorage(event: StorageEvent): void {
+      if (event.key === tokenStorage.ACCESS_TOKEN_KEY && event.newValue === null) {
+        clearClientSession();
+        return;
+      }
+      if (event.key === tokenStorage.LAST_USER_ACTIVITY_KEY && event.newValue) {
+        const timestamp = Number(event.newValue);
+        if (Number.isFinite(timestamp) && timestamp > 0) {
+          scheduleExpiry(timestamp);
+        }
+      }
+    }
+
+    const persistedActivityAt = tokenStorage.getLastUserActivityAt();
+    if (persistedActivityAt === null) {
+      void expireSession();
+      return;
+    }
+    scheduleExpiry(persistedActivityAt);
 
     for (const event of IDLE_ACTIVITY_EVENTS) {
-      window.addEventListener(event, resetTimer, { passive: true });
+      window.addEventListener(event, recordGenuineActivity, { passive: true });
     }
+    window.addEventListener("focus", recordGenuineActivity);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       if (idleTimerRef.current !== null) {
@@ -198,10 +310,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         idleTimerRef.current = null;
       }
       for (const event of IDLE_ACTIVITY_EVENTS) {
-        window.removeEventListener(event, resetTimer);
+        window.removeEventListener(event, recordGenuineActivity);
       }
+      window.removeEventListener("focus", recordGenuineActivity);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [user, logout]);
+  }, [user, clearClientSession, expireSession]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
