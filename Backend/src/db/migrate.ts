@@ -3661,18 +3661,90 @@ export type MigrationRunOptions = {
    * Normal application startup is always check-only in staging/production.
    * Only the standalone migration CLI and test setup pass "apply".
    */
-  mode?: "startup" | "apply";
+  mode?: "startup" | "apply" | "verify";
+  /**
+   * Optional fail-closed Production precondition. When present, identity and
+   * ledger checks run under the migration advisory lock and transaction before
+   * any schema mutation.
+   */
+  productionGuard?: {
+    expectedDatabaseName: string;
+    expectedSystemIdentifier: string;
+    expectedAppliedIds: readonly string[];
+    expectedPendingIds: readonly string[];
+  };
 };
+
+function assertExactMigrationIds(
+  actual: ReadonlySet<string>,
+  expectedIds: readonly string[],
+): void {
+  const expected = new Set(expectedIds);
+  const missing = expectedIds.filter((id) => !actual.has(id));
+  const unexpected = [...actual].filter((id) => !expected.has(id)).sort();
+
+  if (
+    expected.size !== expectedIds.length ||
+    actual.size !== expected.size ||
+    missing.length > 0 ||
+    unexpected.length > 0
+  ) {
+    throw new Error(
+      `[Migration Guard] Applied migration history does not match the approved baseline. ` +
+        `Missing: ${missing.join(", ") || "none"}. ` +
+        `Unexpected: ${unexpected.join(", ") || "none"}.`,
+    );
+  }
+}
+
+function assertExactPendingIds(
+  actualIds: readonly string[],
+  expectedIds: readonly string[],
+): void {
+  const matches =
+    actualIds.length === expectedIds.length &&
+    actualIds.every((id, index) => id === expectedIds[index]);
+
+  if (!matches) {
+    throw new Error(
+      `[Migration Guard] Pending migration sequence does not match the approved release. ` +
+        `Expected: ${expectedIds.join(", ") || "none"}. ` +
+        `Actual: ${actualIds.join(", ") || "none"}.`,
+    );
+  }
+}
 
 export async function runBootstrapMigrations(
   pool: DatabasePool,
   logger: Logger,
   options: MigrationRunOptions = {},
 ): Promise<void> {
-  const { nodeEnv = "development", mode = "startup" } = options;
+  const {
+    nodeEnv = "development",
+    mode = "startup",
+    productionGuard,
+  } = options;
   const isRestrictedEnv = nodeEnv === "staging" || nodeEnv === "production";
-  const mayApply = mode === "apply" || !isRestrictedEnv;
+  const mayApply =
+    mode === "apply" || (mode === "startup" && !isRestrictedEnv);
   const checkOnly = isRestrictedEnv && mode === "startup";
+  const verifyOnly = mode === "verify";
+
+  if (productionGuard && nodeEnv !== "production") {
+    throw new Error(
+      "[Migration Guard] Guarded migration execution requires NODE_ENV=production.",
+    );
+  }
+  if (productionGuard && mode === "startup") {
+    throw new Error(
+      "[Migration Guard] Guarded migration execution is not available during application startup.",
+    );
+  }
+  if (verifyOnly && !productionGuard) {
+    throw new Error(
+      "[Migration Guard] Verification mode requires Production identity and ledger expectations.",
+    );
+  }
 
   if (checkOnly) {
     logger.info(
@@ -3682,16 +3754,23 @@ export async function runBootstrapMigrations(
     );
   }
 
-  // Apply mode uses one dedicated transaction and advisory lock. Restricted
-  // startup uses a read-only transaction and never creates or changes schema.
+  // Apply and guarded verification use one dedicated transaction and advisory
+  // lock. Restricted startup uses a read-only transaction and never creates or
+  // changes schema.
   const client = await pool.connect();
   try {
     await client.query(checkOnly ? "BEGIN TRANSACTION READ ONLY" : "BEGIN");
 
-    if (mayApply) {
+    if (mayApply || verifyOnly) {
       await client.query("SELECT pg_advisory_xact_lock($1)", [
         MIGRATION_ADVISORY_LOCK_KEY,
       ]);
+    }
+
+    // A guarded run requires an existing ledger. Do not create it before the
+    // identity/history precondition because that would be DDL against an
+    // unverified target.
+    if (mayApply && !productionGuard) {
       await client.query(`
         CREATE TABLE IF NOT EXISTS schema_migrations (
           id         text        PRIMARY KEY,
@@ -3700,10 +3779,40 @@ export async function runBootstrapMigrations(
       `);
     }
 
+    if (productionGuard) {
+      const { rows: identityRows } = await client.query<{
+        database_name: string;
+        system_identifier: string;
+        is_primary: boolean;
+      }>(`
+        SELECT current_database() AS database_name,
+               system_identifier::text AS system_identifier,
+               NOT pg_is_in_recovery() AS is_primary
+          FROM pg_control_system()
+      `);
+      const identity = identityRows[0];
+      if (
+        !identity ||
+        !identity.is_primary ||
+        identity.database_name !== productionGuard.expectedDatabaseName ||
+        identity.system_identifier !==
+          productionGuard.expectedSystemIdentifier
+      ) {
+        throw new Error(
+          "[Migration Guard] Active PostgreSQL connection does not match the approved Production database identity.",
+        );
+      }
+    }
+
     const { rows: tableRows } = await client.query<{ table_name: string | null }>(
       "SELECT to_regclass('public.schema_migrations')::text AS table_name",
     );
     const migrationTableExists = Boolean(tableRows[0]?.table_name);
+    if (productionGuard && !migrationTableExists) {
+      throw new Error(
+        "[Migration Guard] The Production migration ledger does not exist.",
+      );
+    }
     const appliedRows = migrationTableExists
       ? (
           await client.query<{ id: string }>(
@@ -3723,6 +3832,17 @@ export async function runBootstrapMigrations(
     }
 
     const pending = BOOTSTRAP_MIGRATIONS.filter((m) => !applied.has(m.id));
+
+    if (productionGuard) {
+      assertExactMigrationIds(
+        applied,
+        productionGuard.expectedAppliedIds,
+      );
+      assertExactPendingIds(
+        pending.map((migration) => migration.id),
+        productionGuard.expectedPendingIds,
+      );
+    }
 
     logger.info(
       {

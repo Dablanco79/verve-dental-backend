@@ -23,6 +23,7 @@
     "test:database-tls-integration": "node -e \"if(!process.env.TLS_DATABASE_URL||!process.env.TLS_CA_CERT_PATH){process.stderr.write('FATAL: TLS_DATABASE_URL and TLS_CA_CERT_PATH must be set for PostgreSQL TLS tests.\\n');process.exit(1)}\" && node --experimental-vm-modules ../node_modules/jest/bin/jest.js tests/databaseTls.integration.test.ts --runInBand --forceExit --verbose",
     "check:migrations:append-only": "node scripts/checkMigrationAppendOnly.mjs",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs src/db/runMigrate.ts",
+    "migrate:production-guarded": "node ./node_modules/tsx/dist/cli.mjs src/db/runProductionGuardedMigrate.ts",
     "bootstrap:admin": "node ./node_modules/tsx/dist/cli.mjs src/db/runBootstrapAdmin.ts",
     "test:db:setup": "node ./node_modules/tsx/dist/cli.mjs src/db/setupTestDb.ts",
     "test:coverage": "npm run test -- --coverage",
