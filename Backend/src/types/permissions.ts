@@ -3,13 +3,11 @@
  *
  * Design principles:
  *   • Permission strings use "resource:action" format for easy prefix-matching.
- *   • DEFAULT_PERMISSIONS defines what each role receives without any explicit
- *     grants in user_permission_grants.  These are baked into access tokens at
- *     issuance time so downstream middleware can gate on req.user.permissions
- *     without an extra DB round-trip per request.
- *   • Explicit grants (rows in user_permission_grants) are unioned with the
- *     role defaults when the token is signed.  Revocations are NOT modelled
- *     here — this table only grants additional permissions, never removes them.
+ *   • DEFAULT_PERMISSIONS defines what each role receives without explicit
+ *     grants. JWTs retain a flat union for UI/backward compatibility, but the
+ *     server reloads active clinic grants on every authenticated request.
+ *   • Explicit grants only add permissions; revocation takes effect immediately
+ *     because request-time authorization never trusts the JWT union.
  *
  * Module access gates (module:*):
  *   • module:* permissions come ENTIRELY from user_permission_grants rows —
@@ -99,7 +97,6 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
     PERMISSIONS.ROSTER_WRITE,
     PERMISSIONS.TIMESHEETS_READ,
     PERMISSIONS.TIMESHEETS_WRITE,
-    PERMISSIONS.BILLING_READ,
     PERMISSIONS.ANALYTICS_READ,
   ],
 
@@ -117,15 +114,12 @@ export const DEFAULT_PERMISSIONS: Record<UserRole, Permission[]> = {
 // owner_admin is not listed here — they have ALL_PERMISSIONS inherently.
 
 export const INITIAL_MODULE_GRANTS: Partial<Record<UserRole, Permission[]>> = {
+  // Workforce pilot default. Deferred modules remain explicitly grantable by
+  // owner_admin but are not enabled for newly created managers.
   group_practice_manager: [
     PERMISSIONS.MODULE_TIMESHEETS,
     PERMISSIONS.MODULE_ROSTER,
     PERMISSIONS.MODULE_LEAVE,
-    PERMISSIONS.MODULE_INVENTORY,
-    PERMISSIONS.MODULE_STOCKTAKES,
-    PERMISSIONS.MODULE_PROCUREMENT,
-    PERMISSIONS.MODULE_RECEIVING,
-    PERMISSIONS.MODULE_REPORTS,
   ],
   clinical_staff: [
     PERMISSIONS.MODULE_TIMESHEETS,

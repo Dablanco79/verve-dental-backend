@@ -87,6 +87,15 @@ describe("Audit trail — invoice creation", () => {
   it("writes an audit event with action 'created' when a draft invoice is created", async () => {
     const app = await createTestApp();
     const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const grantRes = await request(app)
+      .post(
+        `/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${SEED_USER_IDS.clinicAManager}/permissions`,
+      )
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ permission: "billing:read" });
+    expect([200, 201]).toContain(grantRes.status);
 
     const createRes = await request(app)
       .post(`${BILLING(SEED_CLINIC_A_ID)}/invoices`)

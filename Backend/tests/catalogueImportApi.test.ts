@@ -116,6 +116,22 @@ describe("POST /api/v1/suppliers/:id/catalogue/import/preview", () => {
 
     expect(res.status).toBe(403);
   });
+
+  it("rejects catalogue uploads larger than 5 MB", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const supplierId = await createSupplier(app, token);
+
+    const res = await request(app)
+      .post(`/api/v1/suppliers/${supplierId}/catalogue/import/preview`)
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.alloc(5 * 1024 * 1024 + 1), {
+        filename: "oversized.csv",
+        contentType: "text/csv",
+      });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  }, 15000);
 });
 
 // ─── Confirm ───────────────────────────────────────────────────────────────────
@@ -166,5 +182,51 @@ describe("POST /api/v1/suppliers/:id/catalogue/import/confirm", () => {
     // PDF is rejected by the multer fileFilter before reaching the handler
     // The response could be 400 or 500 depending on how multer errors propagate
     expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it("rejects manualMappings keys that are not rows in the uploaded catalogue", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const supplierId = await createSupplier(app, token);
+    const csv = "description,unit_cost\nGloves,12.50\n";
+
+    const res = await request(app)
+      .post(`/api/v1/suppliers/${supplierId}/catalogue/import/confirm`)
+      .set("Authorization", `Bearer ${token}`)
+      .field(
+        "manualMappings",
+        JSON.stringify({
+          999: "00000000-0000-4000-8000-000000000001",
+        }),
+      )
+      .attach("file", Buffer.from(csv), {
+        filename: "test.csv",
+        contentType: "text/csv",
+      });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects non-numeric manualMappings keys", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const supplierId = await createSupplier(app, token);
+    const csv = "description,unit_cost\nGloves,12.50\n";
+
+    const res = await request(app)
+      .post(`/api/v1/suppliers/${supplierId}/catalogue/import/confirm`)
+      .set("Authorization", `Bearer ${token}`)
+      .field(
+        "manualMappings",
+        JSON.stringify({
+          "1-extra": "00000000-0000-4000-8000-000000000001",
+        }),
+      )
+      .attach("file", Buffer.from(csv), {
+        filename: "test.csv",
+        contentType: "text/csv",
+      });
+
+    expect(res.status).toBe(400);
   });
 });

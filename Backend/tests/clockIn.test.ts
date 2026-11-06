@@ -37,7 +37,8 @@
  *   RBAC
  *   ────
  *   - unauthenticated request is rejected (401)
- *   - all three active roles (clinical_staff, GPM, owner_admin) can clock in (201)
+ *   - hourly users may clock in regardless of role
+ *   - commission users are rejected regardless of role
  *   - manager/admin personal Clock In always records their own staffUserId
  *
  *   Payroll home-clinic invariant
@@ -63,7 +64,10 @@
 import { jest } from "@jest/globals";
 import request from "supertest";
 
-import { loginAndGetAccessToken } from "./helpers/auth.js";
+import {
+  loginAndGetAccessToken,
+  replaceUserClinicAccess,
+} from "./helpers/auth.js";
 import { createTestApp } from "./helpers/testApp.js";
 import {
   SEED_CLINIC_A_ID,
@@ -116,6 +120,18 @@ async function clockInAsStaff(
     .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
     .set("Authorization", `Bearer ${token}`)
     .send({ rosterEntryId: null, shiftStartAt, shiftEndAt });
+}
+
+async function setPayrollTrack(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  token: string,
+  userId: string,
+  payrollTrack: "hourly" | "commission",
+) {
+  return request(app)
+    .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/users/${userId}`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({ payrollTrack });
 }
 
 // ── SHIFT WINDOW VALIDATION ───────────────────────────────────────────────────
@@ -387,13 +403,50 @@ describe("POST /clock-in — RBAC", () => {
     expect(res.status).toBe(201);
   });
 
-  it("201: owner_admin can clock in their own shift", async () => {
+  it("403 COMMISSION_CLOCK_IN_FORBIDDEN: commission owner_admin cannot clock in", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
 
     const res = await clockInAsStaff(app, token);
 
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("COMMISSION_CLOCK_IN_FORBIDDEN");
+  });
+
+  it("201: hourly owner_admin can clock in their own shift", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const updateRes = await setPayrollTrack(
+      app,
+      token,
+      SEED_USER_IDS.clinicAAdmin,
+      "hourly",
+    );
+    expect(updateRes.status).toBe(200);
+
+    const res = await clockInAsStaff(app, token);
     expect(res.status).toBe(201);
+    expect((res.body as ApiData<TimesheetEntry>).data.staffUserId)
+      .toBe(SEED_USER_IDS.clinicAAdmin);
+  });
+
+  it("rejects an old hourly token after the authoritative user changes to commission", async () => {
+    const app = await createTestApp();
+    const staleHourlyToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const adminToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
+
+    const updateRes = await setPayrollTrack(
+      app,
+      adminToken,
+      SEED_USER_IDS.clinicAStaff,
+      "commission",
+    );
+    expect(updateRes.status).toBe(200);
+
+    const res = await clockInAsStaff(app, staleHourlyToken);
+    expect(res.status).toBe(403);
+    expect((res.body as ApiError).error.code).toBe("COMMISSION_CLOCK_IN_FORBIDDEN");
   });
 });
 
@@ -653,6 +706,47 @@ describe("POST /clock-in — roster pre-fill activation (production blocker fix)
   });
 });
 
+describe("roster completion — commission attendance path", () => {
+  it("creates a commission_log for a commission user", async () => {
+    const app = await createTestApp();
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+
+    const createRes = await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({
+        staffUserId: SEED_USER_IDS.clinicAAdmin,
+        shiftStartAt: "2026-10-10T22:00:00.000Z",
+        shiftEndAt: "2026-10-11T06:00:00.000Z",
+        shiftType: "standard",
+      });
+    expect(createRes.status).toBe(201);
+    const rosterEntry = (createRes.body as ApiData<{ id: string }>).data;
+
+    const completeRes = await request(app)
+      .patch(`/api/v1/clinics/${SEED_CLINIC_A_ID}/roster/${rosterEntry.id}`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ status: "completed" });
+    expect(completeRes.status).toBe(200);
+
+    const listRes = await request(app)
+      .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .query({ payrollType: "commission_log" });
+    expect(listRes.status).toBe(200);
+    const entries = (listRes.body as ApiData<TimesheetEntry[]>).data;
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rosterEntryId: rosterEntry.id,
+          staffUserId: SEED_USER_IDS.clinicAAdmin,
+          payrollType: "commission_log",
+        }),
+      ]),
+    );
+  });
+});
+
 // ── FIX B REGRESSION — PARTIAL UNIQUE INDEX ───────────────────────────────────
 //
 // Before Fix B the constraint was:
@@ -777,9 +871,21 @@ describe("POST /clock-in — Fix B regression (partial unique index)", () => {
     // clinic in the route (the actual work location).
 
     const app            = await createTestApp();
+    const ownerAToken    = await loginAndGetAccessToken(app, "admin@clinic-a.au");
     const managerAToken  = await loginAndGetAccessToken(app, "manager@clinic-a.au");
     const adminBToken    = await loginAndGetAccessToken(app, "admin@clinic-b.au");
     const staffToken     = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    await replaceUserClinicAccess(
+      app,
+      ownerAToken,
+      SEED_CLINIC_A_ID,
+      SEED_USER_IDS.clinicAStaff,
+      [
+        { clinicId: SEED_CLINIC_A_ID, canOperate: true, canRoster: true },
+        { clinicId: SEED_CLINIC_B_ID, canOperate: false, canRoster: true },
+      ],
+    );
 
     // Roster entry at Clinic A.
     const createA = await request(app)
@@ -833,9 +939,10 @@ describe("POST /clock-in — Fix B regression (partial unique index)", () => {
     expect(tsA.rosteredClinicId).toBe(SEED_CLINIC_A_ID);
 
     // Staff clocks in at Clinic B using roster entry B.
-    // This must succeed — no constraint violation — and produce a separate row.
+    // Personal timesheet routes remain anchored to the staff member's home
+    // clinic; the trusted roster records Clinic B as the physical location.
     const clockInB = await request(app)
-      .post(`/api/v1/clinics/${SEED_CLINIC_B_ID}/timesheets/clock-in`)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
       .set("Authorization", `Bearer ${staffToken}`)
       .send({
         rosterEntryId: rosterB.id,
@@ -901,6 +1008,13 @@ describe("POST /clock-in — all roles personal timekeeping", () => {
   it("201 + correct staffUserId: owner_admin can clock in their own shift (ad-hoc)", async () => {
     const app   = await createTestApp();
     const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+    const updateRes = await setPayrollTrack(
+      app,
+      token,
+      SEED_USER_IDS.clinicAAdmin,
+      "hourly",
+    );
+    expect(updateRes.status).toBe(200);
 
     const res = await request(app)
       .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)
@@ -957,6 +1071,13 @@ describe("POST /clock-in — all roles personal timekeeping", () => {
     try {
       const app   = await createTestApp();
       const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      const updateRes = await setPayrollTrack(
+        app,
+        token,
+        SEED_USER_IDS.clinicAAdmin,
+        "hourly",
+      );
+      expect(updateRes.status).toBe(200);
 
       const clockInRes = await request(app)
         .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/timesheets/clock-in`)

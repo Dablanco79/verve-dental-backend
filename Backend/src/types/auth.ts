@@ -56,10 +56,12 @@ export type AuthenticatedUser = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
+  /** Optional for backward compatibility with access tokens issued before this claim existed. */
+  payrollTrack?: import("./payroll.js").StaffPayrollTrack;
   /**
-   * Effective permission set for this token.
-   * Derived at issuance as: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
-   * Use requirePermission() middleware to gate on a specific permission.
+   * Flat permission union retained in JWTs for UI/backward compatibility.
+   * Standard access middleware replaces the complete authorization identity
+   * and permissions from the current user record before authorization.
    */
   permissions: string[];
 };
@@ -73,9 +75,16 @@ export type AccessTokenPayload = {
   firstName: string | null;
   lastName: string | null;
   displayName: string | null;
-  /** Effective permissions baked in at token issuance. */
+  /** Optional while previously issued access tokens remain valid. */
+  payrollTrack?: import("./payroll.js").StaffPayrollTrack;
+  /** UI/backward-compatibility permission hint baked in at token issuance. */
   permissions: string[];
   type: "access";
+  /**
+   * Original login time. Optional only for access tokens issued before the
+   * strict absolute-session enforcement rollout.
+   */
+  sessionStartAt?: number;
 };
 
 export type RefreshTokenPayload = {
@@ -86,6 +95,11 @@ export type RefreshTokenPayload = {
    *  Carried forward unchanged through every refresh rotation so the backend
    *  can enforce an absolute session max-age (SESSION_MAX_AGE_SECONDS). */
   sessionStartAt: number;
+  /**
+   * Last genuine browser activity time. Normal refresh rotation preserves this
+   * value; only the activity endpoint advances it.
+   */
+  lastUserActivityAt?: number;
 };
 
 export type MfaChallengePayload = {

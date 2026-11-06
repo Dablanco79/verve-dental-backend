@@ -22,19 +22,11 @@
  * (role defaults ∪ explicit user_permission_grants rows).
  */
 
-/**
- * Extracts the `permissions` string array from the payload segment of a JWT
- * access token, using correct Base64URL decoding.
- *
- * Returns `[]` on any parse or decode failure so callers have a safe fallback.
- *
- * @param accessToken - Full JWT string in "header.payload.signature" format.
- */
-export function decodeTokenPermissions(accessToken: string): string[] {
+function decodeTokenPayload(accessToken: string): Record<string, unknown> | null {
   try {
     const parts = accessToken.split(".");
     // A well-formed JWT has exactly three dot-separated segments.
-    if (parts.length !== 3 || !parts[1]) return [];
+    if (parts.length !== 3 || !parts[1]) return null;
 
     // ── Base64URL → standard Base64 ──────────────────────────────────────────
     // Step 1 & 2: reverse the character substitutions made by Base64URL.
@@ -46,10 +38,23 @@ export function decodeTokenPermissions(accessToken: string): string[] {
     const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
 
     const payload: unknown = JSON.parse(atob(padded));
+    return payload !== null && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * Extracts the `permissions` string array from the payload segment of a JWT
+ * access token, using correct Base64URL decoding.
+ */
+export function decodeTokenPermissions(accessToken: string): string[] {
+  const payload = decodeTokenPayload(accessToken);
+  try {
     if (
-      payload !== null &&
-      typeof payload === "object" &&
+      payload &&
       "permissions" in payload &&
       Array.isArray(payload.permissions)
     ) {
@@ -62,4 +67,13 @@ export function decodeTokenPermissions(accessToken: string): string[] {
     // Catches malformed Base64, JSON parse errors, and any other unexpected failure.
     return [];
   }
+}
+
+/** Returns the token's issued-at time in milliseconds, or null if unavailable. */
+export function decodeTokenIssuedAt(accessToken: string): number | null {
+  const payload = decodeTokenPayload(accessToken);
+  const issuedAt = payload?.["iat"];
+  return typeof issuedAt === "number" && Number.isFinite(issuedAt)
+    ? issuedAt * 1000
+    : null;
 }

@@ -111,6 +111,23 @@ function clockUpdatePayload(
   return { clockOutAt, breakDurationMinutes, ...buckets };
 }
 
+/**
+ * Managerial review must be performed by someone other than the employee
+ * whose time or attendance is being certified. The authenticated actor and
+ * persisted staff identity are authoritative; no administrator bypass applies.
+ */
+function assertIndependentTimesheetReviewer(
+  caller: AuthenticatedUser,
+  entry: TimesheetEntry,
+): void {
+  if (caller.id !== entry.staffUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot approve, reject, or verify your own time record",
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Export helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +151,31 @@ function formatDuration(decimalHours: number): string {
 const COL_CLOCK_IN    = `Clock In (${OPERATIONAL_TZ})`;
 const COL_CLOCK_OUT   = `Clock Out (${OPERATIONAL_TZ})`;
 const COL_APPROVED_AT = `Approved At (${OPERATIONAL_TZ})`;
+
+const DETAIL_HEADERS = [
+  "Staff Name",
+  "Staff Email",
+  "Clinic / Location",
+  "Date",
+  COL_CLOCK_IN,
+  COL_CLOCK_OUT,
+  "Break (min)",
+  "Worked Hours",
+  "Duration",
+  "Payroll Type",
+  "Timesheet Status",
+  "Attendance",
+  "Approval Notes",
+  "Approved By",
+  COL_APPROVED_AT,
+  "Commission Note",
+  "Clock In Location",
+  "Clock In Distance (m)",
+  "Clock In Note",
+  "Clock Out Location",
+  "Clock Out Distance (m)",
+  "Clock Out Note",
+] as const;
 
 // Helper: human-readable geofence status for the XLSX export.
 function geofenceStatusLabel(loc: GeofenceLocation | null): string {
@@ -213,7 +255,9 @@ async function buildTimesheetXlsx(
     return row;
   });
 
-  const detailSheet = XLSX.utils.json_to_sheet(rows);
+  const detailSheet = XLSX.utils.json_to_sheet(rows, {
+    header: [...DETAIL_HEADERS],
+  });
 
   // Column widths for readability
   detailSheet["!cols"] = [
@@ -483,6 +527,21 @@ export function createTimesheetService(
         clockInNote?: string | null;
       },
     ): Promise<TimesheetEntry> {
+      // Payroll track is contract data and may change after a token is issued.
+      // Always resolve it from the authoritative user record before reading a
+      // roster, resolving geolocation, or mutating any timesheet state.
+      const authoritativeUser = await userRepository.findById(caller.id);
+      if (!authoritativeUser?.isActive) {
+        throw new AppError(401, "UNAUTHORIZED", "Authenticated user is no longer available");
+      }
+      if (authoritativeUser.payrollTrack === "commission") {
+        throw new AppError(
+          403,
+          "COMMISSION_CLOCK_IN_FORBIDDEN",
+          "Commission staff attendance is managed from completed roster shifts",
+        );
+      }
+
       // All authenticated roles may clock in using their own identity.
       // Role determines management permissions, not personal timekeeping rights.
       // The security invariants below enforce self-only ownership:
@@ -826,6 +885,84 @@ export function createTimesheetService(
       });
     },
 
+    /**
+     * Corrects both clock values on an existing hourly entry and returns it to
+     * submitted for independent approval. The repository mutation atomically
+     * writes both clocks, the unchanged break, and every recalculated bucket.
+     */
+    async correctTimesheet(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      timesheetId: string,
+      input: {
+        clockInAt: Date;
+        clockOutAt: Date;
+        correctionReason: string;
+      },
+    ): Promise<TimesheetEntry> {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+
+      const reason = input.correctionReason.trim();
+      if (!reason) {
+        throw new AppError(400, "CORRECTION_REASON_REQUIRED", "A correction reason is required");
+      }
+
+      const entry = await timesheetRepository.findById(timesheetId);
+      if (!entry || entry.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
+      }
+
+      assertIndependentTimesheetReviewer(caller, entry);
+
+      if (entry.payrollType === "commission_log") {
+        throw new AppError(409, "TIMESHEET_NOT_CORRECTABLE", "Commission entries cannot be corrected");
+      }
+      if (
+        entry.timesheetStatus !== "submitted" &&
+        entry.timesheetStatus !== "rejected" &&
+        entry.timesheetStatus !== "requires_amendment"
+      ) {
+        throw new AppError(
+          409,
+          "TIMESHEET_NOT_CORRECTABLE",
+          `Cannot correct a timesheet with status '${entry.timesheetStatus ?? "null"}'`,
+        );
+      }
+      if (!entry.clockInAt || !entry.clockOutAt) {
+        throw new AppError(400, "MISSING_CLOCK_TIMES", "Both existing clock times are required");
+      }
+      if (input.clockOutAt <= input.clockInAt) {
+        throw new AppError(400, "INVALID_CLOCK_TIMES", "clockOutAt must be after clockInAt");
+      }
+
+      const breakDurationMinutes = entry.breakDurationMinutes ?? 0;
+      if (breakDurationMinutes < 0) {
+        throw new AppError(400, "INVALID_BREAK", "breakDurationMinutes cannot be negative");
+      }
+      const clockMutation = {
+        ...clockUpdatePayload(input.clockInAt, input.clockOutAt, breakDurationMinutes),
+        clockInAt: input.clockInAt,
+      };
+
+      return timesheetRepository.correctWithAudit({
+        id: timesheetId,
+        clinicId,
+        clockMutation,
+        ownerAdmin: caller.role === "owner_admin",
+        auditEvent: {
+          clinicId,
+          entityType: "timesheet_entry",
+          entityId: timesheetId,
+          action: "corrected",
+          actorId: caller.id,
+          actorEmail: caller.email,
+          metadata: {
+            reason,
+          },
+        },
+      });
+    },
+
     // ── Manual entry (manager) ────────────────────────────────────────────────
 
     /**
@@ -988,6 +1125,8 @@ export function createTimesheetService(
         throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
       }
 
+      assertIndependentTimesheetReviewer(caller, entry);
+
       if (entry.payrollType === "commission_log") {
         throw new AppError(
           400,
@@ -1047,6 +1186,8 @@ export function createTimesheetService(
       if (!entry || entry.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Timesheet entry not found");
       }
+
+      assertIndependentTimesheetReviewer(caller, entry);
 
       if (entry.timesheetStatus !== "submitted") {
         throw new AppError(
@@ -1158,6 +1299,8 @@ export function createTimesheetService(
         );
       }
 
+      assertIndependentTimesheetReviewer(caller, entry);
+
       return timesheetRepository.update(timesheetId, {
         attendanceStatus,
         commissionNote,
@@ -1204,11 +1347,18 @@ export function createTimesheetService(
         staffEmail: options?.staffEmail,
       });
 
+      const eligibleEntries = entries.filter(
+        (entry) =>
+          entry.timesheetStatus === "approved" &&
+          (entry.payrollType === "hourly_auto" ||
+            entry.payrollType === "hourly_manual"),
+      );
+
       // Resolve approver emails for the "Approved By" column.
       // Collect distinct approvedByUserIds first to minimise DB round-trips.
       const uniqueApproverIds = [
         ...new Set(
-          entries
+          eligibleEntries
             .map((e) => e.approvedByUserId)
             .filter((id): id is string => id !== null),
         ),
@@ -1230,7 +1380,7 @@ export function createTimesheetService(
       // "null null" or "Daniel null".  Falls back to "" for pre-Sprint-1 rows.
       // StaffEmail remains the reliable identifier regardless of name availability.
       const uniqueStaffIds = [
-        ...new Set(entries.map((e) => e.staffUserId)),
+        ...new Set(eligibleEntries.map((e) => e.staffUserId)),
       ];
       const staffNameMap: StaffNameMap = new Map();
       await Promise.all(
@@ -1245,7 +1395,13 @@ export function createTimesheetService(
         }),
       );
 
-      const buffer = await buildTimesheetXlsx(entries, approverMap, staffNameMap, options?.from, options?.to);
+      const buffer = await buildTimesheetXlsx(
+        eligibleEntries,
+        approverMap,
+        staffNameMap,
+        options?.from,
+        options?.to,
+      );
 
       // Filename: timesheets_YYYY-MM-DD_to_YYYY-MM-DD.xlsx
       // Falls back to just timesheets_export.xlsx when no date range given.
@@ -1256,7 +1412,7 @@ export function createTimesheetService(
           ? `timesheets_${fromStr}_to_${toStr}.xlsx`
           : "timesheets_export.xlsx";
 
-      return { buffer, filename, rowCount: entries.length };
+      return { buffer, filename, rowCount: eligibleEntries.length };
     },
 
     // ── Roster-completion hook ─────────────────────────────────────────────────

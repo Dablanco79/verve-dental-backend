@@ -13,7 +13,8 @@ import type {
   ListLeavePageOptions,
 } from "../types/payroll.js";
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
-import type { UserRepository } from "../repositories/userRepository.js";
+import type { LeaveCoverageRepository } from "../repositories/leaveCoverageRepository.js";
+import type { UserClinicAssignmentsRepository } from "../repositories/userClinicAssignmentsRepository.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
 import { inclusiveCalendarDayCount } from "../utils/calendarDate.js";
 import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
@@ -26,10 +27,17 @@ type AuditWriter = {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Managers and admins may act on leave requests from any staff member in their clinic. */
-function assertReviewAccess(caller: AuthenticatedUser, clinicId: string): void {
+/** Managers and admins may act on leave requests in clinics they can operate. */
+async function assertReviewAccess(
+  caller: AuthenticatedUser,
+  clinicId: string,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
+): Promise<void> {
   if (caller.role === "owner_admin") return;
-  if (caller.role === "group_practice_manager" && caller.homeClinicId === clinicId) return;
+  if (caller.role === "group_practice_manager") {
+    if (caller.homeClinicId === clinicId) return;
+    if (await clinicAssignmentsRepository.hasOperationalAccess(caller.id, clinicId)) return;
+  }
   throw new AppError(403, "FORBIDDEN", "Only managers and admins can approve or reject leave requests");
 }
 
@@ -40,6 +48,45 @@ function assertOwnership(caller: AuthenticatedUser, request: LeaveRequest): void
   throw new AppError(403, "FORBIDDEN", "You can only manage your own leave requests");
 }
 
+/** Personal leave is always recorded and read against the user's authoritative home clinic. */
+function assertPersonalHomeClinic(
+  caller: AuthenticatedUser,
+  clinicId: string,
+): void {
+  if (caller.homeClinicId === clinicId) return;
+  throw new AppError(
+    403,
+    "TENANT_ACCESS_DENIED",
+    "Personal leave is only available for your home clinic",
+  );
+}
+
+/** Original leave decisions require a reviewer other than the employee. */
+function assertIndependentLeaveReviewer(
+  caller: AuthenticatedUser,
+  request: LeaveRequest,
+): void {
+  if (caller.id !== request.staffUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot approve or reject your own leave request",
+  );
+}
+
+/** Cancellation decisions always require a reviewer other than the requester. */
+function assertIndependentCancellationReviewer(
+  caller: AuthenticatedUser,
+  request: { staffUserId: string; requestedByUserId?: string },
+): void {
+  if (caller.id !== request.staffUserId && caller.id !== request.requestedByUserId) return;
+  throw new AppError(
+    403,
+    "SELF_REVIEW_FORBIDDEN",
+    "You cannot review your own cancellation request",
+  );
+}
+
 export type LeaveService = ReturnType<typeof createLeaveService>;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,27 +95,46 @@ export type LeaveService = ReturnType<typeof createLeaveService>;
 
 export function createLeaveService(
   leaveRepository: LeaveRepository,
-  userRepository: UserRepository,
-  auditWriter?: AuditWriter,
+  auditWriter: AuditWriter | undefined,
+  leaveCoverageRepository: LeaveCoverageRepository | undefined,
+  clinicAssignmentsRepository: UserClinicAssignmentsRepository,
 ) {
-  async function selfReviewException(
+  const coverageRepository = (): LeaveCoverageRepository => {
+    if (!leaveCoverageRepository) {
+      throw new AppError(503, "LEAVE_COVERAGE_UNAVAILABLE", "Leave coverage is unavailable");
+    }
+    return leaveCoverageRepository;
+  };
+
+  const cleanGroupName = (name: string): string => {
+    const cleaned = name.trim();
+    if (!cleaned) throw new AppError(400, "VALIDATION_ERROR", "Coverage group name cannot be blank");
+    return cleaned;
+  };
+
+  const auditCoverage = (
     caller: AuthenticatedUser,
     clinicId: string,
-    request: { staffUserId: string; requestedByUserId?: string },
-  ): Promise<boolean> {
-    if (caller.id !== request.staffUserId && caller.id !== request.requestedByUserId) return false;
-    if (caller.role !== "owner_admin" ||
-        !(await userRepository.canUseSoleOwnerAdminLeaveReviewException(clinicId, caller.id))) {
-      throw new AppError(403, "SELF_REVIEW_FORBIDDEN", "You cannot review your own cancellation request");
-    }
-    return true;
-  }
+    action: string,
+    metadata: Record<string, unknown>,
+  ): void => {
+    auditWriter?.recordEvent({
+      clinicId,
+      entityType: "clinic",
+      entityId: clinicId,
+      action,
+      actorId: caller.id,
+      actorEmail: caller.email,
+      metadata,
+    }).catch((err: unknown) => {
+      console.error("[Audit Failure Guard]:", err);
+    });
+  };
 
   return {
     /**
-     * Staff member submits a leave request for their home clinic.
-     * Only the requesting staff member can create for themselves.
-     * Managers/admins may create on behalf of staff (e.g. retrospective sick leave).
+     * Any authenticated employee submits leave for themselves at their home clinic.
+     * Employee identity is always derived from the authoritative caller context.
      */
     async createLeaveRequest(
       caller: AuthenticatedUser,
@@ -78,10 +144,7 @@ export function createLeaveService(
         "staffUserId" | "staffEmail" | "clinicId" | "totalDays"
       >,
     ): Promise<LeaveRequest> {
-      // clinical_staff may only submit for their own home clinic.
-      if (caller.role === "clinical_staff" && caller.homeClinicId !== clinicId) {
-        throw new AppError(403, "FORBIDDEN", "You can only submit leave for your home clinic");
-      }
+      assertPersonalHomeClinic(caller, clinicId);
 
       let totalDays: number;
       try {
@@ -115,7 +178,7 @@ export function createLeaveService(
       leaveId: string,
       reviewNotes: string | null = null,
     ): Promise<ApproveLeaveResult> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const request = await leaveRepository.findById(leaveId);
 
@@ -130,6 +193,8 @@ export function createLeaveService(
           `Leave request is already '${request.status}' and cannot be approved`,
         );
       }
+
+      assertIndependentLeaveReviewer(caller, request);
 
       const result = await leaveRepository.approveWithRosterConflicts({
         leaveId,
@@ -166,7 +231,7 @@ export function createLeaveService(
       clinicId: string,
       leaveId: string,
     ): Promise<LeaveRosterConflict[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const request = await leaveRepository.findById(leaveId);
       if (!request || request.clinicId !== clinicId) {
         throw new AppError(404, "NOT_FOUND", "Leave request not found");
@@ -186,7 +251,7 @@ export function createLeaveService(
       leaveId: string,
       reviewNotes: string,
     ): Promise<LeaveRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       if (!reviewNotes.trim()) {
         throw new AppError(
@@ -209,6 +274,8 @@ export function createLeaveService(
           `Leave request is already '${request.status}' and cannot be rejected`,
         );
       }
+
+      assertIndependentLeaveReviewer(caller, request);
 
       const rejected = await leaveRepository.updateStatus(leaveId, {
         status: "rejected",
@@ -244,7 +311,7 @@ export function createLeaveService(
       leaveId: string,
       cancellationReason: string,
     ): Promise<LeaveRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
 
       const reason = cancellationReason.trim();
       if (!reason) {
@@ -266,7 +333,7 @@ export function createLeaveService(
           `Leave request is '${request.status}' and cannot be cancelled`,
         );
       }
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
 
       const cancelled = await leaveRepository.cancelApprovedLeave({
         leaveId,
@@ -274,7 +341,6 @@ export function createLeaveService(
         expectedStaffUserId: request.staffUserId,
         cancelledByUserId: caller.id,
         cancellationReason: reason,
-        selfReviewExceptionUsed: exceptionUsed,
       });
 
       auditWriter?.recordEvent({
@@ -290,7 +356,7 @@ export function createLeaveService(
           endDate: request.endDate,
           leaveType: request.leaveType,
           cancellationReason: reason,
-          selfReviewExceptionUsed: exceptionUsed,
+          selfReviewExceptionUsed: false,
         },
       }).catch((err: unknown) => {
         console.error("[Audit Failure Guard]:", err);
@@ -305,6 +371,7 @@ export function createLeaveService(
       leaveId: string,
       requestReason: string,
     ): Promise<LeaveCancellationRequest> {
+      assertPersonalHomeClinic(caller, clinicId);
       const reason = requestReason.trim();
       if (!reason) {
         throw new AppError(400, "CANCELLATION_REASON_REQUIRED", "A cancellation reason is required");
@@ -346,11 +413,20 @@ export function createLeaveService(
       options?: ListLeaveCancellationRequestOptions,
     ): Promise<LeaveCancellationRequest[]> {
       if (caller.role === "clinical_staff") {
-        if (caller.homeClinicId !== clinicId) throw new AppError(403, "FORBIDDEN", "Clinic access denied");
-        return leaveRepository.listCancellationRequestsByStaff(caller.id, options);
+        assertPersonalHomeClinic(caller, clinicId);
+        return leaveRepository.listCancellationRequestsByStaff(caller.id, clinicId, options);
       }
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listCancellationRequestsByClinic(clinicId, options);
+    },
+
+    async listMyCancellationRequests(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      options?: ListLeaveCancellationRequestOptions,
+    ): Promise<LeaveCancellationRequest[]> {
+      assertPersonalHomeClinic(caller, clinicId);
+      return leaveRepository.listCancellationRequestsByStaff(caller.id, clinicId, options);
     },
 
     async approveCancellationRequest(
@@ -360,19 +436,18 @@ export function createLeaveService(
       requestId: string,
       reviewNotes: string | null,
     ): Promise<ApproveLeaveCancellationResult> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
       if (!request) {
         throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
       }
       if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
       const result = await leaveRepository.approveCancellationRequest({
         requestId, leaveId, clinicId,
         expectedStaffUserId: request.staffUserId,
         reviewedByUserId: caller.id,
         reviewNotes,
-        selfReviewExceptionUsed: exceptionUsed,
       });
       for (const action of ["cancellation_request_approved", "cancelled"]) {
         auditWriter?.recordEvent({
@@ -382,7 +457,7 @@ export function createLeaveService(
           action,
           actorId: caller.id,
           actorEmail: caller.email,
-          metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, selfReviewExceptionUsed: exceptionUsed },
+          metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, selfReviewExceptionUsed: false },
         }).catch((err: unknown) => {
           console.error("[Audit Failure Guard]:", err);
         });
@@ -397,20 +472,19 @@ export function createLeaveService(
       requestId: string,
       reviewNotes: string,
     ): Promise<LeaveCancellationRequest> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       if (!reviewNotes.trim()) throw new AppError(400, "REVIEW_NOTES_REQUIRED", "Review notes are required");
       const request = await leaveRepository.findCancellationRequestById({ requestId, leaveId, clinicId });
       if (!request) {
         throw new AppError(404, "NOT_FOUND", "Cancellation request not found");
       }
       if (request.status !== "pending") throw new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending");
-      const exceptionUsed = await selfReviewException(caller, clinicId, request);
+      assertIndependentCancellationReviewer(caller, request);
       const declined = await leaveRepository.declineCancellationRequest({
         requestId, leaveId, clinicId,
         expectedStaffUserId: request.staffUserId,
         reviewedByUserId: caller.id,
         reviewNotes: reviewNotes.trim(),
-        selfReviewExceptionUsed: exceptionUsed,
       });
       auditWriter?.recordEvent({
         clinicId,
@@ -419,7 +493,7 @@ export function createLeaveService(
         action: "cancellation_request_declined",
         actorId: caller.id,
         actorEmail: caller.email,
-        metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, reviewNotes: reviewNotes.trim(), selfReviewExceptionUsed: exceptionUsed },
+        metadata: { cancellationRequestId: requestId, staffUserId: request.staffUserId, reviewNotes: reviewNotes.trim(), selfReviewExceptionUsed: false },
       }).catch((err: unknown) => {
         console.error("[Audit Failure Guard]:", err);
       });
@@ -437,6 +511,7 @@ export function createLeaveService(
       clinicId: string,
       leaveId: string,
     ): Promise<LeaveRequest> {
+      assertPersonalHomeClinic(caller, clinicId);
       const request = await leaveRepository.findById(leaveId);
 
       if (!request || request.clinicId !== clinicId) {
@@ -467,12 +542,12 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
-      // clinical_staff can only see their own leave.
-      if (caller.role === "clinical_staff" && caller.id !== staffUserId) {
+      assertPersonalHomeClinic(caller, clinicId);
+      if (caller.id !== staffUserId) {
         throw new AppError(403, "FORBIDDEN", "You can only view your own leave requests");
       }
 
-      return leaveRepository.listByStaff(staffUserId, options);
+      return leaveRepository.listByStaff(staffUserId, clinicId, options);
     },
 
     /** Returns all leave requests for a clinic (manager view). */
@@ -481,7 +556,7 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listByClinic(clinicId, options);
     },
 
@@ -491,8 +566,127 @@ export function createLeaveService(
       clinicId: string,
       options?: ListLeavePageOptions,
     ): Promise<LeavePage> {
-      assertReviewAccess(caller, clinicId);
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
       return leaveRepository.listByClinicPaginated(clinicId, options);
+    },
+
+    async getCoverageWarning(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      startDate: string,
+      endDate: string,
+    ) {
+      if (caller.role === "clinical_staff") {
+        if (caller.homeClinicId !== clinicId) {
+          throw new AppError(
+            403,
+            "FORBIDDEN",
+            "You can only preview leave coverage for your home clinic",
+          );
+        }
+      } else {
+        await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      }
+      try {
+        inclusiveCalendarDayCount(startDate, endDate);
+      } catch (error) {
+        throw new AppError(
+          400,
+          "INVALID_DATE_RANGE",
+          error instanceof Error ? error.message : "Invalid leave date range",
+        );
+      }
+      return coverageRepository().getWarning(clinicId, caller.id, startDate, endDate);
+    },
+
+    async getLeaveCoverageWarning(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      leaveId: string,
+    ) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      const request = await leaveRepository.findById(leaveId);
+      if (!request || request.clinicId !== clinicId) {
+        throw new AppError(404, "NOT_FOUND", "Leave request not found");
+      }
+      if (request.status !== "pending") {
+        throw new AppError(
+          409,
+          "INVALID_STATUS_TRANSITION",
+          `Leave request is already '${request.status}' and cannot be checked for coverage overlaps`,
+        );
+      }
+      return coverageRepository().getWarning(
+        clinicId,
+        request.staffUserId,
+        request.startDate,
+        request.endDate,
+      );
+    },
+
+    async getCoverageSettings(caller: AuthenticatedUser, clinicId: string) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      return coverageRepository().getSettings(clinicId);
+    },
+
+    async updateCoverageSettings(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      enabled: boolean,
+    ) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      const result = await coverageRepository().updateSettings(clinicId, enabled);
+      auditCoverage(caller, clinicId, "leave_coverage_settings_updated", { enabled });
+      return result;
+    },
+
+    async listCoverageGroups(caller: AuthenticatedUser, clinicId: string) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      return coverageRepository().listGroups(clinicId);
+    },
+
+    async createCoverageGroup(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      name: string,
+    ) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      const group = await coverageRepository().createGroup(clinicId, cleanGroupName(name));
+      auditCoverage(caller, clinicId, "leave_coverage_group_created", {
+        coverageGroupId: group.id,
+        name: group.name,
+      });
+      return group;
+    },
+
+    async updateCoverageGroup(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      groupId: string,
+      name: string,
+    ) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      const group = await coverageRepository().updateGroup(clinicId, groupId, cleanGroupName(name));
+      auditCoverage(caller, clinicId, "leave_coverage_group_updated", {
+        coverageGroupId: group.id,
+        name: group.name,
+      });
+      return group;
+    },
+
+    async replaceCoverageGroupMembers(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      groupId: string,
+      memberUserIds: string[],
+    ) {
+      await assertReviewAccess(caller, clinicId, clinicAssignmentsRepository);
+      const group = await coverageRepository().replaceMembers(clinicId, groupId, memberUserIds);
+      auditCoverage(caller, clinicId, "leave_coverage_members_updated", {
+        coverageGroupId: group.id,
+        memberCount: group.memberUserIds.length,
+      });
+      return group;
     },
 
     /**

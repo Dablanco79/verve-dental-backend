@@ -505,6 +505,67 @@ components:
           type: string
           format: date-time
 
+    ClinicLogoMetadata:
+      type: object
+      required: [clinicId, mimeType, sha256Checksum, width, height, updatedAt]
+      properties:
+        clinicId:
+          type: string
+          format: uuid
+        mimeType:
+          type: string
+          enum: [image/png, image/jpeg]
+        sha256Checksum:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        width:
+          type: integer
+          minimum: 1
+          maximum: 1600
+        height:
+          type: integer
+          minimum: 1
+          maximum: 1600
+        updatedAt:
+          type: string
+          format: date-time
+
+    LeaveCoverageWarning:
+      type: object
+      description: Privacy-minimal coverage warning; never includes colleague or leave details.
+      required: [enabled, status, overlappingColleagueCount, affectedGroups]
+      properties:
+        enabled:
+          type: boolean
+        status:
+          type: string
+          enum: [disabled, unconfigured, staff_unassigned, ready]
+        overlappingColleagueCount:
+          type: integer
+          minimum: 0
+        affectedGroups:
+          type: array
+          items:
+            type: object
+            required: [clinicId, groupId, groupName]
+            properties:
+              clinicId: { type: string, format: uuid }
+              groupId: { type: string, format: uuid }
+              groupName: { type: string }
+
+    CoverageGroup:
+      type: object
+      required: [id, clinicId, name, memberUserIds, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        clinicId: { type: string, format: uuid }
+        name: { type: string }
+        memberUserIds:
+          type: array
+          items: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
     CreateClinicRequest:
       type: object
       required: [name]
@@ -2655,6 +2716,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/auth/activity:
+    post:
+      summary: Record genuine browser user activity for the refresh session
+      operationId: recordSessionActivity
+      tags: [Auth]
+      security: []
+      description: >
+        Uses the HttpOnly refresh cookie to update server-side inactivity
+        metadata. The frontend calls this endpoint only in response to user
+        interaction; background API traffic and token refresh do not call it.
+      responses:
+        "204":
+          $ref: "#/components/responses/NoContent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/auth/logout:
     post:
       summary: Revoke refresh token and clear cookie
@@ -2874,7 +2951,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Returns the full clinic record. `owner_admin` may fetch any clinic;
+        Returns the full clinic record. `owner_admin` may fetch any clinic in
+        their organisation;
         all other roles are restricted to their home clinic.
       parameters:
         - $ref: "#/components/parameters/clinicId"
@@ -2927,6 +3005,94 @@ paths:
                     $ref: "#/components/schemas/Clinic"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/clinics/{clinicId}/logo:
+    get:
+      summary: Retrieve the clinic logo
+      operationId: getClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Normalised PNG or JPEG clinic logo.
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string }
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Upload or replace the clinic logo
+      operationId: upsertClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: Owner/Admin only. PNG and JPEG files up to 2 MB are decoded and normalised.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Stored logo metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ClinicLogoMetadata"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: Upload or normalised image exceeds the permitted size.
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete the clinic logo
+      operationId: deleteClinicLogo
+      tags: [Clinics]
+      security:
+        - bearerAuth: []
+      description: Owner/Admin only.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "204":
+          description: Clinic logo deleted.
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -3387,13 +3553,13 @@ paths:
           schema:
             type: string
             format: date-time
-          description: Filter shifts starting at or after this datetime (ISO 8601 with offset).
+          description: Include shifts ending after this datetime (ISO 8601 with offset).
         - name: to
           in: query
           schema:
             type: string
             format: date-time
-          description: Filter shifts starting before this datetime. Must be after `from`.
+          description: Include shifts starting before this datetime. Must be after `from`.
         - name: status
           in: query
           schema:
@@ -3458,6 +3624,157 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /api/v1/clinics/{clinicId}/roster/export.pdf:
+    get:
+      summary: Export a weekly clinic roster as PDF
+      operationId: exportWeeklyRosterPdf
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Downloads the clinic's current Monday-to-Sunday roster as an A4 landscape
+        PDF. Requires `module:roster` and an `owner_admin` or
+        `group_practice_manager` with authorised access to the selected clinic.
+        Clinical staff cannot export clinic-wide rosters. Organisation and clinic
+        scope are enforced before roster or logo data is read. Scheduled elapsed
+        hours are not payroll-approved or payable hours. This endpoint does not
+        publish the roster or send notifications.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: weekStart
+          in: query
+          required: true
+          description: Strict ISO calendar date for the Monday commencing the roster week.
+          schema:
+            type: string
+            format: date
+            pattern: '^\d{4}-\d{2}-\d{2}$'
+            example: "2026-11-16"
+      responses:
+        "200":
+          description: Weekly roster PDF attachment.
+          headers:
+            Content-Disposition:
+              description: Safe server-generated attachment filename.
+              schema:
+                type: string
+            Cache-Control:
+              description: Private no-store caching policy.
+              schema:
+                type: string
+                example: private, no-store
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The roster is too large to export safely.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/clinics/{clinicId}/roster/monthly.pdf:
+    get:
+      summary: Export a monthly clinic roster calendar as PDF
+      operationId: exportMonthlyRosterPdf
+      tags: [Roster]
+      security:
+        - bearerAuth: []
+      description: >
+        Downloads the selected clinic's current roster state for one calendar
+        month as an A3 or A4 landscape PDF. Requires `module:roster` and an
+        `owner_admin` or `group_practice_manager` with authorised operational
+        access to the selected clinic. Clinical staff cannot export clinic-wide
+        calendars. Organisation and exact-clinic scope are enforced before
+        roster, approved-leave, employee, or logo data is read. Busy dates use
+        deterministic continuation pages; no publication state is created and
+        no email notification is sent.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: month
+          in: query
+          required: true
+          description: Calendar month in strict YYYY-MM format.
+          schema:
+            type: string
+            pattern: '^\d{4}-\d{2}$'
+            example: "2026-11"
+        - name: paperSize
+          in: query
+          required: false
+          description: Landscape paper size. Defaults to A3.
+          schema:
+            type: string
+            enum: [A3, A4]
+            default: A3
+      responses:
+        "200":
+          description: Monthly roster calendar PDF attachment.
+          headers:
+            Content-Disposition:
+              description: Safe server-generated attachment filename.
+              schema:
+                type: string
+            Cache-Control:
+              description: Private no-store caching policy.
+              schema:
+                type: string
+                example: private, no-store
+            X-Content-Type-Options:
+              description: MIME-sniffing protection.
+              schema:
+                type: string
+                example: nosniff
+            X-Export-Staff-Count:
+              description: Number of active eligible staff considered by the export.
+              schema:
+                type: integer
+            X-Export-Shift-Count:
+              description: Number of selected-clinic shifts included.
+              schema:
+                type: integer
+            X-Export-Page-Count:
+              description: Total PDF page count.
+              schema:
+                type: integer
+            X-Export-Entry-Count:
+              description: Total shift and approved-leave entries represented.
+              schema:
+                type: integer
+            X-Export-Continuation-Entry-Count:
+              description: Entries represented on continuation pages.
+              schema:
+                type: integer
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The monthly roster is too large to export safely.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/clinics/{clinicId}/roster/me:
     get:
@@ -4041,6 +4358,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/correct:
+    patch:
+      summary: Correct clock times on an eligible hourly timesheet
+      operationId: correctTimesheet
+      tags: [Timesheets]
+      security:
+        - bearerAuth: []
+      description: >
+        Replaces both clock values, preserves the stored break, recalculates all
+        hour buckets, clears stale approval fields, and returns the entry to
+        `submitted` for independent approval. Only `submitted`, `rejected`, and
+        `requires_amendment` hourly entries are eligible.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/timesheetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [clockInAt, clockOutAt, correctionReason]
+              properties:
+                clockInAt:
+                  type: string
+                  format: date-time
+                clockOutAt:
+                  type: string
+                  format: date-time
+                correctionReason:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "200":
+          description: Timesheet corrected and submitted for approval.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TimesheetEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Timesheet type or status is not correctable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/clinics/{clinicId}/timesheets/{timesheetId}/reject:
     post:
       summary: Reject a submitted timesheet entry
@@ -4146,6 +4523,187 @@ paths:
 
   # ── Leave ────────────────────────────────────────────────────────────────────
 
+  /api/v1/clinics/{clinicId}/leave/coverage-overlaps:
+    get:
+      summary: Check coverage-group leave overlaps for the authenticated user
+      operationId: getMyLeaveCoverageOverlaps
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: startDate, in: query, required: true, schema: { type: string, format: date } }
+        - { name: endDate, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Privacy-minimal overlap warning.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LeaveCoverageWarning" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-settings:
+    get:
+      summary: Get leave coverage warning settings
+      operationId: getLeaveCoverageSettings
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200": { description: Coverage warning settings. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      summary: Update leave coverage warning settings
+      operationId: updateLeaveCoverageSettings
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Updated coverage warning settings. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups:
+    get:
+      summary: List leave coverage groups
+      operationId: listLeaveCoverageGroups
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      responses:
+        "200":
+          description: Clinic coverage groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CoverageGroup" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a leave coverage group
+      operationId: createLeaveCoverageGroup
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201": { description: Created coverage group. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups/{groupId}:
+    patch:
+      summary: Rename a leave coverage group
+      operationId: updateLeaveCoverageGroup
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200": { description: Updated coverage group. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/clinics/{clinicId}/leave/coverage-groups/{groupId}/members:
+    put:
+      summary: Replace leave coverage group members
+      operationId: replaceLeaveCoverageGroupMembers
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - { name: groupId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [memberUserIds]
+              properties:
+                memberUserIds:
+                  type: array
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated coverage group membership. }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/clinics/{clinicId}/leave/{leaveId}/coverage-overlaps:
+    get:
+      summary: Check coverage overlaps for a persisted leave request
+      operationId: getLeaveRequestCoverageOverlaps
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - $ref: "#/components/parameters/leaveId"
+      responses:
+        "200":
+          description: Privacy-minimal overlap warning using persisted staff and dates from a pending leave request.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/LeaveCoverageWarning" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The leave request is no longer pending.
+
   /api/v1/clinics/{clinicId}/leave/me:
     get:
       summary: List the authenticated user's own leave requests
@@ -4154,9 +4712,9 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Returns leave requests for the currently authenticated user. Accessible
-        to all roles. Supports the same filters as GET /leave. Does NOT return
-        a pagination envelope — returns the array directly.
+        Returns leave requests for the currently authenticated user at their
+        authoritative home clinic. Accessible to all roles. Supports the same
+        filters as GET /leave. Does NOT return a pagination envelope.
       parameters:
         - $ref: "#/components/parameters/clinicId"
         - $ref: "#/components/parameters/fromDateParam"
@@ -4248,8 +4806,8 @@ paths:
       security:
         - bearerAuth: []
       description: >
-        Submits whole-day leave for the authenticated user. `totalDays` is
-        derived by the server from the inclusive start/end dates.
+        Submits whole-day leave for the authenticated user at their authoritative
+        home clinic. Employee identity and `totalDays` are derived by the server.
       parameters:
         - $ref: "#/components/parameters/clinicId"
       requestBody:
@@ -4431,6 +4989,34 @@ paths:
                   data:
                     type: array
                     items: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+
+  /api/v1/clinics/{clinicId}/leave/cancellation-requests/me:
+    get:
+      summary: List the authenticated user's own leave cancellation requests
+      operationId: listMyLeaveCancellationRequests
+      tags: [Leave]
+      security: [{ bearerAuth: [] }]
+      description: >
+        Returns only cancellation requests belonging to the authenticated user
+        at their authoritative home clinic.
+      parameters:
+        - $ref: "#/components/parameters/clinicId"
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, declined] }
+      responses:
+        "200":
+          description: Self-scoped cancellation requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaveCancellationRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/clinics/{clinicId}/leave/{leaveId}/cancellation-requests:
     post:

@@ -72,7 +72,7 @@ const clockLocationInputSchema = z
     lat: z.number().min(-90).max(90).nullable(),
     lng: z.number().min(-180).max(180).nullable(),
     accuracyMetres: z.number().nullable().optional(),
-    targetClinicId: z.string().uuid("targetClinicId must be a valid UUID"),
+    targetClinicId: z.guid("targetClinicId must be a valid UUID"),
     // Only sent when lat/lng are null. Backend ignores this when coordinates are present.
     locationState: z.enum(["denied", "unavailable"]).optional(),
   })
@@ -87,7 +87,7 @@ const isoDate = () =>
 
 // Full ISO 8601 datetimes with timezone — { offset: true } accepts both UTC
 // ('Z') and local offsets (e.g. '+10:00' for AEST).
-const isoDatetime = () => z.string().datetime({ offset: true });
+const isoDatetime = () => z.iso.datetime({ offset: true });
 
 // ── Serializers ───────────────────────────────────────────────────────────────
 // Date objects are serialized to ISO strings here so the service layer never
@@ -242,6 +242,23 @@ const listCancellationRequestsQuerySchema = z.object({
   status: z.enum(LEAVE_CANCELLATION_REQUEST_STATUSES).optional(),
 }).strict();
 
+const coverageDatesQuerySchema = z.object({
+  startDate: isoDate(),
+  endDate: isoDate(),
+}).strict();
+
+const coverageSettingsSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
+
+const coverageGroupSchema = z.object({
+  name: z.string().trim().min(1, "Coverage group name cannot be blank").max(200),
+}).strict();
+
+const coverageMembersSchema = z.object({
+  memberUserIds: z.array(z.guid()).max(500),
+}).strict();
+
 // Supports filtering by date window, leave type, and status.
 // from/to are YYYY-MM-DD (not full timestamps) to avoid timezone ambiguity.
 const listLeaveQuerySchema = z
@@ -265,7 +282,7 @@ const listLeaveQuerySchema = z
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });
@@ -276,12 +293,103 @@ const listLeaveQuerySchema = z
 
 export function createLeaveHandlers(leaveService: LeaveService) {
   return {
+    async getCoverageOverlaps(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = coverageDatesQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      }
+      const warning = await leaveService.getCoverageWarning(
+        caller,
+        clinicId,
+        parsed.data.startDate,
+        parsed.data.endDate,
+      );
+      res.status(200).json({ data: warning });
+    },
+
+    async getLeaveCoverageOverlaps(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const leaveId = requireUuidParam(req, "leaveId");
+      const warning = await leaveService.getLeaveCoverageWarning(caller, clinicId, leaveId);
+      res.status(200).json({ data: warning });
+    },
+
+    async getCoverageSettings(req: Request, res: Response): Promise<void> {
+      const result = await leaveService.getCoverageSettings(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+      );
+      res.status(200).json({ data: result });
+    },
+
+    async updateCoverageSettings(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageSettingsSchema, req.body);
+      const result = await leaveService.updateCoverageSettings(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        body.enabled,
+      );
+      res.status(200).json({ data: result });
+    },
+
+    async listCoverageGroups(req: Request, res: Response): Promise<void> {
+      const groups = await leaveService.listCoverageGroups(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+      );
+      res.status(200).json({ data: groups });
+    },
+
+    async createCoverageGroup(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageGroupSchema, req.body);
+      const group = await leaveService.createCoverageGroup(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        body.name,
+      );
+      res.status(201).json({ data: group });
+    },
+
+    async updateCoverageGroup(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageGroupSchema, req.body);
+      const group = await leaveService.updateCoverageGroup(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        requireUuidParam(req, "groupId"),
+        body.name,
+      );
+      res.status(200).json({ data: group });
+    },
+
+    async replaceCoverageGroupMembers(req: Request, res: Response): Promise<void> {
+      const body = parseBody(coverageMembersSchema, req.body);
+      const group = await leaveService.replaceCoverageGroupMembers(
+        requireUser(req),
+        requireUuidParam(req, "clinicId"),
+        requireUuidParam(req, "groupId"),
+        body.memberUserIds,
+      );
+      res.status(200).json({ data: group });
+    },
+
     async listCancellationRequests(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
       const clinicId = requireUuidParam(req, "clinicId");
       const parsed = listCancellationRequestsQuerySchema.safeParse(req.query);
       if (!parsed.success) throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
       const requests = await leaveService.listCancellationRequests(caller, clinicId, parsed.data);
+      res.status(200).json({ data: requests.map(serializeLeaveCancellationRequest) });
+    },
+
+    async listMyCancellationRequests(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const parsed = listCancellationRequestsQuerySchema.safeParse(req.query);
+      if (!parsed.success) throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", zodToDetails(parsed.error));
+      const requests = await leaveService.listMyCancellationRequests(caller, clinicId, parsed.data);
       res.status(200).json({ data: requests.map(serializeLeaveCancellationRequest) });
     },
 
@@ -325,9 +433,8 @@ export function createLeaveHandlers(leaveService: LeaveService) {
 
     /**
      * POST /clinics/:clinicId/leave
-     * Staff submits a leave request for their home clinic.
-     * Managers/admins may also submit on behalf of staff (e.g. retrospective
-     * sick leave).  The service enforces clinic-match for clinical_staff.
+     * Any authenticated employee submits their own leave for their home clinic.
+     * The service derives identity from the caller and rejects other clinic scopes.
      */
     async createLeaveRequest(req: Request, res: Response): Promise<void> {
       const caller = requireUser(req);
@@ -511,8 +618,7 @@ const clockInSchema = z
   .object({
     // null = no roster link (ad-hoc clock-in without a matching shift).
     rosterEntryId: z
-      .string()
-      .uuid("rosterEntryId must be a valid UUID")
+      .guid("rosterEntryId must be a valid UUID")
       .nullable()
       .optional(),
     shiftStartAt: isoDatetime(),
@@ -521,8 +627,7 @@ const clockInSchema = z
     // Ignored when rosterEntryId is present (physical clinic is derived
     // from the trusted roster DB record instead).
     physicalClinicId: z
-      .string()
-      .uuid("physicalClinicId must be a valid UUID")
+      .guid("physicalClinicId must be a valid UUID")
       .nullable()
       .optional(),
     // Optional geofence snapshot — raw device data only; backend computes
@@ -573,10 +678,9 @@ const clockOutSchema = z
 // to prevent identity and rostered-location spoofing.
 const createManualEntrySchema = z
   .object({
-    staffUserId: z.string().uuid("staffUserId must be a valid UUID"),
+    staffUserId: z.guid("staffUserId must be a valid UUID"),
     rosterEntryId: z
-      .string()
-      .uuid("rosterEntryId must be a valid UUID")
+      .guid("rosterEntryId must be a valid UUID")
       .nullable()
       .optional(),
     shiftDate: isoDate(),
@@ -595,6 +699,14 @@ const createManualEntrySchema = z
 const approveTimesheetSchema = z
   .object({
     approvalNotes: z.string().trim().max(2000).nullable().optional(),
+  })
+  .strict();
+
+const correctTimesheetSchema = z
+  .object({
+    clockInAt: isoDatetime(),
+    clockOutAt: isoDatetime(),
+    correctionReason: z.string().trim().min(1, "A correction reason is required").max(2000),
   })
   .strict();
 
@@ -653,7 +765,7 @@ const listTimesheetsQuerySchema = z
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });
@@ -662,7 +774,7 @@ const listTimesheetsQuerySchema = z
     // ambiguous and most likely a client mistake.
     if (data.shiftDate && (data.from ?? data.to)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'shiftDate' cannot be combined with 'from' or 'to' range filters",
         path: ["shiftDate"],
       });
@@ -682,12 +794,12 @@ const exportTimesheetsQuerySchema = z
   .object({
     from: isoDate().optional(),
     to: isoDate().optional(),
-    staffEmail: z.string().email("staffEmail must be a valid email address").optional(),
+    staffEmail: z.email("staffEmail must be a valid email address").optional(),
   })
   .superRefine((data, ctx) => {
     if (data.from && data.to && data.from > data.to) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "'from' must be on or before 'to'",
         path: ["from"],
       });
@@ -884,6 +996,22 @@ export function createTimesheetHandlers(timesheetService: TimesheetService) {
         timesheetId,
         body.approvalNotes ?? null,
       );
+
+      res.status(200).json({ data: serializeTimesheet(entry) });
+    },
+
+    /** PATCH /clinics/:clinicId/timesheets/:timesheetId/correct */
+    async correctTimesheet(req: Request, res: Response): Promise<void> {
+      const caller = requireUser(req);
+      const clinicId = requireUuidParam(req, "clinicId");
+      const timesheetId = requireUuidParam(req, "timesheetId");
+      const body = parseBody(correctTimesheetSchema, req.body);
+
+      const entry = await timesheetService.correctTimesheet(caller, clinicId, timesheetId, {
+        clockInAt: new Date(body.clockInAt),
+        clockOutAt: new Date(body.clockOutAt),
+        correctionReason: body.correctionReason,
+      });
 
       res.status(200).json({ data: serializeTimesheet(entry) });
     },

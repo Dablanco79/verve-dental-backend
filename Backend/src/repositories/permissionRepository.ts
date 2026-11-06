@@ -2,8 +2,9 @@
  * RBAC v2 — PermissionRepository
  *
  * Manages explicit per-user permission grants stored in user_permission_grants.
- * These grants are layered on top of DEFAULT_PERMISSIONS (role-based defaults)
- * and are baked into access tokens at issuance time.
+ * These grants are layered on top of DEFAULT_PERMISSIONS (role-based defaults).
+ * Access tokens carry a flat union for UI/backward compatibility only; server
+ * authorization reloads active grants for the relevant clinic on each request.
  *
  * Lifecycle:
  *   grant()   — creates a new active grant (idempotent: noop if already active).
@@ -31,6 +32,9 @@ export interface PermissionRepository {
    * all clinics.  Used when minting access tokens.
    */
   listActiveByUser(userId: string): Promise<string[]>;
+
+  /** Returns distinct active permissions for one user at one clinic. */
+  listActiveByUserForClinic(userId: string, clinicId: string): Promise<string[]>;
 
   /**
    * Returns all grants (active and revoked) for a specific user in a given
@@ -89,6 +93,20 @@ export function createInMemoryPermissionRepository(): PermissionRepository {
       const seen = new Set<string>();
       for (const grant of grants.values()) {
         if (grant.userId === userId && grant.revokedAt === null) {
+          seen.add(grant.permission);
+        }
+      }
+      return Promise.resolve(Array.from(seen));
+    },
+
+    listActiveByUserForClinic(userId: string, clinicId: string): Promise<string[]> {
+      const seen = new Set<string>();
+      for (const grant of grants.values()) {
+        if (
+          grant.userId === userId &&
+          grant.clinicId === clinicId &&
+          grant.revokedAt === null
+        ) {
           seen.add(grant.permission);
         }
       }

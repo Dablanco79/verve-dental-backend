@@ -59,6 +59,20 @@ async function createActiveSupplier(
   return supplier.id;
 }
 
+async function buildSpreadsheetBuffer(
+  bookType: "xlsx" | "xls",
+  rows: unknown[][],
+): Promise<Buffer> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet(rows),
+    "Catalogue",
+  );
+  return XLSX.write(workbook, { type: "buffer", bookType }) as Buffer;
+}
+
 // ─── CSV parsing — preview ─────────────────────────────────────────────────────
 
 describe("CatalogueImportService — CSV preview", () => {
@@ -200,6 +214,51 @@ describe("CatalogueImportService — CSV preview", () => {
     await expect(
       importService.preview(supplierId, buffer, "csv"),
     ).rejects.toMatchObject({ code: "IMPORT_MISSING_COLUMN" });
+  });
+});
+
+// ─── Spreadsheet parsing compatibility ────────────────────────────────────────
+
+describe("CatalogueImportService — SheetJS 0.20.3 compatibility", () => {
+  it.each(["xlsx", "xls"] as const)(
+    "parses a valid %s catalogue and matches by SKU",
+    async (bookType) => {
+      const { importService, supplierRepo } = buildService();
+      const supplierId = await createActiveSupplier(supplierRepo);
+      const item = buildMasterCatalogSeed()[0];
+      if (!item) throw new Error("No seed items available");
+
+      const buffer = await buildSpreadsheetBuffer(bookType, [
+        ["supplier_sku", "description", "unit_cost"],
+        [item.sku, item.name, "12.50"],
+      ]);
+      const result = await importService.preview(supplierId, buffer, "xlsx");
+
+      expect(result).toMatchObject({
+        totalRows: 1,
+        matchedRows: 1,
+        unmatchedRows: 0,
+        errorRows: 0,
+      });
+      expect(result.rows[0]).toMatchObject({
+        matchStatus: "sku",
+        matchedProductId: item.id,
+        unitCostCents: 1250,
+      });
+    },
+  );
+
+  it("rejects a malformed XLSX container without writing catalogue data", async () => {
+    const { importService, supplierRepo, catalogueRepo } = buildService();
+    const supplierId = await createActiveSupplier(supplierRepo);
+    const malformedZip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x01, 0x02, 0x03]);
+
+    await expect(
+      importService.confirm(supplierId, malformedZip, "xlsx"),
+    ).rejects.toThrow();
+    await expect(
+      catalogueRepo.listSupplierProducts({ supplierId }),
+    ).resolves.toHaveLength(0);
   });
 });
 

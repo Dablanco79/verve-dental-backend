@@ -71,6 +71,20 @@ export function createRosterRouter(deps: AppDependencies): Router {
     asyncHandler((req, res) => handlers.listApprovedLeave(req, res)),
   );
 
+  // Manager-only clinic-wide export. Declared before /:entryId so the literal
+  // filename cannot be interpreted as a roster entry UUID.
+  router.get(
+    "/export.pdf",
+    requireRoles(...ROSTER_WRITE_ROLES),
+    asyncHandler((req, res) => handlers.exportWeeklyPdf(req, res)),
+  );
+
+  router.get(
+    "/monthly.pdf",
+    requireRoles(...ROSTER_WRITE_ROLES),
+    asyncHandler((req, res) => handlers.exportMonthlyPdf(req, res)),
+  );
+
   // Conflict pre-flight check — must be before /:entryId to avoid shadowing.
   router.get(
     "/conflicts",

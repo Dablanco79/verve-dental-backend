@@ -16,6 +16,7 @@ import type { SupplierInvoice } from "../types/supplier.js";
 import type { UserRole } from "../types/index.js";
 import {
   ROLE_LABELS,
+  canAccessModule,
   canManagePayroll,
   canManageProcurement,
   canManageSuppliers,
@@ -55,6 +56,7 @@ type DashboardProps = {
   isAllClinicsScope: boolean;
   laborForecast: LaborCostAnalysis | GroupLaborCostAnalysis | null;
   isLoadingLabor: boolean;
+  canAccessLeave: boolean;
 };
 
 type DashboardCardTone = "default" | "positive" | "warning" | "danger" | "teal";
@@ -709,6 +711,7 @@ function PracticeManagerDashboard({
   selectedClinicName,
   summary,
   stats,
+  canAccessLeave,
 }: DashboardProps) {
   const lowStock = stats.lowStockItems.length;
   const pendingOcr = summary.pendingSupplierInvoices.length;
@@ -825,13 +828,15 @@ function PracticeManagerDashboard({
               to="/purchase-orders"
               tone={draftPoLines > 0 ? "warning" : "positive"}
             />
-            <MetricCard
-              title="Leave"
-              value={pendingLeave}
-              description="leave requests waiting"
-              to="/leave"
-              tone={pendingLeave > 0 ? "warning" : "positive"}
-            />
+            {canAccessLeave ? (
+              <MetricCard
+                title="Leave"
+                value={pendingLeave}
+                description="leave requests waiting"
+                to="/leave"
+                tone={pendingLeave > 0 ? "warning" : "positive"}
+              />
+            ) : null}
             <MetricCard
               title="Receiving"
               value="Ready"
@@ -1014,6 +1019,7 @@ function ClinicalStaffDashboard({
   selectedClinicName,
   summary,
   stats,
+  canAccessLeave,
 }: DashboardProps) {
   return (
     <div className="cs-hub">
@@ -1039,10 +1045,12 @@ function ClinicalStaffDashboard({
           <ScanLine size={18} aria-hidden="true" className="cs-quick-action__icon" />
           Scan Inventory
         </Link>
-        <Link to="/leave" className="cs-quick-action">
-          <CalendarOff size={18} aria-hidden="true" className="cs-quick-action__icon" />
-          Leave
-        </Link>
+        {canAccessLeave ? (
+          <Link to="/leave" className="cs-quick-action">
+            <CalendarOff size={18} aria-hidden="true" className="cs-quick-action__icon" />
+            Leave
+          </Link>
+        ) : null}
       </nav>
 
       {/* ── Today's Work metrics (unchanged data, preserved role restrictions) ── */}
@@ -1068,12 +1076,14 @@ function ClinicalStaffDashboard({
             description="your timesheet entries today"
             to="/timesheets"
           />
-          <MetricCard
-            title="Leave"
-            value={summary.pendingLeaveRequests.length}
-            description="your pending leave requests"
-            to="/leave"
-          />
+          {canAccessLeave ? (
+            <MetricCard
+              title="Leave"
+              value={summary.pendingLeaveRequests.length}
+              description="your pending leave requests"
+              to="/leave"
+            />
+          ) : null}
           <MetricCard
             title="Stock Tasks"
             value="Scan"
@@ -1270,9 +1280,11 @@ export function HomePage() {
               payrollType: "commission_log",
             })
           : Promise.resolve([]),
-        canManagePayroll(activeUser.role)
-          ? apiClient.listLeave(activeClinicId, { status: "pending" })
-          : apiClient.listMyLeave(activeClinicId, { status: "pending" }),
+        canAccessModule(activeUser, "module:leave")
+          ? canManagePayroll(activeUser.role)
+            ? apiClient.listLeave(activeClinicId, { status: "pending" })
+            : apiClient.listMyLeave(activeClinicId, { status: "pending" })
+          : Promise.resolve([]),
       ]);
 
       if (cancelled) {
@@ -1437,6 +1449,7 @@ export function HomePage() {
           isAllClinicsScope,
           laborForecast: activeLaborForecast,
           isLoadingLabor,
+          canAccessLeave: canAccessModule(user, "module:leave"),
         }}
       />
     </AppShell>

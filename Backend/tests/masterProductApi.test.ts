@@ -182,12 +182,12 @@ describe("Master Products — list/search/filter/pagination", () => {
     expect((res.body as ApiError).error.code).toBe("VALIDATION_ERROR");
   });
 
-  it("clinical_staff can read the list (read-only access)", async () => {
+  it("blocks Workforce-only clinical_staff from the deferred master-product list", async () => {
     const app = await createTestApp();
     const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
     const res = await request(app).get(BASE).set("Authorization", `Bearer ${token}`);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 
   it("requires authentication", async () => {

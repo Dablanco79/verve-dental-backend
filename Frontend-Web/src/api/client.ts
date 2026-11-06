@@ -55,7 +55,12 @@ import type {
   MaterialShortfallAlert,
   SkuDemandProjection,
 } from "../types/materialsForecast.js";
-import type { ClinicData, CreateClinicData, UpdateClinicData } from "../types/clinic.js";
+import type {
+  ClinicData,
+  ClinicLogoMetadata,
+  CreateClinicData,
+  UpdateClinicData,
+} from "../types/clinic.js";
 import type {
   CreateOrganisationData,
   OrganisationData,
@@ -89,6 +94,7 @@ import type {
   CancelApprovedLeaveRequest,
   ClockInRequest,
   ClockOutRequest,
+  CorrectTimesheetRequest,
   CreateLeaveRequest,
   CreateLeaveCancellationRequest,
   CreateManualTimesheetRequest,
@@ -174,6 +180,11 @@ import type {
   UpdateStocktakeLineRequest,
   UpdateStocktakeSessionRequest,
 } from "../types/stocktake.js";
+import type {
+  CoverageGroup,
+  LeaveCoverageSettings,
+  LeaveCoverageWarning,
+} from "../types/leaveCoverage.js";
 
 type ApiEnvelope<T> = { data: T };
 
@@ -409,6 +420,12 @@ export function createApiClient(config: AppConfig) {
 
   async function refresh(): Promise<AuthSession> {
     return request<AuthSession>(config, "/api/v1/auth/refresh", {
+      method: "POST",
+    });
+  }
+
+  async function recordActivity(): Promise<void> {
+    await request<undefined>(config, "/api/v1/auth/activity", {
       method: "POST",
     });
   }
@@ -1060,6 +1077,73 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function downloadRosterPdf(
+    path: string,
+    fallbackFilename: string,
+    errorLabel: string,
+  ): Promise<string> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const response = await fetch(
+      `${baseUrl}${path}`,
+      {
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ??
+          `${errorLabel} failed (${String(response.status)})`,
+      );
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const suggested = /filename="([^"]+)"/.exec(disposition)?.[1];
+    const filename =
+      suggested && /^[A-Za-z0-9._-]+\.pdf$/i.test(suggested)
+        ? suggested
+        : fallbackFilename;
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // Revoking synchronously can cancel downloads in some browsers. Keep the
+    // URL alive briefly, then release it to avoid leaking blob memory.
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 1_000);
+    return filename;
+  }
+
+  async function exportWeeklyRosterPdf(
+    clinicId: string,
+    weekStart: string,
+  ): Promise<string> {
+    const query = new URLSearchParams({ weekStart });
+    return downloadRosterPdf(
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/export.pdf?${query.toString()}`,
+      `RENQOR_Roster_${weekStart}.pdf`,
+      "Weekly roster PDF export",
+    );
+  }
+
+  async function exportMonthlyRosterPdf(
+    clinicId: string,
+    month: string,
+    paperSize: "A3" | "A4",
+  ): Promise<string> {
+    const query = new URLSearchParams({ month, paperSize });
+    return downloadRosterPdf(
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/roster/monthly.pdf?${query.toString()}`,
+      `RENQOR_Roster_${month}_${paperSize}.pdf`,
+      "Monthly roster PDF export",
+    );
+  }
+
   /**
    * GET /api/v1/clinics/:clinicId/users/:userId/clinic-access
    * Returns a user's clinic assignments. owner_admin only.
@@ -1247,6 +1331,60 @@ export function createApiClient(config: AppConfig) {
       config,
       `/api/v1/clinics/${clinicId}`,
       {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getClinicLogo(clinicId: string): Promise<Blob | null> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      {
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ?? `Unable to load clinic logo (${String(response.status)})`,
+      );
+    }
+    return response.blob();
+  }
+
+  async function uploadClinicLogo(
+    clinicId: string,
+    file: File,
+  ): Promise<ClinicLogoMetadata> {
+    const baseUrl = config.apiBaseUrl.replace(/\/$/, "");
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(
+      `${baseUrl}/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      {
+        method: "PUT",
+        body: formData,
+        headers: { Authorization: `Bearer ${requireAccessToken()}` },
+        credentials: "include",
+      },
+    );
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as ApiErrorBody | null;
+      throw new Error(
+        errorBody?.error.message ?? `Unable to upload clinic logo (${String(response.status)})`,
+      );
+    }
+    const envelope = await response.json() as ApiEnvelope<ClinicLogoMetadata>;
+    return envelope.data;
+  }
+
+  async function deleteClinicLogo(clinicId: string): Promise<void> {
+    await request<undefined>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/logo`,
+      { method: "DELETE" },
       requireAccessToken(),
     );
   }
@@ -1633,6 +1771,19 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function correctTimesheet(
+    clinicId: string,
+    timesheetId: string,
+    body: CorrectTimesheetRequest,
+  ): Promise<TimesheetEntry> {
+    return request<TimesheetEntry>(
+      config,
+      `/api/v1/clinics/${clinicId}/timesheets/${timesheetId}/correct`,
+      { method: "PATCH", body: JSON.stringify(body) },
+      requireAccessToken(),
+    );
+  }
+
   async function verifyCommissionAttendance(
     clinicId: string,
     timesheetId: string,
@@ -1766,6 +1917,100 @@ export function createApiClient(config: AppConfig) {
     );
   }
 
+  async function getMyLeaveCoverageOverlaps(
+    clinicId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<LeaveCoverageWarning> {
+    const query = new URLSearchParams({ startDate, endDate });
+    return request<LeaveCoverageWarning>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-overlaps?${query.toString()}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getLeaveCoverageOverlaps(
+    clinicId: string,
+    leaveId: string,
+  ): Promise<LeaveCoverageWarning> {
+    return request<LeaveCoverageWarning>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/${encodeURIComponent(leaveId)}/coverage-overlaps`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function getLeaveCoverageSettings(clinicId: string): Promise<LeaveCoverageSettings> {
+    return request<LeaveCoverageSettings>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-settings`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function updateLeaveCoverageSettings(
+    clinicId: string,
+    enabled: boolean,
+  ): Promise<LeaveCoverageSettings> {
+    return request<LeaveCoverageSettings>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-settings`,
+      { method: "PATCH", body: JSON.stringify({ enabled }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function listLeaveCoverageGroups(clinicId: string): Promise<CoverageGroup[]> {
+    return request<CoverageGroup[]>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function createLeaveCoverageGroup(
+    clinicId: string,
+    name: string,
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups`,
+      { method: "POST", body: JSON.stringify({ name }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function updateLeaveCoverageGroup(
+    clinicId: string,
+    groupId: string,
+    name: string,
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups/${encodeURIComponent(groupId)}`,
+      { method: "PATCH", body: JSON.stringify({ name }) },
+      requireAccessToken(),
+    );
+  }
+
+  async function replaceLeaveCoverageGroupMembers(
+    clinicId: string,
+    groupId: string,
+    memberUserIds: string[],
+  ): Promise<CoverageGroup> {
+    return request<CoverageGroup>(
+      config,
+      `/api/v1/clinics/${encodeURIComponent(clinicId)}/leave/coverage-groups/${encodeURIComponent(groupId)}/members`,
+      { method: "PUT", body: JSON.stringify({ memberUserIds }) },
+      requireAccessToken(),
+    );
+  }
+
   async function approveLeave(
     clinicId: string,
     leaveId: string,
@@ -1839,6 +2084,21 @@ export function createApiClient(config: AppConfig) {
     return request<LeaveCancellationRequest[]>(
       config,
       `/api/v1/clinics/${clinicId}/leave/cancellation-requests${qs}`,
+      {},
+      requireAccessToken(),
+    );
+  }
+
+  async function listMyLeaveCancellationRequests(
+    clinicId: string,
+    filters: LeaveCancellationRequestFilters = {},
+  ): Promise<LeaveCancellationRequest[]> {
+    const query = new URLSearchParams();
+    if (filters.status) query.set("status", filters.status);
+    const qs = query.toString() ? `?${query.toString()}` : "";
+    return request<LeaveCancellationRequest[]>(
+      config,
+      `/api/v1/clinics/${clinicId}/leave/cancellation-requests/me${qs}`,
       {},
       requireAccessToken(),
     );
@@ -2883,6 +3143,7 @@ export function createApiClient(config: AppConfig) {
     setupMfa,
     confirmMfa,
     refresh,
+    recordActivity,
     logout,
     getMe,
     listInventory,
@@ -2917,6 +3178,8 @@ export function createApiClient(config: AppConfig) {
     createPurchasingDraft,
     getPurchasingDraftDetail,
     listRoster,
+    exportWeeklyRosterPdf,
+    exportMonthlyRosterPdf,
     getMyShifts,
     getMyShiftsAllClinics,
     getRosterAccessibleClinics,
@@ -2940,6 +3203,9 @@ export function createApiClient(config: AppConfig) {
     listClinics,
     createClinic,
     getClinic,
+    getClinicLogo,
+    uploadClinicLogo,
+    deleteClinicLogo,
     getClinicCoordinates,
     updateClinicSettings,
     listInvoices,
@@ -2958,18 +3224,28 @@ export function createApiClient(config: AppConfig) {
     clockOut,
     createManualTimesheetEntry,
     approveTimesheet,
+    correctTimesheet,
     rejectTimesheet,
     verifyCommissionAttendance,
     exportTimesheets,
     listLeave,
     listMyLeave,
     createLeaveRequest,
+    getMyLeaveCoverageOverlaps,
+    getLeaveCoverageOverlaps,
+    getLeaveCoverageSettings,
+    updateLeaveCoverageSettings,
+    listLeaveCoverageGroups,
+    createLeaveCoverageGroup,
+    updateLeaveCoverageGroup,
+    replaceLeaveCoverageGroupMembers,
     approveLeave,
     listLeaveRosterConflicts,
     rejectLeave,
     cancelApprovedLeave,
     withdrawLeave,
     listLeaveCancellationRequests,
+    listMyLeaveCancellationRequests,
     createLeaveCancellationRequest,
     approveLeaveCancellationRequest,
     declineLeaveCancellationRequest,

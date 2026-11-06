@@ -3,7 +3,7 @@
  *
  * Mounted at /api/v1/suppliers (global, not clinic-scoped).
  *
- * Auth: all routes require a valid JWT.
+ * Auth: all routes require a valid JWT and module:procurement.
  * Write routes (POST, PATCH) require owner_admin or group_practice_manager.
  */
 
@@ -16,8 +16,10 @@ import { createSupplierCatalogueHandlers } from "../controllers/supplierCatalogu
 import { createSupplierHandlers } from "../controllers/supplierController.js";
 import {
   createAuthenticateMiddleware,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 // 5 MB limit — supplier catalogues should be well within this.
@@ -69,31 +71,30 @@ export function createSupplierRouter(deps: AppDependencies): Router {
     deps.catalogueImportService,
   );
 
+  router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
+
   // ── Supplier CRUD ──────────────────────────────────────────────────────────
 
   router.get(
     "/",
-    authenticate,
     asyncHandler((req, res) => supplierHandlers.listSuppliers(req, res)),
   );
 
   router.post(
     "/",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => supplierHandlers.createSupplier(req, res)),
   );
 
   router.get(
     "/:supplierId",
-    authenticate,
     requireReadAccess,
     asyncHandler((req, res) => supplierHandlers.getSupplier(req, res)),
   );
 
   router.patch(
     "/:supplierId",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => supplierHandlers.updateSupplier(req, res)),
   );
@@ -103,7 +104,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.get(
     "/:supplierId/catalogue",
-    authenticate,
     requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.listSupplierProducts(req, res),
@@ -112,7 +112,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.post(
     "/:supplierId/catalogue",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.createSupplierProduct(req, res),
@@ -121,7 +120,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.get(
     "/:supplierId/catalogue/:supplierProductId",
-    authenticate,
     requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.getSupplierProduct(req, res),
@@ -130,7 +128,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.patch(
     "/:supplierId/catalogue/:supplierProductId",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.updateSupplierProduct(req, res),
@@ -142,7 +139,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.post(
     "/:supplierId/catalogue/import/preview",
-    authenticate,
     requireWriteAccess,
     upload.single("file"),
     asyncHandler((req, res) => importHandlers.preview(req, res)),
@@ -150,7 +146,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.post(
     "/:supplierId/catalogue/import/confirm",
-    authenticate,
     requireWriteAccess,
     upload.single("file"),
     asyncHandler((req, res) => importHandlers.confirm(req, res)),
@@ -158,7 +153,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.post(
     "/:supplierId/catalogue/import/confirm-reviewed",
-    authenticate,
     requireWriteAccess,
     asyncHandler((req, res) => importHandlers.confirmReviewed(req, res)),
   );
@@ -168,7 +162,6 @@ export function createSupplierRouter(deps: AppDependencies): Router {
 
   router.get(
     "/products/:productId/pricing",
-    authenticate,
     requireReadAccess,
     asyncHandler((req, res) =>
       catalogueHandlers.listPricingForProduct(req, res),

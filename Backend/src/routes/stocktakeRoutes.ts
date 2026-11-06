@@ -35,11 +35,11 @@ const STOCKTAKE_MANAGE_ROLES = [
 // ── Param schemas ─────────────────────────────────────────────────────────────
 
 const sessionParamsSchema = clinicIdParamsSchema.extend({
-  sessionId: z.string().uuid("sessionId must be a valid UUID"),
+  sessionId: z.guid("sessionId must be a valid UUID"),
 });
 
 const lineParamsSchema = sessionParamsSchema.extend({
-  lineId: z.string().uuid("lineId must be a valid UUID"),
+  lineId: z.guid("lineId must be a valid UUID"),
 });
 
 // ── Router factory ────────────────────────────────────────────────────────────

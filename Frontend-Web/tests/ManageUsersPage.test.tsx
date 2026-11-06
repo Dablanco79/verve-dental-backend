@@ -57,6 +57,13 @@ const {
   mockRevokeUserPermission,
   mockListPayRates,
   mockCreatePayRate,
+  mockListRosterEligibleStaff,
+  mockGetCoverageSettings,
+  mockUpdateCoverageSettings,
+  mockListCoverageGroups,
+  mockCreateCoverageGroup,
+  mockUpdateCoverageGroup,
+  mockReplaceCoverageMembers,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
@@ -105,6 +112,16 @@ const {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }),
+    mockListRosterEligibleStaff: vi.fn(),
+    mockGetCoverageSettings: vi.fn().mockResolvedValue({
+      clinicId: "11111111-1111-4111-8111-111111111111",
+      enabled: false,
+    }),
+    mockUpdateCoverageSettings: vi.fn(),
+    mockListCoverageGroups: vi.fn().mockResolvedValue([]),
+    mockCreateCoverageGroup: vi.fn(),
+    mockUpdateCoverageGroup: vi.fn(),
+    mockReplaceCoverageMembers: vi.fn(),
   };
 });
 
@@ -130,6 +147,13 @@ vi.mock("../src/api/client.js", () => ({
     revokeUserPermission: mockRevokeUserPermission,
     listPayRates: mockListPayRates,
     createPayRate: mockCreatePayRate,
+    listRosterEligibleStaff: mockListRosterEligibleStaff,
+    getLeaveCoverageSettings: mockGetCoverageSettings,
+    updateLeaveCoverageSettings: mockUpdateCoverageSettings,
+    listLeaveCoverageGroups: mockListCoverageGroups,
+    createLeaveCoverageGroup: mockCreateCoverageGroup,
+    updateLeaveCoverageGroup: mockUpdateCoverageGroup,
+    replaceLeaveCoverageGroupMembers: mockReplaceCoverageMembers,
   }),
 }));
 
@@ -207,6 +231,22 @@ function renderPage() {
   );
 }
 
+beforeEach(() => {
+  mockListRosterEligibleStaff.mockResolvedValue(sampleUsers);
+  mockGetCoverageSettings.mockResolvedValue({
+    clinicId: TEST_CLINIC_ID,
+    enabled: false,
+  });
+  mockUpdateCoverageSettings.mockResolvedValue({
+    clinicId: TEST_CLINIC_ID,
+    enabled: false,
+  });
+  mockListCoverageGroups.mockResolvedValue([]);
+  mockCreateCoverageGroup.mockClear();
+  mockUpdateCoverageGroup.mockClear();
+  mockReplaceCoverageMembers.mockClear();
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("ManageUsersPage — loading state", () => {
@@ -229,6 +269,83 @@ describe("ManageUsersPage — successful load", () => {
     setAuthenticatedUser(authTestState, adminUser);
     mockListUsers.mockResolvedValue(sampleUsers);
     mockListClinics.mockResolvedValue(sampleClinics);
+  });
+
+  it("shows unconfigured coverage status and can enable warnings", async () => {
+    const user = userEvent.setup();
+    mockGetCoverageSettings.mockResolvedValue({ clinicId: TEST_CLINIC_ID, enabled: true });
+    mockListCoverageGroups.mockResolvedValue([]);
+    mockUpdateCoverageSettings.mockResolvedValue({ clinicId: TEST_CLINIC_ID, enabled: false });
+    renderPage();
+
+    expect(await screen.findByText(/enabled but not configured/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /enabled/i }));
+    await waitFor(() => {
+      expect(mockUpdateCoverageSettings).toHaveBeenCalledWith(TEST_CLINIC_ID, false);
+    });
+  });
+
+  it("creates a group and saves selected memberships", async () => {
+    const user = userEvent.setup();
+    mockGetCoverageSettings.mockResolvedValue({ clinicId: TEST_CLINIC_ID, enabled: true });
+    mockListCoverageGroups.mockResolvedValue([]);
+    mockCreateCoverageGroup.mockResolvedValue({
+      id: "group-1",
+      clinicId: TEST_CLINIC_ID,
+      name: "Clinical team",
+      memberUserIds: [],
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-01T00:00:00Z",
+    });
+    mockReplaceCoverageMembers.mockResolvedValue({
+      id: "group-1",
+      clinicId: TEST_CLINIC_ID,
+      name: "Clinical team",
+      memberUserIds: [namedUser.id],
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-01T00:00:00Z",
+    });
+    renderPage();
+
+    const nameInput = await screen.findByLabelText("New group name");
+    await user.type(nameInput, "Clinical team");
+    await user.click(screen.getByRole("button", { name: "Create group" }));
+    const aliceMembership = await screen.findByRole("checkbox", { name: /alice jones/i });
+    await user.click(aliceMembership);
+    await user.click(screen.getByRole("button", { name: "Save memberships" }));
+
+    await waitFor(() => {
+      expect(mockReplaceCoverageMembers).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        "group-1",
+        [namedUser.id],
+      );
+    });
+  });
+
+  it("uses clinic roster assignments for coverage members, including cross-home staff", async () => {
+    const crossHomeStaff = {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      email: "cross-home@clinic-b.au",
+      displayName: "Cross Home Clinician",
+      firstName: "Cross",
+      lastName: "Home",
+    };
+    mockListRosterEligibleStaff.mockResolvedValue([crossHomeStaff]);
+    mockListCoverageGroups.mockResolvedValue([{
+      id: "group-cross-home",
+      clinicId: TEST_CLINIC_ID,
+      name: "Shared clinical cover",
+      memberUserIds: [crossHomeStaff.id],
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-01T00:00:00Z",
+    }]);
+
+    renderPage();
+
+    expect(await screen.findByRole("checkbox", { name: /cross home/i }))
+      .toBeChecked();
+    expect(mockListRosterEligibleStaff).toHaveBeenCalledWith(TEST_CLINIC_ID);
   });
 
   it("renders Name, Email, Role, and Home clinic column headers", async () => {
@@ -470,6 +587,17 @@ describe("ManageUsersPage — Module Access panel", () => {
     expect(screen.getByLabelText(`Module access for ${namedUser.email}`)).toBeInTheDocument();
   });
 
+  it("explains immediate cross-clinic Workforce access for Group Practice Managers", async () => {
+    await openModuleAccessPanel(unnamedUser.email);
+
+    expect(
+      await screen.findByText(
+        /Timesheets, Roster and Leave access applies at every same-organisation clinic where this manager has Can operate enabled/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/next login/i)).not.toBeInTheDocument();
+  });
+
   it("renders 3 seeded grants checked for a clinical_staff user", async () => {
     // Simulate the backend returning timesheets, roster, leave as active grants
     // (the 3 production initial grants for clinical_staff)
@@ -551,6 +679,124 @@ describe("ManageUsersPage — Module Access panel", () => {
     });
 
     await waitFor(() => expect(inventoryBox).not.toBeChecked());
+  });
+
+  it("uses the selected operational clinic for permission list, grant, and revoke", async () => {
+    const crossHomeUser: StaffUser = {
+      ...namedUser,
+      homeClinicId: TEST_CLINIC_B_ID,
+      homeClinicName: TEST_CLINIC_B_NAME,
+    };
+    mockListUsers.mockResolvedValue([crossHomeUser]);
+    mockListUserPermissions.mockResolvedValue([]);
+
+    await openModuleAccessPanel(crossHomeUser.email);
+
+    await waitFor(() => {
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+      );
+    });
+
+    const inventoryBox = await screen.findByRole("checkbox", { name: /inventory access/i });
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+        "module:inventory",
+      );
+    });
+
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeUser.id,
+        "module:inventory",
+      );
+    });
+  });
+
+  it("uses a GPM's home clinic for Workforce permissions while keeping other modules on the selected clinic", async () => {
+    const crossHomeGpm: StaffUser = {
+      ...unnamedUser,
+      homeClinicId: TEST_CLINIC_B_ID,
+      homeClinicName: TEST_CLINIC_B_NAME,
+    };
+    mockListUsers.mockResolvedValue([crossHomeGpm]);
+    mockListUserPermissions.mockImplementation((permissionClinicId: string, userId: string) => {
+      const common = {
+        userId,
+        grantedBy: adminUser.id,
+        grantedAt: "2026-09-01T00:00:00Z",
+        revokedAt: null,
+      };
+      if (permissionClinicId === TEST_CLINIC_B_ID) {
+        return Promise.resolve([
+          {
+            ...common,
+            id: "home-timesheets",
+            clinicId: TEST_CLINIC_B_ID,
+            permission: "module:timesheets",
+          },
+        ]);
+      }
+      return Promise.resolve([
+        {
+          ...common,
+          id: "selected-inventory",
+          clinicId: TEST_CLINIC_ID,
+          permission: "module:inventory",
+        },
+      ]);
+    });
+
+    await openModuleAccessPanel(crossHomeGpm.email);
+
+    await waitFor(() => {
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeGpm.id,
+      );
+      expect(mockListUserPermissions).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+      );
+    });
+
+    const timesheetsBox = await screen.findByRole("checkbox", { name: /timesheets access/i });
+    const inventoryBox = screen.getByRole("checkbox", { name: /inventory access/i });
+    expect(timesheetsBox).toBeChecked();
+    expect(inventoryBox).toBeChecked();
+
+    await userEvent.click(timesheetsBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+        "module:timesheets",
+      );
+    });
+
+    await userEvent.click(timesheetsBox);
+    await waitFor(() => {
+      expect(mockGrantUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_B_ID,
+        crossHomeGpm.id,
+        "module:timesheets",
+      );
+    });
+
+    await userEvent.click(inventoryBox);
+    await waitFor(() => {
+      expect(mockRevokeUserPermission).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        crossHomeGpm.id,
+        "module:inventory",
+      );
+    });
   });
 
   it("shows a controlled error state when listUserPermissions rejects (no crash)", async () => {

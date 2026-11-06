@@ -7,17 +7,16 @@ import { zodToDetails } from "../utils/validation.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 const manualMappingsSchema = z
-  .record(z.string(), z.string().uuid())
+  .record(z.string().regex(/^\d+$/, "manualMappings keys must be row numbers"), z.guid())
   .optional()
   .transform((v) => {
     if (!v) return undefined;
     const result: Record<number, string> = {};
     for (const [k, val] of Object.entries(v)) {
-      const num = parseInt(k, 10);
-      if (!isNaN(num)) result[num] = val;
+      result[Number(k)] = val;
     }
     return result;
   });
@@ -38,7 +37,7 @@ const reviewedRowsSchema = z.object({
     description: z.string().max(512).nullable(),
     unitCostCents: z.number().int().nonnegative().nullable(),
     unitOfMeasure: z.string().max(128).nullable(),
-    matchedProductId: z.string().uuid().nullable(),
+    matchedProductId: z.guid().nullable(),
   })).min(1),
 });
 

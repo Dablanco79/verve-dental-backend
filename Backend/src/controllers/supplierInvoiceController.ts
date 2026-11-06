@@ -53,10 +53,10 @@ function serializeLine(line: SupplierInvoiceLine): Record<string, unknown> {
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.guid();
 
 const updateInvoiceSchema = z.object({
-  supplierId: z.string().uuid().nullable().optional(),
+  supplierId: z.guid().nullable().optional(),
   supplierNameRaw: z.string().max(512).nullable().optional(),
   invoiceNumber: z.string().max(128).nullable().optional(),
   invoiceDate: z
@@ -90,8 +90,8 @@ const updateLineSchema = z.object({
   discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
   taxRateBasisPoints: z.number().int().min(0).max(10_000).optional(),
   supplierLineTotalCents: z.number().int().min(0).nullable().optional(),
-  masterCatalogItemId: z.string().uuid().nullable().optional(),
-  supplierCatalogueId: z.string().uuid().nullable().optional(),
+  masterCatalogItemId: z.guid().nullable().optional(),
+  supplierCatalogueId: z.guid().nullable().optional(),
   isMatched: z.boolean().optional(),
   matchMethod: z
     .enum(["exact_sku", "name_match", "manual"])
@@ -105,15 +105,65 @@ const updateLineSchema = z.object({
 });
 
 const confirmImportSchema = z.object({
-  readyToCreateLineIds: z.array(z.string().uuid()).optional(),
-  skippedLineIds: z.array(z.string().uuid()).optional(),
+  readyToCreateLineIds: z.array(z.guid()).optional(),
+  skippedLineIds: z.array(z.guid()).optional(),
 });
+
+function assertInvoiceConfirmationIds(
+  body: unknown,
+  allowedLineIds: Set<string>,
+): void {
+  const rawBody = body as {
+    readyToCreateLineIds?: unknown;
+    skippedLineIds?: unknown;
+  } | null;
+  const collections = [
+    ["readyToCreateLineIds", rawBody?.readyToCreateLineIds],
+    ["skippedLineIds", rawBody?.skippedLineIds],
+  ] as const;
+  const allSeen = new Set<string>();
+
+  for (const [field, rawIds] of collections) {
+    if (!Array.isArray(rawIds)) continue;
+    if (rawIds.length > allowedLineIds.size) {
+      throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+        { field, message: `${field} cannot exceed the lines on this invoice` },
+      ]);
+    }
+
+    const fieldSeen = new Set<string>();
+    rawIds.forEach((rawId, index) => {
+      if (typeof rawId !== "string") return;
+      if (fieldSeen.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          { field: `${field}.${String(index)}`, message: `${field} must contain unique IDs` },
+        ]);
+      }
+      fieldSeen.add(rawId);
+
+      if (!allowedLineIds.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          { field: `${field}.${String(index)}`, message: "line ID must belong to this invoice" },
+        ]);
+      }
+      if (allSeen.has(rawId)) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          {
+            field: `${field}.${String(index)}`,
+            message: "a line ID cannot be both ready to create and skipped",
+          },
+        ]);
+      }
+      allSeen.add(rawId);
+    });
+  }
+}
 
 const receiveInvoiceSchema = z.object({
   lines: z
     .array(
       z.object({
-        itemId: z.string().uuid(),
+        itemId: z.guid(),
         quantityDelta: z
           .number()
           .int()
@@ -138,7 +188,7 @@ const listQuerySchema = z.object({
       "voided",
     ])
     .optional(),
-  supplierId: z.string().uuid().optional(),
+  supplierId: z.guid().optional(),
   from: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -215,7 +265,7 @@ export function createSupplierInvoiceHandlers(
 
       const parsed = listQuerySchema.safeParse(req.query);
       if (!parsed.success) {
-        throw new AppError(400, "VALIDATION_ERROR", parsed.error.errors[0]?.message ?? "Invalid query parameters");
+        throw new AppError(400, "VALIDATION_ERROR", parsed.error.issues[0]?.message ?? "Invalid query parameters");
       }
 
       const { page, limit, ...filters } = parsed.data;
@@ -263,7 +313,7 @@ export function createSupplierInvoiceHandlers(
 
       const body = updateInvoiceSchema.safeParse(req.body);
       if (!body.success) {
-        throw new AppError(400, "VALIDATION_ERROR", body.error.errors[0]?.message ?? "Invalid request body");
+        throw new AppError(400, "VALIDATION_ERROR", body.error.issues[0]?.message ?? "Invalid request body");
       }
 
       const result = await service.updateInvoice(
@@ -294,7 +344,7 @@ export function createSupplierInvoiceHandlers(
 
       const body = updateLineSchema.safeParse(req.body);
       if (!body.success) {
-        throw new AppError(400, "VALIDATION_ERROR", body.error.errors[0]?.message ?? "Invalid request body");
+        throw new AppError(400, "VALIDATION_ERROR", body.error.issues[0]?.message ?? "Invalid request body");
       }
 
       const line = await service.updateLine(
@@ -319,9 +369,24 @@ export function createSupplierInvoiceHandlers(
         throw new AppError(400, "VALIDATION_ERROR", "Invalid invoiceId");
       }
 
+      const rawBody = req.body as {
+        readyToCreateLineIds?: unknown;
+        skippedLineIds?: unknown;
+      } | null;
+      if (
+        Array.isArray(rawBody?.readyToCreateLineIds) ||
+        Array.isArray(rawBody?.skippedLineIds)
+      ) {
+        const invoice = await service.getInvoice(caller, clinicId, invoiceId.data);
+        assertInvoiceConfirmationIds(
+          req.body,
+          new Set(invoice.lines.map((line) => line.id)),
+        );
+      }
+
       const body = confirmImportSchema.safeParse(req.body ?? {});
       if (!body.success) {
-        throw new AppError(400, "VALIDATION_ERROR", body.error.errors[0]?.message ?? "Invalid request body");
+        throw new AppError(400, "VALIDATION_ERROR", body.error.issues[0]?.message ?? "Invalid request body");
       }
 
       const result = await service.confirmImport(caller, clinicId, invoiceId.data, body.data);
@@ -374,7 +439,7 @@ export function createSupplierInvoiceHandlers(
         throw new AppError(
           400,
           "VALIDATION_ERROR",
-          body.error.errors[0]?.message ?? "Invalid request body",
+          body.error.issues[0]?.message ?? "Invalid request body",
         );
       }
 

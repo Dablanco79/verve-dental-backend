@@ -19,18 +19,18 @@ import type { PilotResetService } from "../services/pilotResetService.js";
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const previewSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
   mode: z.enum(["operational", "full_pilot"], {
-    errorMap: () => ({ message: 'mode must be "operational" or "full_pilot"' }),
+    error: 'mode must be "operational" or "full_pilot"',
   }),
 });
 
 const executeSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
   mode: z.enum(["operational", "full_pilot"], {
-    errorMap: () => ({ message: 'mode must be "operational" or "full_pilot"' }),
+    error: 'mode must be "operational" or "full_pilot"',
   }),
-  previewToken: z.string().uuid("previewToken must be a valid UUID"),
+  previewToken: z.guid("previewToken must be a valid UUID"),
   /** TOTP code — exactly 6 digits. */
   mfaCode: z
     .string()
@@ -70,7 +70,7 @@ export function createPilotResetHandlers(
 
       const parsed = previewSchema.safeParse(req.body);
       if (!parsed.success) {
-        const details = parsed.error.errors.map((e) => ({
+        const details = parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         }));
@@ -95,7 +95,7 @@ export function createPilotResetHandlers(
 
       const parsed = executeSchema.safeParse(req.body);
       if (!parsed.success) {
-        const details = parsed.error.errors.map((e) => ({
+        const details = parsed.error.issues.map((e) => ({
           field: e.path.join("."),
           message: e.message,
         }));

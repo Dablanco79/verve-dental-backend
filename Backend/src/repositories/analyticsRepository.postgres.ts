@@ -1,4 +1,5 @@
 import type { DatabasePool } from "../db/pool.js";
+import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 import { withTenantContext } from "../db/tenantContext.js";
 import { AppError } from "../types/errors.js";
 import type {
@@ -40,6 +41,34 @@ function rowToEvent(row: AuditEventRow): AuditEvent {
   };
 }
 
+export type AuditQueryExecutor = Pick<PoolClient, "query">;
+
+/** Inserts one append-only audit event using the caller's query/transaction context. */
+export async function insertAuditEvent(
+  executor: AuditQueryExecutor,
+  input: CreateAuditEventInput,
+): Promise<AuditEvent> {
+  const result = await executor.query<AuditEventRow>(
+    `INSERT INTO audit_events
+       (clinic_id, entity_type, entity_id, action,
+        actor_id, actor_email, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING *`,
+    [
+      input.clinicId,
+      input.entityType,
+      input.entityId,
+      input.action,
+      input.actorId,
+      input.actorEmail,
+      JSON.stringify(input.metadata),
+    ],
+  ) as QueryResult<AuditEventRow & QueryResultRow>;
+  const row = result.rows[0];
+  if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create audit event");
+  return rowToEvent(row);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Postgres implementation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,52 +78,14 @@ export function createPostgresAnalyticsRepository(
 ): AnalyticsRepository {
   return {
     async recordEvent(input: CreateAuditEventInput): Promise<AuditEvent> {
-      const result = await pool.query<AuditEventRow>(
-        `INSERT INTO audit_events
-           (clinic_id, entity_type, entity_id, action,
-            actor_id, actor_email, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [
-          input.clinicId,
-          input.entityType,
-          input.entityId,
-          input.action,
-          input.actorId,
-          input.actorEmail,
-          JSON.stringify(input.metadata),
-        ],
-      );
-      const row = result.rows[0];
-      if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create audit event");
-      return rowToEvent(row);
+      return insertAuditEvent(pool, input);
     },
 
     async recordEventAdmin(input: CreateAuditEventInput): Promise<AuditEvent> {
       return withTenantContext(
         pool,
         input.clinicId,
-        async (client) => {
-          const result = await client.query<AuditEventRow>(
-            `INSERT INTO audit_events
-               (clinic_id, entity_type, entity_id, action,
-                actor_id, actor_email, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING *`,
-            [
-              input.clinicId,
-              input.entityType,
-              input.entityId,
-              input.action,
-              input.actorId,
-              input.actorEmail,
-              JSON.stringify(input.metadata),
-            ],
-          );
-          const row = result.rows[0];
-          if (!row) throw new AppError(500, "INTERNAL_ERROR", "Failed to create audit event");
-          return rowToEvent(row);
-        },
+        (client) => insertAuditEvent(client, input),
         true, // ownerAdmin=true — bypasses clinic_id RLS check for auth events
       );
     },

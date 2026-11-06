@@ -9,18 +9,18 @@ import type { SupplierRelationshipService } from "../services/supplierRelationsh
 
 const createRelationshipSchema = z
   .object({
-    supplierId: z.string().uuid("supplierId must be a valid UUID"),
+    supplierId: z.guid("supplierId must be a valid UUID"),
     relationshipStatus: z.enum(["active", "inactive"]).optional(),
     preferredSupplier: z.boolean().optional(),
     accountNumber: z.string().trim().max(100).nullable().optional(),
     customerNumber: z.string().trim().max(100).nullable().optional(),
     creditTerms: z.string().trim().max(200).nullable().optional(),
     creditLimitCents: z.number().int().min(0).nullable().optional(),
-    orderingEmail: z.string().trim().email().max(255).nullable().optional(),
+    orderingEmail: z.string().trim().pipe(z.email().max(255)).nullable().optional(),
     deliveryAddress: z.string().trim().max(1000).nullable().optional(),
     invoiceAddress: z.string().trim().max(1000).nullable().optional(),
     representativeName: z.string().trim().max(255).nullable().optional(),
-    representativeEmail: z.string().trim().email().max(255).nullable().optional(),
+    representativeEmail: z.string().trim().pipe(z.email().max(255)).nullable().optional(),
     representativePhone: z.string().trim().max(50).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
   })
@@ -34,11 +34,11 @@ const updateRelationshipSchema = z
     customerNumber: z.string().trim().max(100).nullable().optional(),
     creditTerms: z.string().trim().max(200).nullable().optional(),
     creditLimitCents: z.number().int().min(0).nullable().optional(),
-    orderingEmail: z.string().trim().email().max(255).nullable().optional(),
+    orderingEmail: z.string().trim().pipe(z.email().max(255)).nullable().optional(),
     deliveryAddress: z.string().trim().max(1000).nullable().optional(),
     invoiceAddress: z.string().trim().max(1000).nullable().optional(),
     representativeName: z.string().trim().max(255).nullable().optional(),
-    representativeEmail: z.string().trim().email().max(255).nullable().optional(),
+    representativeEmail: z.string().trim().pipe(z.email().max(255)).nullable().optional(),
     representativePhone: z.string().trim().max(50).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
   })

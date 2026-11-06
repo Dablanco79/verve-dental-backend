@@ -10,7 +10,7 @@ import { AppError } from "../types/errors.js";
 import { parseBody, zodToDetails } from "../utils/validation.js";
 
 const adjustSchema = z.object({
-  itemId: z.string().uuid(),
+  itemId: z.guid(),
   quantityDelta: z.number().int().refine((value) => value !== 0, {
     message: "quantityDelta must be non-zero",
   }),
@@ -32,7 +32,7 @@ const adjustSchema = z.object({
  *   silently update inventory without marking the invoice received.
  */
 const receiveSchema = z.object({
-  itemId: z.string().uuid(),
+  itemId: z.guid(),
   quantityDelta: z.number().int().positive({ message: "quantityDelta must be a positive integer" }),
   reason: z.string().trim().min(1).max(255).optional(),
 });
@@ -53,7 +53,7 @@ const paginationQuerySchema = z.object({
 
 const adjustmentsQuerySchema = paginationQuerySchema;
 const timelineAdjustmentsQuerySchema = adjustmentsQuerySchema.extend({
-  itemId: z.string().uuid().optional(),
+  itemId: z.guid().optional(),
 });
 
 function serializeInventoryItem(item: ClinicInventoryItemView) {

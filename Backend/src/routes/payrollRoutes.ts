@@ -71,11 +71,54 @@ export function createLeaveRouter(deps: AppDependencies): Router {
   router.use(authenticate, enforceTenantParam("clinicId"));
   router.use(requirePermission(PERMISSIONS.MODULE_LEAVE));
 
+  // Coverage configuration routes are static and must precede /:leaveId.
+  router.get(
+    "/coverage-overlaps",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.getCoverageOverlaps(req, res)),
+  );
+  router.get(
+    "/coverage-settings",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.getCoverageSettings(req, res)),
+  );
+  router.patch(
+    "/coverage-settings",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.updateCoverageSettings(req, res)),
+  );
+  router.get(
+    "/coverage-groups",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.listCoverageGroups(req, res)),
+  );
+  router.post(
+    "/coverage-groups",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.createCoverageGroup(req, res)),
+  );
+  router.patch(
+    "/coverage-groups/:groupId",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.updateCoverageGroup(req, res)),
+  );
+  router.put(
+    "/coverage-groups/:groupId/members",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.replaceCoverageGroupMembers(req, res)),
+  );
+
   // ── /me — must come before /:leaveId to avoid route shadowing ──────────────
   router.get(
     "/me",
     requireRoles(...PAYROLL_ALL_ROLES),
     asyncHandler((req, res) => handlers.listMyLeave(req, res)),
+  );
+
+  router.get(
+    "/cancellation-requests/me",
+    requireRoles(...PAYROLL_ALL_ROLES),
+    asyncHandler((req, res) => handlers.listMyCancellationRequests(req, res)),
   );
 
   router.get(
@@ -129,6 +172,12 @@ export function createLeaveRouter(deps: AppDependencies): Router {
     "/:leaveId/conflicts",
     requireRoles(...PAYROLL_MANAGER_ROLES),
     asyncHandler((req, res) => handlers.listLeaveRosterConflicts(req, res)),
+  );
+
+  router.get(
+    "/:leaveId/coverage-overlaps",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.getLeaveCoverageOverlaps(req, res)),
   );
 
   router.post(
@@ -251,6 +300,12 @@ export function createTimesheetRouter(deps: AppDependencies): Router {
     "/:timesheetId/approve",
     requireRoles(...PAYROLL_MANAGER_ROLES),
     asyncHandler((req, res) => handlers.approveTimesheet(req, res)),
+  );
+
+  router.patch(
+    "/:timesheetId/correct",
+    requireRoles(...PAYROLL_MANAGER_ROLES),
+    asyncHandler((req, res) => handlers.correctTimesheet(req, res)),
   );
 
   router.post(

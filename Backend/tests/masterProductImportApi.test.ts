@@ -175,6 +175,21 @@ describe("POST /api/v1/master-products/import", () => {
     expect(res.status).toBe(403);
   });
 
+  it("rejects master product uploads larger than 5 MB", async () => {
+    const app = await createTestApp();
+    const token = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+
+    const res = await request(app)
+      .post("/api/v1/master-products/import")
+      .set("Authorization", `Bearer ${token}`)
+      .attach("file", Buffer.alloc(5 * 1024 * 1024 + 1), {
+        filename: "oversized.csv",
+        contentType: "text/csv",
+      });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  }, 15000);
+
   it("allows owner_admin to provision a clinic that is not their home clinic", async () => {
     const app = await createTestApp();
     const ownerToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");

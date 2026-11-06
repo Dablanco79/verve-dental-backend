@@ -35,6 +35,7 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     JWT_ACCESS_EXPIRES_IN: "15m",
       JWT_REFRESH_EXPIRES_IN: "7d",
       SESSION_MAX_AGE_SECONDS: 43200,
+    SESSION_IDLE_TIMEOUT_SECONDS: 3600,
     DATABASE_URL: "postgres://user:pass@db.example.com/verve?sslmode=verify-full",
     DATABASE_SSL: "auto",
     REDIS_URL: "redis://cache.example.com:6379",

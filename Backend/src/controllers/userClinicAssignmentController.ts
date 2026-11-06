@@ -30,7 +30,7 @@ function requireUuidParam(req: Request, paramName: string): string {
 const replaceAssignmentsSchema = z.object({
   assignments: z.array(
     z.object({
-      clinicId: z.string().uuid("clinicId must be a valid UUID"),
+      clinicId: z.guid("clinicId must be a valid UUID"),
       canRoster: z.boolean(),
       canOperate: z.boolean(),
     }),
@@ -92,18 +92,55 @@ export function createClinicAssignmentHandlers(
       const user = await userRepository.findById(userId);
       if (!user) throw new AppError(404, "NOT_FOUND", "User not found");
 
+      const [homeClinic, allClinics] = await Promise.all([
+        clinicRepository.findById(user.homeClinicId),
+        clinicRepository.listAll(),
+      ]);
+      if (!homeClinic) {
+        throw new AppError(403, "TENANT_ACCESS_DENIED", "User home clinic is unavailable");
+      }
+
+      const organisationClinics = allClinics.filter(
+        (clinic) => clinic.organisationId === homeClinic.organisationId,
+      );
+      const rawAssignments = (req.body as { assignments?: unknown } | null)?.assignments;
+      if (
+        Array.isArray(rawAssignments) &&
+        rawAssignments.length > organisationClinics.length
+      ) {
+        throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+          {
+            field: "assignments",
+            message: "assignments cannot exceed the clinics in the user's organisation",
+          },
+        ]);
+      }
+
       const body = parseBody(replaceAssignmentsSchema, req.body);
 
-      // Validate that all clinicIds in the payload actually exist.
-      const clinicChecks = await Promise.all(
-        body.assignments.map((a) => clinicRepository.findById(a.clinicId)),
-      );
-      for (let i = 0; i < clinicChecks.length; i++) {
-        if (!clinicChecks[i]) {
+      const seenClinicIds = new Set<string>();
+      const clinicsById = new Map(allClinics.map((clinic) => [clinic.id, clinic]));
+      for (const assignment of body.assignments) {
+        if (seenClinicIds.has(assignment.clinicId)) {
+          throw new AppError(400, "VALIDATION_ERROR", "Request validation failed", [
+            { field: "assignments", message: "assignments must contain unique clinicId values" },
+          ]);
+        }
+        seenClinicIds.add(assignment.clinicId);
+
+        const clinic = clinicsById.get(assignment.clinicId);
+        if (!clinic) {
           throw new AppError(
             404,
             "CLINIC_NOT_FOUND",
-            `Clinic ${body.assignments[i]?.clinicId ?? "unknown"} not found`,
+            `Clinic ${assignment.clinicId} not found`,
+          );
+        }
+        if (clinic.organisationId !== homeClinic.organisationId) {
+          throw new AppError(
+            403,
+            "TENANT_ACCESS_DENIED",
+            "Clinic assignments must remain within the user's organisation",
           );
         }
       }

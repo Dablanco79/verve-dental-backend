@@ -174,8 +174,18 @@ describe("InMemoryLeaveRepository", () => {
         totalDays: 2,
         reason: null,
       });
+      await repo.create({
+        staffUserId: STAFF_USER_ID,
+        staffEmail: "staff@clinic-a.au",
+        clinicId: CLINIC_B_ID,
+        leaveType: "annual",
+        startDate: "2026-07-03",
+        endDate: "2026-07-03",
+        totalDays: 1,
+        reason: null,
+      });
 
-      const results = await repo.listByStaff(STAFF_USER_ID);
+      const results = await repo.listByStaff(STAFF_USER_ID, CLINIC_A_ID);
       expect(results).toHaveLength(1);
       expect(results[0]?.staffUserId).toBe(STAFF_USER_ID);
     });
@@ -208,8 +218,8 @@ describe("InMemoryLeaveRepository", () => {
         reason: null,
       });
 
-      const approved = await repo.listByStaff(STAFF_USER_ID, { status: "approved" });
-      const pendingList = await repo.listByStaff(STAFF_USER_ID, { status: "pending" });
+      const approved = await repo.listByStaff(STAFF_USER_ID, CLINIC_A_ID, { status: "approved" });
+      const pendingList = await repo.listByStaff(STAFF_USER_ID, CLINIC_A_ID, { status: "pending" });
       expect(approved).toHaveLength(1);
       expect(pendingList).toHaveLength(1);
     });
@@ -237,9 +247,63 @@ describe("InMemoryLeaveRepository", () => {
         reason: "Family bereavement",
       });
 
-      const compassionate = await repo.listByStaff(STAFF_USER_ID, { leaveType: "compassionate" });
+      const compassionate = await repo.listByStaff(STAFF_USER_ID, CLINIC_A_ID, { leaveType: "compassionate" });
       expect(compassionate).toHaveLength(1);
       expect(compassionate[0]?.leaveType).toBe("compassionate");
+    });
+  });
+
+  describe("listCancellationRequestsByStaff", () => {
+    it("isolates cancellation history by both staff user and clinic", async () => {
+      const repo = createInMemoryLeaveRepository();
+      const otherStaffId = "ffffffff-0000-0000-0000-000000000001";
+
+      async function createCancellation(
+        staffUserId: string,
+        clinicId: string,
+        startDate: string,
+      ) {
+        const leave = await repo.create({
+          staffUserId,
+          staffEmail: `${staffUserId}@example.test`,
+          clinicId,
+          leaveType: "annual",
+          startDate,
+          endDate: startDate,
+          totalDays: 1,
+          reason: null,
+        });
+        await repo.updateStatus(leave.id, {
+          status: "approved",
+          reviewedByUserId: MANAGER_USER_ID,
+          reviewNotes: null,
+        });
+        return repo.createCancellationRequest({
+          leaveRequestId: leave.id,
+          clinicId,
+          staffUserId,
+          requestedByUserId: staffUserId,
+          requestReason: "Plans changed",
+        });
+      }
+
+      const expected = await createCancellation(
+        STAFF_USER_ID,
+        CLINIC_A_ID,
+        "2026-09-01",
+      );
+      await createCancellation(STAFF_USER_ID, CLINIC_B_ID, "2026-09-02");
+      await createCancellation(otherStaffId, CLINIC_A_ID, "2026-09-03");
+
+      await expect(
+        repo.listCancellationRequestsByStaff(STAFF_USER_ID, CLINIC_A_ID),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          id: expected.id,
+          staffUserId: STAFF_USER_ID,
+          clinicId: CLINIC_A_ID,
+        }),
+      ]);
     });
   });
 

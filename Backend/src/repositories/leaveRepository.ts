@@ -26,7 +26,11 @@ import type {
 export interface LeaveRepository {
   create(input: CreateLeaveRequestInput): Promise<LeaveRequest>;
   findById(id: string): Promise<LeaveRequest | null>;
-  listByStaff(staffUserId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
+  listByStaff(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListLeaveOptions,
+  ): Promise<LeaveRequest[]>;
   listByClinic(clinicId: string, options?: ListLeaveOptions): Promise<LeaveRequest[]>;
   listByClinicPaginated(clinicId: string, options?: ListLeavePageOptions): Promise<LeavePage>;
   /**
@@ -52,7 +56,11 @@ export interface LeaveRepository {
   }): Promise<ApproveLeaveResult>;
   cancelApprovedLeave(input: CancelApprovedLeaveInput): Promise<LeaveRequest>;
   createCancellationRequest(input: CreateLeaveCancellationRequestInput): Promise<LeaveCancellationRequest>;
-  listCancellationRequestsByStaff(staffUserId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
+  listCancellationRequestsByStaff(
+    staffUserId: string,
+    clinicId: string,
+    options?: ListLeaveCancellationRequestOptions,
+  ): Promise<LeaveCancellationRequest[]>;
   listCancellationRequestsByClinic(clinicId: string, options?: ListLeaveCancellationRequestOptions): Promise<LeaveCancellationRequest[]>;
   findCancellationRequestById(input: {
     requestId: string;
@@ -117,12 +125,14 @@ export function createInMemoryLeaveRepository(
 
     listByStaff(
       staffUserId: string,
+      clinicId: string,
       options?: ListLeaveOptions,
     ): Promise<LeaveRequest[]> {
       return Promise.resolve(
         records
           .filter((r) => {
             if (r.staffUserId !== staffUserId) return false;
+            if (r.clinicId !== clinicId) return false;
             if (options?.status && r.status !== options.status) return false;
             if (options?.leaveType && r.leaveType !== options.leaveType) return false;
             // YYYY-MM-DD string comparison is lexicographically correct for ISO dates.
@@ -253,6 +263,13 @@ export function createInMemoryLeaveRepository(
           new Error(`Leave request is '${request.status}' and cannot be cancelled`),
         );
       }
+      if (input.cancelledByUserId === request.staffUserId) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       if (cancellationRecords.some((item) =>
         item.leaveRequestId === input.leaveId && item.status === "pending")) {
         return Promise.reject(new AppError(
@@ -267,7 +284,7 @@ export function createInMemoryLeaveRepository(
         cancelledByUserId: input.cancelledByUserId,
         cancelledAt: new Date(),
         cancellationReason: input.cancellationReason,
-        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed ?? false,
+        cancellationSelfReviewExceptionUsed: false,
         updatedAt: new Date(),
       };
       records[records.indexOf(request)] = cancelled;
@@ -304,9 +321,12 @@ export function createInMemoryLeaveRepository(
       return Promise.resolve({ ...record });
     },
 
-    listCancellationRequestsByStaff(staffUserId, options) {
+    listCancellationRequestsByStaff(staffUserId, clinicId, options) {
       return Promise.resolve(cancellationRecords
-        .filter((item) => item.staffUserId === staffUserId && (!options?.status || item.status === options.status))
+        .filter((item) =>
+          item.staffUserId === staffUserId &&
+          item.clinicId === clinicId &&
+          (!options?.status || item.status === options.status))
         .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
         .map((item) => ({ ...item })));
     },
@@ -335,13 +355,24 @@ export function createInMemoryLeaveRepository(
       if (child.status !== "pending" || leave.status !== "approved") {
         return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
       }
+      if (
+        input.reviewedByUserId === leave.staffUserId ||
+        input.reviewedByUserId === child.staffUserId ||
+        input.reviewedByUserId === child.requestedByUserId
+      ) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       const now = new Date();
       Object.assign(child, {
         status: "approved",
         reviewedByUserId: input.reviewedByUserId,
         reviewedAt: now,
         reviewNotes: input.reviewNotes,
-        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        selfReviewExceptionUsed: false,
         updatedAt: now,
       });
       Object.assign(leave, {
@@ -349,7 +380,7 @@ export function createInMemoryLeaveRepository(
         cancelledByUserId: input.reviewedByUserId,
         cancelledAt: now,
         cancellationReason: child.requestReason,
-        cancellationSelfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        cancellationSelfReviewExceptionUsed: false,
         updatedAt: now,
       });
       return Promise.resolve({ request: { ...child }, leave: { ...leave } });
@@ -364,13 +395,24 @@ export function createInMemoryLeaveRepository(
       if (child.status !== "pending" || leave.status !== "approved") {
         return Promise.reject(new AppError(409, "INVALID_STATUS_TRANSITION", "Cancellation request is no longer pending"));
       }
+      if (
+        input.reviewedByUserId === leave.staffUserId ||
+        input.reviewedByUserId === child.staffUserId ||
+        input.reviewedByUserId === child.requestedByUserId
+      ) {
+        return Promise.reject(new AppError(
+          403,
+          "SELF_REVIEW_FORBIDDEN",
+          "You cannot review your own cancellation request",
+        ));
+      }
       const now = new Date();
       Object.assign(child, {
         status: "declined",
         reviewedByUserId: input.reviewedByUserId,
         reviewedAt: now,
         reviewNotes: input.reviewNotes,
-        selfReviewExceptionUsed: input.selfReviewExceptionUsed,
+        selfReviewExceptionUsed: false,
         updatedAt: now,
       });
       return Promise.resolve({ ...child });

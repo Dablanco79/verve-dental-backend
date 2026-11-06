@@ -3,10 +3,12 @@
  *
  * Mounted at /api/v1/clinics/:clinicId/supplier-invoices
  *
- * Auth:   All routes require a valid JWT (authenticate middleware from parent).
+ * Auth:   All routes require a valid JWT (authenticate middleware from parent)
+ *         and module:procurement.
  * Roles:  Write operations (upload, patch, confirm, cancel, void) require
  *         owner_admin or group_practice_manager.
- *         Read operations (list, get) are available to all authenticated users.
+ *         Read operations are also restricted to those manager/admin roles.
+ *         Receiving additionally requires module:receiving.
  *
  * File upload:  multer memory storage.  Size limit from OCR_MAX_FILE_SIZE_BYTES
  *               config (default 20 MB).  MIME filter: PDF, PNG, JPEG.
@@ -17,7 +19,8 @@ import { Router } from "express";
 
 import type { AppDependencies } from "../bootstrap/dependencies.js";
 import { createSupplierInvoiceHandlers } from "../controllers/supplierInvoiceController.js";
-import { requireRoles } from "../middleware/authMiddleware.js";
+import { requirePermission, requireRoles } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import type { EnvConfig } from "../config/index.js";
 
@@ -51,6 +54,8 @@ export function createSupplierInvoiceRouter(
   });
 
   const handlers = createSupplierInvoiceHandlers(deps.supplierInvoiceService);
+
+  router.use(requirePermission(PERMISSIONS.MODULE_PROCUREMENT));
 
   // ── POST /upload ───────────────────────────────────────────────────────────
   // Upload a supplier invoice file, run OCR, return extracted draft.
@@ -125,6 +130,7 @@ export function createSupplierInvoiceRouter(
   // Blocks if the invoice has already been received (409 INVOICE_ALREADY_RECEIVED).
   router.post(
     "/:invoiceId/receive",
+    requirePermission(PERMISSIONS.MODULE_RECEIVING),
     requireWriteAccess,
     asyncHandler((req, res) => handlers.receive(req, res)),
   );

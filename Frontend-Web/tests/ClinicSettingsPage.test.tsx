@@ -35,12 +35,22 @@ import {
 
 // ── Mocks (hoisted) ────────────────────────────────────────────────────────────
 
-const { authTestState, mockGetClinic, mockUpdateClinicSettings } = vi.hoisted(() => {
+const {
+  authTestState,
+  mockDeleteClinicLogo,
+  mockGetClinic,
+  mockGetClinicLogo,
+  mockUpdateClinicSettings,
+  mockUploadClinicLogo,
+} = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
     authTestState,
+    mockDeleteClinicLogo:      vi.fn(),
     mockGetClinic:            vi.fn(),
+    mockGetClinicLogo:        vi.fn(),
     mockUpdateClinicSettings: vi.fn(),
+    mockUploadClinicLogo:     vi.fn(),
   };
 });
 
@@ -56,8 +66,11 @@ vi.mock("../src/auth/useAuth.js", () => ({
 
 vi.mock("../src/api/client.js", () => ({
   createApiClient: () => ({
+    deleteClinicLogo:      mockDeleteClinicLogo,
     getClinic:            mockGetClinic,
+    getClinicLogo:        mockGetClinicLogo,
     updateClinicSettings: mockUpdateClinicSettings,
+    uploadClinicLogo:     mockUploadClinicLogo,
   }),
 }));
 
@@ -125,6 +138,28 @@ function renderEditClinicRoute(clinicId: string) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetClinicLogo.mockResolvedValue(null);
+  mockDeleteClinicLogo.mockResolvedValue(undefined);
+  mockUploadClinicLogo.mockResolvedValue({
+    clinicId: TEST_CLINIC_ID,
+    mimeType: "image/png",
+    sha256Checksum: "a".repeat(64),
+    width: 320,
+    height: 120,
+    updatedAt: "2026-10-30T00:00:00.000Z",
+  });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: vi.fn(() => "blob:clinic-logo"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: vi.fn(),
+  });
+});
+
 describe("ClinicSettingsPage — /settings/clinic (home-clinic route)", () => {
   describe("owner_admin", () => {
     beforeEach(() => {
@@ -173,6 +208,36 @@ describe("ClinicSettingsPage — /settings/clinic (home-clinic route)", () => {
         );
       });
     });
+
+    it("shows the clinic name fallback and uploads a valid logo", async () => {
+      renderHomeClinicRoute();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /upload logo/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("img", { name: /clinic a logo/i })).not.toBeInTheDocument();
+
+      const file = new File(["png-data"], "clinic.png", { type: "image/png" });
+      fireEvent.change(screen.getByLabelText(/choose clinic logo file/i), {
+        target: { files: [file] },
+      });
+      await waitFor(() => {
+        expect(mockUploadClinicLogo).toHaveBeenCalledWith(TEST_CLINIC_ID, file);
+      });
+      expect(await screen.findByText(/clinic logo uploaded/i)).toBeInTheDocument();
+    });
+
+    it("rejects unsupported files before calling the API", async () => {
+      renderHomeClinicRoute();
+      await waitFor(() => {
+        expect(screen.getByLabelText(/choose clinic logo file/i)).toBeInTheDocument();
+      });
+      const file = new File(["<svg/>"], "clinic.svg", { type: "image/svg+xml" });
+      fireEvent.change(screen.getByLabelText(/choose clinic logo file/i), {
+        target: { files: [file] },
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent(/png or jpeg/i);
+      expect(mockUploadClinicLogo).not.toHaveBeenCalled();
+    });
   });
 
   describe("group_practice_manager", () => {
@@ -207,6 +272,18 @@ describe("ClinicSettingsPage — /settings/clinic (home-clinic route)", () => {
       await waitFor(() => {
         expect(screen.queryByRole("button", { name: /save settings/i })).not.toBeInTheDocument();
       });
+    });
+
+    it("can preview the logo but cannot change it", async () => {
+      mockGetClinicLogo.mockResolvedValue(
+        new Blob(["logo"], { type: "image/png" }),
+      );
+      renderHomeClinicRoute();
+      expect(
+        await screen.findByRole("img", { name: `${TEST_CLINIC_NAME} logo` }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /replace logo/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/restricted to owner\/admin/i)).toBeInTheDocument();
     });
   });
 

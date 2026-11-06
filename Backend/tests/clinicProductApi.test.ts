@@ -203,7 +203,7 @@ describe("Clinic Product Maintenance API", () => {
   describe("GET /master-products/categories", () => {
     it("returns the canonical category list when authenticated", async () => {
       const app = await createTestApp();
-      const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+      const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
 
       const response = await request(app)
         .get("/api/v1/master-products/categories")
@@ -253,7 +253,7 @@ describe("Clinic Product Maintenance API", () => {
       expect(response.status).toBe(401);
     });
 
-    it("is accessible to clinical_staff (read-only endpoint)", async () => {
+    it("blocks Workforce-only clinical_staff from the deferred category endpoint", async () => {
       const app = await createTestApp();
       const token = await loginAndGetAccessToken(app, "staff@clinic-a.au");
 
@@ -261,7 +261,7 @@ describe("Clinic Product Maintenance API", () => {
         .get("/api/v1/master-products/categories")
         .set("Authorization", `Bearer ${token}`);
 
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(403);
     });
   });
 

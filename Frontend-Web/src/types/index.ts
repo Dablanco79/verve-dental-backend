@@ -27,6 +27,11 @@ export type AuthUser = {
    */
   displayName: string | null;
   /**
+   * Payroll contract track. Optional while access tokens issued before this
+   * field was added can still restore a session; clocking UI must fail closed.
+   */
+  payrollTrack?: StaffPayrollTrack;
+  /**
    * Effective module permissions baked into the JWT at issuance.
    * Derived from: DEFAULT_PERMISSIONS[role] ∪ active user_permission_grants.
    * Use user.permissions.includes("module:X") to gate UI elements.

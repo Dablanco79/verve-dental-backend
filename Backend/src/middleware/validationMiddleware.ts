@@ -31,8 +31,8 @@
  *   import { z } from "zod";
  *
  *   const invoiceParamsSchema = z.object({
- *     clinicId:  z.string().uuid("clinicId must be a valid UUID"),
- *     invoiceId: z.string().uuid("invoiceId must be a valid UUID"),
+ *     clinicId:  z.guid("clinicId must be a valid UUID"),
+ *     invoiceId: z.guid("invoiceId must be a valid UUID"),
  *   });
  *
  *   router.post(
@@ -125,23 +125,23 @@ export function validateParams<T>(schema: z.ZodType<T>): RequestHandler {
  * repository queries.
  */
 export const clinicIdParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
 });
 
 /**
  * Validates :clinicId + :userId (e.g. POST /clinics/:clinicId/users/:userId/reset-password).
  */
 export const clinicUserParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
-  userId: z.string().uuid("userId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
+  userId: z.guid("userId must be a valid UUID"),
 });
 
 /**
  * Validates :clinicId + :itemId (e.g. GET /clinics/:clinicId/inventory/:itemId).
  */
 export const clinicInventoryItemParamsSchema = z.object({
-  clinicId: z.string().uuid("clinicId must be a valid UUID"),
-  itemId: z.string().uuid("itemId must be a valid UUID"),
+  clinicId: z.guid("clinicId must be a valid UUID"),
+  itemId: z.guid("itemId must be a valid UUID"),
 });
 
 /**
@@ -149,7 +149,7 @@ export const clinicInventoryItemParamsSchema = z.object({
  * The permission segment is a free-form string (e.g. "inventory:read").
  */
 export const clinicUserPermissionParamsSchema = z.object({
-  clinicId:   z.string().uuid("clinicId must be a valid UUID"),
-  userId:     z.string().uuid("userId must be a valid UUID"),
+  clinicId:   z.guid("clinicId must be a valid UUID"),
+  userId:     z.guid("userId must be a valid UUID"),
   permission: z.string().min(1, "permission must not be empty"),
 });

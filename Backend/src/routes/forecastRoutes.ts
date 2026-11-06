@@ -43,8 +43,10 @@ import type { AppDependencies } from "../bootstrap/dependencies.js";
 import {
   createAuthenticateMiddleware,
   enforceTenantParam,
+  requirePermission,
   requireRoles,
 } from "../middleware/authMiddleware.js";
+import { PERMISSIONS } from "../types/permissions.js";
 import { createForecastService } from "../services/forecastService.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../types/errors.js";
@@ -199,6 +201,7 @@ export function createForecastRouter(deps: AppDependencies): Router {
 
   // All forecast routes require authentication.
   router.use(authenticate);
+  router.use(requirePermission(PERMISSIONS.MODULE_REPORTS));
 
   // enforceTenantParam ensures the session token's homeClinicId matches the
   // :clinicId URL segment (owner_admin is exempt — they can query any clinic).

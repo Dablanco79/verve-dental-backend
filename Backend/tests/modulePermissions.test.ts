@@ -6,7 +6,8 @@
  *   BILLING SECURITY GAP
  *     1. clinical_staff → 403 on GET /billing/invoices
  *     2. owner_admin → 200 on GET /billing/invoices
- *     3. group_practice_manager → 200 on GET /billing/invoices (managerOrAdmin)
+ *     3. group_practice_manager without billing:read → 403
+ *     3b. group_practice_manager with billing:read → 200
  *
  *   PROCUREMENT GATE
  *     4. seed clinical_staff (no module:procurement) → 403 on POST /purchase-orders
@@ -35,7 +36,7 @@
  *    17. group_practice_manager (has module:reports) → 200 on GET /analytics/dashboard
  *
  *   NEW USER INITIAL GRANTS
- *    18. newly created GPM → 8 module grants
+ *    18. newly created GPM → exactly 3 Workforce module grants
  *    19. newly created clinical_staff → exactly 3 module grants
  *    20. new clinical_staff → 403 on GET /inventory (no module:inventory)
  *    21. after granting module:inventory to new staff → 200 on GET /inventory
@@ -136,13 +137,34 @@ describe("Module permissions — billing security gap fix", () => {
   );
 
   it(
-    "3. GPM (managerOrAdmin) can access GET /billing/invoices (200)",
+    "3. GPM without billing:read cannot access GET /billing/invoices (403)",
     async () => {
       const app = await createTestApp();
       const token = await loginAndGetAccessToken(app, "manager@clinic-a.au");
       const res = await request(app)
         .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/billing/invoices`)
         .set("Authorization", `Bearer ${token}`);
+      expect(res.status).toBe(403);
+    },
+    30_000,
+  );
+
+  it(
+    "3b. GPM can access Billing after owner_admin grants billing:read",
+    async () => {
+      const app = await createTestApp();
+      const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+      const adminToken = await loginAndGetAccessToken(app, "admin@clinic-a.au");
+      await grantPermission(
+        app,
+        adminToken,
+        SEED_USER_IDS.clinicAManager,
+        "billing:read",
+      );
+
+      const res = await request(app)
+        .get(`/api/v1/clinics/${SEED_CLINIC_A_ID}/billing/invoices`)
+        .set("Authorization", `Bearer ${managerToken}`);
       expect(res.status).toBe(200);
     },
     30_000,
@@ -408,7 +430,7 @@ describe("Module permissions — analytics gate", () => {
 
 describe("Module permissions — new user initial grants", () => {
   it(
-    "18. newly created GPM has 8 module grants",
+    "18. newly created GPM has exactly the 3 Workforce module grants",
     async () => {
       const app = await createTestApp();
       const adminToken = await loginAndGetAccessToken(app, "admin@clinic-b.au");
@@ -439,15 +461,14 @@ describe("Module permissions — new user initial grants", () => {
         "module:timesheets",
         "module:roster",
         "module:leave",
-        "module:inventory",
-        "module:stocktakes",
-        "module:procurement",
-        "module:receiving",
-        "module:reports",
       ];
+      expect(activeGrants.filter((permission) => permission.startsWith("module:"))).toHaveLength(3);
       for (const mod of expectedModules) {
         expect(activeGrants).toContain(mod);
       }
+      expect(activeGrants).not.toContain("module:inventory");
+      expect(activeGrants).not.toContain("module:procurement");
+      expect(activeGrants).not.toContain("module:reports");
     },
     30_000,
   );

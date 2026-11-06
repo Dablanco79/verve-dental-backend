@@ -103,10 +103,41 @@ function submitCredentials(
 describe("LoginPage — credentials step", () => {
   it("renders the sign-in form", () => {
     renderLoginPage();
-    expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^welcome$/i })).toBeInTheDocument();
+    expect(screen.getByAltText("RENQOR")).toBeInTheDocument();
+    expect(screen.getByLabelText(/email/i)).toHaveAttribute("autocomplete", "username");
+    expect(screen.getByLabelText(/password/i)).toHaveAttribute(
+      "autocomplete",
+      "current-password",
+    );
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+  });
+
+  it("keeps the submit control disabled while authentication is pending", async () => {
+    const ctx = makeAuthContext({
+      login: vi.fn(() => new Promise<never>(() => undefined)),
+    });
+    renderLoginPage(ctx);
+
+    submitCredentials();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /signing in/i })).toBeDisabled();
+    });
+  });
+
+  it("only selects the decorative artwork above the mobile breakpoint", () => {
+    const { container } = renderLoginPage();
+    const source = container.querySelector<HTMLSourceElement>(
+      'source[srcset="/assets/brand/rq-right-artwork.png"]',
+    );
+    const fallback = container.querySelector<HTMLImageElement>(
+      "img.renqor-login__artwork",
+    );
+
+    expect(source).toHaveAttribute("media", "(min-width: 741px)");
+    expect(fallback?.src).toMatch(/^data:image\/svg\+xml,/);
+    expect(fallback).toHaveAttribute("alt", "");
   });
 });
 
@@ -207,7 +238,7 @@ describe("LoginPage — requiresMfaEnrollment path", () => {
     });
 
     // Step machine resets to credentials
-    expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^welcome$/i })).toBeInTheDocument();
   });
 });
 
@@ -275,10 +306,10 @@ describe("LoginPage — login failure", () => {
     submitCredentials();
 
     await waitFor(() => {
-      expect(screen.getByText(/invalid email or password/i)).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(/invalid email or password/i);
     });
 
     // Should remain on the credentials step
-    expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^welcome$/i })).toBeInTheDocument();
   });
 });

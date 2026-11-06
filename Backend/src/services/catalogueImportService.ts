@@ -514,6 +514,24 @@ export function createCatalogueImportService(
         );
       }
 
+      if (manualMappings) {
+        const uploadedRowNumbers = new Set(dataRows.map((row) => row.rowNumber));
+        for (const key of Object.keys(manualMappings)) {
+          const rowNumber = Number(key);
+          if (!Number.isInteger(rowNumber) || !uploadedRowNumbers.has(rowNumber)) {
+            throw new AppError(
+              400,
+              "VALIDATION_ERROR",
+              "Request validation failed",
+              [{
+                field: `manualMappings.${key}`,
+                message: "manual mapping row must exist in the uploaded catalogue",
+              }],
+            );
+          }
+        }
+      }
+
       let imported = 0;
       let updated = 0;
       let skipped = 0;

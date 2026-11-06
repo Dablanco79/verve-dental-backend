@@ -64,6 +64,17 @@ function buildService() {
   return { importService, catalogRepo, inventoryRepo };
 }
 
+async function buildXlsxBuffer(rows: unknown[][]): Promise<Buffer> {
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet(rows),
+    "Master Products",
+  );
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
 // ─── Happy path ────────────────────────────────────────────────────────────────
 
 describe("MasterProductImportService — creates products", () => {
@@ -167,6 +178,35 @@ describe("MasterProductImportService — creates products", () => {
     expect(result.imported).toBe(3);
     expect(result.skippedDuplicates).toBe(0);
     expect(result.skippedInvalid).toBe(0);
+  });
+
+  it("imports a valid XLSX master product library", async () => {
+    const { importService, catalogRepo } = buildService();
+    const buffer = await buildXlsxBuffer([
+      ["display_name", "category", "default_unit", "status"],
+      ["Céramique Polishing Kit", "Restorative", "Kit", "active"],
+    ]);
+
+    const result = await importService.importLibrary(
+      OWNER_ADMIN,
+      buffer,
+      "xlsx",
+    );
+
+    expect(result).toMatchObject({
+      totalRows: 1,
+      imported: 1,
+      skippedDuplicates: 0,
+      skippedInvalid: 0,
+    });
+    const items = await catalogRepo.listMasterItems();
+    expect(
+      items.find((item) => item.name === "Céramique Polishing Kit"),
+    ).toMatchObject({
+      category: "Restorative",
+      stockUnit: "Kit",
+      status: "active",
+    });
   });
 });
 

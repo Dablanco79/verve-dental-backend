@@ -1,4 +1,5 @@
 import type { AuthenticatedUser, UserRecord } from "../types/auth.js";
+import type { Clinic } from "../types/clinic.js";
 import type {
   CreateRosterEntryInput,
   ListRosterOptions,
@@ -15,8 +16,102 @@ import type { UserClinicAssignmentsRepository } from "../repositories/userClinic
 import type { LeaveRepository } from "../repositories/leaveRepository.js";
 import type { RosterLeaveBlock } from "../types/payroll.js";
 import type { CreateAuditEventInput } from "../types/analytics.js";
-import { calendarDayWindow, coveredCalendarDateRange } from "../utils/calendarDate.js";
+import {
+  addCalendarDays,
+  calendarDayWindow,
+  coveredCalendarDateRange,
+  formatCalendarDate,
+  startOfCalendarDate,
+} from "../utils/calendarDate.js";
 import { OPERATIONAL_TZ } from "../utils/melbourneTime.js";
+import {
+  generateMonthlyRosterPdf,
+  monthlyRosterPdfFilename,
+  type MonthlyRosterPaperSize,
+} from "./monthlyRosterPdf.js";
+import {
+  generateWeeklyRosterPdf,
+  weeklyRosterPdfFilename,
+} from "./weeklyRosterPdf.js";
+
+const MAX_WEEKLY_EXPORT_STAFF = 500;
+const MAX_WEEKLY_EXPORT_STAFF_CANDIDATES = 2_000;
+const MAX_WEEKLY_EXPORT_SHIFTS = 5_000;
+const MAX_MONTHLY_EXPORT_SHIFTS = 20_000;
+
+export function assertWeeklyRosterExportSize(input: {
+  shiftCount?: number;
+  candidateStaffCount?: number;
+  activeStaffCount?: number;
+}): void {
+  if (
+    input.shiftCount !== undefined &&
+    input.shiftCount > MAX_WEEKLY_EXPORT_SHIFTS
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many shifts to export safely",
+    );
+  }
+  if (
+    input.candidateStaffCount !== undefined &&
+    input.candidateStaffCount > MAX_WEEKLY_EXPORT_STAFF_CANDIDATES
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many staff candidates to export safely",
+    );
+  }
+  if (
+    input.activeStaffCount !== undefined &&
+    input.activeStaffCount > MAX_WEEKLY_EXPORT_STAFF
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This weekly roster contains too many active staff members to export safely",
+    );
+  }
+}
+
+export function assertMonthlyRosterExportSize(input: {
+  shiftCount?: number;
+  candidateStaffCount?: number;
+  activeStaffCount?: number;
+}): void {
+  if (
+    input.shiftCount !== undefined &&
+    input.shiftCount > MAX_MONTHLY_EXPORT_SHIFTS
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This monthly roster contains too many shifts to export safely",
+    );
+  }
+  if (
+    input.candidateStaffCount !== undefined &&
+    input.candidateStaffCount > MAX_WEEKLY_EXPORT_STAFF_CANDIDATES
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This monthly roster contains too many staff candidates to export safely",
+    );
+  }
+  if (
+    input.activeStaffCount !== undefined &&
+    input.activeStaffCount > MAX_WEEKLY_EXPORT_STAFF
+  ) {
+    throw new AppError(
+      413,
+      "ROSTER_EXPORT_TOO_LARGE",
+      "This monthly roster contains too many active staff members to export safely",
+    );
+  }
+}
 
 // Narrow write-only audit dependency.
 type AuditWriter = {
@@ -124,6 +219,222 @@ export function createRosterService(
       "FORBIDDEN",
       "You do not have permission to manage this clinic's roster",
     );
+  }
+
+  async function assertRosterExportAccess(
+    caller: AuthenticatedUser,
+    clinicId: string,
+  ) {
+    if (
+      caller.role !== "owner_admin" &&
+      caller.role !== "group_practice_manager"
+    ) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        "Only authorised managers may export a clinic roster",
+      );
+    }
+    const [homeClinic, targetClinic] = await Promise.all([
+      clinicRepository.findById(caller.homeClinicId),
+      clinicRepository.findById(clinicId),
+    ]);
+    if (!homeClinic) {
+      throw new AppError(403, "TENANT_ACCESS_DENIED", "Home clinic is unavailable");
+    }
+    if (!targetClinic) {
+      throw new AppError(404, "CLINIC_NOT_FOUND", "Target clinic not found");
+    }
+    if (homeClinic.organisationId !== targetClinic.organisationId) {
+      throw new AppError(
+        403,
+        "TENANT_ACCESS_DENIED",
+        "You do not have access to this clinic's organisation",
+      );
+    }
+    await assertClinicWriteAccess(caller, clinicId);
+    return targetClinic;
+  }
+
+  function weeklyExportWindow(weekStart: string, timeZone: string) {
+    try {
+      const weekEndExclusive = addCalendarDays(weekStart, 7);
+      const weekday = new Date(`${weekStart}T00:00:00.000Z`).getUTCDay();
+      if (weekday !== 1) {
+        throw new AppError(
+          400,
+          "INVALID_WEEK_START",
+          "weekStart must be a Monday",
+        );
+      }
+      return {
+        weekEnd: addCalendarDays(weekStart, 6),
+        from: startOfCalendarDate(weekStart, timeZone),
+        to: startOfCalendarDate(weekEndExclusive, timeZone),
+      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        400,
+        "INVALID_WEEK_START",
+        "weekStart must be a valid ISO calendar date in YYYY-MM-DD format",
+      );
+    }
+  }
+
+  function monthlyExportWindow(month: string, timeZone: string) {
+    const match = /^(\d{4})-(\d{2})$/.exec(month);
+    const year = Number(match?.[1]);
+    const monthNumber = Number(match?.[2]);
+    if (
+      !match ||
+      !Number.isInteger(year) ||
+      year < 2000 ||
+      year > 9999 ||
+      monthNumber < 1 ||
+      monthNumber > 12
+    ) {
+      throw new AppError(
+        400,
+        "INVALID_MONTH",
+        "month must be a valid calendar month in YYYY-MM format",
+      );
+    }
+    const monthStart = `${month}-01`;
+    const nextMonthDate = new Date(Date.UTC(year, monthNumber, 1));
+    const nextMonth = `${String(nextMonthDate.getUTCFullYear()).padStart(4, "0")}-${String(
+      nextMonthDate.getUTCMonth() + 1,
+    ).padStart(2, "0")}-01`;
+    const monthEnd = addCalendarDays(nextMonth, -1);
+    return {
+      monthStart,
+      monthEnd,
+      from: startOfCalendarDate(monthStart, timeZone),
+      to: startOfCalendarDate(nextMonth, timeZone),
+    };
+  }
+
+  function exportCalendarDate(value: unknown, timeZone: string): string {
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return value;
+    }
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return formatCalendarDate(value, timeZone);
+    }
+    throw new AppError(
+      500,
+      "INVALID_ROSTER_EXPORT_DATA",
+      "Roster export received an invalid calendar date",
+    );
+  }
+
+  async function loadRosterExportData(
+    caller: AuthenticatedUser,
+    clinicId: string,
+    options: {
+      from: Date;
+      to: Date;
+      firstDate: string;
+      lastDate: string;
+      periodLabel: "weekly" | "monthly";
+      includeEntry?: (entry: RosterEntry) => boolean;
+      clinic?: Clinic;
+    },
+  ) {
+    const clinic =
+      options.clinic ?? await assertRosterExportAccess(caller, clinicId);
+    const entries = (
+      await rosterRepository.listByClinic(clinicId, {
+        from: options.from,
+        to: options.to,
+      })
+    ).filter(
+      (entry) =>
+        entry.status !== "cancelled" &&
+        (options.includeEntry?.(entry) ?? true),
+    );
+    if (options.periodLabel === "weekly") {
+      assertWeeklyRosterExportSize({ shiftCount: entries.length });
+    } else {
+      assertMonthlyRosterExportSize({ shiftCount: entries.length });
+    }
+
+    const assignments = (await assignmentsRepository.listByClinic(clinicId))
+      .filter((assignment) => assignment.canRoster);
+    const entryStaffIds = new Set(entries.map((entry) => entry.staffUserId));
+    const candidateStaffIds = new Set([
+      ...assignments.map((assignment) => assignment.userId),
+      ...entryStaffIds,
+    ]);
+    if (options.periodLabel === "weekly") {
+      assertWeeklyRosterExportSize({
+        candidateStaffCount: candidateStaffIds.size,
+      });
+    } else {
+      assertMonthlyRosterExportSize({
+        candidateStaffCount: candidateStaffIds.size,
+      });
+    }
+
+    const users = await Promise.all(
+      [...candidateStaffIds].map((staffUserId) =>
+        userRepository.findById(staffUserId)),
+    );
+    const usersById = new Map(
+      users
+        .filter((user): user is UserRecord => user !== null)
+        .map((user) => [user.id, user]),
+    );
+    const staffIds = [...candidateStaffIds].filter(
+      (staffUserId) => usersById.get(staffUserId)?.isActive === true,
+    );
+    if (options.periodLabel === "weekly") {
+      assertWeeklyRosterExportSize({ activeStaffCount: staffIds.length });
+    } else {
+      assertMonthlyRosterExportSize({ activeStaffCount: staffIds.length });
+    }
+
+    const approvedLeave = await leaveRepository.listApprovedForStaff(
+      staffIds,
+      options.firstDate,
+      options.lastDate,
+    );
+    const logo = await clinicRepository.findBrandAsset(clinicId);
+    const staff = staffIds.map((staffUserId) => {
+      const user = usersById.get(staffUserId);
+      const legalName = [user?.firstName, user?.lastName]
+        .filter((part): part is string => Boolean(part?.trim()))
+        .join(" ");
+      const displayName =
+        user?.displayName?.trim() ||
+        legalName ||
+        `Staff ${staffUserId.slice(0, 8)}`;
+      return {
+        staffUserId,
+        displayName,
+        shifts: entries
+          .filter((entry) => entry.staffUserId === staffUserId)
+          .map((entry) => ({
+            id: entry.id,
+            shiftStartAt: entry.shiftStartAt,
+            shiftEndAt: entry.shiftEndAt,
+          })),
+        approvedLeave: approvedLeave
+          .filter((leave) => leave.staffUserId === staffUserId)
+          .map((leave) => ({
+            startDate: exportCalendarDate(
+              leave.startDate,
+              clinic.timezone,
+            ),
+            endDate: exportCalendarDate(
+              leave.endDate,
+              clinic.timezone,
+            ),
+          })),
+      };
+    });
+
+    return { clinic, entries, staff, logo };
   }
 
   return {
@@ -594,6 +905,117 @@ export function createRosterService(
         dateRange.firstDate,
         dateRange.lastDate,
       );
+    },
+
+    async exportWeeklyPdf(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      weekStart: string,
+    ): Promise<{
+      buffer: Buffer;
+      filename: string;
+      pageCount: number;
+      staffCount: number;
+      shiftCount: number;
+    }> {
+      const clinic = await assertRosterExportAccess(caller, clinicId);
+      const window = weeklyExportWindow(weekStart, clinic.timezone);
+      const exportData = await loadRosterExportData(caller, clinicId, {
+        from: window.from,
+        to: window.to,
+        firstDate: weekStart,
+        lastDate: window.weekEnd,
+        periodLabel: "weekly",
+        clinic,
+      });
+      const pdf = await generateWeeklyRosterPdf(
+        {
+          clinicName: exportData.clinic.name,
+          clinicTimeZone: exportData.clinic.timezone,
+          weekStart,
+          weekEnd: window.weekEnd,
+          generatedAt: new Date(),
+          logo: exportData.logo
+            ? {
+                imageData: exportData.logo.imageData,
+                mimeType: exportData.logo.mimeType,
+              }
+            : undefined,
+          staff: exportData.staff,
+        },
+        window.from,
+        window.to,
+      );
+
+      return {
+        ...pdf,
+        filename: weeklyRosterPdfFilename(exportData.clinic.name, weekStart),
+        staffCount: exportData.staff.length,
+        shiftCount: exportData.entries.length,
+      };
+    },
+
+    async exportMonthlyPdf(
+      caller: AuthenticatedUser,
+      clinicId: string,
+      month: string,
+      paperSize: MonthlyRosterPaperSize,
+    ): Promise<{
+      buffer: Buffer;
+      filename: string;
+      pageCount: number;
+      staffCount: number;
+      shiftCount: number;
+      entryCount: number;
+      continuationEntryCount: number;
+    }> {
+      const clinic = await assertRosterExportAccess(caller, clinicId);
+      const window = monthlyExportWindow(month, clinic.timezone);
+      const exportData = await loadRosterExportData(caller, clinicId, {
+        from: window.from,
+        to: window.to,
+        firstDate: window.monthStart,
+        lastDate: window.monthEnd,
+        periodLabel: "monthly",
+        clinic,
+        includeEntry: (entry) => {
+          const startDate = formatCalendarDate(
+            entry.shiftStartAt,
+            clinic.timezone,
+          );
+          return (
+            startDate >= window.monthStart &&
+            startDate <= window.monthEnd
+          );
+        },
+      });
+      const pdf = await generateMonthlyRosterPdf({
+        clinicName: exportData.clinic.name,
+        clinicTimeZone: exportData.clinic.timezone,
+        month,
+        monthStart: window.monthStart,
+        monthEnd: window.monthEnd,
+        generatedAt: new Date(),
+        paperSize,
+        logo: exportData.logo
+          ? {
+              imageData: exportData.logo.imageData,
+              mimeType: exportData.logo.mimeType,
+            }
+          : undefined,
+        staff: exportData.staff,
+      });
+
+      return {
+        ...pdf,
+        filename: monthlyRosterPdfFilename(
+          exportData.clinic.name,
+          month,
+          paperSize,
+        ),
+        staffCount: exportData.staff.length,
+        shiftCount: exportData.entries.length,
+      };
     },
 
     /**

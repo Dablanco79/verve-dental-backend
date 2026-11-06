@@ -408,6 +408,13 @@ export type ApproveTimesheetRequest = {
   approvalNotes?: string | null;
 };
 
+/** PATCH /clinics/:clinicId/timesheets/:timesheetId/correct */
+export type CorrectTimesheetRequest = {
+  clockInAt: string;
+  clockOutAt: string;
+  correctionReason: string;
+};
+
 /** POST /clinics/:clinicId/timesheets/:timesheetId/reject */
 export type RejectTimesheetRequest = {
   approvalNotes: string;

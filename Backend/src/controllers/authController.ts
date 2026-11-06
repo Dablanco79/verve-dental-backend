@@ -7,7 +7,7 @@ import { AppError } from "../types/errors.js";
 import { parseBody } from "../utils/validation.js";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.email(),
   password: z.string().min(8),
 });
 
@@ -168,6 +168,19 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
           user: result.user,
         },
       });
+    },
+
+    async recordActivity(req: Request, res: Response): Promise<void> {
+      const refreshToken = (req.cookies as Record<string, string> | undefined)?.[
+        REFRESH_COOKIE_NAME
+      ];
+      if (!refreshToken) {
+        throw new AppError(401, "MISSING_REFRESH_TOKEN", "Refresh token required");
+      }
+
+      const rotatedRefreshToken = await authService.recordUserActivity(refreshToken);
+      setRefreshCookie(res, rotatedRefreshToken);
+      res.status(204).send();
     },
 
     async logout(req: Request, res: Response): Promise<void> {

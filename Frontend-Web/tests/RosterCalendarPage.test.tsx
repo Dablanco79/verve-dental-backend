@@ -32,6 +32,7 @@ import type { StaffUser } from "../src/types/index.js";
 import type { RosterEntry } from "../src/types/roster.js";
 import {
   createManagerUser,
+  createStaffUser,
   TEST_CLINIC_ID,
   TEST_CLINIC_NAME,
 } from "./helpers/auth.js";
@@ -55,6 +56,8 @@ const {
   mockListRosterApprovedLeave,
   mockUseOperationalClinic,
   mockCancelShift,
+  mockExportWeeklyRosterPdf,
+  mockExportMonthlyRosterPdf,
   mockUpdateShift,
 } = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
@@ -68,6 +71,8 @@ const {
     mockGetRosterAccessibleClinics: vi.fn(),
     mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
     mockCancelShift: vi.fn(),
+    mockExportWeeklyRosterPdf: vi.fn(),
+    mockExportMonthlyRosterPdf: vi.fn(),
     mockUpdateShift: vi.fn(),
     mockUseOperationalClinic: vi.fn().mockReturnValue({
       clinicId: DEFAULT_CLINIC_ID,
@@ -132,6 +137,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
       })]);
 
       const { container } = renderPage();
+      await navigateMonthViewTo(user, "2026-10");
       const monthCell = (date: string): HTMLElement => {
         const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
           .find((candidate) =>
@@ -158,6 +164,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         within(monthCell("13")).getByRole("button", { name: /Shift: Alice Jones/i }),
       ).toBeInTheDocument();
 
+      await user.click(screen.getByRole("button", { name: "Today" }));
       await navigateDayViewTo(user, "2026-10-12");
       expect(
         await screen.findByLabelText(/Approved leave: Alice Jones/i),
@@ -220,6 +227,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
       }]);
 
       const { container } = renderPage();
+      await navigateMonthViewTo(user, "2026-10");
       await waitFor(() => {
         for (const date of monthDates) {
           const cell = [...container.querySelectorAll<HTMLElement>(".roster-month-cell")]
@@ -233,6 +241,7 @@ describe("RosterCalendarPage — pilot approved leave views", () => {
         }
       });
 
+      await user.click(screen.getByRole("button", { name: "Today" }));
       await navigateDayViewTo(user, startDate.slice(0, 10));
       expect(
         await screen.findByLabelText(/Approved leave: Alice Jones/i),
@@ -264,6 +273,8 @@ vi.mock("../src/api/client.js", () => ({
     createShift: vi.fn(),
     updateShift: mockUpdateShift,
     cancelShift: mockCancelShift,
+    exportWeeklyRosterPdf: mockExportWeeklyRosterPdf,
+    exportMonthlyRosterPdf: mockExportMonthlyRosterPdf,
     checkShiftConflicts: vi.fn().mockResolvedValue({ overlapping: [], sameDay: [] }),
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
     listRosterApprovedLeave: mockListRosterApprovedLeave,
@@ -347,6 +358,31 @@ function todayDateString(): string {
   return currentRosterCalendarDate();
 }
 
+async function navigateMonthViewTo(
+  user: ReturnType<typeof userEvent.setup>,
+  targetMonth: string,
+): Promise<void> {
+  const [currentYear, currentMonth] = currentRosterCalendarDate()
+    .slice(0, 7)
+    .split("-")
+    .map(Number);
+  const [targetYear, targetMonthNumber] = targetMonth.split("-").map(Number);
+  if (
+    currentYear === undefined ||
+    currentMonth === undefined ||
+    targetYear === undefined ||
+    targetMonthNumber === undefined
+  ) {
+    throw new Error(`Invalid target month: ${targetMonth}`);
+  }
+  const distance =
+    targetYear * 12 + targetMonthNumber - (currentYear * 12 + currentMonth);
+  const buttonName = distance >= 0 ? "Next month" : "Previous month";
+  for (let step = 0; step < Math.abs(distance); step += 1) {
+    await user.click(screen.getByRole("button", { name: buttonName }));
+  }
+}
+
 async function navigateDayViewTo(
   user: ReturnType<typeof userEvent.setup>,
   targetDate: string,
@@ -377,6 +413,217 @@ describe("staffDisplayName helper", () => {
 
   it("falls back to email when all name fields are null", () => {
     expect(staffDisplayName(unnamedStaff)).toBe("charlie@clinic-a.au");
+  });
+});
+
+describe("RosterCalendarPage — roster PDF export", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAuthenticatedUser(authTestState, managerUser);
+    mockUseOperationalClinic.mockReturnValue({
+      clinicId: TEST_CLINIC_ID,
+      clinicName: TEST_CLINIC_NAME,
+      selectedClinic: { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      isAllClinicsScope: false,
+    });
+    mockListRoster.mockResolvedValue([]);
+    mockListUsers.mockResolvedValue([namedStaff]);
+    mockListRosterApprovedLeave.mockResolvedValue([]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME, preferredName: null },
+    ]);
+    mockExportWeeklyRosterPdf.mockResolvedValue(
+      "RENQOR_Clinic_Roster_2026-11-16.pdf",
+    );
+    mockExportMonthlyRosterPdf.mockResolvedValue(
+      "RENQOR_Clinic_Roster_2026-11_A3.pdf",
+    );
+  });
+
+  it("exports the selected clinic and week and prevents duplicate clicks", async () => {
+    let resolveExport: ((filename: string) => void) | undefined;
+    mockExportWeeklyRosterPdf.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const button = await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    });
+    await user.click(button);
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("Exporting");
+    expect(mockExportWeeklyRosterPdf).toHaveBeenCalledTimes(1);
+    const [clinicId, weekStart] =
+      mockExportWeeklyRosterPdf.mock.calls[0] as [string, string];
+    expect(clinicId).toBe(TEST_CLINIC_ID);
+    expect(weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(new Date(`${weekStart}T00:00:00.000Z`).getUTCDay()).toBe(1);
+
+    resolveExport?.("RENQOR_Clinic_Roster.pdf");
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  it("exports the selected monthly calendar with A3 default and optional A4", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const exportType = await screen.findByLabelText("Export Roster PDF");
+    expect(
+      within(exportType).getByRole("option", { name: "Weekly Roster" }),
+    ).toBeInTheDocument();
+    expect(
+      within(exportType).getByRole("option", { name: "Monthly Calendar" }),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(exportType, "monthly");
+    const monthInput = screen.getByLabelText("Roster month");
+    await user.clear(monthInput);
+    await user.type(monthInput, "2026-11");
+    const paperSelect = screen.getByLabelText("PDF paper size");
+    expect(paperSelect).toHaveValue("A3");
+    await user.selectOptions(paperSelect, "A4");
+    await user.click(screen.getByRole("button", {
+      name: "Export Monthly PDF",
+    }));
+
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      "2026-11",
+      "A4",
+    );
+    expect(mockExportWeeklyRosterPdf).not.toHaveBeenCalled();
+  });
+
+  it("keeps the monthly export month aligned with calendar navigation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(
+      await screen.findByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    const monthInput = screen.getByLabelText<HTMLInputElement>("Roster month");
+    const initialMonth = monthInput.value;
+
+    await user.click(screen.getByRole("button", { name: "Next month" }));
+    await waitFor(() => {
+      expect(monthInput.value).not.toBe(initialMonth);
+    });
+    const navigatedMonth = monthInput.value;
+    await user.click(
+      screen.getByRole("button", { name: "Export Monthly PDF" }),
+    );
+
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledWith(
+      TEST_CLINIC_ID,
+      navigatedMonth,
+      "A3",
+    );
+  });
+
+  it("prevents duplicate monthly exports and reports monthly failures", async () => {
+    let rejectExport: ((error: Error) => void) | undefined;
+    mockExportMonthlyRosterPdf.mockReturnValue(
+      new Promise<string>((_resolve, reject) => {
+        rejectExport = reject;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.selectOptions(
+      await screen.findByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    const button = screen.getByRole("button", {
+      name: "Export Monthly PDF",
+    });
+    await user.click(button);
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(mockExportMonthlyRosterPdf).toHaveBeenCalledTimes(1);
+
+    rejectExport?.(new Error("Unable to generate monthly roster"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to generate monthly roster",
+    );
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  it("disables combined export in All Clinics scope", async () => {
+    mockUseOperationalClinic.mockReturnValue({
+      clinicId: undefined,
+      clinicName: undefined,
+      selectedClinic: null,
+      isAllClinicsScope: true,
+    });
+    renderPage();
+    const button = await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/select one clinic to export/i)).toBeInTheDocument();
+    expect(mockExportWeeklyRosterPdf).not.toHaveBeenCalled();
+    await userEvent.setup().selectOptions(
+      screen.getByLabelText("Export Roster PDF"),
+      "monthly",
+    );
+    expect(
+      screen.getByRole("button", { name: "Export Monthly PDF" }),
+    ).toBeDisabled();
+    expect(mockExportMonthlyRosterPdf).not.toHaveBeenCalled();
+  });
+
+  it("does not show the clinic-wide export action to clinical staff", async () => {
+    setAuthenticatedUser(authTestState, createStaffUser());
+    renderPage();
+    await waitFor(() => {
+      expect(mockListRoster).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Export Roster PDF"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the export action to a manager without module:roster", async () => {
+    setAuthenticatedUser(authTestState, createManagerUser({
+      permissions: ["module:inventory"],
+    }));
+    renderPage();
+    await waitFor(() => {
+      expect(mockListRoster).toHaveBeenCalled();
+    });
+    expect(
+      screen.queryByRole("button", { name: "Export Weekly PDF" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Export Roster PDF"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces export failures without changing roster controls", async () => {
+    mockExportWeeklyRosterPdf.mockRejectedValue(
+      new Error("Unable to generate weekly roster"),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", {
+      name: "Export Weekly PDF",
+    }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to generate weekly roster",
+    );
+    expect(
+      screen.getAllByRole("button", { name: /add shift/i }).length,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -418,6 +665,10 @@ describe("RosterCalendarPage — staff dropdown (manager view)", () => {
       name: /Alice Jones \(alice\.jones@clinic-a\.au\)/i,
     });
     expect(option).toBeInTheDocument();
+    const modal = screen.getByRole("dialog", { name: "Add shift" });
+    expect(within(modal).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Add shift" })).toBeInTheDocument();
+    expect(within(modal).queryByRole("button", { name: "Cancel shift" })).toBeNull();
   });
 
   it("shows email only (no parenthetical hint) for unnamed staff", async () => {
@@ -517,6 +768,10 @@ describe("RosterCalendarPage — edit modal staff/clinic display", () => {
       expect(within(modal).getByText(/Alice Jones/)).toBeInTheDocument();
       expect(within(modal).getByText(new RegExp(namedStaff.email))).toBeInTheDocument();
     });
+    const modal = screen.getByRole("dialog", { name: "Edit shift" });
+    expect(within(modal).getByRole("button", { name: "Cancel shift" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   });
 });
 

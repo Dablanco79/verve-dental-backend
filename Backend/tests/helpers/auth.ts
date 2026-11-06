@@ -129,3 +129,26 @@ export async function loginAndGetTokens(
     refreshCookie: extractRefreshCookie(loginResponse),
   };
 }
+
+export async function replaceUserClinicAccess(
+  app: Express,
+  ownerToken: string,
+  managingClinicId: string,
+  userId: string,
+  assignments: Array<{
+    clinicId: string;
+    canOperate: boolean;
+    canRoster: boolean;
+  }>,
+): Promise<void> {
+  const response = await request(app)
+    .put(`/api/v1/clinics/${managingClinicId}/users/${userId}/clinic-access`)
+    .set("Authorization", `Bearer ${ownerToken}`)
+    .send({ assignments });
+
+  if (response.status !== 200) {
+    throw new Error(
+      `Clinic access setup failed (${String(response.status)}): ${JSON.stringify(response.body)}`,
+    );
+  }
+}

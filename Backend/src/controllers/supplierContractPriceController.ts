@@ -9,7 +9,7 @@ import type { SupplierContractPriceService } from "../services/supplierContractP
 
 const createPriceSchema = z
   .object({
-    masterCatalogItemId: z.string().uuid(),
+    masterCatalogItemId: z.guid(),
     priceType: z.enum(["contract", "promotional"]).optional(),
     unitPriceCents: z.number().int().positive(),
     effectiveFrom: z.coerce.date(),

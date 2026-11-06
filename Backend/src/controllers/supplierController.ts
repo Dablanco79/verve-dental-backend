@@ -8,7 +8,7 @@ import type { Supplier } from "../types/supplier.js";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const supplierIdSchema = z.string().uuid("supplierId must be a valid UUID");
+const supplierIdSchema = z.guid("supplierId must be a valid UUID");
 
 // Shared Sprint 4C metadata fields (reused in both create and update schemas)
 const supplierMetadataFields = {
@@ -26,7 +26,7 @@ const supplierMetadataFields = {
   onlineOrdering: z.boolean().optional(),
   preferredCommMethod: z.string().trim().max(100).nullable().optional(),
   logoStorageKey: z.string().trim().max(500).nullable().optional(),
-  createdByClinicId: z.string().uuid().nullable().optional(),
+  createdByClinicId: z.guid().nullable().optional(),
   isPublic: z.boolean().optional(),
 };
 
@@ -39,7 +39,7 @@ const supplierMetadataFields = {
  * - Blank / null / undefined → mapped to null/undefined so .nullable() /
  *   .optional() allows it through.
  * - Anything else (no dot, spaces, obviously malformed) → returned as-is so
- *   that z.string().url() produces the appropriate validation error.
+ *   that z.url() produces the appropriate validation error.
  */
 function normaliseWebsite(raw: unknown): unknown {
   if (raw === undefined) return undefined;
@@ -51,21 +51,21 @@ function normaliseWebsite(raw: unknown): unknown {
   if (/^https?:\/\//i.test(s)) return s;
   // Bare domain heuristic: no whitespace, at least one dot, TLD is ≥ 2 chars.
   if (/^[^\s]+\.[^\s]{2,}$/.test(s)) return `https://${s}`;
-  // Not a recognisable domain — let z.string().url() reject it.
+  // Not a recognisable domain — let z.url() reject it.
   return s;
 }
 
 // Shared website field: normalises bare domains before URL validation.
 const websiteField = z.preprocess(
   normaliseWebsite,
-  z.string().url("Website must be a valid URL (e.g. www.example.com or https://example.com)").nullable().optional(),
+  z.url("Website must be a valid URL (e.g. www.example.com or https://example.com)").nullable().optional(),
 );
 
 const createSupplierBodySchema = z.object({
   supplierName: z.string().min(1, "supplierName is required").max(200),
   supplierCode: z.string().max(50).nullable().optional(),
   contactName: z.string().max(200).nullable().optional(),
-  email: z.string().email("Invalid email address").nullable().optional(),
+  email: z.email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
   website: websiteField,
   abn: z.string().max(20).nullable().optional(),
@@ -78,7 +78,7 @@ const updateSupplierBodySchema = z.object({
   supplierName: z.string().min(1).max(200).optional(),
   supplierCode: z.string().max(50).nullable().optional(),
   contactName: z.string().max(200).nullable().optional(),
-  email: z.string().email("Invalid email address").nullable().optional(),
+  email: z.email("Invalid email address").nullable().optional(),
   phone: z.string().max(50).nullable().optional(),
   website: websiteField,
   abn: z.string().max(20).nullable().optional(),

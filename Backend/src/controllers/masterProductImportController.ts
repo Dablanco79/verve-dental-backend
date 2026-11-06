@@ -9,7 +9,7 @@ import { AppError } from "../types/errors.js";
 import { zodToDetails } from "../utils/validation.js";
 
 const importBodySchema = z.object({
-  clinicId: z.string().uuid().optional(),
+  clinicId: z.guid().optional(),
 });
 
 function resolveFormat(filename: string, mimetype: string): ImportFormat {

@@ -47,8 +47,9 @@ The files in `Backend/migrations/` are **reference and rollback documentation on
 
 3. Choose the `id` only after checking active workstreams as well as the
    current branch. Never reuse a number already assigned on a branch awaiting
-   integration. Migration `058_leave_coverage_groups` belongs to the Workforce
-   workstream, so this branch uses `059_force_workflow_table_rls`.
+   integration. The coordinated sequence is
+   `057_leave_cancellation_requests`, `059_force_workflow_table_rls`, then
+   `060_leave_coverage_groups`.
 4. Write or update tests in `Backend/tests/migrationGate.test.ts` to confirm the new entry is registered.
 5. Run the full validation suite before opening a pull request:
 

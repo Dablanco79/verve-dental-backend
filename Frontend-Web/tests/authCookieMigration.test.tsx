@@ -24,9 +24,13 @@ const {
   mockGetAccessToken,
   mockSetAccessToken,
   mockClearAccessToken,
+  mockGetLastUserActivityAt,
+  mockSetLastUserActivityAt,
+  mockClearLastUserActivityAt,
   mockLogin,
   mockVerifyMfa,
   mockRefresh,
+  mockRecordActivity,
   mockLogout,
   mockGetMe,
 } = vi.hoisted(() => {
@@ -34,18 +38,27 @@ const {
     mockGetAccessToken: vi.fn(() => null as string | null),
     mockSetAccessToken: vi.fn(),
     mockClearAccessToken: vi.fn(),
+    mockGetLastUserActivityAt: vi.fn(() => Date.now() as number | null),
+    mockSetLastUserActivityAt: vi.fn(),
+    mockClearLastUserActivityAt: vi.fn(),
     mockLogin: vi.fn(),
     mockVerifyMfa: vi.fn(),
     mockRefresh: vi.fn(),
+    mockRecordActivity: vi.fn(),
     mockLogout: vi.fn(),
     mockGetMe: vi.fn(),
   };
 });
 
 vi.mock("../src/auth/tokenStorage.js", () => ({
+  ACCESS_TOKEN_KEY: "verve.accessToken",
+  LAST_USER_ACTIVITY_KEY: "verve.lastUserActivityAt",
   getAccessToken: mockGetAccessToken,
   setAccessToken: mockSetAccessToken,
   clearAccessToken: mockClearAccessToken,
+  getLastUserActivityAt: mockGetLastUserActivityAt,
+  setLastUserActivityAt: mockSetLastUserActivityAt,
+  clearLastUserActivityAt: mockClearLastUserActivityAt,
 }));
 
 vi.mock("../src/api/client.js", () => ({
@@ -54,6 +67,7 @@ vi.mock("../src/api/client.js", () => ({
     login: mockLogin,
     verifyMfa: mockVerifyMfa,
     refresh: mockRefresh,
+    recordActivity: mockRecordActivity,
     logout: mockLogout,
     getMe: mockGetMe,
   }),
@@ -111,6 +125,7 @@ describe("Sprint 4B — Cookie Migration", () => {
     vi.clearAllMocks();
     capturedContext = null;
     mockGetAccessToken.mockReturnValue(null);
+    mockGetLastUserActivityAt.mockReturnValue(Date.now());
     // Default: no valid refresh cookie → refresh rejects
     mockRefresh.mockRejectedValue(new Error("No refresh cookie"));
   });

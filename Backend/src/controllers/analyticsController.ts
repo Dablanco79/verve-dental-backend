@@ -23,7 +23,7 @@ function firstString(v: unknown): string | undefined {
 
 // Reusable UUID route-param validator — returns a 400 before the value ever
 // reaches the repository layer, preventing raw Postgres type-cast 500 errors.
-const uuidParamSchema = z.string().uuid();
+const uuidParamSchema = z.guid();
 
 const periodDaysSchema = z
   .string()
@@ -51,10 +51,10 @@ const auditEventsQuerySchema = z.object({
     // the audit_events table during paginated queries.
     .pipe(z.number().int().min(0).max(100_000)),
   entityType: z.enum(AUDIT_ENTITY_TYPES).optional(),
-  actorId: z.string().uuid().optional(),
-  entityId: z.string().uuid().optional(),
-  from: z.string().datetime({ offset: true }).optional(),
-  to: z.string().datetime({ offset: true }).optional(),
+  actorId: z.guid().optional(),
+  entityId: z.guid().optional(),
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

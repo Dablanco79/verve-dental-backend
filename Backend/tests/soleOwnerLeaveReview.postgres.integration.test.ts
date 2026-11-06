@@ -3,11 +3,10 @@ import pg from "pg";
 
 import type { DatabasePool } from "../src/db/pool.js";
 import { createPostgresLeaveRepository } from "../src/repositories/leaveRepository.postgres.js";
-import { createPostgresUserRepository } from "../src/repositories/userRepository.postgres.js";
 
 const DB_URL = process.env["TEST_DATABASE_URL"];
 
-describe("sole owner leave review organisation scope (Postgres)", () => {
+describe("leave cancellation independent review (Postgres)", () => {
   if (!DB_URL) {
     it.skip("TEST_DATABASE_URL not configured", () => undefined);
     return;
@@ -123,161 +122,7 @@ describe("sole owner leave review organisation scope (Postgres)", () => {
     return { leaveId, requestId };
   }
 
-  it("allows one active owner whose home clinic belongs to the target organisation", async () => {
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(true);
-  });
-
-  it("rejects when a second active owner belongs to the same organisation", async () => {
-    await insertUser(randomUUID(), "owner_admin", siblingClinicId);
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(false);
-  });
-
-  it("ignores an active owner from another organisation", async () => {
-    await insertUser(randomUUID(), "owner_admin", otherClinicId);
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(true);
-  });
-
-  it("ignores an inactive same-organisation owner", async () => {
-    await insertUser(randomUUID(), "owner_admin", siblingClinicId, false);
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(true);
-  });
-
-  it("never allows an ordinary GPM actor", async () => {
-    const gpmId = randomUUID();
-    await insertUser(gpmId, "group_practice_manager", targetClinicId);
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        gpmId,
-      ),
-    ).resolves.toBe(false);
-  });
-
-  it("fails closed when the target clinic has no organisation", async () => {
-    const nullOrganisationOwnerId = randomUUID();
-    await insertUser(nullOrganisationOwnerId, "owner_admin", nullOrganisationClinicId);
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        nullOrganisationClinicId,
-        nullOrganisationOwnerId,
-      ),
-    ).resolves.toBe(false);
-  });
-
-  it("counts an active target-clinic GPM with module:leave as another reviewer", async () => {
-    const gpmId = randomUUID();
-    await insertUser(gpmId, "group_practice_manager", targetClinicId);
-    await pool.query(
-      `INSERT INTO user_permission_grants (clinic_id, user_id, permission, granted_by)
-       VALUES ($1, $2, 'module:leave', $3)`,
-      [targetClinicId, gpmId, actorId],
-    );
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(false);
-  });
-
-  it("ignores a target-clinic GPM whose module:leave grant is for another clinic", async () => {
-    const gpmId = randomUUID();
-    await insertUser(gpmId, "group_practice_manager", targetClinicId);
-    await pool.query(
-      `INSERT INTO user_permission_grants (clinic_id, user_id, permission, granted_by)
-       VALUES ($1, $2, 'module:leave', $3)`,
-      [siblingClinicId, gpmId, actorId],
-    );
-    await expect(
-      createPostgresUserRepository(pool).canUseSoleOwnerAdminLeaveReviewException(
-        targetClinicId,
-        actorId,
-      ),
-    ).resolves.toBe(true);
-  });
-
-  it("allows the sole eligible owner exception to complete against PostgreSQL", async () => {
-    const { leaveId, requestId } = await insertApprovedOwnerLeave();
-    const result = await createPostgresLeaveRepository(pool).approveCancellationRequest({
-      requestId,
-      leaveId,
-      clinicId: targetClinicId,
-      expectedStaffUserId: actorId,
-      reviewedByUserId: actorId,
-      reviewNotes: "Sole eligible reviewer",
-      selfReviewExceptionUsed: true,
-    });
-    expect(result.request).toMatchObject({
-      status: "approved",
-      selfReviewExceptionUsed: true,
-    });
-    expect(result.leave).toMatchObject({
-      status: "cancelled",
-      cancellationSelfReviewExceptionUsed: true,
-    });
-  });
-
-  it("transactional revalidation ignores an owner from another organisation", async () => {
-    const { leaveId, requestId } = await insertApprovedOwnerLeave();
-    await insertUser(randomUUID(), "owner_admin", otherClinicId);
-
-    const result = await createPostgresLeaveRepository(pool).approveCancellationRequest({
-      requestId,
-      leaveId,
-      clinicId: targetClinicId,
-      expectedStaffUserId: actorId,
-      reviewedByUserId: actorId,
-      reviewNotes: "Other-organisation owner is not a reviewer",
-      selfReviewExceptionUsed: true,
-    });
-
-    expect(result.request.status).toBe("approved");
-    expect(result.leave.status).toBe("cancelled");
-  });
-
-  it("revalidates organisation scope and preserves both rows if a same-org owner appears", async () => {
-    const userRepository = createPostgresUserRepository(pool);
-    await expect(
-      userRepository.canUseSoleOwnerAdminLeaveReviewException(targetClinicId, actorId),
-    ).resolves.toBe(true);
-    const { leaveId, requestId } = await insertApprovedOwnerLeave();
-    await insertUser(randomUUID(), "owner_admin", siblingClinicId);
-
-    await expect(
-      createPostgresLeaveRepository(pool).approveCancellationRequest({
-        requestId,
-        leaveId,
-        clinicId: targetClinicId,
-        expectedStaffUserId: actorId,
-        reviewedByUserId: actorId,
-        reviewNotes: "Stale precheck",
-        selfReviewExceptionUsed: true,
-      }),
-    ).rejects.toMatchObject({
-      statusCode: 403,
-      code: "SELF_REVIEW_FORBIDDEN",
-    });
-
+  async function expectUnchanged(leaveId: string, requestId: string) {
     const persisted = await pool.query<{
       parent_status: string;
       cancelled_by_user_id: string | null;
@@ -304,6 +149,117 @@ describe("sole owner leave review organisation scope (Postgres)", () => {
       child_status: "pending",
       reviewed_by_user_id: null,
       self_review_exception_used: false,
+    });
+  }
+
+  it("rejects direct self-cancellation transactionally", async () => {
+    const { leaveId } = await insertApprovedOwnerLeave();
+    await pool.query("DELETE FROM leave_cancellation_requests WHERE leave_request_id = $1", [leaveId]);
+
+    await expect(
+      createPostgresLeaveRepository(pool).cancelApprovedLeave({
+        leaveId,
+        clinicId: targetClinicId,
+        expectedStaffUserId: actorId,
+        cancelledByUserId: actorId,
+        cancellationReason: "Self cancellation attempt",
+      }),
+    ).rejects.toMatchObject({ statusCode: 403, code: "SELF_REVIEW_FORBIDDEN" });
+
+    const persisted = await pool.query<{
+      status: string;
+      cancelled_by_user_id: string | null;
+      cancellation_self_review_exception_used: boolean;
+    }>(
+      `SELECT status::text, cancelled_by_user_id, cancellation_self_review_exception_used
+         FROM leave_requests WHERE id = $1`,
+      [leaveId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      status: "approved",
+      cancelled_by_user_id: null,
+      cancellation_self_review_exception_used: false,
+    });
+  });
+
+  it.each(["approve", "decline"] as const)(
+    "rejects direct repository self-%s and preserves both locked rows",
+    async (decision) => {
+      const { leaveId, requestId } = await insertApprovedOwnerLeave();
+      const repository = createPostgresLeaveRepository(pool);
+      const input = {
+        requestId,
+        leaveId,
+        clinicId: targetClinicId,
+        expectedStaffUserId: actorId,
+        reviewedByUserId: actorId,
+        reviewNotes: decision === "approve" ? null : "Self decline attempt",
+      };
+
+      await expect(
+        decision === "approve"
+          ? repository.approveCancellationRequest(input)
+          : repository.declineCancellationRequest(input),
+      ).rejects.toMatchObject({ statusCode: 403, code: "SELF_REVIEW_FORBIDDEN" });
+      await expectUnchanged(leaveId, requestId);
+    },
+  );
+
+  it("preserves independent approval and writes false exception evidence", async () => {
+    const reviewerId = randomUUID();
+    await insertUser(reviewerId, "owner_admin", siblingClinicId);
+    const { leaveId, requestId } = await insertApprovedOwnerLeave();
+
+    const result = await createPostgresLeaveRepository(pool).approveCancellationRequest({
+      requestId,
+      leaveId,
+      clinicId: targetClinicId,
+      expectedStaffUserId: actorId,
+      reviewedByUserId: reviewerId,
+      reviewNotes: "Independent approval",
+    });
+
+    expect(result.request).toMatchObject({
+      status: "approved",
+      reviewedByUserId: reviewerId,
+      selfReviewExceptionUsed: false,
+    });
+    expect(result.leave).toMatchObject({
+      status: "cancelled",
+      cancelledByUserId: reviewerId,
+      cancellationSelfReviewExceptionUsed: false,
+    });
+  });
+
+  it("continues to read historical exception evidence", async () => {
+    const { leaveId, requestId } = await insertApprovedOwnerLeave();
+    await pool.query(
+      `UPDATE leave_cancellation_requests
+          SET status = 'approved', reviewed_by_user_id = $3, reviewed_at = now(),
+              self_review_exception_used = true
+        WHERE id = $1 AND leave_request_id = $2`,
+      [requestId, leaveId, actorId],
+    );
+    await pool.query(
+      `UPDATE leave_requests
+          SET status = 'cancelled', cancelled_by_user_id = $2, cancelled_at = now(),
+              cancellation_reason = 'Historical exception',
+              cancellation_self_review_exception_used = true
+        WHERE id = $1`,
+      [leaveId, actorId],
+    );
+
+    await expect(createPostgresLeaveRepository(pool).findById(leaveId)).resolves.toMatchObject({
+      status: "cancelled",
+      cancellationSelfReviewExceptionUsed: true,
+    });
+    await expect(createPostgresLeaveRepository(pool).findCancellationRequestById({
+      requestId,
+      leaveId,
+      clinicId: targetClinicId,
+    })).resolves.toMatchObject({
+      status: "approved",
+      selfReviewExceptionUsed: true,
     });
   });
 });
