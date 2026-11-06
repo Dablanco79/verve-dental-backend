@@ -131,6 +131,46 @@ error is a stop condition. Do not start or promote the application until the
 failure has been investigated and a repeat execution confirms zero pending
 migrations.
 
+### Workforce Production guarded entrypoint
+
+The 57-to-59 Workforce Production migration uses a release-specific guard. It
+requires `NODE_ENV=production` and these temporary, non-secret identity values:
+
+- `PRODUCTION_MIGRATION_EXPECTED_DATABASE_NAME`
+- `PRODUCTION_MIGRATION_EXPECTED_SYSTEM_IDENTIFIER`
+
+The active connection must be the writable Production primary; read replicas
+are rejected. Apply and verify must run in the same Render Pre-Deploy
+environment with the same primary `DATABASE_URL`. The database role must have
+permission to execute `pg_control_system()` or the guard fails closed.
+
+The apply operation accepts only the exact reviewed 57-ID baseline and pending
+sequence `060_leave_coverage_groups`, `061_clinic_brand_assets`:
+
+```powershell
+npm.cmd run migrate:production-guarded --workspace=@verve/backend -- apply
+```
+
+After apply succeeds, run the read-only verification mode against the exact
+59-ID release ledger:
+
+```powershell
+npm.cmd run migrate:production-guarded --workspace=@verve/backend -- verify
+```
+
+For Render Pre-Deploy, chain the equivalent Linux commands with `&&` so a
+failure prevents deployment:
+
+```bash
+npm run migrate:production-guarded --workspace=@verve/backend -- apply &&
+npm run migrate:production-guarded --workspace=@verve/backend -- verify
+```
+
+Apply intentionally refuses an already-migrated database. After the first
+successful release, remove the temporary apply command; any later safety check
+must use verification mode only. Never print the identity values or other
+environment configuration in deployment logs.
+
 > **Hosted-data safety:** Never run
 > `npm.cmd run test:db:setup --workspace=@verve/backend` against Staging or
 > Production. It is test setup and seeds demo data.
