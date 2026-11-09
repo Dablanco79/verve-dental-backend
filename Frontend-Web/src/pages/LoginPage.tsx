@@ -18,6 +18,13 @@ type LoginStep =
 
 const INLINE_ARTWORK_FALLBACK =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+const SESSION_EXPIRED_MESSAGE = "Your session expired. Please log in again.";
+
+function consumeSessionExpiredMessage(): string | null {
+  if (window.sessionStorage.getItem("verve.sessionExpired") !== "1") return null;
+  window.sessionStorage.removeItem("verve.sessionExpired");
+  return SESSION_EXPIRED_MESSAGE;
+}
 
 function LoginLayout({ children, isFlow = false }: { children: ReactNode; isFlow?: boolean }) {
   return (
@@ -75,7 +82,9 @@ export function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const locationState = location.state as { from?: string; message?: string } | null;
   const returnTo = locationState?.from?.startsWith("/") ? locationState.from : "/";
-  const sessionMessage = locationState?.message ?? null;
+  const [sessionMessage] = useState(
+    () => locationState?.message ?? consumeSessionExpiredMessage(),
+  );
 
   if (user) {
     return <Navigate to={returnTo} replace />;

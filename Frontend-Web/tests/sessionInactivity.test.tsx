@@ -12,11 +12,13 @@ const {
   mockRefresh,
   mockRecordActivity,
   mockLogout,
+  mockRedirectToLogin,
 } = vi.hoisted(() => ({
   mockGetMe: vi.fn(),
   mockRefresh: vi.fn(),
   mockRecordActivity: vi.fn(),
   mockLogout: vi.fn(),
+  mockRedirectToLogin: vi.fn(),
 }));
 
 vi.mock("../src/api/client.js", () => ({
@@ -30,6 +32,10 @@ vi.mock("../src/api/client.js", () => ({
     recordActivity: mockRecordActivity,
     logout: mockLogout,
   }),
+}));
+
+vi.mock("../src/auth/authNavigation.js", () => ({
+  redirectToLogin: mockRedirectToLogin,
 }));
 
 const USER: AuthUser = {
@@ -168,7 +174,25 @@ describe("persistent session inactivity enforcement", () => {
 
     await waitFor(() => { expect(context?.user).toBeNull(); });
     expect(mockLogout).toHaveBeenCalledOnce();
+    expect(mockRedirectToLogin).toHaveBeenCalledOnce();
+    expect(mockLogout.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+      mockRedirectToLogin.mock.invocationCallOrder[0] ?? 0,
+    );
     visibilitySpy.mockRestore();
+  });
+
+  it("redirects after failed-refresh or absolute session-expiry events", async () => {
+    window.localStorage.setItem("verve.accessToken", tokenIssuedAt(BASE_TIME));
+    window.localStorage.setItem("verve.lastUserActivityAt", String(BASE_TIME));
+    renderProvider();
+    await waitFor(() => { expect(context?.user).toEqual(USER); });
+
+    act(() => {
+      window.dispatchEvent(new Event("verve:session-expired"));
+    });
+
+    expect(context?.user).toBeNull();
+    expect(mockRedirectToLogin).toHaveBeenCalledOnce();
   });
 
   it("records only genuine interaction as user activity", async () => {
@@ -208,5 +232,6 @@ describe("persistent session inactivity enforcement", () => {
     });
 
     expect(context?.user).toBeNull();
+    expect(mockRedirectToLogin).toHaveBeenCalledOnce();
   });
 });
