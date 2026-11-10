@@ -63,7 +63,29 @@ describe("POST /auth/mfa/setup", () => {
     expect(secret.length).toBeGreaterThanOrEqual(32);
     expect(uri).toMatch(/^otpauth:\/\/totp\//);
     expect(uri).toContain("staff%40clinic-a.au");
-    expect(uri).toContain("Verve%20Dental");
+    const parsedUri = new URL(uri);
+    expect(parsedUri.searchParams.get("issuer")).toBe("Verve Dental (Staging)");
+    expect(decodeURIComponent(parsedUri.pathname.slice(1))).toBe(
+      "Verve Dental (Staging):staff@clinic-a.au",
+    );
+  });
+
+  it.each([
+    ["Production", "RENQOR"],
+    ["Staging", "Verve Dental (Staging)"],
+  ])("uses the configured %s issuer in the URI label and parameter", async (_environment, issuer) => {
+    const app = await createTestApp({ mfaTotpIssuer: issuer });
+    const accessToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+
+    const res = await doSetup(app, accessToken);
+    expect(res.status).toBe(200);
+
+    const { uri } = (res.body as ApiData<{ uri: string }>).data;
+    const parsedUri = new URL(uri);
+    expect(parsedUri.searchParams.get("issuer")).toBe(issuer);
+    expect(decodeURIComponent(parsedUri.pathname.slice(1))).toBe(
+      `${issuer}:staff@clinic-a.au`,
+    );
   });
 
   it("requires authentication", async () => {

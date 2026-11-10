@@ -28,6 +28,7 @@ type TestAppOptions = {
   sessionIdleTimeoutSeconds?: number;
   sessionMaxAgeSeconds?: number;
   accessExpiresIn?: string;
+  mfaTotpIssuer?: string;
   configureDependencies?: (
     dependencies: AppDependencies,
   ) => void | Promise<void>;
@@ -46,6 +47,11 @@ export async function createTestApp(options?: TestAppOptions): Promise<Express> 
   );
   process.env.CORS_ORIGIN = options?.corsOrigin ?? "http://localhost:5173";
   process.env.MFA_ENCRYPTION_KEY = TEST_MFA_ENCRYPTION_KEY;
+  if (options?.mfaTotpIssuer) {
+    process.env.MFA_TOTP_ISSUER = options.mfaTotpIssuer;
+  } else {
+    delete process.env.MFA_TOTP_ISSUER;
+  }
   delete process.env.DATABASE_URL;
   delete process.env.REDIS_URL;
 

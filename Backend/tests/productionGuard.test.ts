@@ -14,7 +14,7 @@
  */
 
 import { createAppDependencies } from "../src/bootstrap/dependencies.js";
-import { assertDeployedCorsOrigin } from "../src/config/index.js";
+import { assertDeployedCorsOrigin, loadConfig } from "../src/config/index.js";
 import { createLogger } from "../src/utils/logger.js";
 import type { EnvConfig } from "../src/config/index.js";
 
@@ -41,6 +41,7 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     REDIS_URL: "redis://cache.example.com:6379",
     REDIS_TLS: "auto",
     MFA_ENCRYPTION_KEY: "0".repeat(64),
+    MFA_TOTP_ISSUER: "RENQOR",
     MIGRATE_ON_STARTUP: false,
     OCR_PROVIDER: "anthropic",
     OCR_CLAUDE_MODEL: "claude-opus-4-5",
@@ -52,6 +53,76 @@ function makeConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
 }
 
 const silentLogger = createLogger({ LOG_LEVEL: "silent" });
+
+function loadMfaConfig(
+  nodeEnv: "development" | "test" | "staging" | "production",
+  issuer?: string,
+): EnvConfig {
+  const keys = [
+    "NODE_ENV",
+    "CORS_ORIGIN",
+    "JWT_ACCESS_SECRET",
+    "JWT_REFRESH_SECRET",
+    "MFA_ENCRYPTION_KEY",
+    "MFA_TOTP_ISSUER",
+  ] as const;
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+
+  process.env.NODE_ENV = nodeEnv;
+  process.env.CORS_ORIGIN =
+    nodeEnv === "staging" || nodeEnv === "production"
+      ? "https://app.example.com"
+      : "http://localhost:5173";
+  process.env.JWT_ACCESS_SECRET = "test-access-secret-minimum-32-characters-long";
+  process.env.JWT_REFRESH_SECRET = "test-refresh-secret-minimum-32-characters-long";
+  process.env.MFA_ENCRYPTION_KEY = "0".repeat(64);
+  if (issuer === undefined) {
+    delete process.env.MFA_TOTP_ISSUER;
+  } else {
+    process.env.MFA_TOTP_ISSUER = issuer;
+  }
+
+  try {
+    return loadConfig();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+describe("MFA TOTP issuer configuration", () => {
+  it.each(["development", "test"] as const)(
+    "defaults %s to the staging issuer",
+    (nodeEnv) => {
+      expect(loadMfaConfig(nodeEnv).MFA_TOTP_ISSUER).toBe(
+        "Verve Dental (Staging)",
+      );
+    },
+  );
+
+  it.each(["staging", "production"] as const)(
+    "requires an explicit issuer in %s",
+    (nodeEnv) => {
+      expect(() => loadMfaConfig(nodeEnv)).toThrow(/MFA_TOTP_ISSUER.*required/i);
+    },
+  );
+
+  it("accepts the explicit Production issuer", () => {
+    expect(loadMfaConfig("production", "RENQOR").MFA_TOTP_ISSUER).toBe("RENQOR");
+  });
+
+  it("accepts the explicit Staging issuer", () => {
+    expect(
+      loadMfaConfig("production", "Verve Dental (Staging)").MFA_TOTP_ISSUER,
+    ).toBe("Verve Dental (Staging)");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Production — URL-absent guards (network-free: throw before any connect())

@@ -48,7 +48,7 @@ const MOCK_USER: AuthUser = {
 
 const MOCK_SETUP_DATA: MfaSetupData = {
   secret: "JBSWY3DPEHPK3PXP",
-  uri: "otpauth://totp/Verve%20Dental:staff%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=Verve%20Dental",
+  uri: "otpauth://totp/RENQOR:staff%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=RENQOR",
 };
 
 function makeAuthContext(

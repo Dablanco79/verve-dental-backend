@@ -14,6 +14,7 @@ import * as tokenStorage from "./tokenStorage.js";
 import { decodeTokenIssuedAt, decodeTokenPermissions } from "./tokenUtils.js";
 import { AuthContext } from "./AuthContext.js";
 import type { AuthContextValue } from "./AuthContext.js";
+import { redirectToLogin } from "./authNavigation.js";
 
 const apiClient = createApiClient(loadConfig());
 const SESSION_EXPIRED_EVENT = "verve:session-expired";
@@ -86,11 +87,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // expired session visible while a slow or offline network request settles.
     clearClientSession();
     window.sessionStorage.setItem("verve.sessionExpired", "1");
+    // Initiate server-side revocation before notifying listeners. Navigation
+    // must not block on a slow or offline request, so revocation remains
+    // best-effort after it has been started.
+    void apiClient.logout().catch(() => undefined);
     window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
-    // Revocation must not block the login screen when the client is offline.
-    void Promise.resolve()
-      .then(() => apiClient.logout())
-      .catch(() => undefined);
     return Promise.resolve();
   }, [clearClientSession]);
 
@@ -176,6 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function handleSessionExpired(): void {
       clearClientSession();
+      redirectToLogin();
     }
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
@@ -280,6 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function handleStorage(event: StorageEvent): void {
       if (event.key === tokenStorage.ACCESS_TOKEN_KEY && event.newValue === null) {
         clearClientSession();
+        redirectToLogin();
         return;
       }
       if (event.key === tokenStorage.LAST_USER_ACTIVITY_KEY && event.newValue) {

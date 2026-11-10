@@ -20,7 +20,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthContext } from "../src/auth/AuthContext.js";
 import type { AuthContextValue } from "../src/auth/AuthContext.js";
@@ -52,7 +52,7 @@ const MOCK_ADMIN_USER: AuthUser = {
 
 const MOCK_SETUP_DATA: MfaSetupData = {
   secret: "JBSWY3DPEHPK3PXP",
-  uri: "otpauth://totp/Verve%20Dental:admin%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=Verve%20Dental",
+  uri: "otpauth://totp/RENQOR:admin%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=RENQOR",
 };
 
 const ENROLLMENT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.enrollment";
@@ -96,6 +96,10 @@ function submitCredentials(
   fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
 }
 
+beforeEach(() => {
+  window.sessionStorage.clear();
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Credentials step
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +115,18 @@ describe("LoginPage — credentials step", () => {
       "current-password",
     );
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+  });
+
+  it("shows and consumes the session-expired notification after document navigation", () => {
+    window.sessionStorage.setItem("verve.sessionExpired", "1");
+
+    renderLoginPage();
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Your session expired. Please log in again.",
+    );
+    expect(window.sessionStorage.getItem("verve.sessionExpired")).toBeNull();
+    expect(screen.getByAltText("RENQOR")).toBeInTheDocument();
   });
 
   it("keeps the submit control disabled while authentication is pending", async () => {

@@ -903,7 +903,7 @@ export function createAuthService(
     await savePendingMfaSecret(userId, secret);
 
     const uri = generateURI({
-      issuer: "Verve Dental",
+      issuer: config.MFA_TOTP_ISSUER,
       label: user.email,
       secret,
     });

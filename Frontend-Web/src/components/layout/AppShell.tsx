@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
@@ -30,6 +30,7 @@ import {
   X,
 } from "lucide-react";
 
+import { redirectToLogin } from "../../auth/authNavigation.js";
 import { useAuth } from "../../auth/useAuth.js";
 import { ALL_CLINICS_DASHBOARD_SCOPE } from "../../clinic/clinicContext.js";
 import { useSelectedClinic } from "../../clinic/useSelectedClinic.js";
@@ -78,7 +79,6 @@ export function AppShell({ children }: AppShellProps) {
     hasClinicProvider,
     setDashboardScope,
   } = useSelectedClinic();
-  const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const profileInitials = user?.email.slice(0, 2).toUpperCase() ?? "VB";
   const scopeLabel =
@@ -91,8 +91,14 @@ export function AppShell({ children }: AppShellProps) {
       : selectedClinic?.id ?? "";
 
   async function handleLogout(): Promise<void> {
-    await logout();
-    await navigate("/login");
+    try {
+      await logout();
+    } catch {
+      // AuthProvider clears the local session in a finally block. A network
+      // failure must not leave the user in the authenticated application.
+    } finally {
+      redirectToLogin();
+    }
   }
 
   function closeNav(): void {

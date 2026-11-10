@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-const envSchema = z.object({
+const LOCAL_MFA_TOTP_ISSUER = "Verve Dental (Staging)";
+
+const rawEnvSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "staging", "production"])
     .default("development"),
@@ -49,6 +51,14 @@ const envSchema = z.object({
   MFA_ENCRYPTION_KEY: z
     .string()
     .min(64, "MFA_ENCRYPTION_KEY must be at least 64 hex characters (32 bytes)"),
+  /**
+   * Display name embedded in new otpauth:// enrollment URIs.
+   *
+   * Render services may both use NODE_ENV=production, so deployed environments
+   * must set this explicitly rather than inferring an issuer from NODE_ENV.
+   * Development/test use the staging label by default.
+   */
+  MFA_TOTP_ISSUER: z.string().trim().min(1).max(64).optional(),
   /**
    * Legacy startup-migration flag.
    *
@@ -131,6 +141,26 @@ const envSchema = z.object({
     .enum(["optional", "required"])
     .default("optional"),
 });
+
+const envSchema = rawEnvSchema
+  .superRefine((config, ctx) => {
+    if (
+      (config.NODE_ENV === "staging" || config.NODE_ENV === "production") &&
+      config.MFA_TOTP_ISSUER === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["MFA_TOTP_ISSUER"],
+        message:
+          "MFA_TOTP_ISSUER is required in staging and production; " +
+          "set RENQOR for Production or Verve Dental (Staging) for Staging",
+      });
+    }
+  })
+  .transform((config) => ({
+    ...config,
+    MFA_TOTP_ISSUER: config.MFA_TOTP_ISSUER ?? LOCAL_MFA_TOTP_ISSUER,
+  }));
 
 export type EnvConfig = z.infer<typeof envSchema>;
 

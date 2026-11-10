@@ -17,7 +17,13 @@ import {
 } from "./helpers/auth.js";
 import { setAuthenticatedUser, type AuthTestState } from "./helpers/mockUseAuth.js";
 
-const { authTestState, mockListClinics, mockGetMyOperationalClinics, mockLogout } = vi.hoisted(() => {
+const {
+  authTestState,
+  mockListClinics,
+  mockGetMyOperationalClinics,
+  mockLogout,
+  mockRedirectToLogin,
+} = vi.hoisted(() => {
   const authTestState: AuthTestState = { user: null, isLoading: false };
   return {
     authTestState,
@@ -33,8 +39,13 @@ const { authTestState, mockListClinics, mockGetMyOperationalClinics, mockLogout 
       },
     ]),
     mockLogout: vi.fn(),
+    mockRedirectToLogin: vi.fn(),
   };
 });
+
+vi.mock("../src/auth/authNavigation.js", () => ({
+  redirectToLogin: mockRedirectToLogin,
+}));
 
 vi.mock("../src/auth/useAuth.js", () => ({
   useAuth: () => ({
@@ -89,6 +100,39 @@ describe("AppShell navigation and clinic scope", () => {
     window.localStorage.clear();
     mockListClinics.mockReset();
     mockLogout.mockReset();
+    mockRedirectToLogin.mockReset();
+  });
+
+  it("waits for server logout before performing a full login navigation", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    mockListClinics.mockResolvedValue([]);
+    let resolveLogout: (() => void) | undefined;
+    mockLogout.mockReturnValue(new Promise<void>((resolve) => {
+      resolveLogout = resolve;
+    }));
+    renderShell();
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(mockLogout).toHaveBeenCalledOnce();
+    expect(mockRedirectToLogin).not.toHaveBeenCalled();
+
+    resolveLogout?.();
+    await waitFor(() => {
+      expect(mockRedirectToLogin).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("still performs a full login navigation when server logout fails", async () => {
+    setAuthenticatedUser(authTestState, createAdminUser());
+    mockListClinics.mockResolvedValue([]);
+    mockLogout.mockRejectedValue(new Error("Network error"));
+    renderShell();
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    await waitFor(() => {
+      expect(mockRedirectToLogin).toHaveBeenCalledOnce();
+    });
   });
 
   it("shows an owner_admin clinic selector and persists the selected clinic", async () => {

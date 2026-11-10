@@ -318,6 +318,7 @@ describe("createOcrProvider", () => {
       DATABASE_SSL: "auto",
       REDIS_TLS: "auto",
       MFA_ENCRYPTION_KEY: "0".repeat(64),
+      MFA_TOTP_ISSUER: "Verve Dental (Staging)",
       MIGRATE_ON_STARTUP: false,
       OCR_PROVIDER: "anthropic",
       OCR_CLAUDE_MODEL: "claude-opus-4-5",

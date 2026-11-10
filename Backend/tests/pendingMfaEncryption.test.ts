@@ -99,6 +99,7 @@ function makeTestConfig(): EnvConfig {
     REDIS_URL: undefined,
     REDIS_TLS: "auto",
     MFA_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
+    MFA_TOTP_ISSUER: "Verve Dental (Staging)",
     MIGRATE_ON_STARTUP: false,
     OCR_PROVIDER: "anthropic",
     OCR_CLAUDE_MODEL: "claude-opus-4-5",
