@@ -52,7 +52,7 @@ const MOCK_ADMIN_USER: AuthUser = {
 
 const MOCK_SETUP_DATA: MfaSetupData = {
   secret: "JBSWY3DPEHPK3PXP",
-  uri: "otpauth://totp/Verve%20Dental:admin%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=Verve%20Dental",
+  uri: "otpauth://totp/RENQOR:admin%40clinic-a.au?secret=JBSWY3DPEHPK3PXP&issuer=RENQOR",
 };
 
 const ENROLLMENT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.enrollment";
