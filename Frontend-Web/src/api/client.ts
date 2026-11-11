@@ -10,6 +10,7 @@ import type {
   HealthResponse,
   LoginResponse,
   MfaSetupData,
+  RequiredPasswordChangeRequest,
   ResetPasswordRequest,
   StaffPayRate,
   StaffUser,
@@ -409,6 +410,22 @@ export function createApiClient(config: AppConfig) {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+  }
+
+  async function completeRequiredPasswordChange(
+    passwordChangeToken: string,
+    body: RequiredPasswordChangeRequest,
+  ): Promise<void> {
+    await request<{ message: string }>(
+      config,
+      "/api/v1/auth/required-password-change",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+      passwordChangeToken,
+      { skipAuthRetry: true },
+    );
   }
 
   async function verifyMfa(mfaToken: string, code: string): Promise<AuthSession> {
@@ -3139,6 +3156,7 @@ export function createApiClient(config: AppConfig) {
   return {
     getHealth,
     login,
+    completeRequiredPasswordChange,
     verifyMfa,
     setupMfa,
     confirmMfa,

@@ -47,6 +47,11 @@ export type AuthSession = {
 
 export type LoginResponse =
   | {
+      requiresPasswordChange: true;
+      passwordChangeToken: string;
+      user: AuthUser;
+    }
+  | {
       requiresMfa: false;
       accessToken: string;
       expiresIn: number;
@@ -121,6 +126,10 @@ export type UpdateUserRequest = {
 
 export type ChangePasswordRequest = {
   currentPassword: string;
+  newPassword: string;
+};
+
+export type RequiredPasswordChangeRequest = {
   newPassword: string;
 };
 

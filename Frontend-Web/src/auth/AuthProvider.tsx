@@ -189,6 +189,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiClient.login(email, password);
 
+    if ("requiresPasswordChange" in result) {
+      // The challenge remains only in the caller's in-memory step state. It is
+      // never persisted as an access token or browser session credential.
+      return {
+        requiresPasswordChange: true as const,
+        passwordChangeToken: result.passwordChangeToken,
+      };
+    }
+
     // Narrow the enrollment case first. Early return ensures TypeScript removes
     // this variant from the type for subsequent checks — the && would confuse
     // control-flow analysis and leave the union unsatisfied below.
@@ -208,6 +217,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistSession(result.accessToken, result.user, setUser, true);
     return { requiresMfa: false as const };
   }, []);
+
+  const completeRequiredPasswordChange = useCallback(
+    async (passwordChangeToken: string, newPassword: string): Promise<void> => {
+      await apiClient.completeRequiredPasswordChange(passwordChangeToken, {
+        newPassword,
+      });
+    },
+    [],
+  );
 
   const verifyMfa = useCallback(async (mfaToken: string, code: string) => {
     const session = await apiClient.verifyMfa(mfaToken, code);
@@ -327,12 +345,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       enrollmentToken,
       login,
+      completeRequiredPasswordChange,
       verifyMfa,
       setupMfa,
       confirmMfaEnrollment,
       logout,
     }),
-    [user, isLoading, enrollmentToken, login, verifyMfa, setupMfa, confirmMfaEnrollment, logout],
+    [
+      user,
+      isLoading,
+      enrollmentToken,
+      login,
+      completeRequiredPasswordChange,
+      verifyMfa,
+      setupMfa,
+      confirmMfaEnrollment,
+      logout,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

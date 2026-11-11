@@ -409,9 +409,9 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
     expect(ids).toContain("038_stocktake_line_snapshot");
   });
 
-  it("orders coordinated migrations as 057, 059, 060, then 061", () => {
+  it("orders coordinated migrations through mandatory password migration 062", () => {
     const ids = BOOTSTRAP_MIGRATIONS.map((m) => m.id);
-    expect(ids[ids.length - 1]).toBe("061_clinic_brand_assets");
+    expect(ids[ids.length - 1]).toBe("062_mandatory_first_login_password");
     expect(ids.indexOf("057_leave_cancellation_requests"))
       .toBe(ids.indexOf("056_approved_leave_cancellation") + 1);
     expect(ids.indexOf("059_force_workflow_table_rls"))
@@ -420,6 +420,19 @@ describe("Stocktake migrations — registered in BOOTSTRAP_MIGRATIONS", () => {
       .toBe(ids.indexOf("059_force_workflow_table_rls") + 1);
     expect(ids.indexOf("061_clinic_brand_assets"))
       .toBe(ids.indexOf("060_leave_coverage_groups") + 1);
+    expect(ids.indexOf("062_mandatory_first_login_password"))
+      .toBe(ids.indexOf("061_clinic_brand_assets") + 1);
+  });
+
+  it("062 adds a non-null false default without updating existing users", () => {
+    const migration = BOOTSTRAP_MIGRATIONS.find(
+      (candidate) => candidate.id === "062_mandatory_first_login_password",
+    );
+    expect(migration).toBeDefined();
+    expect(migration?.sql).toContain(
+      "must_change_password boolean NOT NULL DEFAULT false",
+    );
+    expect(migration?.sql).not.toMatch(/\bUPDATE\s+users\b/i);
   });
 
   it("061 FORCEs exact-clinic RLS without an owner-admin bypass", () => {

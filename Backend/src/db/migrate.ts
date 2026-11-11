@@ -3642,6 +3642,13 @@ export const BOOTSTRAP_MIGRATIONS: BootstrapMigration[] = [
         WITH CHECK (clinic_id = app_current_clinic_id());
     `,
   },
+  {
+    id: "062_mandatory_first_login_password",
+    sql: `
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
+    `,
+  },
 ];
 
 /**

@@ -72,6 +72,7 @@ function createMinimalUserRepo(
     payrollTrack,
     totpSecret: null,
     mfaEnabled: false,
+    mustChangePassword: false,
     isActive: true,
   });
 
@@ -87,6 +88,8 @@ function createMinimalUserRepo(
     },
     getClinicName(): Promise<string> { return Promise.resolve("Clinic A"); },
     async updatePassword() { /* no-op */ },
+    async setTemporaryPassword() { /* no-op */ },
+    async completeRequiredPasswordChange() { return false; },
     updateUser(): never { throw new Error("not implemented in test stub"); },
     async setUserMfaEnrollment() { /* no-op */ },
   };

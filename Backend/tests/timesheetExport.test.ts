@@ -658,6 +658,7 @@ describe("timesheet export — payroll eligibility", () => {
       payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
+      mustChangePassword: false,
       isActive: true,
     };
     const approverUser: UserRecord = {

@@ -13,8 +13,7 @@ export type ProductionDatabaseIdentity = {
 };
 
 export const PRODUCTION_TARGET_MIGRATION_IDS = [
-  "060_leave_coverage_groups",
-  "061_clinic_brand_assets",
+  "062_mandatory_first_login_password",
 ] as const;
 
 const RELEASE_MIGRATION_IDS = BOOTSTRAP_MIGRATIONS.map(
@@ -27,7 +26,7 @@ const BASELINE_MIGRATION_IDS = RELEASE_MIGRATION_IDS.slice(
 
 function assertApprovedReleaseShape(): void {
   const expectedTail = [
-    "059_force_workflow_table_rls",
+    "061_clinic_brand_assets",
     ...PRODUCTION_TARGET_MIGRATION_IDS,
   ];
   const actualTail = RELEASE_MIGRATION_IDS.slice(-expectedTail.length);
@@ -36,13 +35,13 @@ function assertApprovedReleaseShape(): void {
   );
 
   if (
-    BASELINE_MIGRATION_IDS.length !== 57 ||
-    RELEASE_MIGRATION_IDS.length !== 59 ||
+    BASELINE_MIGRATION_IDS.length !== 59 ||
+    RELEASE_MIGRATION_IDS.length !== 60 ||
     !tailMatches ||
     RELEASE_MIGRATION_IDS.some((id) => id.startsWith("058_"))
   ) {
     throw new Error(
-      "[Migration Guard] Release migration registration no longer matches the approved 57-to-59 migration plan.",
+      "[Migration Guard] Release migration registration no longer matches the approved 59-to-60 migration plan.",
     );
   }
 }

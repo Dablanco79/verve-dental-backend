@@ -47,6 +47,7 @@ type UserRow = {
   payroll_track: string;
   totp_secret: string | null;
   mfa_enabled: boolean;
+  must_change_password: boolean;
   is_active: boolean;
 };
 
@@ -64,6 +65,7 @@ function rowToUserRecord(row: UserRow): UserRecord {
     payrollTrack: row.payroll_track as UserRecord["payrollTrack"],
     totpSecret: row.totp_secret,
     mfaEnabled: row.mfa_enabled,
+    mustChangePassword: row.must_change_password,
     isActive: row.is_active,
   };
 }
@@ -126,9 +128,9 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
              id, email, password_hash, role,
              home_clinic_id, home_clinic_name,
              first_name, last_name, display_name,
-             payroll_track, mfa_enabled, is_active
+             payroll_track, mfa_enabled, must_change_password, is_active
            )
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, true)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, true)
            RETURNING *`,
           [
             id,
@@ -141,6 +143,7 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
             input.lastName,
             derivedDisplayName,
             input.payrollTrack ?? "hourly",
+            input.mustChangePassword ?? false,
           ],
         );
 
@@ -293,6 +296,50 @@ export function createPostgresUserRepository(pool: DatabasePool): UserRepository
           }
         },
         true, // ownerAdmin
+      );
+    },
+
+    async setTemporaryPassword(userId: string, hashedPassword: string): Promise<void> {
+      await withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const result = await client.query(
+            `UPDATE users
+                SET password_hash = $1,
+                    must_change_password = true
+              WHERE id = $2`,
+            [hashedPassword, userId],
+          );
+          if ((result.rowCount ?? 0) === 0) {
+            throw new AppError(404, "USER_NOT_FOUND", "User not found");
+          }
+        },
+        true,
+      );
+    },
+
+    async completeRequiredPasswordChange(
+      userId: string,
+      expectedPasswordHash: string,
+      hashedPassword: string,
+    ): Promise<boolean> {
+      return withTenantContext(
+        pool,
+        AUTH_BYPASS_CLINIC_ID,
+        async (client) => {
+          const result = await client.query(
+            `UPDATE users
+                SET password_hash = $1,
+                    must_change_password = false
+              WHERE id = $2
+                AND password_hash = $3
+                AND must_change_password = true`,
+            [hashedPassword, userId, expectedPasswordHash],
+          );
+          return (result.rowCount ?? 0) === 1;
+        },
+        true,
       );
     },
 

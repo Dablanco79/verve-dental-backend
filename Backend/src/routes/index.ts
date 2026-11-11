@@ -117,6 +117,12 @@ export function createApiRouter(deps: AppDependencies, config: EnvConfig): Route
   router.get("/ready", asyncHandler(createReadinessHandler(deps.healthService)));
 
   router.post("/auth/login", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.login(req, res)));
+  router.post(
+    "/auth/required-password-change",
+    authRateLimiter,
+    originGuard,
+    asyncHandler((req, res) => authHandlers.completeRequiredPasswordChange(req, res)),
+  );
   router.post("/auth/mfa/verify", authRateLimiter, originGuard, asyncHandler((req, res) => authHandlers.verifyMfa(req, res)));
   router.post("/auth/mfa/setup", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.setupMfa(req, res)));
   router.post("/auth/mfa/confirm", authRateLimiter, originGuard, mfaSetupAuth, asyncHandler((req, res) => authHandlers.confirmMfa(req, res)));

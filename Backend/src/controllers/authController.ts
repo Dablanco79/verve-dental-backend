@@ -16,6 +16,13 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
+const requiredPasswordChangeSchema = z.object({
+  newPassword: z
+    .string()
+    .min(8, "New password must be at least 8 characters")
+    .max(128, "New password must be at most 128 characters"),
+});
+
 const mfaVerifySchema = z.object({
   mfaToken: z.string().min(1),
   code: z.string().length(6),
@@ -66,6 +73,26 @@ function auditContext(req: Request) {
   };
 }
 
+function bearerToken(req: Request): string {
+  const authorization = req.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    throw new AppError(
+      401,
+      "INVALID_PASSWORD_CHANGE_CHALLENGE",
+      "Password-change challenge is required.",
+    );
+  }
+  const token = authorization.slice("Bearer ".length).trim();
+  if (!token) {
+    throw new AppError(
+      401,
+      "INVALID_PASSWORD_CHANGE_CHALLENGE",
+      "Password-change challenge is required.",
+    );
+  }
+  return token;
+}
+
 export function createAuthHandlers(authService: AuthService, config: EnvConfig) {
   const cookieMaxAge = parseTtlMs(config.JWT_REFRESH_EXPIRES_IN);
   const isDeployedEnvironment =
@@ -98,6 +125,17 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
     async login(req: Request, res: Response): Promise<void> {
       const body = parseBody(loginSchema, req.body);
       const result = await authService.login(body.email, body.password, auditContext(req));
+
+      if (result.kind === "password_change_required") {
+        res.status(200).json({
+          data: {
+            requiresPasswordChange: true,
+            passwordChangeToken: result.passwordChangeToken,
+            user: result.user,
+          },
+        });
+        return;
+      }
 
       if (result.kind === "mfa_required") {
         res.status(200).json({
@@ -213,6 +251,21 @@ export function createAuthHandlers(authService: AuthService, config: EnvConfig) 
       );
 
       res.status(200).json({ data: { message: "Password changed successfully. Please log in again." } });
+    },
+
+    async completeRequiredPasswordChange(req: Request, res: Response): Promise<void> {
+      const body = parseBody(requiredPasswordChangeSchema, req.body);
+      await authService.completeRequiredPasswordChange(
+        bearerToken(req),
+        body.newPassword,
+        auditContext(req),
+      );
+      clearRefreshCookie(res);
+      res.status(200).json({
+        data: {
+          message: "Password changed successfully. Please sign in again.",
+        },
+      });
     },
 
     async setupMfa(req: Request, res: Response): Promise<void> {

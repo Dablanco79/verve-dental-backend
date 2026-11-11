@@ -103,7 +103,7 @@ function sawDdl(queries: readonly string[]): boolean {
 }
 
 describe("Production migration safety guard", () => {
-  it("applies only 060 and 061 in approved order for the correct identity", async () => {
+  it("applies only 062 in approved order for the correct identity", async () => {
     const state = makeGuardedPool(BASELINE_IDS);
 
     await expect(
@@ -131,7 +131,7 @@ describe("Production migration safety guard", () => {
     expect(firstDdlIndex).toBeGreaterThan(identityIndex);
   });
 
-  it("verifies the exact 59-ID release ledger without modifying it", async () => {
+  it("verifies the exact 60-ID release ledger without modifying it", async () => {
     const state = makeGuardedPool(RELEASE_IDS);
 
     await expect(

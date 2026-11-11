@@ -11,6 +11,8 @@ import { encryptTotpSecret } from "../utils/mfaCrypto.js";
 export type CreateUserInput = {
   email: string;
   passwordHash: string;
+  /** Administrator-created accounts use a temporary password. */
+  mustChangePassword?: boolean;
   role: UserRole;
   homeClinicId: string;
   homeClinicName: string;
@@ -49,6 +51,22 @@ export interface UserRepository {
    */
   getClinicName(clinicId: string): Promise<string | null>;
   updatePassword(userId: string, hashedPassword: string): Promise<void>;
+  /**
+   * Replaces a user's password with an administrator-issued temporary password.
+   * The password and mandatory-change state are written atomically.
+   */
+  setTemporaryPassword(userId: string, hashedPassword: string): Promise<void>;
+  /**
+   * Atomically replaces the verified temporary password and clears the
+   * mandatory-change state. The expected hash prevents stale challenges from
+   * overwriting a later administrator reset. Returns false when the challenge
+   * no longer matches the authoritative account state.
+   */
+  completeRequiredPasswordChange(
+    userId: string,
+    expectedPasswordHash: string,
+    hashedPassword: string,
+  ): Promise<boolean>;
   /**
    * Partial-update a user's profile fields.  Only supplied keys are written.
    * Throws 404 when the user does not exist.
@@ -104,6 +122,7 @@ export async function createInMemoryUserRepository(
       payrollTrack: "commission",
       totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
       mfaEnabled: true,
+      mustChangePassword: false,
       isActive: true,
     },
     {
@@ -119,6 +138,7 @@ export async function createInMemoryUserRepository(
       payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
+      mustChangePassword: false,
       isActive: true,
     },
     {
@@ -136,6 +156,7 @@ export async function createInMemoryUserRepository(
       // the MFA challenge, keeping all existing integration tests passing.
       totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
       mfaEnabled: true,
+      mustChangePassword: false,
       isActive: true,
     },
     {
@@ -152,6 +173,7 @@ export async function createInMemoryUserRepository(
       // MFA enrolled — loginAndGetTokens uses SEED_ADMIN_TOTP_SECRET for MFA.
       totpSecret: encryptTotpSecret(SEED_ADMIN_TOTP_SECRET, encryptionKey),
       mfaEnabled: true,
+      mustChangePassword: false,
       isActive: true,
     },
     // ── No-MFA privileged seed users (enforcement tests only) ──────────────
@@ -168,6 +190,7 @@ export async function createInMemoryUserRepository(
       payrollTrack: "commission",
       totpSecret: null,
       mfaEnabled: false,
+      mustChangePassword: false,
       isActive: true,
     },
     {
@@ -183,6 +206,7 @@ export async function createInMemoryUserRepository(
       payrollTrack: "hourly",
       totpSecret: null,
       mfaEnabled: false,
+      mustChangePassword: false,
       isActive: true,
     },
   ];
@@ -211,6 +235,7 @@ export async function createInMemoryUserRepository(
         payrollTrack: input.payrollTrack ?? "hourly",
         totpSecret: null,
         mfaEnabled: false,
+        mustChangePassword: input.mustChangePassword ?? false,
         isActive: true,
       };
       users.push(record);
@@ -232,6 +257,34 @@ export async function createInMemoryUserRepository(
         user.passwordHash = hashedPassword;
       }
       return Promise.resolve();
+    },
+
+    setTemporaryPassword(userId: string, hashedPassword: string): Promise<void> {
+      const user = users.find((u) => u.id === userId);
+      if (!user) {
+        return Promise.reject(new AppError(404, "USER_NOT_FOUND", "User not found"));
+      }
+      user.passwordHash = hashedPassword;
+      user.mustChangePassword = true;
+      return Promise.resolve();
+    },
+
+    completeRequiredPasswordChange(
+      userId: string,
+      expectedPasswordHash: string,
+      hashedPassword: string,
+    ): Promise<boolean> {
+      const user = users.find((u) => u.id === userId);
+      if (
+        !user ||
+        !user.mustChangePassword ||
+        user.passwordHash !== expectedPasswordHash
+      ) {
+        return Promise.resolve(false);
+      }
+      user.passwordHash = hashedPassword;
+      user.mustChangePassword = false;
+      return Promise.resolve(true);
     },
 
     updateUser(userId: string, fields: UpdateUserFields): Promise<UserRecord> {

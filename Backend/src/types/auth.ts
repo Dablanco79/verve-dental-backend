@@ -43,6 +43,8 @@ export type UserRecord = {
    */
   totpSecret: string | null;
   mfaEnabled: boolean;
+  /** True until an administrator-issued temporary password is replaced. */
+  mustChangePassword: boolean;
   isActive: boolean;
 };
 
@@ -108,6 +110,20 @@ export type MfaChallengePayload = {
 };
 
 /**
+ * Short-lived, single-purpose credential issued only after a temporary
+ * password has been verified. It is never accepted as an access token.
+ *
+ * passwordVersion is a keyed fingerprint of the password hash that was
+ * verified at login. An administrator reset therefore invalidates every
+ * previously issued challenge without exposing the password hash.
+ */
+export type PasswordChangeChallengePayload = {
+  sub: string;
+  type: "password_change_challenge";
+  passwordVersion: string;
+};
+
+/**
  * Short-lived token (15 min) issued at login when a privileged user has not
  * yet enrolled MFA.  It carries the same user fields as an access token but
  * uses type "mfa_enrollment" so the authenticate middleware rejects it for all
@@ -142,6 +158,11 @@ export type PublicUser = AuthenticatedUser & {
 };
 
 export type LoginResult =
+  | {
+      kind: "password_change_required";
+      passwordChangeToken: string;
+      user: PublicUser;
+    }
   | {
       kind: "authenticated";
       tokens: AuthTokens;

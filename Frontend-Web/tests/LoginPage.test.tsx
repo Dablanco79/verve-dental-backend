@@ -65,6 +65,7 @@ function makeAuthContext(overrides: Partial<AuthContextValue> = {}): AuthContext
     isLoading: false,
     enrollmentToken: null,
     login: vi.fn().mockResolvedValue({ requiresMfa: false }),
+    completeRequiredPasswordChange: vi.fn().mockResolvedValue(undefined),
     verifyMfa: vi.fn().mockResolvedValue(undefined),
     setupMfa: vi.fn().mockResolvedValue(MOCK_SETUP_DATA),
     confirmMfaEnrollment: vi.fn().mockResolvedValue(undefined),
@@ -154,6 +155,77 @@ describe("LoginPage — credentials step", () => {
     expect(source).toHaveAttribute("media", "(min-width: 741px)");
     expect(fallback?.src).toMatch(/^data:image\/svg\+xml,/);
     expect(fallback).toHaveAttribute("alt", "");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mandatory temporary-password replacement
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("LoginPage — required password change", () => {
+  it("shows only the mandatory password form and completes with the challenge", async () => {
+    const passwordChangeToken = "password-change-challenge";
+    const completeRequiredPasswordChange = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeAuthContext({
+      login: vi.fn().mockResolvedValue({
+        requiresPasswordChange: true as const,
+        passwordChangeToken,
+      }),
+      completeRequiredPasswordChange,
+    });
+    renderLoginPage(ctx);
+
+    submitCredentials("staff@clinic-a.au", "TemporaryPassword123!");
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", {
+        name: /change your temporary password/i,
+      })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /sign in/i })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPermanentPassword456!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "NewPermanentPassword456!" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^change password$/i }));
+
+    await waitFor(() => {
+      expect(completeRequiredPasswordChange).toHaveBeenCalledWith(
+        passwordChangeToken,
+        "NewPermanentPassword456!",
+      );
+    });
+    expect(await screen.findByRole("heading", { name: /password changed/i }))
+      .toBeInTheDocument();
+  });
+
+  it("rejects mismatched new passwords without submitting the challenge", async () => {
+    const completeRequiredPasswordChange = vi.fn();
+    renderLoginPage(makeAuthContext({
+      login: vi.fn().mockResolvedValue({
+        requiresPasswordChange: true as const,
+        passwordChangeToken: "password-change-challenge",
+      }),
+      completeRequiredPasswordChange,
+    }));
+    submitCredentials();
+
+    await screen.findByRole("heading", { name: /change your temporary password/i });
+    fireEvent.change(screen.getByLabelText(/^new password$/i), {
+      target: { value: "NewPermanentPassword456!" },
+    });
+    fireEvent.change(screen.getByLabelText(/confirm new password/i), {
+      target: { value: "DifferentPermanentPassword789!" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^change password$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "New passwords do not match.",
+    );
+    expect(completeRequiredPasswordChange).not.toHaveBeenCalled();
   });
 });
 

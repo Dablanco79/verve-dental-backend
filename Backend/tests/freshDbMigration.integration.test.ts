@@ -9,7 +9,7 @@
  * 055_leave_pilot_safety, 056_approved_leave_cancellation, and
  * 057_leave_cancellation_requests, infrastructure hardening migration
  * 059_force_workflow_table_rls, 060_leave_coverage_groups, and
- * 061_clinic_brand_assets.
+ * 061_clinic_brand_assets and 062_mandatory_first_login_password.
  *
  * TWO GATING VARIABLES:
  *
@@ -147,12 +147,30 @@ describe("Full migration chain — clean database (requires FRESH_DATABASE_URL)"
     if (SKIP_FRESH) return;
 
     const expectedLastMigration = BOOTSTRAP_MIGRATIONS.at(-1)?.id;
-    expect(expectedLastMigration).toBe("061_clinic_brand_assets");
+    expect(expectedLastMigration).toBe("062_mandatory_first_login_password");
 
     const { rows } = await (freshPool as pg.Pool).query<{ id: string }>(
       "SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1",
     );
     expect(rows[0]?.id).toBe(expectedLastMigration);
+  });
+
+  it("adds mandatory password state without forcing existing users", async () => {
+    if (SKIP_FRESH) return;
+
+    const { rows } = await (freshPool as pg.Pool).query<{
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+          AND column_name = 'must_change_password'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.is_nullable).toBe("NO");
+    expect(rows[0]?.column_default).toBe("false");
   });
 
   it("seeds clinics, demo users, and inventory without error", async () => {

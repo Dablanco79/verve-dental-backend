@@ -51,6 +51,7 @@ function makeMockUser(overrides: Partial<UserRecord> = {}): UserRecord {
     payrollTrack: "hourly",
     totpSecret: null,
     mfaEnabled: false,
+    mustChangePassword: false,
     isActive: true,
     ...overrides,
   };
@@ -65,6 +66,8 @@ function makeMockUserRepo(initial: UserRecord = makeMockUser()): UserRepository 
     listByClinic: () => Promise.resolve([]),
     getClinicName: () => Promise.resolve(null),
     updatePassword: () => Promise.resolve(),
+    setTemporaryPassword: () => Promise.resolve(),
+    completeRequiredPasswordChange: () => Promise.resolve(false),
     updateUser: () => Promise.resolve(record),
     setUserMfaEnrollment: (_id, totpSecret) => {
       record = { ...record, totpSecret, mfaEnabled: true };

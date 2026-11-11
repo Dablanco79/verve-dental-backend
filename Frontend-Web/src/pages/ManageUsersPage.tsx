@@ -952,7 +952,9 @@ export function ManageUsersPage() {
                             {/* Reset password action */}
                             {!isEditingThis ? (
                               isResettingThis && resetState.success ? (
-                                <span className="inventory-notice--inline">Password reset</span>
+                                <span className="inventory-notice--inline">
+                                  Temporary password set — change required at next login
+                                </span>
                               ) : (
                                 <button
                                   type="button"
@@ -1294,7 +1296,7 @@ export function ManageUsersPage() {
                               aria-label={`Reset password for ${u.email}`}
                             >
                               <label>
-                                New password
+                                Temporary password
                                 <input
                                   type="password"
                                   value={resetState.newPassword}
@@ -1313,7 +1315,7 @@ export function ManageUsersPage() {
                                 <p className="status-card__error">{resetState.error}</p>
                               ) : null}
                               <button type="submit" disabled={resetState.isSubmitting}>
-                                {resetState.isSubmitting ? "Resetting…" : "Set new password"}
+                                {resetState.isSubmitting ? "Resetting…" : "Set temporary password"}
                               </button>
                             </form>
                           </td>

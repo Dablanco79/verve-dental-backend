@@ -19,6 +19,12 @@ info:
     2. On success → `{ requiresMfa: false, accessToken, expiresIn, user }`
     3. Use `accessToken` as `Authorization: Bearer <token>` on subsequent requests.
 
+    ### Administrator-Issued Temporary Password
+    1. `POST /auth/login` → `{ requiresPasswordChange: true, passwordChangeToken, user }`
+    2. `POST /auth/required-password-change` (Bearer = passwordChangeToken) with
+       `{ newPassword }`.
+    3. Sign in again with the new password and continue through existing MFA requirements.
+
     ### MFA Verification Flow (existing enrollment)
     1. `POST /auth/login` → `{ requiresMfa: true, mfaToken, user }`
     2. `POST /auth/mfa/verify` with `{ mfaToken, code }` → `{ accessToken, expiresIn, user }`
@@ -2457,8 +2463,10 @@ paths:
       tags: [Auth]
       security: []
       description: >
-        Returns one of three outcomes depending on the user's MFA state:
+        Returns one of four outcomes depending on the user's password and MFA state:
 
+        - `requiresPasswordChange: true` — the verified administrator-issued
+          temporary password must be replaced before MFA or normal authentication.
         - `requiresMfa: false` — fully authenticated; `accessToken` and `refreshToken`
           cookie issued.
         - `requiresMfa: true` — MFA challenge; use `mfaToken` with POST /auth/mfa/verify.
@@ -2485,7 +2493,7 @@ paths:
               password: "securepassword"
       responses:
         "200":
-          description: Authenticated, MFA required, or MFA enrollment required.
+          description: Password change required, authenticated, MFA required, or MFA enrollment required.
           content:
             application/json:
               schema:
@@ -2494,6 +2502,17 @@ paths:
                 properties:
                   data:
                     oneOf:
+                      - description: Administrator-issued temporary password must be replaced.
+                        type: object
+                        required: [requiresPasswordChange, passwordChangeToken, user]
+                        properties:
+                          requiresPasswordChange:
+                            type: boolean
+                            enum: [true]
+                          passwordChangeToken:
+                            type: string
+                          user:
+                            $ref: "#/components/schemas/AuthenticatedUser"
                       - description: Direct authentication (no MFA).
                         type: object
                         required: [requiresMfa, accessToken, expiresIn, user]
@@ -2550,6 +2569,40 @@ paths:
                 message: Too many attempts, please try again later.
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/required-password-change:
+    post:
+      summary: Replace an administrator-issued temporary password
+      operationId: completeRequiredPasswordChange
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      description: >
+        Accepts only the short-lived password-change challenge returned by
+        POST /auth/login. It never issues access or refresh tokens. Successful
+        completion consumes the account's mandatory-change state and requires
+        a fresh login. Rate limited to 10 requests per 15 minutes per IP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+      responses:
+        "200":
+          description: Temporary password replaced; fresh login required.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Auth rate limit exceeded.
 
   /api/v1/auth/mfa/verify:
     post:
@@ -2775,8 +2828,7 @@ paths:
         - bearerAuth: []
       description: >
         Changes the password for the currently authenticated user. On success,
-        the user should log in again with the new password as existing sessions
-        are not automatically invalidated.
+        all refresh sessions are revoked and the user must log in again.
       requestBody:
         required: true
         content:

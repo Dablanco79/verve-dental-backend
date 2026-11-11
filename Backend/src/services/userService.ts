@@ -121,6 +121,7 @@ export function createUserService(
     const user = await userRepository.createUser({
       email: params.email,
       passwordHash,
+      mustChangePassword: true,
       role: params.role,
       homeClinicId: params.homeClinicId,
       homeClinicName: params.homeClinicName,
@@ -253,7 +254,7 @@ export function createUserService(
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    await userRepository.updatePassword(targetUserId, hashedPassword);
+    await userRepository.setTemporaryPassword(targetUserId, hashedPassword);
     await authService.revokeAllUserTokens(targetUserId);
 
     audit.logAuthEvent("auth.password.reset", {

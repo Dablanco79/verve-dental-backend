@@ -131,9 +131,9 @@ error is a stop condition. Do not start or promote the application until the
 failure has been investigated and a repeat execution confirms zero pending
 migrations.
 
-### Workforce Production guarded entrypoint
+### Production guarded entrypoint
 
-The 57-to-59 Workforce Production migration uses a release-specific guard. It
+The current 59-to-60 Production migration uses a release-specific guard. It
 requires `NODE_ENV=production` and these temporary, non-secret identity values:
 
 - `PRODUCTION_MIGRATION_EXPECTED_DATABASE_NAME`
@@ -144,15 +144,15 @@ are rejected. Apply and verify must run in the same Render Pre-Deploy
 environment with the same primary `DATABASE_URL`. The database role must have
 permission to execute `pg_control_system()` or the guard fails closed.
 
-The apply operation accepts only the exact reviewed 57-ID baseline and pending
-sequence `060_leave_coverage_groups`, `061_clinic_brand_assets`:
+The apply operation accepts only the exact reviewed 59-ID baseline and pending
+sequence `062_mandatory_first_login_password`:
 
 ```powershell
 npm.cmd run migrate:production-guarded --workspace=@verve/backend -- apply
 ```
 
 After apply succeeds, run the read-only verification mode against the exact
-59-ID release ledger:
+60-ID release ledger:
 
 ```powershell
 npm.cmd run migrate:production-guarded --workspace=@verve/backend -- verify

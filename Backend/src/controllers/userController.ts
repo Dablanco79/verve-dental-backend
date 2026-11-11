@@ -121,7 +121,11 @@ export function createUserHandlers(userService: UserService) {
 
       await userService.resetPassword(caller, targetUserId, body.newPassword);
 
-      res.status(200).json({ data: { message: "Password reset successfully." } });
+      res.status(200).json({
+        data: {
+          message: "Temporary password set. User must change it at next login.",
+        },
+      });
     },
   };
 }

@@ -169,6 +169,7 @@ describe("Sprint 4B — Cookie Migration", () => {
       await waitFor(() => { expect(ctx().isLoading).toBe(false); });
 
       let result:
+        | { requiresPasswordChange: true; passwordChangeToken: string }
         | { requiresMfa: true; mfaToken: string }
         | { requiresMfaEnrollment: true }
         | { requiresMfa: false }

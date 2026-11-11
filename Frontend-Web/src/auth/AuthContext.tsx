@@ -14,10 +14,15 @@ export type AuthContextValue = {
     email: string,
     password: string,
   ) => Promise<
+    | { requiresPasswordChange: true; passwordChangeToken: string }
     | { requiresMfa: true; mfaToken: string }
     | { requiresMfaEnrollment: true; enrollmentToken: string }
     | { requiresMfa: false }
   >;
+  completeRequiredPasswordChange: (
+    passwordChangeToken: string,
+    newPassword: string,
+  ) => Promise<void>;
   verifyMfa: (mfaToken: string, code: string) => Promise<void>;
   /**
    * Initiates MFA enrollment. Pass the enrollmentToken returned by login()

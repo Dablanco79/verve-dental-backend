@@ -116,6 +116,7 @@ function makeAuthContext(user: AuthUser): AuthContextValue {
     isLoading: false,
     enrollmentToken: null,
     login: vi.fn(),
+    completeRequiredPasswordChange: vi.fn(),
     verifyMfa: vi.fn(),
     setupMfa: vi.fn(),
     confirmMfaEnrollment: vi.fn(),

@@ -10,6 +10,8 @@ import type { MfaSetupData } from "../types/index.js";
 
 type LoginStep =
   | { step: "credentials" }
+  | { step: "password_change"; passwordChangeToken: string }
+  | { step: "password_change_success" }
   | { step: "mfa_verify"; mfaToken: string }
   | { step: "enrollment_loading" }
   | { step: "enrollment"; setupData: MfaSetupData }
@@ -73,10 +75,19 @@ function LoginLayout({ children, isFlow = false }: { children: ReactNode; isFlow
 
 export function LoginPage() {
   const location = useLocation();
-  const { user, login, verifyMfa, setupMfa, confirmMfaEnrollment } = useAuth();
+  const {
+    user,
+    login,
+    completeRequiredPasswordChange,
+    verifyMfa,
+    setupMfa,
+    confirmMfaEnrollment,
+  } = useAuth();
   const [loginStep, setLoginStep] = useState<LoginStep>({ step: "credentials" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -100,7 +111,13 @@ export function LoginPage() {
     try {
       const result = await login(email, password);
 
-      if ("requiresMfaEnrollment" in result) {
+      if ("requiresPasswordChange" in result) {
+        setPassword("");
+        setLoginStep({
+          step: "password_change",
+          passwordChangeToken: result.passwordChangeToken,
+        });
+      } else if ("requiresMfaEnrollment" in result) {
         // Backend requires this user to enroll MFA before proceeding.
         // Pass the enrollmentToken directly — do not rely on AuthContext state
         // having flushed yet, which would cause setupMfa() to see null and fall
@@ -116,6 +133,38 @@ export function LoginPage() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoginStep({ step: "credentials" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRequiredPasswordChange(
+    event: SubmitEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    if (loginStep.step !== "password_change") return;
+    setError(null);
+
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setError("New password must be between 8 and 128 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setError("New passwords do not match.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await completeRequiredPasswordChange(
+        loginStep.passwordChangeToken,
+        newPassword,
+      );
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setLoginStep({ step: "password_change_success" });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Password change failed");
     } finally {
       setIsSubmitting(false);
     }
@@ -157,6 +206,76 @@ export function LoginPage() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (loginStep.step === "password_change_success") {
+    return (
+      <LoginLayout isFlow>
+        <section className="auth-card">
+          <h2>Password changed</h2>
+          <p>
+            Your temporary password has been replaced. Sign in again with your
+            new password, then complete any required MFA setup or verification.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoginStep({ step: "credentials" });
+              setError(null);
+            }}
+          >
+            Back to sign in
+          </button>
+        </section>
+      </LoginLayout>
+    );
+  }
+
+  if (loginStep.step === "password_change") {
+    return (
+      <LoginLayout isFlow>
+        <section className="auth-card">
+          <LockKeyhole aria-hidden="true" />
+          <h2>Change your temporary password</h2>
+          <p>
+            You must choose a new password before accessing RENQOR. You will
+            sign in again afterward and complete any required MFA.
+          </p>
+          <form className="auth-form" onSubmit={(event) => {
+            void handleRequiredPasswordChange(event);
+          }}>
+            <label>
+              New password
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(event) => { setNewPassword(event.target.value); }}
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <label>
+              Confirm new password
+              <input
+                type="password"
+                value={confirmNewPassword}
+                onChange={(event) => { setConfirmNewPassword(event.target.value); }}
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Changing password…" : "Change password"}
+            </button>
+          </form>
+          {error ? <p className="status-card__error" role="alert">{error}</p> : null}
+        </section>
+      </LoginLayout>
+    );
+  }
 
   if (loginStep.step === "enrollment_success") {
     return (

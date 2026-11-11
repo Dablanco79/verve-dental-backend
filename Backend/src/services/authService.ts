@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { generateSecret, generateURI, verifySync } from "otplib";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import type { EnvConfig } from "../config/index.js";
 import { decryptTotpSecret, encryptTotpSecret } from "../utils/mfaCrypto.js";
@@ -16,6 +16,7 @@ import type {
   LoginResult,
   MfaChallengePayload,
   MfaEnrollmentPayload,
+  PasswordChangeChallengePayload,
   PublicUser,
   RefreshTokenPayload,
   UserRecord,
@@ -30,6 +31,7 @@ import { AppError } from "../types/errors.js";
  * or feature flag is needed.
  */
 const MFA_REQUIRED_ROLES: UserRole[] = ["owner_admin", "group_practice_manager"];
+const PASSWORD_CHANGE_CHALLENGE_TTL = "10m";
 
 type RefreshTokenRecord = {
   userId: string;
@@ -263,6 +265,43 @@ export function createAuthService(
     return { accessToken, refreshToken, expiresIn };
   }
 
+  function passwordHashVersion(passwordHash: string): string {
+    return createHmac("sha256", config.JWT_ACCESS_SECRET)
+      .update(passwordHash)
+      .digest("base64url");
+  }
+
+  function signPasswordChangeChallenge(user: UserRecord): string {
+    const payload: PasswordChangeChallengePayload = {
+      sub: user.id,
+      type: "password_change_challenge",
+      passwordVersion: passwordHashVersion(user.passwordHash),
+    };
+
+    return jwt.sign(payload, config.JWT_ACCESS_SECRET, {
+      expiresIn: PASSWORD_CHANGE_CHALLENGE_TTL,
+    });
+  }
+
+  function passwordVersionsMatch(actual: string, expected: string): boolean {
+    const actualBuffer = Buffer.from(actual);
+    const expectedBuffer = Buffer.from(expected);
+    return (
+      actualBuffer.length === expectedBuffer.length &&
+      timingSafeEqual(actualBuffer, expectedBuffer)
+    );
+  }
+
+  function assertPasswordChangeComplete(user: UserRecord): void {
+    if (user.mustChangePassword) {
+      throw new AppError(
+        403,
+        "PASSWORD_CHANGE_REQUIRED",
+        "You must change your temporary password before continuing.",
+      );
+    }
+  }
+
   function signMfaChallenge(user: UserRecord): string {
     const payload: MfaChallengePayload = {
       sub: user.id,
@@ -387,6 +426,24 @@ export function createAuthService(
 
     const publicUser = toPublicUser(user);
 
+    // A temporary password is sufficient only to obtain this short-lived,
+    // single-purpose challenge. Never issue access, refresh, MFA challenge, or
+    // MFA enrollment credentials until the password has been replaced.
+    if (user.mustChangePassword) {
+      await revokeAllUserTokens(user.id);
+      audit.logAuthEvent("auth.login.password_change_required", {
+        userId: user.id,
+        email: user.email,
+        clinicId: user.homeClinicId,
+        ...auditContext,
+      });
+      return {
+        kind: "password_change_required",
+        passwordChangeToken: signPasswordChangeChallenge(user),
+        user: publicUser,
+      };
+    }
+
     // ── MFA_REQUIRED_ROLES: owner_admin / group_practice_manager ─────────────
     // These roles unconditionally require MFA.
     if (MFA_REQUIRED_ROLES.includes(user.role)) {
@@ -507,6 +564,7 @@ export function createAuthService(
     if (!user?.isActive) {
       throw new AppError(401, "INVALID_MFA_TOKEN", "Invalid MFA challenge token");
     }
+    assertPasswordChangeComplete(user);
 
     const plaintextSecret = user.totpSecret
       ? decryptTotpSecret(user.totpSecret, config.MFA_ENCRYPTION_KEY)
@@ -584,6 +642,10 @@ export function createAuthService(
       if (!user?.isActive) {
         await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
         throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+      }
+      if (user.mustChangePassword) {
+        await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+        assertPasswordChangeComplete(user);
       }
 
       const sessionAgeSeconds = Math.floor(Date.now() / 1000) - sessionStartAt;
@@ -698,6 +760,15 @@ export function createAuthService(
     if (!storedUserId || storedUserId !== refreshPayload.sub) {
       throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
     }
+    const user = await userRepository.findById(storedUserId);
+    if (!user?.isActive) {
+      await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+      throw new AppError(401, "INVALID_REFRESH_TOKEN", "Invalid refresh token");
+    }
+    if (user.mustChangePassword) {
+      await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
+      assertPasswordChangeComplete(user);
+    }
     if (now - sessionStartAt >= config.SESSION_MAX_AGE_SECONDS) {
       await deleteRefreshToken(refreshPayload.jti, refreshPayload.sub);
       throw new AppError(401, "SESSION_EXPIRED", "Session has expired. Please log in again.");
@@ -775,6 +846,7 @@ export function createAuthService(
     if (!currentUser?.isActive) {
       throw new AppError(401, "UNAUTHORIZED", "User account is unavailable");
     }
+    assertPasswordChangeComplete(currentUser);
 
     let permissions: string[];
     if (currentUser.role === "owner_admin") {
@@ -841,6 +913,80 @@ export function createAuthService(
     }
   }
 
+  async function completeRequiredPasswordChange(
+    challengeToken: string,
+    newPassword: string,
+    auditContext: { ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    let payload: PasswordChangeChallengePayload;
+    try {
+      const decoded = parseJwtPayload(
+        jwt.verify(challengeToken, config.JWT_ACCESS_SECRET),
+      );
+      if (
+        decoded.type !== "password_change_challenge" ||
+        typeof decoded.sub !== "string" ||
+        typeof decoded.passwordVersion !== "string"
+      ) {
+        throw new Error("Invalid challenge type");
+      }
+      payload = decoded as unknown as PasswordChangeChallengePayload;
+    } catch {
+      throw new AppError(
+        401,
+        "INVALID_PASSWORD_CHANGE_CHALLENGE",
+        "Password-change challenge is invalid or expired.",
+      );
+    }
+
+    const user = await userRepository.findById(payload.sub);
+    const expectedVersion = user
+      ? passwordHashVersion(user.passwordHash)
+      : "";
+    if (
+      !user?.isActive ||
+      !user.mustChangePassword ||
+      !passwordVersionsMatch(payload.passwordVersion, expectedVersion)
+    ) {
+      throw new AppError(
+        401,
+        "INVALID_PASSWORD_CHANGE_CHALLENGE",
+        "Password-change challenge is invalid or expired.",
+      );
+    }
+
+    if (await bcrypt.compare(newPassword, user.passwordHash)) {
+      throw new AppError(
+        400,
+        "PASSWORD_REUSE_NOT_ALLOWED",
+        "Choose a password different from the temporary password.",
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    const updated = await userRepository.completeRequiredPasswordChange(
+      user.id,
+      user.passwordHash,
+      hashedPassword,
+    );
+    if (!updated) {
+      throw new AppError(
+        401,
+        "INVALID_PASSWORD_CHANGE_CHALLENGE",
+        "Password-change challenge is invalid or expired.",
+      );
+    }
+
+    await revokeAllUserTokens(user.id);
+    audit.logAuthEvent("auth.password.changed", {
+      userId: user.id,
+      email: user.email,
+      clinicId: user.homeClinicId,
+      reason: "required_first_login_change",
+      ...auditContext,
+    });
+  }
+
   async function changePassword(
     userId: string,
     currentPassword: string,
@@ -897,6 +1043,7 @@ export function createAuthService(
     if (!user?.isActive) {
       throw new AppError(404, "NOT_FOUND", "User not found");
     }
+    assertPasswordChangeComplete(user);
 
     const secret = generateSecret();
 
@@ -938,6 +1085,7 @@ export function createAuthService(
     if (!user?.isActive) {
       throw new AppError(404, "NOT_FOUND", "User not found");
     }
+    assertPasswordChangeComplete(user);
 
     const pendingSecret = await getPendingMfaSecret(userId);
 
@@ -984,6 +1132,7 @@ export function createAuthService(
     rehydrateAuthoritativeUser,
     verifyMfaEnrollmentToken,
     canAccessClinic,
+    completeRequiredPasswordChange,
     changePassword,
     revokeAllUserTokens,
     setupMfa,

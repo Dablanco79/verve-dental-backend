@@ -6,6 +6,7 @@ import type { Logger } from "../utils/logger.js";
 export type AuthAuditEvent =
   | "auth.login.success"
   | "auth.login.failure"
+  | "auth.login.password_change_required"
   | "auth.login.mfa_required"
   | "auth.login.mfa_enrollment_required"
   | "auth.mfa.success"
