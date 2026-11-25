@@ -55,17 +55,15 @@ export function createPostgresUserClinicAssignmentsRepository(
     },
 
     async listRosterEligible(clinicId: string): Promise<ClinicAssignment[]> {
-      // Joined against users to filter inactive accounts.
-      // Uses active tenant context — roster-eligible queries are always
-      // performed within a clinic-scoped route context.
+      // Active-user and organisation filtering is applied by rosterService
+      // after hydrating these assignment-scoped user IDs. Joining users here
+      // would incorrectly apply users.home_clinic_id RLS to cross-home staff.
       const { rows } = await pool.query<AssignmentRow>(
-        `SELECT uca.*
-         FROM user_clinic_assignments uca
-         JOIN users u ON u.id = uca.user_id
-         WHERE uca.clinic_id = $1
-           AND uca.can_roster = true
-           AND u.is_active = true
-         ORDER BY uca.assigned_at ASC`,
+        `SELECT *
+         FROM user_clinic_assignments
+         WHERE clinic_id = $1
+           AND can_roster = true
+         ORDER BY assigned_at ASC`,
         [clinicId],
       );
       return rows.map(toAssignment);

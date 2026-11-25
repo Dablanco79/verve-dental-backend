@@ -64,8 +64,6 @@ type RosterEntryDto = {
 
 type ApprovedLeaveDto = {
   leaveId: string;
-  staffUserId: string;
-  staffEmail: string;
   startDate: string;
   endDate: string;
 };
@@ -371,6 +369,175 @@ describe("Approved leave in roster conflict preflight", () => {
     "Australia/Melbourne",
   );
 
+  async function createCrossHomeApprovedLeaveFixture(options?: {
+    returnPostgresDateObjects?: boolean;
+  }) {
+    const app = await createTestApp({
+      configureDependencies: async (deps) => {
+        if (options?.returnPostgresDateObjects) {
+          const listApprovedForStaff =
+            deps.leaveRepository.listApprovedForStaff.bind(deps.leaveRepository);
+          deps.leaveRepository.listApprovedForStaff = async (...args) =>
+            (await listApprovedForStaff(...args)).map((leave) => {
+              const postgresDate = (value: string) => {
+                const year = Number(value.slice(0, 4));
+                const month = Number(value.slice(5, 7));
+                const day = Number(value.slice(8, 10));
+                return new Date(year, month - 1, day) as unknown as string;
+              };
+              return {
+                ...leave,
+                startDate: postgresDate(leave.startDate),
+                endDate: postgresDate(leave.endDate),
+              };
+            });
+        }
+        await Promise.all([
+          deps.clinicAssignmentsRepository.upsert({
+            userId: SEED_USER_IDS.clinicAStaff,
+            clinicId: SEED_CLINIC_B_ID,
+            canRoster: true,
+            canOperate: false,
+            assignedByUserId: SEED_USER_IDS.clinicAAdmin,
+          }),
+          deps.clinicAssignmentsRepository.upsert({
+            userId: SEED_USER_IDS.clinicAManager,
+            clinicId: SEED_CLINIC_B_ID,
+            canRoster: true,
+            canOperate: true,
+            assignedByUserId: SEED_USER_IDS.clinicAAdmin,
+          }),
+        ]);
+      },
+    });
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const leaveResponse = await createLeaveAt(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      LEAVE_DATE,
+    );
+    const leaveId = (leaveResponse.body as ApiData<{ id: string }>).data.id;
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/approve`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({ reviewNotes: "Confidential approval note" })
+      .expect(200);
+    return { app, leaveId, managerToken };
+  }
+
+  it("warns a GPM about approved leave for a cross-home eligible employee", async () => {
+    const { app, leaveId, managerToken } =
+      await createCrossHomeApprovedLeaveFixture();
+
+    const conflicts = await getConflicts(
+      app,
+      managerToken,
+      SEED_CLINIC_B_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+
+    expect(conflicts.approvedLeave).toEqual([
+      {
+        leaveId,
+        startDate: LEAVE_DATE,
+        endDate: LEAVE_DATE,
+      },
+    ]);
+  });
+
+  it("formats PostgreSQL-style Date objects as calendar dates without a UTC shift", async () => {
+    const { app, leaveId, managerToken } =
+      await createCrossHomeApprovedLeaveFixture({
+        returnPostgresDateObjects: true,
+      });
+
+    const conflicts = await getConflicts(
+      app,
+      managerToken,
+      SEED_CLINIC_B_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+
+    expect(conflicts.approvedLeave).toStrictEqual([
+      {
+        leaveId,
+        startDate: LEAVE_DATE,
+        endDate: LEAVE_DATE,
+      },
+    ]);
+  });
+
+  it("still blocks final save when cross-home approved leave overlaps", async () => {
+    const { app, managerToken } = await createCrossHomeApprovedLeaveFixture();
+
+    const response = await mkShiftAt(
+      app,
+      managerToken,
+      SEED_CLINIC_B_ID,
+      SEED_USER_IDS.clinicAStaff,
+      STD_START,
+      STD_END,
+      409,
+    );
+
+    expect((response.body as ApiError).error.code).toBe(
+      "APPROVED_LEAVE_CONFLICT",
+    );
+  });
+
+  it("does not let a GPM inspect leave through an unauthorised clinic", async () => {
+    const app = await createTestApp();
+    const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
+    const managerToken = await loginAndGetAccessToken(app, "manager@clinic-a.au");
+    const leaveResponse = await createLeaveAt(
+      app,
+      staffToken,
+      SEED_CLINIC_A_ID,
+      LEAVE_DATE,
+    );
+    const leaveId = (leaveResponse.body as ApiData<{ id: string }>).data.id;
+    await request(app)
+      .post(`/api/v1/clinics/${SEED_CLINIC_A_ID}/leave/${leaveId}/approve`)
+      .set("Authorization", `Bearer ${managerToken}`)
+      .send({})
+      .expect(200);
+
+    await request(app)
+      .get(
+        `/api/v1/clinics/${SEED_CLINIC_B_ID}/roster/conflicts` +
+          `?staffUserId=${SEED_USER_IDS.clinicAStaff}` +
+          `&start=${encodeURIComponent(STD_START)}` +
+          `&end=${encodeURIComponent(STD_END)}`,
+      )
+      .set("Authorization", `Bearer ${managerToken}`)
+      .expect(403);
+  });
+
+  it("returns only the non-sensitive leave conflict projection", async () => {
+    const { app, managerToken } = await createCrossHomeApprovedLeaveFixture();
+
+    const conflicts = await getConflicts(
+      app,
+      managerToken,
+      SEED_CLINIC_B_ID,
+      SEED_USER_IDS.clinicAStaff,
+    );
+    const block = conflicts.approvedLeave[0];
+
+    expect(block).toBeDefined();
+    expect(Object.keys(block ?? {}).sort()).toEqual([
+      "endDate",
+      "leaveId",
+      "startDate",
+    ]);
+    expect(block).not.toHaveProperty("leaveType");
+    expect(block).not.toHaveProperty("reason");
+    expect(block).not.toHaveProperty("reviewNotes");
+    expect(block).not.toHaveProperty("attachments");
+  });
+
   it("returns person-wide approved leave when preflighting at another clinic", async () => {
     const app = await createTestApp();
     const staffToken = await loginAndGetAccessToken(app, "staff@clinic-a.au");
@@ -399,7 +566,6 @@ describe("Approved leave in roster conflict preflight", () => {
     expect(conflicts.approvedLeave).toEqual([
       expect.objectContaining({
         leaveId,
-        staffUserId: SEED_USER_IDS.clinicAStaff,
         startDate: LEAVE_DATE,
         endDate: LEAVE_DATE,
       }),

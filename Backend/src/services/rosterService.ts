@@ -39,6 +39,26 @@ const MAX_WEEKLY_EXPORT_STAFF_CANDIDATES = 2_000;
 const MAX_WEEKLY_EXPORT_SHIFTS = 5_000;
 const MAX_MONTHLY_EXPORT_SHIFTS = 20_000;
 
+function rosterConflictCalendarDate(value: unknown): string {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    // node-postgres parses a DATE as local midnight. Read the local calendar
+    // components so UTC conversion cannot move the value to an adjacent day.
+    return [
+      String(value.getFullYear()).padStart(4, "0"),
+      String(value.getMonth() + 1).padStart(2, "0"),
+      String(value.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
+  throw new AppError(
+    500,
+    "INVALID_LEAVE_DATE",
+    "Approved leave contains an invalid calendar date",
+  );
+}
+
 export function assertWeeklyRosterExportSize(input: {
   shiftCount?: number;
   candidateStaffCount?: number;
@@ -149,8 +169,8 @@ export type ConflictCheckResult = {
   overlapping: RosterEntry[];
   /** Same calendar day, no time overlap — informational only (AMBER). */
   sameDay: RosterEntry[];
-  /** Person-wide approved leave covering the proposed Melbourne dates. */
-  approvedLeave: RosterLeaveBlock[];
+  /** Minimal approved-leave projection covering the proposed Melbourne dates. */
+  approvedLeave: Pick<RosterLeaveBlock, "leaveId" | "startDate" | "endDate">[];
 };
 
 export type RosterService = ReturnType<typeof createRosterService>;
@@ -762,30 +782,73 @@ export function createRosterService(
      * Returns all active users who are roster-eligible at the given clinic.
      * Used by the Add Shift staff selector (replaces the home-clinic-only
      * listUsers path for roster purposes).
-     *
-     * owner_admin may see all active users at a clinic without an explicit
-     * assignment (they have implicit roster authority everywhere).
+     * Both owner_admin and GPM callers receive the same explicit assignment
+     * set after clinic-access and organisation checks.
      */
     async getRosterEligibleStaff(
       caller: AuthenticatedUser,
       clinicId: string,
     ): Promise<{ id: string; email: string; displayName: string | null; firstName: string | null; lastName: string | null }[]> {
+      const [targetClinic, callerHomeClinic] = await Promise.all([
+        clinicRepository.findById(clinicId),
+        clinicRepository.findById(caller.homeClinicId),
+      ]);
+      if (
+        !targetClinic ||
+        !callerHomeClinic ||
+        targetClinic.organisationId !== callerHomeClinic.organisationId
+      ) {
+        throw new AppError(
+          403,
+          "TENANT_ACCESS_DENIED",
+          "You do not have access to this clinic's organisation",
+        );
+      }
+
       // Assert caller can see this clinic's roster.
       if (!(await hasFullClinicReadAccess(caller, clinicId))) {
         throw new AppError(403, "FORBIDDEN", "You do not have access to this clinic's roster");
       }
 
-      // owner_admin: return all active users who have a roster-eligible assignment
-      // at this clinic (or the home-clinic users as a fallback if no assignments).
+      // Return only users with an explicit roster-eligible assignment at this clinic.
       const assignments = await assignmentsRepository.listRosterEligible(clinicId);
       const userIds = assignments.map((a) => a.userId);
 
       const users = await Promise.all(
         userIds.map((id) => userRepository.findById(id)),
       );
+      if (users.some((user) => user === null)) {
+        throw new AppError(
+          500,
+          "INTERNAL_ERROR",
+          "Roster eligibility references an unavailable staff account",
+        );
+      }
 
-      return users
-        .filter((u): u is NonNullable<typeof u> => u !== null && u.isActive)
+      const hydratedUsers = users.filter((user): user is NonNullable<typeof user> => user !== null);
+      const homeClinicIds = [...new Set(hydratedUsers.map((user) => user.homeClinicId))];
+      const homeClinics = await Promise.all(
+        homeClinicIds.map((homeClinicId) => clinicRepository.findById(homeClinicId)),
+      );
+      const homeClinicsById = new Map(
+        homeClinics
+          .filter((clinic): clinic is NonNullable<typeof clinic> => clinic !== null)
+          .map((clinic) => [clinic.id, clinic]),
+      );
+      const hasInconsistentOrganisation = hydratedUsers.some((user) => {
+        const homeClinic = homeClinicsById.get(user.homeClinicId);
+        return !homeClinic || homeClinic.organisationId !== targetClinic.organisationId;
+      });
+      if (hasInconsistentOrganisation) {
+        throw new AppError(
+          500,
+          "INTERNAL_ERROR",
+          "Roster eligibility contains an invalid organisation assignment",
+        );
+      }
+
+      return hydratedUsers
+        .filter((u) => u.isActive)
         .map((u) => ({
           id: u.id,
           email: u.email,
@@ -836,6 +899,48 @@ export function createRosterService(
       await assertClinicWriteAccess(caller, clinicId);
 
       const { staffUserId, proposedStart, proposedEnd, excludeEntryId } = params;
+      const [targetClinic, callerHomeClinic, staffUser] = await Promise.all([
+        clinicRepository.findById(clinicId),
+        clinicRepository.findById(caller.homeClinicId),
+        userRepository.findById(staffUserId),
+      ]);
+      if (!targetClinic) {
+        throw new AppError(404, "CLINIC_NOT_FOUND", "Target clinic not found");
+      }
+      if (
+        !callerHomeClinic ||
+        callerHomeClinic.organisationId !== targetClinic.organisationId
+      ) {
+        throw new AppError(
+          403,
+          "TENANT_ACCESS_DENIED",
+          "You do not have access to this clinic's organisation",
+        );
+      }
+      if (!staffUser) {
+        throw new AppError(404, "USER_NOT_FOUND", "Staff user not found");
+      }
+      const staffHomeClinic = await clinicRepository.findById(staffUser.homeClinicId);
+      if (
+        !staffHomeClinic ||
+        staffHomeClinic.organisationId !== targetClinic.organisationId
+      ) {
+        throw new AppError(
+          403,
+          "TENANT_ACCESS_DENIED",
+          "This staff member is outside the clinic's organisation",
+        );
+      }
+      if (
+        caller.role !== "owner_admin" &&
+        !(await assignmentsRepository.hasRosterEligibility(staffUserId, clinicId))
+      ) {
+        throw new AppError(
+          403,
+          "STAFF_NOT_ELIGIBLE_FOR_CLINIC",
+          "This staff member is not eligible to be rostered at this clinic",
+        );
+      }
 
       // Strict time overlaps.
       const overlapping = await rosterRepository.findOverlappingShifts(
@@ -866,18 +971,21 @@ export function createRosterService(
         proposedEnd,
         OPERATIONAL_TZ,
       );
+      // This repository method performs the existing person-wide RLS-safe lookup.
+      // It is intentionally reached only after clinic write access, organisation
+      // consistency and (for GPMs) target-clinic roster eligibility are verified.
+      // The returned RosterLeaveBlock projection excludes leave type, reason,
+      // review notes, attachments and all other confidential leave details.
       const approvedLeave = (
-        await leaveRepository.findApprovedOverlapRange(
-          staffUserId,
+        await leaveRepository.listApprovedForStaff(
+          [staffUserId],
           leaveWindow.firstDate,
           leaveWindow.lastDate,
         )
       ).map((leave) => ({
-        leaveId: leave.id,
-        staffUserId: leave.staffUserId,
-        staffEmail: leave.staffEmail,
-        startDate: leave.startDate,
-        endDate: leave.endDate,
+        leaveId: leave.leaveId,
+        startDate: rosterConflictCalendarDate(leave.startDate),
+        endDate: rosterConflictCalendarDate(leave.endDate),
       }));
 
       return { overlapping, sameDay, approvedLeave };
