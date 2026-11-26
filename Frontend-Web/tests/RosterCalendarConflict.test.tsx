@@ -9,7 +9,7 @@
  *   - No conflicts → no banner rendered
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +42,7 @@ const {
   mockListUsers,
   mockCheckShiftConflicts,
   mockCreateShift,
+  mockUpdateShift,
   mockGetRosterAccessibleClinics,
   mockListRosterApprovedLeave,
 } = vi.hoisted(() => {
@@ -52,6 +53,7 @@ const {
     mockListUsers: vi.fn(),
     mockCheckShiftConflicts: vi.fn(),
     mockCreateShift: vi.fn(),
+    mockUpdateShift: vi.fn(),
     mockGetRosterAccessibleClinics: vi.fn(),
     mockListRosterApprovedLeave: vi.fn().mockResolvedValue([]),
   };
@@ -72,7 +74,7 @@ vi.mock("../src/api/client.js", () => ({
     listRoster: mockListRoster,
     listRosterEligibleStaff: mockListUsers,
     createShift: mockCreateShift,
-    updateShift: vi.fn(),
+    updateShift: mockUpdateShift,
     cancelShift: vi.fn(),
     checkShiftConflicts: mockCheckShiftConflicts,
     getRosterAccessibleClinics: mockGetRosterAccessibleClinics,
@@ -371,6 +373,172 @@ describe("RosterCalendarPage — Clinic/Location dropdown in Add Shift modal", (
   });
 });
 
+describe("RosterCalendarPage — eligible staff loading states", () => {
+  beforeEach(() => {
+    setAuthenticatedUser(authTestState, managerUser);
+    mockListRoster.mockResolvedValue([]);
+    mockListRosterApprovedLeave.mockResolvedValue([]);
+    mockCheckShiftConflicts.mockResolvedValue({
+      overlapping: [],
+      sameDay: [],
+    });
+    mockCreateShift.mockResolvedValue(buildConflictEntry());
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    ]);
+    mockListUsers.mockResolvedValue([testStaff]);
+  });
+
+  async function openAddShiftModal(user: ReturnType<typeof userEvent.setup>) {
+    const addButtons = await screen.findAllByRole("button", {
+      name: /Add shift/i,
+    });
+    await user.click(addButtons[0] as HTMLElement);
+    return screen.findByRole("dialog", { name: "Add shift" });
+  }
+
+  it("displays eligible employees after a successful response", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const modal = await openAddShiftModal(user);
+
+    expect(
+      await within(modal).findByRole("option", { name: /Alice Test/i }),
+    ).toBeInTheDocument();
+    expect(within(modal).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps Add Shift employee selection and conflict preview behaviour", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const modal = await openAddShiftModal(user);
+    const staffSelect = await within(modal).findByLabelText(/Staff member/i);
+
+    await user.selectOptions(staffSelect, testStaff.id);
+
+    expect(staffSelect).toHaveValue(testStaff.id);
+    await waitFor(
+      () => {
+        expect(mockCheckShiftConflicts).toHaveBeenCalledWith(
+          TEST_CLINIC_ID,
+          expect.objectContaining({ staffUserId: testStaff.id }),
+        );
+      },
+      { timeout: 2000 },
+    );
+  });
+
+  it("displays a distinct empty state after a successful empty response", async () => {
+    mockListUsers.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderPage();
+    const modal = await openAddShiftModal(user);
+
+    expect(
+      await within(modal).findByRole("option", {
+        name: "No eligible employees",
+      }),
+    ).toBeInTheDocument();
+    expect(within(modal).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("displays an API error instead of an empty staff state", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    });
+    mockListUsers.mockRejectedValue(new Error("Network unavailable"));
+
+    const modal = await openAddShiftModal(user);
+
+    expect(await within(modal).findByRole("alert")).toHaveTextContent(
+      "Unable to load eligible employees. Please try again.",
+    );
+    expect(
+      within(modal).queryByRole("option", { name: "No eligible employees" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("retries a failed eligible-staff request and clears the error", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    });
+    mockListUsers
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce([testStaff]);
+
+    const modal = await openAddShiftModal(user);
+    await user.click(await within(modal).findByRole("button", { name: "Retry" }));
+
+    expect(
+      await within(modal).findByRole("option", { name: /Alice Test/i }),
+    ).toBeInTheDocument();
+    expect(within(modal).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("ignores an older staff response after the clinic changes", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    });
+
+    let resolveClinicA:
+      | ((staff: typeof testStaff[]) => void)
+      | undefined;
+    const clinicAResponse = new Promise<typeof testStaff[]>((resolve) => {
+      resolveClinicA = resolve;
+    });
+    mockListUsers.mockImplementation((requestedClinicId: string) =>
+      requestedClinicId === TEST_CLINIC_B_ID
+        ? Promise.resolve([testStaff2])
+        : clinicAResponse,
+    );
+
+    const modal = await openAddShiftModal(user);
+    await user.selectOptions(
+      within(modal).getByLabelText(/Clinic \/ Location/i),
+      TEST_CLINIC_B_ID,
+    );
+    expect(
+      await within(modal).findByRole("option", { name: /Bob Builder/i }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveClinicA?.([testStaff]);
+      await clinicAResponse;
+    });
+
+    expect(
+      within(modal).queryByRole("option", { name: /Alice Test/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(modal).getByRole("option", { name: /Bob Builder/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks shift submission while eligible staff loading has failed", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => {
+      expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
+    });
+    mockListUsers.mockRejectedValue(new Error("Network unavailable"));
+
+    const modal = await openAddShiftModal(user);
+    await within(modal).findByRole("alert");
+    const submit = within(modal).getByRole("button", { name: "Add shift" });
+
+    expect(submit).toBeDisabled();
+    await user.click(submit);
+    expect(mockCreateShift).not.toHaveBeenCalled();
+  });
+});
+
 // ── Edit Shift Location ───────────────────────────────────────────────────────
 
 /**
@@ -397,9 +565,10 @@ async function openEditModal(
 describe("RosterCalendarPage — Clinic/Location in Edit Shift modal", () => {
   beforeEach(() => {
     mockCheckShiftConflicts.mockClear();
+    mockUpdateShift.mockClear();
   });
 
-  it("Edit Shift modal shows editable Clinic/Location dropdown with current clinic pre-selected", async () => {
+  it("retains the original employee as immutable edit-shift context", async () => {
     const user = userEvent.setup();
     const conflictEntry = buildConflictEntry();
 
@@ -414,10 +583,6 @@ describe("RosterCalendarPage — Clinic/Location in Edit Shift modal", () => {
     setAuthenticatedUser(authTestState, managerUser);
     renderPage();
 
-    // Switch to week view so the shift card is visible
-    const weekBtn = await screen.findByRole("button", { name: "Week" });
-    await user.click(weekBtn);
-
     // Open the edit modal by clicking the shift card
     await openEditModal(user, conflictEntry);
 
@@ -430,21 +595,64 @@ describe("RosterCalendarPage — Clinic/Location in Edit Shift modal", () => {
       expect(clinicSelect.tagName).toBe("SELECT");
       expect(clinicSelect).toHaveValue(TEST_CLINIC_ID);
     });
+    expect(within(modal).queryByLabelText(/Staff member/i)).not.toBeInTheDocument();
+    expect(within(modal).getByText("Alice Test")).toBeInTheDocument();
+    expect(within(modal).getByText(testStaff.email)).toBeInTheDocument();
   });
 
-  it("Changing clinic in Edit Shift clears staff when not eligible at new clinic", async () => {
+  it("preserves the original employee when moving an edit to an eligible clinic", async () => {
     const user = userEvent.setup();
     const conflictEntry = buildConflictEntry({ staffUserId: testStaff.id });
+    mockListUsers.mockResolvedValue([testStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    ]);
+    mockListRoster.mockResolvedValue([conflictEntry]);
+    mockCheckShiftConflicts.mockResolvedValue({ overlapping: [], sameDay: [] });
+    mockUpdateShift.mockResolvedValue({
+      ...conflictEntry,
+      rosteredClinicId: TEST_CLINIC_B_ID,
+      rosteredClinicName: TEST_CLINIC_B_NAME,
+    });
 
-    // Call order:
-    //   1. Global staffList effect (mount)           → [testStaff]
-    //   2. formStaffList effect (modal open, A)      → [testStaff]
-    //   3. formStaffList effect (clinic changed to B)→ [testStaff2]
-    mockListUsers
-      .mockResolvedValueOnce([testStaff])   // 1: global staffList on mount
-      .mockResolvedValueOnce([testStaff])   // 2: formStaffList — modal open, clinic A
-      .mockResolvedValue([testStaff2]);     // 3: formStaffList — clinic B
+    setAuthenticatedUser(authTestState, managerUser);
+    renderPage();
+    await openEditModal(user, conflictEntry);
+    const modal = await screen.findByRole("dialog");
+    const clinicSelect = within(modal).getByLabelText(/Clinic \/ Location/i);
+    await user.selectOptions(clinicSelect, TEST_CLINIC_B_ID);
 
+    await waitFor(() => {
+      expect(within(modal).queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        within(modal).getByRole("button", { name: "Save changes" }),
+      ).not.toBeDisabled();
+    });
+    expect(within(modal).getByText("Alice Test")).toBeInTheDocument();
+
+    await user.click(within(modal).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(mockUpdateShift).toHaveBeenCalledWith(
+        TEST_CLINIC_ID,
+        conflictEntry.id,
+        expect.objectContaining({ rosteredClinicId: TEST_CLINIC_B_ID }),
+      );
+    });
+    const updatePayload = mockUpdateShift.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(updatePayload).not.toHaveProperty("staffUserId");
+  });
+
+  it("blocks save when the original employee is ineligible at the destination", async () => {
+    const user = userEvent.setup();
+    const conflictEntry = buildConflictEntry();
+    mockListUsers.mockImplementation((clinicId: string) =>
+      Promise.resolve(
+        clinicId === TEST_CLINIC_B_ID ? [testStaff2] : [testStaff],
+      ),
+    );
     mockGetRosterAccessibleClinics.mockResolvedValue([
       { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
       { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
@@ -454,30 +662,135 @@ describe("RosterCalendarPage — Clinic/Location in Edit Shift modal", () => {
 
     setAuthenticatedUser(authTestState, managerUser);
     renderPage();
-
-    // Switch to week view
-    const weekBtn = await screen.findByRole("button", { name: "Week" });
-    await user.click(weekBtn);
-
-    // Open edit modal
     await openEditModal(user, conflictEntry);
+    const modal = await screen.findByRole("dialog");
+    await user.selectOptions(
+      within(modal).getByLabelText(/Clinic \/ Location/i),
+      TEST_CLINIC_B_ID,
+    );
 
+    expect(await within(modal).findByRole("alert")).toHaveTextContent(
+      "This employee is not eligible to be rostered at the selected clinic.",
+    );
+    expect(
+      within(modal).getByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+    expect(within(modal).getByText("Alice Test")).toBeInTheDocument();
+    expect(mockUpdateShift).not.toHaveBeenCalled();
+  });
+
+  it("checks edit conflicts for the original employee after a clinic move", async () => {
+    const user = userEvent.setup();
+    const conflictEntry = buildConflictEntry();
+    mockListUsers.mockResolvedValue([testStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    ]);
+    mockListRoster.mockResolvedValue([conflictEntry]);
+    mockCheckShiftConflicts.mockResolvedValue({ overlapping: [], sameDay: [] });
+
+    setAuthenticatedUser(authTestState, managerUser);
+    renderPage();
+    await openEditModal(user, conflictEntry);
+    const modal = await screen.findByRole("dialog");
+    mockCheckShiftConflicts.mockClear();
+    await user.selectOptions(
+      within(modal).getByLabelText(/Clinic \/ Location/i),
+      TEST_CLINIC_B_ID,
+    );
+
+    await waitFor(
+      () => {
+        expect(mockCheckShiftConflicts).toHaveBeenCalledWith(
+          TEST_CLINIC_B_ID,
+          expect.objectContaining({
+            staffUserId: conflictEntry.staffUserId,
+            excludeEntryId: conflictEntry.id,
+          }),
+        );
+      },
+      { timeout: 2000 },
+    );
+  });
+
+  it("preserves the edited employee when eligible-staff loading fails", async () => {
+    const user = userEvent.setup();
+    const conflictEntry = buildConflictEntry();
+    mockListUsers.mockResolvedValueOnce([testStaff]).mockRejectedValue(
+      new Error("Network unavailable"),
+    );
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+    ]);
+    mockListRoster.mockResolvedValue([conflictEntry]);
+    mockCheckShiftConflicts.mockResolvedValue({ overlapping: [], sameDay: [] });
+
+    setAuthenticatedUser(authTestState, managerUser);
+    renderPage();
+    await openEditModal(user, conflictEntry);
     const modal = await screen.findByRole("dialog");
 
-    // Wait for staff select to load with pre-populated value
+    expect(await within(modal).findByRole("alert")).toHaveTextContent(
+      "Unable to load eligible employees. Please try again.",
+    );
+    expect(within(modal).getByText("Alice Test")).toBeInTheDocument();
+    expect(
+      within(modal).getByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+  });
+
+  it("ignores stale clinic eligibility without changing the edited employee", async () => {
+    const user = userEvent.setup();
+    const conflictEntry = buildConflictEntry();
+    mockListUsers.mockResolvedValue([testStaff]);
+    mockGetRosterAccessibleClinics.mockResolvedValue([
+      { id: TEST_CLINIC_ID, name: TEST_CLINIC_NAME },
+      { id: TEST_CLINIC_B_ID, name: TEST_CLINIC_B_NAME },
+    ]);
+    mockListRoster.mockResolvedValue([conflictEntry]);
+    mockCheckShiftConflicts.mockResolvedValue({ overlapping: [], sameDay: [] });
+
+    setAuthenticatedUser(authTestState, managerUser);
+    renderPage();
     await waitFor(() => {
-      const staffSel = within(modal).getByLabelText(/Staff member/i);
-      expect(staffSel).toHaveValue(testStaff.id);
+      expect(mockListUsers).toHaveBeenCalledWith(TEST_CLINIC_ID);
     });
 
-    // Change the clinic to clinic B
-    const clinicSelect = within(modal).getByLabelText(/Clinic \/ Location/i);
-    await user.selectOptions(clinicSelect, TEST_CLINIC_B_ID);
-
-    // Staff selection should be cleared (testStaff not in clinic B list)
-    await waitFor(() => {
-      expect(within(modal).getByLabelText(/Staff member/i)).toHaveValue("");
+    let resolveClinicA:
+      | ((staff: typeof testStaff[]) => void)
+      | undefined;
+    const staleClinicAResponse = new Promise<typeof testStaff[]>((resolve) => {
+      resolveClinicA = resolve;
     });
+    mockListUsers.mockImplementation((clinicId: string) =>
+      clinicId === TEST_CLINIC_B_ID
+        ? Promise.resolve([testStaff])
+        : staleClinicAResponse,
+    );
+
+    await openEditModal(user, conflictEntry);
+    const modal = await screen.findByRole("dialog");
+    await user.selectOptions(
+      within(modal).getByLabelText(/Clinic \/ Location/i),
+      TEST_CLINIC_B_ID,
+    );
+    await waitFor(() => {
+      expect(
+        within(modal).getByRole("button", { name: "Save changes" }),
+      ).not.toBeDisabled();
+    });
+
+    await act(async () => {
+      resolveClinicA?.([]);
+      await staleClinicAResponse;
+    });
+
+    expect(within(modal).getByText("Alice Test")).toBeInTheDocument();
+    expect(within(modal).queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(modal).getByRole("button", { name: "Save changes" }),
+    ).not.toBeDisabled();
   });
 
   it("Edit Shift excludes the entry itself from conflict checking (excludeEntryId passed)", async () => {

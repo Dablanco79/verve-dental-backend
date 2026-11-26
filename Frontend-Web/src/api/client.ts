@@ -1044,7 +1044,7 @@ export function createApiClient(config: AppConfig) {
   ): Promise<{
     overlapping: RosterEntry[];
     sameDay: RosterEntry[];
-    approvedLeave: RosterLeaveBlock[];
+    approvedLeave: Pick<RosterLeaveBlock, "leaveId" | "startDate" | "endDate">[];
   }> {
     const q = new URLSearchParams({
       staffUserId: params.staffUserId,
@@ -1055,7 +1055,7 @@ export function createApiClient(config: AppConfig) {
     return request<{
       overlapping: RosterEntry[];
       sameDay: RosterEntry[];
-      approvedLeave: RosterLeaveBlock[];
+      approvedLeave: Pick<RosterLeaveBlock, "leaveId" | "startDate" | "endDate">[];
     }>(
       config,
       `/api/v1/clinics/${clinicId}/roster/conflicts?${q.toString()}`,

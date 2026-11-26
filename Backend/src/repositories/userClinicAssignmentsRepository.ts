@@ -43,13 +43,11 @@ export interface UserClinicAssignmentsRepository {
   listByClinic(clinicId: string): Promise<ClinicAssignment[]>;
 
   /**
-   * Returns active users who are roster-eligible (can_roster=true) at the
-   * given clinic. Used by the Add Shift staff selector.
-   *
-   * activeOnly: when true (default), only returns assignments for users
-   * with is_active=true (joined against the users table).
+   * Returns assignments with can_roster=true at the given clinic.
+   * The service layer hydrates the assigned users, enforces organisation
+   * consistency, and excludes inactive accounts.
    */
-  listRosterEligible(clinicId: string, activeOnly?: boolean): Promise<ClinicAssignment[]>;
+  listRosterEligible(clinicId: string): Promise<ClinicAssignment[]>;
 
   /**
    * Returns clinic IDs where the user has can_operate=true.

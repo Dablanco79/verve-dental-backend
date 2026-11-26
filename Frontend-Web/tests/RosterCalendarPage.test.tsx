@@ -734,7 +734,7 @@ describe("RosterCalendarPage — shift cards", () => {
 });
 
 describe("RosterCalendarPage — edit modal staff/clinic display", () => {
-  it("shows pre-selected staff and clinic in the edit modal dropdowns", async () => {
+  it("shows immutable staff identity and an editable clinic in the edit modal", async () => {
     const user = userEvent.setup();
     setAuthenticatedUser(authTestState, managerUser);
     const entry = buildEntry();
@@ -759,12 +759,10 @@ describe("RosterCalendarPage — edit modal staff/clinic display", () => {
       expect(clinicSel).toHaveValue(TEST_CLINIC_ID);
     });
 
-    // Staff dropdown should be pre-selected with the entry's staff member
+    // Staff identity is display-only because the edit API cannot reassign it.
     await waitFor(() => {
       const modal = screen.getByRole("dialog");
-      const staffEl = within(modal).getByLabelText(/Staff member/i);
-      expect(staffEl).toHaveValue(namedStaff.id);
-      // The selected option should show the staff's display name and email
+      expect(within(modal).queryByLabelText(/Staff member/i)).toBeNull();
       expect(within(modal).getByText(/Alice Jones/)).toBeInTheDocument();
       expect(within(modal).getByText(new RegExp(namedStaff.email))).toBeInTheDocument();
     });

@@ -431,7 +431,7 @@ export function createRosterHandlers(rosterService: RosterService) {
         data: {
           overlapping: result.overlapping.map(serializeEntry),
           sameDay: result.sameDay.map(serializeEntry),
-          approvedLeave: result.approvedLeave.map(serializeLeaveBlock),
+          approvedLeave: result.approvedLeave,
         },
       });
     },

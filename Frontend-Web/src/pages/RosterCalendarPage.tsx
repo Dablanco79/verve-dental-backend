@@ -222,12 +222,16 @@ export function RosterCalendarPage() {
   // ── Per-clinic form staff list (reloads when form.clinicId changes) ───────
   const [formStaffList, setFormStaffList] = useState<EligibleStaff[]>([]);
   const [isLoadingFormStaff, setIsLoadingFormStaff] = useState(false);
+  const [formStaffLoadError, setFormStaffLoadError] = useState<string | null>(null);
+  const [formStaffEligibilityError, setFormStaffEligibilityError] =
+    useState<string | null>(null);
+  const formStaffRequestIdRef = useRef(0);
 
   // ── Conflict detection state ──────────────────────────────────────────────
   const [conflictResult, setConflictResult] = useState<{
     overlapping: RosterEntry[];
     sameDay: RosterEntry[];
-    approvedLeave?: RosterLeaveBlock[];
+    approvedLeave?: Pick<RosterLeaveBlock, "leaveId" | "startDate" | "endDate">[];
   } | null>(null);
   const [isCheckingConflict, setIsCheckingConflict] = useState(false);
   const conflictDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -395,28 +399,80 @@ export function RosterCalendarPage() {
       .catch(() => undefined);
   }, [user, clinicId, canWrite]);
 
-  // ── Load staff list for the form (reloads when form.clinicId changes) ─────
-  useEffect(() => {
-    if (!showModal || !form.clinicId) {
-      setFormStaffList([]);
-      return;
-    }
+  const loadFormStaff = useCallback(async (requestedClinicId: string) => {
+    const requestId = ++formStaffRequestIdRef.current;
     setIsLoadingFormStaff(true);
-    apiClient
-      .listRosterEligibleStaff(form.clinicId)
-      .then((list) => {
-        setFormStaffList(list);
-        // Retain staff if still eligible at new clinic, otherwise clear
+    setFormStaffLoadError(null);
+    setFormStaffEligibilityError(null);
+    setFormStaffList([]);
+    try {
+      const list = await apiClient.listRosterEligibleStaff(requestedClinicId);
+      if (requestId !== formStaffRequestIdRef.current) return;
+      setFormStaffList(list);
+      if (editingEntry) {
+        const movingClinic =
+          requestedClinicId !== editingEntry.rosteredClinicId;
+        const originalStaffIsEligible = list.some(
+          (staff) => staff.id === editingEntry.staffUserId,
+        );
+        setFormStaffEligibilityError(
+          movingClinic && !originalStaffIsEligible
+            ? "This employee is not eligible to be rostered at the selected clinic."
+            : null,
+        );
+        setForm((prev) =>
+          prev.clinicId === requestedClinicId
+            ? { ...prev, staffUserId: editingEntry.staffUserId }
+            : prev,
+        );
+      } else {
+        // Add Shift retains the selected staff only while they remain eligible.
         setForm((prev) => {
-          if (prev.staffUserId && !list.some((s) => s.id === prev.staffUserId)) {
+          if (
+            prev.clinicId === requestedClinicId &&
+            prev.staffUserId &&
+            !list.some((staff) => staff.id === prev.staffUserId)
+          ) {
             return { ...prev, staffUserId: "" };
           }
           return prev;
         });
-      })
-      .catch(() => { setFormStaffList([]); })
-      .finally(() => { setIsLoadingFormStaff(false); });
-  }, [showModal, form.clinicId]);
+      }
+    } catch {
+      if (requestId !== formStaffRequestIdRef.current) return;
+      setFormStaffList([]);
+      setFormStaffLoadError(
+        "Unable to load eligible employees. Please try again.",
+      );
+      if (!editingEntry) {
+        setForm((prev) =>
+          prev.clinicId === requestedClinicId
+            ? { ...prev, staffUserId: "" }
+            : prev,
+        );
+      }
+    } finally {
+      if (requestId === formStaffRequestIdRef.current) {
+        setIsLoadingFormStaff(false);
+      }
+    }
+  }, [editingEntry]);
+
+  // ── Load staff list for the form (reloads when form.clinicId changes) ─────
+  useEffect(() => {
+    if (!showModal || !form.clinicId) {
+      formStaffRequestIdRef.current += 1;
+      setFormStaffList([]);
+      setIsLoadingFormStaff(false);
+      setFormStaffLoadError(null);
+      setFormStaffEligibilityError(null);
+      return;
+    }
+    void loadFormStaff(form.clinicId);
+    return () => {
+      formStaffRequestIdRef.current += 1;
+    };
+  }, [showModal, form.clinicId, loadFormStaff]);
 
   // ── Conflict check for modal ──────────────────────────────────────────────
   // Fires whenever the modal is open and the staff/date/time/clinic fields change.
@@ -426,7 +482,17 @@ export function RosterCalendarPage() {
       setConflictResult(null);
       return;
     }
-    if (!form.staffUserId || !form.date || !form.startTime || !form.endTime) {
+    const effectiveStaffUserId =
+      editingEntry?.staffUserId ?? form.staffUserId;
+    if (
+      !effectiveStaffUserId ||
+      !form.date ||
+      !form.startTime ||
+      !form.endTime ||
+      isLoadingFormStaff ||
+      formStaffLoadError ||
+      formStaffEligibilityError
+    ) {
       setConflictResult(null);
       return;
     }
@@ -443,7 +509,7 @@ export function RosterCalendarPage() {
       setIsCheckingConflict(true);
       apiClient
         .checkShiftConflicts(form.clinicId, {
-          staffUserId: form.staffUserId,
+          staffUserId: effectiveStaffUserId,
           start,
           end,
           excludeEntryId: editingEntry?.id,
@@ -464,7 +530,19 @@ export function RosterCalendarPage() {
       if (conflictDebounceRef.current) clearTimeout(conflictDebounceRef.current);
     };
     // The dependency list intentionally omits apiClient (module-level stable reference).
-  }, [showModal, form.clinicId, form.staffUserId, form.date, form.startTime, form.endTime, editingEntry?.id]);
+  }, [
+    showModal,
+    form.clinicId,
+    form.staffUserId,
+    form.date,
+    form.startTime,
+    form.endTime,
+    editingEntry?.id,
+    editingEntry?.staffUserId,
+    isLoadingFormStaff,
+    formStaffLoadError,
+    formStaffEligibilityError,
+  ]);
 
   // ── Compute grid-level conflict indicators ────────────────────────────────
   // Detect any pairs of entries for the same staff member whose times overlap
@@ -555,6 +633,18 @@ export function RosterCalendarPage() {
     event.preventDefault();
     if (!user) return;
     setFormError(null);
+    if (formStaffLoadError) {
+      setFormError("Unable to load eligible employees. Please try again.");
+      return;
+    }
+    if (isLoadingFormStaff) {
+      setFormError("Please wait for eligible employees to finish loading.");
+      return;
+    }
+    if (formStaffEligibilityError) {
+      setFormError(formStaffEligibilityError);
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -1174,7 +1264,13 @@ export function RosterCalendarPage() {
                   required
                   value={form.clinicId}
                   onChange={(e) => {
-                    setForm((f) => ({ ...f, clinicId: e.target.value }));
+                    setForm((f) => ({
+                      ...f,
+                      clinicId: e.target.value,
+                      staffUserId: editingEntry
+                        ? editingEntry.staffUserId
+                        : "",
+                    }));
                   }}
                   className="roster-form__control"
                 >
@@ -1187,35 +1283,77 @@ export function RosterCalendarPage() {
                 </select>
               </label>
 
-              {/* Staff member — always a selector (pre-populated from formFromEntry in edit mode) */}
-              <label className="roster-form__field">
-                Staff member
-                <select
-                  required
-                  value={form.staffUserId}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, staffUserId: e.target.value }));
-                  }}
-                  className="roster-form__control"
-                  disabled={isLoadingFormStaff || !form.clinicId}
-                >
-                  <option value="">
-                    {isLoadingFormStaff
-                      ? "Loading staff…"
-                      : form.clinicId
-                        ? "— Select staff member —"
-                        : "— Select clinic first —"}
-                  </option>
-                  {formStaffList.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {staffDisplayName(s)}
-                      {s.firstName || s.lastName || s.displayName
-                        ? ` (${s.email})`
-                        : ""}
+              {editingEntry ? (
+                <div className="roster-form__field-static">
+                  <span className="roster-form__static-label">Staff member</span>
+                  <span className="roster-form__static-value">
+                    {resolveStaffName(
+                      editingEntry.staffUserId,
+                      editingEntry.staffEmail,
+                    )}
+                    <span className="roster-form__static-secondary">
+                      {editingEntry.staffEmail}
+                    </span>
+                  </span>
+                </div>
+              ) : (
+                <label className="roster-form__field">
+                  Staff member
+                  <select
+                    required
+                    value={form.staffUserId}
+                    onChange={(e) => {
+                      setForm((f) => ({ ...f, staffUserId: e.target.value }));
+                    }}
+                    className="roster-form__control"
+                    disabled={
+                      isLoadingFormStaff ||
+                      Boolean(formStaffLoadError) ||
+                      !form.clinicId
+                    }
+                  >
+                    <option value="">
+                      {isLoadingFormStaff
+                        ? "Loading staff…"
+                        : formStaffLoadError
+                          ? "Eligible employees unavailable"
+                        : form.clinicId
+                          ? formStaffList.length > 0
+                            ? "— Select staff member —"
+                            : "No eligible employees"
+                          : "— Select clinic first —"}
                     </option>
-                  ))}
-                </select>
-              </label>
+                    {formStaffList.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {staffDisplayName(s)}
+                        {s.firstName || s.lastName || s.displayName
+                          ? ` (${s.email})`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {formStaffLoadError ? (
+                <div className="status-card__error" role="alert">
+                  <span>{formStaffLoadError}</span>{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      void loadFormStaff(form.clinicId);
+                    }}
+                    disabled={isLoadingFormStaff || !form.clinicId}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null}
+              {formStaffEligibilityError ? (
+                <p className="status-card__error" role="alert">
+                  {formStaffEligibilityError}
+                </p>
+              ) : null}
 
               {/* Date */}
               <label className="roster-form__field">
@@ -1308,8 +1446,8 @@ export function RosterCalendarPage() {
                   <ul className="roster-conflict-list">
                     {(conflictResult.approvedLeave ?? []).map((leave) => (
                       <li key={leave.leaveId}>
-                        {resolveStaffName(leave.staffUserId, leave.staffEmail)} has approved
-                        leave from {leave.startDate} to {leave.endDate}.
+                        The selected employee has approved leave from{" "}
+                        {leave.startDate} to {leave.endDate}.
                       </li>
                     ))}
                   </ul>
@@ -1390,6 +1528,9 @@ export function RosterCalendarPage() {
                     className="roster-form__submit-btn"
                     disabled={
                       isSubmitting ||
+                      isLoadingFormStaff ||
+                      Boolean(formStaffLoadError) ||
+                      Boolean(formStaffEligibilityError) ||
                       (conflictResult?.overlapping.length ?? 0) > 0 ||
                       (conflictResult?.approvedLeave?.length ?? 0) > 0
                     }
